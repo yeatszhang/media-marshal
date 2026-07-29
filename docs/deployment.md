@@ -50,7 +50,7 @@ TODO:
 
 如果部署环境无法直连 TMDB API，可以配置 HTTP 代理：
 
-```env
+```dotenv
 MEDIA_MARSHAL_TMDB_PROXY_ENABLED=true
 MEDIA_MARSHAL_TMDB_PROXY_HTTP_URL=http://127.0.0.1:7890
 ```
