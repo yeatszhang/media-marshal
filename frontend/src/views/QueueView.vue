@@ -1973,22 +1973,25 @@ h2 {
   gap: 10px;
 }
 
-.batch-recognition-dialog :deep(.el-dialog) {
+:global(.el-dialog.batch-recognition-dialog),
+:global(.batch-recognition-dialog .el-dialog) {
   display: flex;
   flex-direction: column;
   max-height: min(86vh, 760px);
   height: min(86vh, 760px);
-  margin: 0;
+  overflow: hidden;
 }
 
-.batch-recognition-dialog :deep(.el-dialog__body) {
+:global(.el-dialog.batch-recognition-dialog .el-dialog__body),
+:global(.batch-recognition-dialog .el-dialog .el-dialog__body) {
   flex: 1;
   min-height: 0;
   overflow: hidden;
   padding-bottom: 12px;
 }
 
-.batch-recognition-dialog :deep(.el-dialog__footer) {
+:global(.el-dialog.batch-recognition-dialog .el-dialog__footer),
+:global(.batch-recognition-dialog .el-dialog .el-dialog__footer) {
   flex: 0 0 auto;
 }
 

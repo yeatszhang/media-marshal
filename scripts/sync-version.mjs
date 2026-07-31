@@ -34,6 +34,17 @@ await updateText('backend/pom.xml', current => current.replace(
   `$1${versionText}-SNAPSHOT$2`,
 ))
 
+await updateJson('package.json', json => {
+  json.version = packageVersion
+})
+
+await updateJson('package-lock.json', json => {
+  json.version = packageVersion
+  if (json.packages?.['']) {
+    json.packages[''].version = packageVersion
+  }
+})
+
 await updateJson('frontend/package.json', json => {
   json.version = packageVersion
 })
