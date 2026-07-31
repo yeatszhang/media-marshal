@@ -7,6 +7,7 @@ export const releaseNotes: ReleaseNote[] = [
     items: [
       { type: 'feature', key: 'releaseNotes.v0_2_12.items.docsSite' },
       { type: 'fix', key: 'releaseNotes.v0_2_12.items.batchRecognitionDialogScroll' },
+      { type: 'optimization', key: 'releaseNotes.v0_2_12.items.queueFileNameSorting' },
     ],
   },
   {

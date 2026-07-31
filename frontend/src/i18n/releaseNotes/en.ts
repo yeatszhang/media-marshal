@@ -3,6 +3,7 @@ export default {
     items: {
       docsSite: 'Documentation pages now collect the user guide, deployment notes, and FAQ in one place.',
       batchRecognitionDialogScroll: 'The batch edit dialog stays centered at a fixed height, with large previews scrolling inside the panel.',
+      queueFileNameSorting: 'Review Queue tasks are sorted by filename, making episodes easier to batch select together.',
     },
   },
   v0_2_11: {

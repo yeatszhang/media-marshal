@@ -3,6 +3,7 @@ export default {
     items: {
       docsSite: '新增文档站内容，用户手册、部署指南和常见问题更方便集中查看。',
       batchRecognitionDialogScroll: '批量编辑面板保持居中和固定高度，选择大量任务时预览区会在面板内滚动。',
+      queueFileNameSorting: '待确认任务按文件名升序排列，同一剧集更容易集中批量选择。',
     },
   },
   v0_2_11: {

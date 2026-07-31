@@ -807,8 +807,13 @@ const batchRecognitionForm = reactive<{
   episodeSortDirection: 'ASC',
 })
 
+const queueFileNameCollator = new Intl.Collator('zh-CN', {
+  numeric: true,
+  sensitivity: 'base',
+})
+
 const sortedQueueTasks = computed(() => {
-  return [...queueTasks.value].sort((a, b) => taskTime(b) - taskTime(a))
+  return [...queueTasks.value].sort(compareQueueTaskByFileNameAsc)
 })
 
 const displayedTasks = computed(() => {
@@ -1594,15 +1599,29 @@ function formatNullable(value: string | number | null | undefined) {
 }
 
 function sourceFileName(sourcePath: string) {
-  const normalized = sourcePath.replace(/\\/g, '/')
+  const normalized = normalizeSourcePath(sourcePath)
   const index = normalized.lastIndexOf('/')
   return index >= 0 ? normalized.slice(index + 1) : normalized
 }
 
 function parentPath(sourcePath: string) {
-  const normalized = sourcePath.replace(/\\/g, '/')
+  const normalized = normalizeSourcePath(sourcePath)
   const index = normalized.lastIndexOf('/')
   return index >= 0 ? normalized.slice(0, index) : ''
+}
+
+function normalizeSourcePath(sourcePath: string) {
+  return sourcePath.replace(/\\/g, '/')
+}
+
+function compareQueueTaskByFileNameAsc(a: MediaTask, b: MediaTask) {
+  const fileNameCompare = queueFileNameCollator.compare(sourceFileName(a.sourcePath), sourceFileName(b.sourcePath))
+  if (fileNameCompare !== 0) return fileNameCompare
+
+  const sourcePathCompare = queueFileNameCollator.compare(normalizeSourcePath(a.sourcePath), normalizeSourcePath(b.sourcePath))
+  if (sourcePathCompare !== 0) return sourcePathCompare
+
+  return a.id - b.id
 }
 
 function formatResolution(task: MediaTask) {
@@ -1622,10 +1641,6 @@ function assetTypeTagType(assetType: MediaAssetType | null | undefined) {
   return map[assetType || 'VIDEO_FILE']
 }
 
-function taskTime(task: MediaTask) {
-  const timestamp = new Date(task.createdAt).getTime()
-  return Number.isNaN(timestamp) ? 0 : timestamp
-}
 </script>
 
 <style scoped>

@@ -3138,6 +3138,33 @@ alwaysApply: false
 
 ---
 
+## [Queue 待确认任务文件名排序] 2026-08-01
+
+### 完成内容
+- Queue 待确认任务列表改为在分页前按源文件名自然升序排列，避免同一剧集的不同集数因为创建时间不同散落到多个分页。
+- 文件名相同时继续按规范化源路径和任务 ID 排序，保证列表顺序稳定。
+- v0.2.12 ReleaseNote 补充待确认队列排序优化说明。
+
+### 影响文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
 ## [ADR-028 已完成任务匹配纠错、目标资产重命名与修正历史链路] 2026-06-28
 
 ### 完成内容
