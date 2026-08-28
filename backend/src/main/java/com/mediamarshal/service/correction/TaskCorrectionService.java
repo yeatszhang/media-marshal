@@ -9,18 +9,14 @@ import com.mediamarshal.model.dto.TaskCorrectionRematchResponse;
 import com.mediamarshal.model.dto.TaskCorrectionRequest;
 import com.mediamarshal.model.entity.MediaAssetType;
 import com.mediamarshal.model.entity.MediaTask;
-import com.mediamarshal.model.entity.TaskCandidate;
 import com.mediamarshal.model.entity.WatchRule;
 import com.mediamarshal.repository.MediaTaskRepository;
-import com.mediamarshal.repository.TaskCandidateRepository;
 import com.mediamarshal.repository.WatchRuleRepository;
 import com.mediamarshal.service.matcher.MetadataMatcher;
-import com.mediamarshal.service.nfo.NfoGeneratorService;
 import com.mediamarshal.service.rename.RenameService;
 import com.mediamarshal.service.rename.TemplateRenderer;
 import com.mediamarshal.service.settings.SettingsService;
 import com.mediamarshal.websocket.EventPublisher;
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,8 +26,6 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -54,14 +48,14 @@ public class TaskCorrectionService {
     );
 
     private final MediaTaskRepository taskRepository;
-    private final TaskCandidateRepository candidateRepository;
     private final WatchRuleRepository watchRuleRepository;
     private final MetadataMatcher metadataMatcher;
     private final RenameService renameService;
     private final TemplateRenderer templateRenderer;
-    private final NfoGeneratorService nfoGeneratorService;
     private final SettingsService settingsService;
     private final EventPublisher eventPublisher;
+    private final TaskCorrectionFileExecutor fileExecutor;
+    private final TaskCorrectionPersistenceService persistenceService;
 
     public TaskCorrectionRematchResponse rematch(Long taskId, TaskCorrectionRequest request) {
         MediaTask task = loadTask(taskId);
@@ -81,49 +75,48 @@ public class TaskCorrectionService {
         return buildPlan(taskId, request).preview();
     }
 
-    @Transactional
     public TaskCorrectionApplyResponse apply(Long taskId, TaskCorrectionRequest request) {
-        CorrectionPlan plan = buildPlan(taskId, request);
+        TaskCorrectionPlan plan = prepare(taskId, request);
+        return executePrepared(plan, true);
+    }
+
+    TaskCorrectionPlan prepare(Long taskId, TaskCorrectionRequest request) {
+        return buildPlan(taskId, request);
+    }
+
+    TaskCorrectionApplyResponse executePrepared(TaskCorrectionPlan plan, boolean cleanupAfterSuccess) {
         if (!plan.preview().isCanApply()) {
             throw new IllegalStateException(String.join("；", plan.preview().getBlockers()));
         }
 
-        List<FileMove> executedMoves = new ArrayList<>();
+        TaskCorrectionFileExecution fileExecution = fileExecutor.execute(plan);
+        TaskCorrectionApplyResponse response;
         try {
-            for (FileMove move : plan.moves()) {
-                movePath(move.source(), move.target());
-                executedMoves.add(move);
-            }
-            if (plan.regenerateNfo()) {
-                nfoGeneratorService.generate(plan.correctedTask(), plan.selectedMatch(), plan.correctedTarget());
-            }
+            response = persistenceService.persist(plan);
         } catch (Exception e) {
-            rollbackMoves(executedMoves);
-            throw new IllegalStateException("修正文件操作失败，数据库记录未更新：" + e.getMessage(), e);
+            List<String> rollbackFailures = fileExecutor.rollback(fileExecution);
+            String rollbackMessage = rollbackFailures.isEmpty()
+                    ? ""
+                    : "；部分文件回滚失败：" + String.join("；", rollbackFailures);
+            throw new IllegalStateException("修正数据库记录失败，文件操作已尝试回滚：" + e.getMessage() + rollbackMessage, e);
         }
 
-        MediaTask correctedTask = taskRepository.saveAndFlush(plan.correctedTask());
-        saveSelectedCandidate(correctedTask, plan.selectedMatch());
+        if (cleanupAfterSuccess) {
+            fileExecutor.cleanupEmptyTargetDirs(
+                    plan.cleanupStartDir(),
+                    plan.cleanupStopDir(),
+                    plan.preview().getWarnings()
+            );
+        }
 
-        MediaTask originalTask = plan.originalTask();
-        originalTask.setStatus(MediaTask.TaskStatus.CORRECTED);
-        originalTask.setCorrectedToTaskId(correctedTask.getId());
-        originalTask.setCorrectedAt(LocalDateTime.now());
-        taskRepository.saveAndFlush(originalTask);
-
-        correctedTask.setUpdatedAt(LocalDateTime.now());
-        correctedTask = taskRepository.saveAndFlush(correctedTask);
-
-        cleanupEmptyTargetDirs(plan.cleanupStartDir(), plan.cleanupStopDir(), plan.preview().getWarnings());
-
-        eventPublisher.publishTaskCorrected(originalTask);
-        eventPublisher.publishTaskDone(correctedTask);
+        eventPublisher.publishTaskCorrected(response.originalTask());
+        eventPublisher.publishTaskDone(response.correctedTask());
         log.info("Task correction applied: originalTaskId={}, correctedTaskId={}, target={}",
-                originalTask.getId(), correctedTask.getId(), correctedTask.getTargetPath());
-        return new TaskCorrectionApplyResponse(originalTask, correctedTask, plan.preview());
+                response.originalTask().getId(), response.correctedTask().getId(), response.correctedTask().getTargetPath());
+        return response;
     }
 
-    private CorrectionPlan buildPlan(Long taskId, TaskCorrectionRequest request) {
+    private TaskCorrectionPlan buildPlan(Long taskId, TaskCorrectionRequest request) {
         MediaTask originalTask = loadTask(taskId);
         TaskCorrectionPreview preview = new TaskCorrectionPreview();
         preview.setCurrentTargetPath(originalTask.getTargetPath());
@@ -140,7 +133,7 @@ public class TaskCorrectionService {
         MatchResult selectedMatch = null;
         MediaTask correctedTask = null;
         Path correctedTarget = null;
-        List<FileMove> moves = new ArrayList<>();
+        List<TaskCorrectionFileMove> moves = new ArrayList<>();
         Path cleanupStartDir = null;
         Path cleanupStopDir = null;
 
@@ -177,7 +170,7 @@ public class TaskCorrectionService {
                 .description("将原任务标记为已修正并保留历史")
                 .build());
         preview.setCanApply(preview.getBlockers().isEmpty());
-        return new CorrectionPlan(
+        return new TaskCorrectionPlan(
                 originalTask,
                 correctedTask,
                 selectedMatch,
@@ -456,7 +449,7 @@ public class TaskCorrectionService {
             Path correctedTarget,
             boolean regenerateNfo,
             TaskCorrectionPreview preview,
-            List<FileMove> moves
+            List<TaskCorrectionFileMove> moves
     ) throws IOException {
         if (currentTarget == null || correctedTarget == null) {
             return;
@@ -470,7 +463,7 @@ public class TaskCorrectionService {
                             ? "移动 / 重命名蓝光根目录"
                             : "移动 / 重命名主视频文件")
                     .build());
-            moves.add(new FileMove(currentTarget, correctedTarget));
+            moves.add(new TaskCorrectionFileMove(currentTarget, correctedTarget));
         }
 
         if (!MediaAssetType.BLURAY_DIRECTORY.equals(originalTask.getAssetType())) {
@@ -505,7 +498,7 @@ public class TaskCorrectionService {
             Path currentTarget,
             Path correctedTarget,
             TaskCorrectionPreview preview,
-            List<FileMove> moves
+            List<TaskCorrectionFileMove> moves
     ) throws IOException {
         Path currentDir = currentTarget.getParent();
         Path correctedDir = correctedTarget.getParent();
@@ -545,7 +538,7 @@ public class TaskCorrectionService {
                             .targetPath(destination.toString())
                             .description("移动 / 重命名同名附属文件")
                             .build());
-                    moves.add(new FileMove(associated.toAbsolutePath().normalize(), destination));
+                    moves.add(new TaskCorrectionFileMove(associated.toAbsolutePath().normalize(), destination));
                 }
                 if (lower.endsWith(".md5")) {
                     md5Found = true;
@@ -582,87 +575,6 @@ public class TaskCorrectionService {
             return null;
         }
         return Paths.get(rule.getTargetDir()).toAbsolutePath().normalize();
-    }
-
-    private void movePath(Path source, Path target) throws IOException {
-        Path parent = target.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-        try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException e) {
-            Files.move(source, target);
-        }
-    }
-
-    private void rollbackMoves(List<FileMove> executedMoves) {
-        for (int i = executedMoves.size() - 1; i >= 0; i--) {
-            FileMove move = executedMoves.get(i);
-            try {
-                if (Files.exists(move.target(), LinkOption.NOFOLLOW_LINKS)
-                        && !Files.exists(move.source(), LinkOption.NOFOLLOW_LINKS)) {
-                    movePath(move.target(), move.source());
-                }
-            } catch (IOException rollbackError) {
-                log.warn("Failed to rollback correction move: target={}, source={}, error={}",
-                        move.target(), move.source(), rollbackError.getMessage());
-            }
-        }
-    }
-
-    private void cleanupEmptyTargetDirs(Path startDir, Path stopDir, List<String> warnings) {
-        if (startDir == null || stopDir == null) {
-            return;
-        }
-        Path current = startDir.toAbsolutePath().normalize();
-        Path stop = stopDir.toAbsolutePath().normalize();
-        while (current.startsWith(stop) && !current.equals(stop)) {
-            try (var stream = Files.list(current)) {
-                if (stream.findAny().isPresent()) {
-                    return;
-                }
-            } catch (IOException e) {
-                log.warn("Failed to inspect empty target directory: dir={}, error={}", current, e.getMessage());
-                warnings.add("旧目标空目录清理失败：" + current);
-                return;
-            }
-
-            try {
-                Files.delete(current);
-                log.info("Empty target directory deleted after correction: {}", current);
-            } catch (IOException e) {
-                log.warn("Failed to delete empty target directory: dir={}, error={}", current, e.getMessage());
-                warnings.add("旧目标空目录清理失败：" + current);
-                return;
-            }
-            current = current.getParent();
-            if (current == null) {
-                return;
-            }
-        }
-    }
-
-    private void saveSelectedCandidate(MediaTask task, MatchResult match) {
-        TaskCandidate candidate = new TaskCandidate();
-        candidate.setTask(task);
-        candidate.setTmdbId(Long.valueOf(match.getSourceId()));
-        candidate.setTitle(match.getTitle());
-        candidate.setOriginalTitle(match.getOriginalTitle());
-        candidate.setYear(match.getYear());
-        candidate.setMediaType(MediaTask.MediaType.valueOf(match.getMediaType()));
-        candidate.setConfidence(match.getConfidence());
-        candidate.setPosterUrl(match.getPosterUrl());
-        candidate.setOverview(match.getOverview());
-        candidate.setGenre1(genreAt(match, 0));
-        candidate.setGenre2(genreAt(match, 1));
-        candidate.setGenre3(genreAt(match, 2));
-        candidate.setGenre4(genreAt(match, 3));
-        candidate.setCountry(match.getCountry());
-        candidate.setEpisodeTitle(match.getEpisodeTitle());
-        candidate.setRank(1);
-        candidate.setSelected(true);
-        candidateRepository.save(candidate);
     }
 
     private MatchResult getByIdWithRetry(Long tmdbId, MediaTask.MediaType mediaType) {
@@ -786,19 +698,4 @@ public class TaskCorrectionService {
     ) {
     }
 
-    private record FileMove(Path source, Path target) {
-    }
-
-    private record CorrectionPlan(
-            MediaTask originalTask,
-            MediaTask correctedTask,
-            MatchResult selectedMatch,
-            Path correctedTarget,
-            List<FileMove> moves,
-            Path cleanupStartDir,
-            Path cleanupStopDir,
-            boolean regenerateNfo,
-            TaskCorrectionPreview preview
-    ) {
-    }
 }

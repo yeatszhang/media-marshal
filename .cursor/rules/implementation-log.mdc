@@ -3489,3 +3489,35 @@ alwaysApply: false
 
 ### 遗留问题 / 需 PM 决策
 - 无。
+
+---
+
+## [ADR-030 步骤 2：单项修正执行内核与短事务边界] 2026-08-29
+
+### 完成内容
+- 将 ADR-028 单项修正拆分为计划计算、文件执行和数据库持久化三个职责，保留原有 rematch / preview / apply 接口与用户语义。
+- 文件移动和 NFO 生成在数据库事务外执行；修正任务、候选快照和 `CORRECTED -> DONE` 历史链路由独立短事务写入。
+- 文件执行器返回已完成移动日志；数据库持久化失败时按逆序尝试恢复当前条目文件，避免留下数据库未更新但主资产已移动的静默不一致。
+- `TaskCorrectionService` 暴露包内可复用的 prepare / executePrepared 内核，为后续批次编排提供同一套单任务规则，并允许批次延迟执行空目录清理。
+- 新增数据库失败后的文件回滚测试，继续覆盖目标路径不变、同 basename 附属文件和通用封面保留语义。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionPlan.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileMove.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileExecution.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileExecutor.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionPersistenceService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionServiceTest.java`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionServiceTest,QueueBatchRecognitionServiceTest,SqliteMediaTaskSchemaMigrationTest" test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 批次表、后台执行器、任务占用锁和重启恢复由 ADR-030 步骤 3 实现。

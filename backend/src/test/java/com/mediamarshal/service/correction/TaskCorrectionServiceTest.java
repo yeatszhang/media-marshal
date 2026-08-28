@@ -65,17 +65,23 @@ class TaskCorrectionServiceTest {
                 templateRenderer,
                 new TemplatePathSafetyService()
         );
+        NfoGeneratorService nfoGeneratorService = mock(NfoGeneratorService.class);
+        TaskCorrectionFileExecutor fileExecutor = new TaskCorrectionFileExecutor(nfoGeneratorService);
+        TaskCorrectionPersistenceService persistenceService = new TaskCorrectionPersistenceService(
+                taskRepository,
+                candidateRepository
+        );
 
         service = new TaskCorrectionService(
                 taskRepository,
-                candidateRepository,
                 watchRuleRepository,
                 metadataMatcher,
                 renameService,
                 templateRenderer,
-                mock(NfoGeneratorService.class),
                 settingsService,
-                eventPublisher
+                eventPublisher,
+                fileExecutor,
+                persistenceService
         );
 
         when(taskRepository.saveAndFlush(any(MediaTask.class))).thenAnswer(invocation -> saveTask(invocation.getArgument(0)));
@@ -159,6 +165,31 @@ class TaskCorrectionServiceTest {
         assertThat(Files.readString(corrected.resolveSibling("New (2025).md5"))).isEqualTo("md5");
         assertThat(Files.exists(current.resolveSibling("poster.jpg"))).isTrue();
         assertThat(Files.exists(current)).isFalse();
+    }
+
+    @Test
+    void applyRollsBackFileMovesWhenPersistenceFails() throws Exception {
+        Path current = tempDir.resolve("library/Old (2024)/Old (2024).mkv");
+        Files.createDirectories(current.getParent());
+        Files.writeString(current, "video");
+
+        MediaTask original = doneTask(current);
+        WatchRule rule = movieRule("{title} ({year})/{title} ({year}){ext}");
+        when(taskRepository.findById(1L)).thenReturn(Optional.of(original));
+        when(watchRuleRepository.findById(9L)).thenReturn(Optional.of(rule));
+        when(metadataMatcher.getById("200", "MOVIE")).thenReturn(movieMatch(200L, "New", 2025));
+        when(taskRepository.saveAndFlush(any(MediaTask.class))).thenThrow(new IllegalStateException("database unavailable"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.apply(1L, movieRequest("New", 2025, 200L, false))
+                )
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("文件操作已尝试回滚");
+
+        Path corrected = tempDir.resolve("library/New (2025)/New (2025).mkv");
+        assertThat(Files.exists(current)).isTrue();
+        assertThat(Files.exists(corrected)).isFalse();
+        assertThat(original.getStatus()).isEqualTo(MediaTask.TaskStatus.DONE);
     }
 
     @Test
