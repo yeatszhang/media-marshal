@@ -3566,3 +3566,46 @@ alwaysApply: false
 
 ### 遗留问题 / 需 PM 决策
 - 范围解析和全批次只读预览由 ADR-030 步骤 4 实现。
+
+---
+
+## [ADR-030 步骤 4：跨分页范围解析与全批次只读预览] 2026-08-29
+
+### 完成内容
+- 新增剧集修正范围接口，按当前错误 `tmdbId + ruleId + DONE + TV_SHOW` 查询同剧集完整范围，同季额外匹配锚点季号，不依赖 Dashboard 分页或筛选。
+- 范围结果按季号、集号、集结束号、目标文件名自然顺序和任务 ID 稳定排序，并以任务状态、路径、更新时间和关键识别字段生成 SHA-256 `groupFingerprint`。
+- 新增批量预览接口；公共标题和年份应用到每个临时单项计划，季号、集号、集结束号继续使用旧任务原值。
+- 同一次预览只获取一次所选 TMDB 剧集详情；每条单集计划复用剧集详情，并沿用现有 TMDB 分集缓存。
+- 预览返回范围汇总、逐任务路径和操作、附属文件数量、阻断项、提示项、选择状态和正确候选快照。
+- 支持显式排除范围内任务；被排除任务仍在预览中可见，但其单项阻断不阻止其它选中任务。
+- 新增批次内部重复当前路径、重复修正目标、主资产 / 附属文件重复目标、修正目标占用其它当前有效任务路径和活跃批次占用检查。
+- 检测剧集共享封面、fanart、季海报和 `tvshow.nfo` 时返回合并 warning，第一版不生成移动计划。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchPreview.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchPreviewItem.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionScopesResponse.java`
+- `backend/src/main/java/com/mediamarshal/repository/MediaTaskRepository.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionResolvedScope.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchPreviewService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchPreviewServiceTest.java`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 新增 `GET /api/tasks/{id}/correction/scopes`。
+- 新增 `POST /api/tasks/{id}/correction/batch/preview`。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionScopeServiceTest,TaskCorrectionBatchPreviewServiceTest,TaskCorrectionServiceTest" test`
+- `mvn -q test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 批量应用、作业查询和失败项重试由 ADR-030 步骤 5 实现。

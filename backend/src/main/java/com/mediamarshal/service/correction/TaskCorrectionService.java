@@ -84,7 +84,15 @@ public class TaskCorrectionService {
     }
 
     TaskCorrectionPlan prepare(Long taskId, TaskCorrectionRequest request) {
-        return buildPlan(taskId, request);
+        return buildPlan(taskId, request, null);
+    }
+
+    TaskCorrectionPlan prepare(Long taskId, TaskCorrectionRequest request, MatchResult selectedMatch) {
+        return buildPlan(taskId, request, selectedMatch);
+    }
+
+    MatchResult loadSelectedMatch(Long tmdbId, MediaTask.MediaType mediaType) {
+        return getByIdWithRetry(tmdbId, mediaType);
     }
 
     TaskCorrectionApplyResponse executePrepared(TaskCorrectionPlan plan, boolean cleanupAfterSuccess) {
@@ -120,6 +128,10 @@ public class TaskCorrectionService {
     }
 
     private TaskCorrectionPlan buildPlan(Long taskId, TaskCorrectionRequest request) {
+        return buildPlan(taskId, request, null);
+    }
+
+    private TaskCorrectionPlan buildPlan(Long taskId, TaskCorrectionRequest request, MatchResult providedMatch) {
         MediaTask originalTask = loadTask(taskId);
         TaskCorrectionPreview preview = new TaskCorrectionPreview();
         preview.setCurrentTargetPath(originalTask.getTargetPath());
@@ -146,7 +158,12 @@ public class TaskCorrectionService {
 
         if (preview.getBlockers().isEmpty()) {
             try {
-                selectedMatch = getByIdWithRetry(tmdbId, recognition.mediaType());
+                selectedMatch = providedMatch == null
+                        ? getByIdWithRetry(tmdbId, recognition.mediaType())
+                        : copyMatch(providedMatch);
+                if (!String.valueOf(tmdbId).equals(selectedMatch.getSourceId())) {
+                    throw new IllegalArgumentException("所选 TMDB 候选与修正请求不一致");
+                }
                 correctedTask = buildCorrectedTask(originalTask, recognition, selectedMatch);
                 fillEpisodeTitleIfNeeded(correctedTask, selectedMatch);
                 applyMatchToTask(correctedTask, selectedMatch);
@@ -650,6 +667,23 @@ public class TaskCorrectionService {
         }
         String value = genres.get(index);
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private MatchResult copyMatch(MatchResult source) {
+        MatchResult copy = new MatchResult();
+        copy.setSource(source.getSource());
+        copy.setSourceId(source.getSourceId());
+        copy.setTitle(source.getTitle());
+        copy.setOriginalTitle(source.getOriginalTitle());
+        copy.setYear(source.getYear());
+        copy.setMediaType(source.getMediaType());
+        copy.setOverview(source.getOverview());
+        copy.setPosterUrl(source.getPosterUrl());
+        copy.setGenres(source.getGenres() == null ? List.of() : List.copyOf(source.getGenres()));
+        copy.setCountry(source.getCountry());
+        copy.setEpisodeTitle(source.getEpisodeTitle());
+        copy.setConfidence(source.getConfidence());
+        return copy;
     }
 
     private String extension(Path path) {

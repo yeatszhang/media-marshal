@@ -15,6 +15,21 @@ public interface MediaTaskRepository extends JpaRepository<MediaTask, Long> {
 
     List<MediaTask> findByStatusOrderByCreatedAtDesc(MediaTask.TaskStatus status);
 
+    List<MediaTask> findByStatusAndMediaTypeAndTmdbIdAndRuleId(
+            MediaTask.TaskStatus status,
+            MediaTask.MediaType mediaType,
+            Long tmdbId,
+            Long ruleId
+    );
+
+    List<MediaTask> findByStatusAndMediaTypeAndTmdbIdAndRuleIdAndParsedSeason(
+            MediaTask.TaskStatus status,
+            MediaTask.MediaType mediaType,
+            Long tmdbId,
+            Long ruleId,
+            Integer parsedSeason
+    );
+
     boolean existsBySourcePath(String sourcePath);
 
     /**
