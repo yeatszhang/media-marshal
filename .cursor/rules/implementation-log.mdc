@@ -3098,6 +3098,73 @@ alwaysApply: false
 
 ---
 
+## [Queue 批量编辑弹窗固定高度与版本信息补齐] 2026-07-31
+
+### 完成内容
+- 修复批量编辑识别信息弹窗固定高度未生效的问题：Element Plus 会将 `class="batch-recognition-dialog"` 应用到 `.el-dialog` 本身，原选择器按“外层容器包含 `.el-dialog`”匹配，导致外层固定高度样式没有命中。
+- 将弹窗高度、body 溢出和 footer 固定规则改为全局选择器，兼容 `.el-dialog.batch-recognition-dialog` 与外层容器两种结构，避免选择大量文件时变更预览继续撑高弹窗。
+- 移除对 `.el-dialog` 的 `margin` 覆盖，保留 Element Plus `align-center` 的居中定位，避免弹窗固定高度修复后跑到左上角。
+- 将当前版本号同步为 `v0.2.12`，并补齐 `v0.2.11` / `v0.2.12` ReleaseNote；`v0.2.11` 记录 Queue 批量编辑，`v0.2.12` 记录文档站和批量编辑弹窗体验修复。
+- ReleaseNote 面板当前只展示最近 3 个版本，因此前端 ReleaseNote 索引和中英文文案仅保留 `v0.2.12`、`v0.2.11`、`v0.2.10`，删除不会展示的旧版本内容。
+- 补齐 `scripts/sync-version.mjs` 对根目录 VitePress 文档站 `package.json` / `package-lock.json` 的版本同步，避免后续升级继续遗漏。
+
+### 影响文件
+- `VERSION`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `package.json`
+- `package-lock.json`
+- `parser/main.py`
+- `scripts/sync-version.mjs`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `mvn -q -DskipTests compile`
+- `npm.cmd run docs:build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [Queue 待确认任务文件名排序] 2026-08-01
+
+### 完成内容
+- Queue 待确认任务列表改为在分页前按源文件名自然升序排列，避免同一剧集的不同集数因为创建时间不同散落到多个分页。
+- 文件名相同时继续按规范化源路径和任务 ID 排序，保证列表顺序稳定。
+- v0.2.12 ReleaseNote 补充待确认队列排序优化说明。
+
+### 影响文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
 ## [ADR-028 已完成任务匹配纠错、目标资产重命名与修正历史链路] 2026-06-28
 
 ### 完成内容

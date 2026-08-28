@@ -807,8 +807,13 @@ const batchRecognitionForm = reactive<{
   episodeSortDirection: 'ASC',
 })
 
+const queueFileNameCollator = new Intl.Collator('zh-CN', {
+  numeric: true,
+  sensitivity: 'base',
+})
+
 const sortedQueueTasks = computed(() => {
-  return [...queueTasks.value].sort((a, b) => taskTime(b) - taskTime(a))
+  return [...queueTasks.value].sort(compareQueueTaskByFileNameAsc)
 })
 
 const displayedTasks = computed(() => {
@@ -1594,15 +1599,29 @@ function formatNullable(value: string | number | null | undefined) {
 }
 
 function sourceFileName(sourcePath: string) {
-  const normalized = sourcePath.replace(/\\/g, '/')
+  const normalized = normalizeSourcePath(sourcePath)
   const index = normalized.lastIndexOf('/')
   return index >= 0 ? normalized.slice(index + 1) : normalized
 }
 
 function parentPath(sourcePath: string) {
-  const normalized = sourcePath.replace(/\\/g, '/')
+  const normalized = normalizeSourcePath(sourcePath)
   const index = normalized.lastIndexOf('/')
   return index >= 0 ? normalized.slice(0, index) : ''
+}
+
+function normalizeSourcePath(sourcePath: string) {
+  return sourcePath.replace(/\\/g, '/')
+}
+
+function compareQueueTaskByFileNameAsc(a: MediaTask, b: MediaTask) {
+  const fileNameCompare = queueFileNameCollator.compare(sourceFileName(a.sourcePath), sourceFileName(b.sourcePath))
+  if (fileNameCompare !== 0) return fileNameCompare
+
+  const sourcePathCompare = queueFileNameCollator.compare(normalizeSourcePath(a.sourcePath), normalizeSourcePath(b.sourcePath))
+  if (sourcePathCompare !== 0) return sourcePathCompare
+
+  return a.id - b.id
 }
 
 function formatResolution(task: MediaTask) {
@@ -1622,10 +1641,6 @@ function assetTypeTagType(assetType: MediaAssetType | null | undefined) {
   return map[assetType || 'VIDEO_FILE']
 }
 
-function taskTime(task: MediaTask) {
-  const timestamp = new Date(task.createdAt).getTime()
-  return Number.isNaN(timestamp) ? 0 : timestamp
-}
 </script>
 
 <style scoped>
@@ -1973,22 +1988,25 @@ h2 {
   gap: 10px;
 }
 
-.batch-recognition-dialog :deep(.el-dialog) {
+:global(.el-dialog.batch-recognition-dialog),
+:global(.batch-recognition-dialog .el-dialog) {
   display: flex;
   flex-direction: column;
   max-height: min(86vh, 760px);
   height: min(86vh, 760px);
-  margin: 0;
+  overflow: hidden;
 }
 
-.batch-recognition-dialog :deep(.el-dialog__body) {
+:global(.el-dialog.batch-recognition-dialog .el-dialog__body),
+:global(.batch-recognition-dialog .el-dialog .el-dialog__body) {
   flex: 1;
   min-height: 0;
   overflow: hidden;
   padding-bottom: 12px;
 }
 
-.batch-recognition-dialog :deep(.el-dialog__footer) {
+:global(.el-dialog.batch-recognition-dialog .el-dialog__footer),
+:global(.batch-recognition-dialog .el-dialog .el-dialog__footer) {
   flex: 0 0 auto;
 }
 
