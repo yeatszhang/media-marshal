@@ -9,6 +9,7 @@ import com.mediamarshal.model.entity.TaskCandidate;
 import com.mediamarshal.model.entity.WatchRule;
 import com.mediamarshal.repository.MediaTaskRepository;
 import com.mediamarshal.repository.TaskCandidateRepository;
+import com.mediamarshal.repository.TaskCorrectionBatchItemRepository;
 import com.mediamarshal.repository.WatchRuleRepository;
 import com.mediamarshal.service.matcher.MetadataMatcher;
 import com.mediamarshal.service.nfo.NfoGeneratorService;
@@ -71,6 +72,9 @@ class TaskCorrectionServiceTest {
                 taskRepository,
                 candidateRepository
         );
+        TaskCorrectionConcurrencyGuard concurrencyGuard = new TaskCorrectionConcurrencyGuard(
+                mock(TaskCorrectionBatchItemRepository.class)
+        );
 
         service = new TaskCorrectionService(
                 taskRepository,
@@ -81,7 +85,8 @@ class TaskCorrectionServiceTest {
                 settingsService,
                 eventPublisher,
                 fileExecutor,
-                persistenceService
+                persistenceService,
+                concurrencyGuard
         );
 
         when(taskRepository.saveAndFlush(any(MediaTask.class))).thenAnswer(invocation -> saveTask(invocation.getArgument(0)));

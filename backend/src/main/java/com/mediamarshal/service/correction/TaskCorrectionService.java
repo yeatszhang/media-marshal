@@ -56,6 +56,7 @@ public class TaskCorrectionService {
     private final EventPublisher eventPublisher;
     private final TaskCorrectionFileExecutor fileExecutor;
     private final TaskCorrectionPersistenceService persistenceService;
+    private final TaskCorrectionConcurrencyGuard concurrencyGuard;
 
     public TaskCorrectionRematchResponse rematch(Long taskId, TaskCorrectionRequest request) {
         MediaTask task = loadTask(taskId);
@@ -76,8 +77,10 @@ public class TaskCorrectionService {
     }
 
     public TaskCorrectionApplyResponse apply(Long taskId, TaskCorrectionRequest request) {
-        TaskCorrectionPlan plan = prepare(taskId, request);
-        return executePrepared(plan, true);
+        return concurrencyGuard.executeSingle(taskId, () -> {
+            TaskCorrectionPlan plan = prepare(taskId, request);
+            return executePrepared(plan, true);
+        });
     }
 
     TaskCorrectionPlan prepare(Long taskId, TaskCorrectionRequest request) {

@@ -3521,3 +3521,48 @@ alwaysApply: false
 
 ### 遗留问题 / 需 PM 决策
 - 批次表、后台执行器、任务占用锁和重启恢复由 ADR-030 步骤 3 实现。
+
+---
+
+## [ADR-030 步骤 3：持久化批次基础设施与恢复状态机] 2026-08-29
+
+### 完成内容
+- 新增 `task_correction_batch` 和 `task_correction_batch_item` 实体、Repository 与显式 SQLite 建表迁移，持久化批次参数、计数、逐条路径快照、失败原因和人工恢复信息。
+- 为 `idempotencyKey`、批次内任务唯一性和 `PENDING / RUNNING` 任务占用建立唯一索引，避免重复请求和两个活跃作业同时声明同一旧任务。
+- 新增批次状态服务，统一处理作业开始、条目开始、成功、失败、最终成功 / 部分失败 / 全部失败计数与状态迁移。
+- 新增单实例串行后台执行器；关闭时等待正在执行的工作，并在超时后中断线程。
+- 新增单项与批量共用的并发协调器：单项修正会拒绝已被批次占用的任务，批次预留会拒绝正在执行单项修正或已有活跃预留的任务。
+- 服务启动时将遗留 `QUEUED / RUNNING` 作业转为 `INTERRUPTED`，把未完成条目标记为可重试的 `FAILED` 并保留原路径、计划目标和中断说明；不自动猜测文件是否已完成移动。
+- 系统重置同步删除批次条目和批次记录。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/model/entity/TaskCorrectionBatch.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/TaskCorrectionBatchItem.java`
+- `backend/src/main/java/com/mediamarshal/repository/TaskCorrectionBatchRepository.java`
+- `backend/src/main/java/com/mediamarshal/repository/TaskCorrectionBatchItemRepository.java`
+- `backend/src/main/java/com/mediamarshal/config/SqliteTaskCorrectionBatchSchemaMigration.java`
+- `backend/src/main/java/com/mediamarshal/config/TaskCorrectionBatchRecoveryRunner.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchExecutor.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchRecoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionConcurrencyGuard.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/main/java/com/mediamarshal/service/settings/SystemResetService.java`
+- `backend/src/test/java/com/mediamarshal/config/SqliteTaskCorrectionBatchSchemaMigrationTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionConcurrencyGuardTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/settings/SystemResetServiceTest.java`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无；本步骤只提供后续批量接口使用的持久化和执行基础设施。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=SqliteTaskCorrectionBatchSchemaMigrationTest,TaskCorrectionConcurrencyGuardTest,TaskCorrectionBatchStateServiceTest,TaskCorrectionServiceTest,SystemResetServiceTest" test`
+- `mvn -q test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 范围解析和全批次只读预览由 ADR-030 步骤 4 实现。

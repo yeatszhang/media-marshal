@@ -7,6 +7,8 @@ import com.mediamarshal.model.entity.WatchRule;
 import com.mediamarshal.repository.AppSettingRepository;
 import com.mediamarshal.repository.MediaTaskRepository;
 import com.mediamarshal.repository.TaskCandidateRepository;
+import com.mediamarshal.repository.TaskCorrectionBatchItemRepository;
+import com.mediamarshal.repository.TaskCorrectionBatchRepository;
 import com.mediamarshal.repository.WatchRuleRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,8 +37,16 @@ class SystemResetServiceTest {
     @Autowired
     private TaskCandidateRepository taskCandidateRepository;
 
+    @Autowired
+    private TaskCorrectionBatchItemRepository taskCorrectionBatchItemRepository;
+
+    @Autowired
+    private TaskCorrectionBatchRepository taskCorrectionBatchRepository;
+
     @BeforeEach
     void clean() {
+        taskCorrectionBatchItemRepository.deleteAllInBatch();
+        taskCorrectionBatchRepository.deleteAllInBatch();
         taskCandidateRepository.deleteAllInBatch();
         mediaTaskRepository.deleteAllInBatch();
         watchRuleRepository.deleteAllInBatch();
@@ -71,6 +81,8 @@ class SystemResetServiceTest {
         systemResetService.reset();
 
         assertThat(taskCandidateRepository.count()).isZero();
+        assertThat(taskCorrectionBatchItemRepository.count()).isZero();
+        assertThat(taskCorrectionBatchRepository.count()).isZero();
         assertThat(mediaTaskRepository.count()).isZero();
         assertThat(watchRuleRepository.count()).isZero();
         assertThat(appSettingRepository.count()).isZero();
