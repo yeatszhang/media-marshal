@@ -95,6 +95,36 @@ class TaskCorrectionBatchStateService {
     }
 
     @Transactional
+    void failBatch(Long batchId, String errorMessage) {
+        TaskCorrectionBatch batch = loadBatch(batchId);
+        List<TaskCorrectionBatchItem> unfinished = itemRepository.findByBatchIdAndStatusInOrderByExecutionOrderAsc(
+                batchId,
+                List.of(TaskCorrectionBatchItem.Status.PENDING, TaskCorrectionBatchItem.Status.RUNNING)
+        );
+        for (TaskCorrectionBatchItem item : unfinished) {
+            item.setStatus(TaskCorrectionBatchItem.Status.FAILED);
+            item.setCompletedAt(LocalDateTime.now());
+            item.setErrorMessage(errorMessage);
+            item.setRecoveryDetails("原路径=" + item.getCurrentTargetPath()
+                    + (item.getCorrectedTargetPath() == null ? "" : "；计划目标=" + item.getCorrectedTargetPath()));
+        }
+        itemRepository.saveAll(unfinished);
+        List<TaskCorrectionBatchItem> items = itemRepository.findByBatchIdOrderByExecutionOrderAsc(batchId);
+        batch.setSuccessCount((int) items.stream()
+                .filter(item -> TaskCorrectionBatchItem.Status.SUCCEEDED.equals(item.getStatus()))
+                .count());
+        batch.setFailedCount((int) items.stream()
+                .filter(item -> TaskCorrectionBatchItem.Status.FAILED.equals(item.getStatus()))
+                .count());
+        batch.setStatus(batch.getSuccessCount() > 0
+                ? TaskCorrectionBatch.Status.PARTIAL_FAILED
+                : TaskCorrectionBatch.Status.FAILED);
+        batch.setCompletedAt(LocalDateTime.now());
+        batch.setErrorMessage(errorMessage);
+        batchRepository.save(batch);
+    }
+
+    @Transactional
     int interruptActiveBatches() {
         List<TaskCorrectionBatch> activeBatches = batchRepository.findByStatusIn(List.of(
                 TaskCorrectionBatch.Status.QUEUED,

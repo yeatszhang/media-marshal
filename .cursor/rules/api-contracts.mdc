@@ -26,6 +26,7 @@ alwaysApply: false
 | POST | `/api/tasks/{id}/correction/apply` | ADR-028：重新校验并应用纠错；移动/重命名当前目标资产，创建修正历史链路 | `TaskCorrectionRequest` | `TaskCorrectionApplyResponse` |
 | GET | `/api/tasks/{id}/correction/scopes` | ADR-030：返回锚点剧集的仅当前集、同季和同剧集数量；范围由后端跨分页查询 | — | `TaskCorrectionScopesResponse` |
 | POST | `/api/tasks/{id}/correction/batch/preview` | ADR-030：按同季或同剧集重新解析完整范围，获取一次剧集详情并生成批次级只读预览 | `TaskCorrectionBatchRequest` | `TaskCorrectionBatchPreview` |
+| POST | `/api/tasks/{id}/correction/batch/apply` | ADR-030：重新解析范围、校验指纹和阻断项，持久化后台作业后立即返回；请求线程不移动文件 | `TaskCorrectionBatchRequest` | `TaskCorrectionBatchApplyResponse` |
 
 ### MediaTask 字段
 ```typescript
@@ -176,6 +177,63 @@ interface TaskCorrectionBatchPreview {
     selected: boolean
   }>
 }
+
+interface TaskCorrectionBatchApplyResponse {
+  batchId: number
+  status: TaskCorrectionBatchStatus
+}
+
+type TaskCorrectionBatchStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'PARTIAL_FAILED'
+  | 'FAILED'
+  | 'INTERRUPTED'
+
+type TaskCorrectionBatchItemStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'EXCLUDED'
+
+interface TaskCorrectionBatchResponse {
+  id: number
+  anchorTaskId: number
+  scope: 'SAME_SEASON' | 'SAME_SERIES'
+  originalTmdbId: number
+  targetTmdbId: number
+  ruleId: number
+  parsedTitle: string
+  parsedYear: number | null
+  regenerateNfo: boolean
+  groupFingerprint: string
+  status: TaskCorrectionBatchStatus
+  totalCount: number
+  successCount: number
+  failedCount: number
+  excludedCount: number
+  errorMessage: string | null
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
+  currentItem: TaskCorrectionBatchItemResponse | null
+  items: TaskCorrectionBatchItemResponse[]
+}
+
+interface TaskCorrectionBatchItemResponse {
+  id: number
+  originalTaskId: number
+  correctedTaskId: number | null
+  season: number | null
+  episode: number | null
+  episodeEnd: number | null
+  currentTargetPath: string
+  correctedTargetPath: string | null
+  status: TaskCorrectionBatchItemStatus
+  executionOrder: number
+  retryCount: number
+  errorMessage: string | null
+  recoveryDetails: string | null
+  startedAt: string | null
+  completedAt: string | null
+}
 ```
 
 > 纠错入口只面向 `status=DONE` 且 `assetType=VIDEO_FILE | BLURAY_DIRECTORY` 的任务；`ISO_IMAGE`、`CORRECTED`、待确认、失败和跳过任务不允许应用纠错。
@@ -189,6 +247,16 @@ interface TaskCorrectionBatchPreview {
 > ADR-030 范围只查询当前 `DONE + TV_SHOW + tmdbId + ruleId` 任务；`SAME_SEASON` 额外匹配锚点季号。返回数量和预览不受 Dashboard 当前页或筛选条件影响，`CORRECTED` 历史任务不会进入范围。
 > 批量预览不修改数据库、不操作文件。前端只提交显式排除的 `excludedTaskIds`，不提交完整任务 ID 作为权威范围；不属于范围的排除 ID 会形成批次级 blocker。
 > `groupFingerprint` 覆盖范围任务 ID、更新时间、状态、当前目标路径、资产类型、TMDB、规则和季集字段；后续应用接口必须重新解析范围并比较该指纹。
+> `POST /api/tasks/{id}/correction/batch/apply` 要求同时提交 preview 返回的 `groupFingerprint` 和不超过 100 字符的非空 `idempotencyKey`。同一个 key 重复提交返回原批次，不创建或重复调度作业。
+> 批次后台按稳定季集顺序串行执行。每条任务独立完成文件移动、短数据库事务和历史链路；单条失败不会回滚其它成功条目，最终状态可能为 `PARTIAL_FAILED`。
+> 查询和失败重试接口如下；重试复用原批次 ID，只把 `FAILED` 条目恢复为 `PENDING` 并递增 `retryCount`，不会重复执行 `SUCCEEDED` 条目。
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/task-correction-batches/{batchId}` | 查询持久化批次状态、计数、当前条目和逐条结果，供前端轮询 | — | `TaskCorrectionBatchResponse` |
+| POST | `/api/task-correction-batches/{batchId}/retry-failed` | 重新校验失败条目的旧任务状态和当前路径，只重试失败项 | — | `TaskCorrectionBatchApplyResponse` |
+
+> 服务启动时，遗留 `QUEUED / RUNNING` 批次转为 `INTERRUPTED`，未完成条目转为 `FAILED` 并保留 `recoveryDetails`。重试前若旧任务不再是 `DONE` 或当前目标路径与作业快照不一致，接口拒绝自动重试，要求人工核对。
 
 ---
 

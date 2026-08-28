@@ -3609,3 +3609,54 @@ alwaysApply: false
 
 ### 遗留问题 / 需 PM 决策
 - 批量应用、作业查询和失败项重试由 ADR-030 步骤 5 实现。
+
+---
+
+## [ADR-030 步骤 5：持久化批量应用、进度查询与失败项重试] 2026-08-29
+
+### 完成内容
+- 新增批量应用接口：重新执行完整只读预览、比较 `groupFingerprint`、校验阻断项和任务占用后，在短事务中创建批次及全部条目；HTTP 请求只返回批次 ID，不等待文件操作。
+- `idempotencyKey` 必填并建立持久化唯一约束；重复提交返回既有批次，不重复创建或调度作业。
+- 后台执行器每个批次只获取一次正确 TMDB 剧集详情，按稳定季集顺序逐条重建最终计划、核对旧任务状态 / 当前路径 / 修正目标快照，再复用 ADR-028 内核执行文件和历史链路。
+- 单条成功写入新 `DONE` 任务、选中候选快照和旧任务 `CORRECTED` 双向链路；单条失败保存错误与人工恢复路径并继续其它条目。
+- 所有条目进入最终状态后，按旧目录深度从深到浅去重清理空目录；共享封面等非空内容会保留并阻止继续向上删除。
+- 新增批次查询接口，返回状态、汇总计数、当前运行条目、逐条路径、重试次数、错误和恢复信息，前端可使用轮询展示进度。
+- 新增失败项重试接口；仅允许 `PARTIAL_FAILED / FAILED / INTERRUPTED` 批次，重新校验原任务仍为 `DONE` 且当前路径与快照一致，只重置 `FAILED` 条目，不重复执行成功或排除条目。
+- 新增临时媒体库端到端测试，覆盖“万物生灵”1978 错误条目到 2020 正确条目的跨季主视频和字幕移动、逐条历史链路、共享 poster 保留及延迟空目录清理。
+- 项目、后端和前端包版本统一更新为 `v0.2.13`；前端交互仍作为后续独立步骤，不在本次后端步骤 2–5 范围内声明完成。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionController.java`
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionBatchController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchApplyResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchItemResponse.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchPersistenceService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchWorker.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchWorkerTest.java`
+- `VERSION`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `.cursor/rules/project-roadmap.mdc`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 新增 `POST /api/tasks/{id}/correction/batch/apply`。
+- 新增 `GET /api/task-correction-batches/{batchId}`。
+- 新增 `POST /api/task-correction-batches/{batchId}/retry-failed`。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionBatchServiceTest,TaskCorrectionBatchWorkerTest,TaskCorrectionBatchStateServiceTest,TaskCorrectionServiceTest" test`
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- Dashboard 的同季 / 同剧集范围选择、批量预览表、进度轮询和失败项重试交互仍需按 ADR-030 的前端阶段实现；后端接口已就绪。
