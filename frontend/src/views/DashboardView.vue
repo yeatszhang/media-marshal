@@ -456,7 +456,7 @@
                 </el-form>
               </section>
 
-              <section class="correction-section">
+              <section class="correction-section candidate-section">
                 <div class="section-title-row">
                   <h3>{{ t('dashboard.correction.candidates') }}</h3>
                 </div>
@@ -1124,14 +1124,10 @@ async function rematchCorrection() {
   if (!request) return
   correctionRematching.value = true
   try {
-    if (isBatchCorrection.value) {
-      const query = [correctionForm.parsedTitle.trim(), correctionForm.parsedYear].filter(Boolean).join(' ')
-      const res = await mediaApi.searchMetadata(query, 'TV_SHOW')
-      correctionCandidates.value = res.data.data.filter((candidate) => candidate.mediaType === 'TV_SHOW')
-    } else {
-      const res = await mediaApi.rematchTaskCorrection(correctionTask.value.id, request)
-      correctionCandidates.value = res.data.data.candidates
-    }
+    const res = await mediaApi.rematchTaskCorrection(correctionTask.value.id, request)
+    correctionCandidates.value = isBatchCorrection.value
+      ? res.data.data.candidates.filter((candidate) => candidate.mediaType === 'TV_SHOW')
+      : res.data.data.candidates
     selectedCorrectionCandidate.value = correctionCandidates.value[0] || null
     invalidateCorrectionPreview()
     if (correctionCandidates.value.length === 0) {
@@ -1651,19 +1647,25 @@ h2 {
 }
 
 .correction-main-grid {
+  --correction-panel-height: 560px;
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .correction-left-column {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
+  box-sizing: border-box;
+  height: var(--correction-panel-height);
+  min-height: 0;
   padding: 14px;
   border-radius: 6px;
   background: #fcfdff;
   box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.16), 0 8px 18px rgba(31, 45, 61, 0.05);
+  overflow: hidden;
 }
 
 .correction-section {
@@ -1780,7 +1782,18 @@ h2 {
 
 .candidate-list {
   display: grid;
+  flex: 1;
   gap: 6px;
+  align-content: start;
+  min-height: 0;
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.candidate-section {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .candidate-row {
@@ -1854,8 +1867,13 @@ h2 {
 
 .preview-panel {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .batch-preview-summary {
@@ -1957,11 +1975,15 @@ h2 {
 }
 
 .preview-section {
+  box-sizing: border-box;
+  height: var(--correction-panel-height);
+  min-height: 0;
   min-width: 0;
   padding: 14px;
   border-radius: 6px;
   background: #fff;
   box-shadow: 0 0 0 1px rgba(64, 158, 255, 0.12), 0 8px 20px rgba(31, 45, 61, 0.07);
+  overflow: hidden;
 }
 
 @media (max-width: 1200px) {
