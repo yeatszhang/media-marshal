@@ -3660,3 +3660,40 @@ alwaysApply: false
 
 ### 遗留问题 / 需 PM 决策
 - Dashboard 的同季 / 同剧集范围选择、批量预览表、进度轮询和失败项重试交互仍需按 ADR-030 的前端阶段实现；后端接口已就绪。
+
+---
+
+## [ADR-030 步骤 6：Dashboard 批量修正交互与作业进度] 2026-08-29
+
+### 完成内容
+- 保留 Dashboard 单条“修正”入口和 `SINGLE` 默认值；符合条件的已完成普通视频剧集加载后端范围数量，展示仅当前集、同季和同剧集三个选项，范围加载失败时自动保持单条模式。
+- 批量模式固定 `TV_SHOW`，公共标题和年份可编辑，原季号、集号和集结束号只读；候选卡补充原始标题、年份、TMDB ID、类型、海报和置信度，非剧集候选不可用于批量修正。
+- 接入完整批量预览，展示范围、纳入、阻断和提示汇总，以及每条任务的季集、当前 / 修正路径、附属文件、操作、阻断和提示；用户显式排除任务后立即使旧预览失效并向后端重新计算。
+- 应用时提交预览 `groupFingerprint` 和前端生成的稳定 `idempotencyKey`，只调用批量作业接口，不循环调用单条修正接口。
+- 创建作业后弹窗切换为进度状态，按批次查询接口轮询状态，展示已处理 / 总数、成功、失败、排除、当前季集、逐条错误和人工恢复信息；作业终态统一刷新 Dashboard。
+- `PARTIAL_FAILED / FAILED / INTERRUPTED` 且存在失败条目时提供“重试失败项”，后端继续保证成功项不重复执行。
+- 将锚点、范围任务和成功后的新任务与批次 ID 保存在浏览器本地最近作业索引中；关闭弹窗不取消后台作业，从相关任务再次进入时恢复批次详情和未完成轮询。
+- 修正弹窗使用固定视口高度，标题与操作区保持可见，长范围预览和进度明细在内容区滚动；补充中英文交互文案、v0.2.13 发布说明和用户手册中的“万物生灵”同名不同年份示例。
+
+### 影响文件
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/api/media.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/components/AppVersionInfo.vue`
+- `docs/user-guide.md`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无；前端接入 ADR-030 步骤 4、5 已提供的范围、预览、应用、查询和失败重试接口。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- 使用工作区临时 SQLite、三条虚拟《万物生灵》分集和本地 TMDB 模拟响应进行浏览器端到端验证：范围计数、1978 → 2020 候选切换、跨季预览、显式排除、3/3 批量成功、Dashboard 刷新及最近批次恢复均通过。
+- 浏览器控制台无新增 warning / error。
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。

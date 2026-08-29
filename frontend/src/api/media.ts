@@ -14,9 +14,14 @@ import type {
   QueueRecognitionResponse,
   TaskCandidate,
   TaskCorrectionApplyResponse,
+  TaskCorrectionBatchApplyResponse,
+  TaskCorrectionBatchPreview,
+  TaskCorrectionBatchRequest,
+  TaskCorrectionBatchResponse,
   TaskCorrectionPreview,
   TaskCorrectionRematchResponse,
   TaskCorrectionRequest,
+  TaskCorrectionScopesResponse,
   TaskStatus,
 } from '@/types'
 
@@ -24,6 +29,7 @@ const TMDB_SEARCH_TIMEOUT_MS = 30000
 const TMDB_SINGLE_REMATCH_TIMEOUT_MS = 60000
 const QUEUE_BATCH_PREVIEW_TIMEOUT_MS = 30000
 const QUEUE_BATCH_REMATCH_TIMEOUT_MS = 180000
+const TASK_CORRECTION_BATCH_TIMEOUT_MS = 180000
 
 export const mediaApi = {
   listTasks(status?: TaskStatus) {
@@ -109,5 +115,29 @@ export const mediaApi = {
 
   applyTaskCorrection(id: number, request: TaskCorrectionRequest) {
     return http.post<ApiResponse<TaskCorrectionApplyResponse>>(`/api/tasks/${id}/correction/apply`, request)
+  },
+
+  getTaskCorrectionScopes(id: number) {
+    return http.get<ApiResponse<TaskCorrectionScopesResponse>>(`/api/tasks/${id}/correction/scopes`)
+  },
+
+  previewTaskCorrectionBatch(id: number, request: TaskCorrectionBatchRequest) {
+    return http.post<ApiResponse<TaskCorrectionBatchPreview>>(`/api/tasks/${id}/correction/batch/preview`, request, {
+      timeout: TASK_CORRECTION_BATCH_TIMEOUT_MS,
+    })
+  },
+
+  applyTaskCorrectionBatch(id: number, request: TaskCorrectionBatchRequest) {
+    return http.post<ApiResponse<TaskCorrectionBatchApplyResponse>>(`/api/tasks/${id}/correction/batch/apply`, request, {
+      timeout: TASK_CORRECTION_BATCH_TIMEOUT_MS,
+    })
+  },
+
+  getTaskCorrectionBatch(batchId: number) {
+    return http.get<ApiResponse<TaskCorrectionBatchResponse>>(`/api/task-correction-batches/${batchId}`)
+  },
+
+  retryTaskCorrectionBatch(batchId: number) {
+    return http.post<ApiResponse<TaskCorrectionBatchApplyResponse>>(`/api/task-correction-batches/${batchId}/retry-failed`)
   },
 }
