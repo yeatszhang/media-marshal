@@ -3489,3 +3489,237 @@ alwaysApply: false
 
 ### 遗留问题 / 需 PM 决策
 - 无。
+
+---
+
+## [ADR-030 步骤 2：单项修正执行内核与短事务边界] 2026-08-29
+
+### 完成内容
+- 将 ADR-028 单项修正拆分为计划计算、文件执行和数据库持久化三个职责，保留原有 rematch / preview / apply 接口与用户语义。
+- 文件移动和 NFO 生成在数据库事务外执行；修正任务、候选快照和 `CORRECTED -> DONE` 历史链路由独立短事务写入。
+- 文件执行器返回已完成移动日志；数据库持久化失败时按逆序尝试恢复当前条目文件，避免留下数据库未更新但主资产已移动的静默不一致。
+- `TaskCorrectionService` 暴露包内可复用的 prepare / executePrepared 内核，为后续批次编排提供同一套单任务规则，并允许批次延迟执行空目录清理。
+- 新增数据库失败后的文件回滚测试，继续覆盖目标路径不变、同 basename 附属文件和通用封面保留语义。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionPlan.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileMove.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileExecution.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileExecutor.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionPersistenceService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionServiceTest.java`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionServiceTest,QueueBatchRecognitionServiceTest,SqliteMediaTaskSchemaMigrationTest" test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 批次表、后台执行器、任务占用锁和重启恢复由 ADR-030 步骤 3 实现。
+
+---
+
+## [ADR-030 步骤 3：持久化批次基础设施与恢复状态机] 2026-08-29
+
+### 完成内容
+- 新增 `task_correction_batch` 和 `task_correction_batch_item` 实体、Repository 与显式 SQLite 建表迁移，持久化批次参数、计数、逐条路径快照、失败原因和人工恢复信息。
+- 为 `idempotencyKey`、批次内任务唯一性和 `PENDING / RUNNING` 任务占用建立唯一索引，避免重复请求和两个活跃作业同时声明同一旧任务。
+- 新增批次状态服务，统一处理作业开始、条目开始、成功、失败、最终成功 / 部分失败 / 全部失败计数与状态迁移。
+- 新增单实例串行后台执行器；关闭时等待正在执行的工作，并在超时后中断线程。
+- 新增单项与批量共用的并发协调器：单项修正会拒绝已被批次占用的任务，批次预留会拒绝正在执行单项修正或已有活跃预留的任务。
+- 服务启动时将遗留 `QUEUED / RUNNING` 作业转为 `INTERRUPTED`，把未完成条目标记为可重试的 `FAILED` 并保留原路径、计划目标和中断说明；不自动猜测文件是否已完成移动。
+- 系统重置同步删除批次条目和批次记录。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/model/entity/TaskCorrectionBatch.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/TaskCorrectionBatchItem.java`
+- `backend/src/main/java/com/mediamarshal/repository/TaskCorrectionBatchRepository.java`
+- `backend/src/main/java/com/mediamarshal/repository/TaskCorrectionBatchItemRepository.java`
+- `backend/src/main/java/com/mediamarshal/config/SqliteTaskCorrectionBatchSchemaMigration.java`
+- `backend/src/main/java/com/mediamarshal/config/TaskCorrectionBatchRecoveryRunner.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchExecutor.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchRecoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionConcurrencyGuard.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/main/java/com/mediamarshal/service/settings/SystemResetService.java`
+- `backend/src/test/java/com/mediamarshal/config/SqliteTaskCorrectionBatchSchemaMigrationTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionConcurrencyGuardTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/settings/SystemResetServiceTest.java`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无；本步骤只提供后续批量接口使用的持久化和执行基础设施。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=SqliteTaskCorrectionBatchSchemaMigrationTest,TaskCorrectionConcurrencyGuardTest,TaskCorrectionBatchStateServiceTest,TaskCorrectionServiceTest,SystemResetServiceTest" test`
+- `mvn -q test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 范围解析和全批次只读预览由 ADR-030 步骤 4 实现。
+
+---
+
+## [ADR-030 步骤 4：跨分页范围解析与全批次只读预览] 2026-08-29
+
+### 完成内容
+- 新增剧集修正范围接口，按当前错误 `tmdbId + ruleId + DONE + TV_SHOW` 查询同剧集完整范围，同季额外匹配锚点季号，不依赖 Dashboard 分页或筛选。
+- 范围结果按季号、集号、集结束号、目标文件名自然顺序和任务 ID 稳定排序，并以任务状态、路径、更新时间和关键识别字段生成 SHA-256 `groupFingerprint`。
+- 新增批量预览接口；公共标题和年份应用到每个临时单项计划，季号、集号、集结束号继续使用旧任务原值。
+- 同一次预览只获取一次所选 TMDB 剧集详情；每条单集计划复用剧集详情，并沿用现有 TMDB 分集缓存。
+- 预览返回范围汇总、逐任务路径和操作、附属文件数量、阻断项、提示项、选择状态和正确候选快照。
+- 支持显式排除范围内任务；被排除任务仍在预览中可见，但其单项阻断不阻止其它选中任务。
+- 新增批次内部重复当前路径、重复修正目标、主资产 / 附属文件重复目标、修正目标占用其它当前有效任务路径和活跃批次占用检查。
+- 检测剧集共享封面、fanart、季海报和 `tvshow.nfo` 时返回合并 warning，第一版不生成移动计划。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchPreview.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchPreviewItem.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionScopesResponse.java`
+- `backend/src/main/java/com/mediamarshal/repository/MediaTaskRepository.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionResolvedScope.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchPreviewService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchPreviewServiceTest.java`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 新增 `GET /api/tasks/{id}/correction/scopes`。
+- 新增 `POST /api/tasks/{id}/correction/batch/preview`。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionScopeServiceTest,TaskCorrectionBatchPreviewServiceTest,TaskCorrectionServiceTest" test`
+- `mvn -q test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 批量应用、作业查询和失败项重试由 ADR-030 步骤 5 实现。
+
+---
+
+## [ADR-030 步骤 5：持久化批量应用、进度查询与失败项重试] 2026-08-29
+
+### 完成内容
+- 新增批量应用接口：重新执行完整只读预览、比较 `groupFingerprint`、校验阻断项和任务占用后，在短事务中创建批次及全部条目；HTTP 请求只返回批次 ID，不等待文件操作。
+- `idempotencyKey` 必填并建立持久化唯一约束；重复提交返回既有批次，不重复创建或调度作业。
+- 后台执行器每个批次只获取一次正确 TMDB 剧集详情，按稳定季集顺序逐条重建最终计划、核对旧任务状态 / 当前路径 / 修正目标快照，再复用 ADR-028 内核执行文件和历史链路。
+- 单条成功写入新 `DONE` 任务、选中候选快照和旧任务 `CORRECTED` 双向链路；单条失败保存错误与人工恢复路径并继续其它条目。
+- 所有条目进入最终状态后，按旧目录深度从深到浅去重清理空目录；共享封面等非空内容会保留并阻止继续向上删除。
+- 新增批次查询接口，返回状态、汇总计数、当前运行条目、逐条路径、重试次数、错误和恢复信息，前端可使用轮询展示进度。
+- 新增失败项重试接口；仅允许 `PARTIAL_FAILED / FAILED / INTERRUPTED` 批次，重新校验原任务仍为 `DONE` 且当前路径与快照一致，只重置 `FAILED` 条目，不重复执行成功或排除条目。
+- 新增临时媒体库端到端测试，覆盖“万物生灵”1978 错误条目到 2020 正确条目的跨季主视频和字幕移动、逐条历史链路、共享 poster 保留及延迟空目录清理。
+- 项目、后端和前端包版本统一更新为 `v0.2.13`；前端交互仍作为后续独立步骤，不在本次后端步骤 2–5 范围内声明完成。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionController.java`
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionBatchController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchApplyResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchItemResponse.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchPersistenceService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchWorker.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchWorkerTest.java`
+- `VERSION`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `.cursor/rules/project-roadmap.mdc`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 新增 `POST /api/tasks/{id}/correction/batch/apply`。
+- 新增 `GET /api/task-correction-batches/{batchId}`。
+- 新增 `POST /api/task-correction-batches/{batchId}/retry-failed`。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionBatchServiceTest,TaskCorrectionBatchWorkerTest,TaskCorrectionBatchStateServiceTest,TaskCorrectionServiceTest" test`
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- Dashboard 的同季 / 同剧集范围选择、批量预览表、进度轮询和失败项重试交互仍需按 ADR-030 的前端阶段实现；后端接口已就绪。
+
+---
+
+## [ADR-030 步骤 6：Dashboard 批量修正交互与作业进度] 2026-08-29
+
+### 完成内容
+- 保留 Dashboard 单条“修正”入口和 `SINGLE` 默认值；符合条件的已完成普通视频剧集加载后端范围数量，展示仅当前集、同季和同剧集三个选项，范围加载失败时自动保持单条模式。
+- 批量模式固定 `TV_SHOW`，公共标题和年份可编辑，原季号、集号和集结束号只读；候选卡补充原始标题、年份、TMDB ID、类型、海报和置信度，非剧集候选不可用于批量修正。
+- 接入完整批量预览，展示范围、纳入、阻断和提示汇总，以及每条任务的季集、当前 / 修正路径、附属文件、操作、阻断和提示；用户显式排除任务后立即使旧预览失效并向后端重新计算。
+- 应用时提交预览 `groupFingerprint` 和前端生成的稳定 `idempotencyKey`，只调用批量作业接口，不循环调用单条修正接口。
+- 创建作业后弹窗切换为进度状态，按批次查询接口轮询状态，展示已处理 / 总数、成功、失败、排除、当前季集、逐条错误和人工恢复信息；作业终态统一刷新 Dashboard。
+- `PARTIAL_FAILED / FAILED / INTERRUPTED` 且存在失败条目时提供“重试失败项”，后端继续保证成功项不重复执行。
+- 将锚点、范围任务和成功后的新任务与批次 ID 保存在浏览器本地最近作业索引中；关闭弹窗不取消后台作业，从相关任务再次进入时恢复批次详情和未完成轮询。
+- 修正弹窗使用固定视口高度，标题与操作区保持可见，长范围预览和进度明细在内容区滚动；补充中英文交互文案、v0.2.13 发布说明和用户手册中的“万物生灵”同名不同年份示例。
+
+### 影响文件
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/api/media.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/components/AppVersionInfo.vue`
+- `docs/user-guide.md`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无；前端接入 ADR-030 步骤 4、5 已提供的范围、预览、应用、查询和失败重试接口。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- 使用工作区临时 SQLite、三条虚拟《万物生灵》分集和本地 TMDB 模拟响应进行浏览器端到端验证：范围计数、1978 → 2020 候选切换、跨季预览、显式排除、3/3 批量成功、Dashboard 刷新及最近批次恢复均通过。
+- 浏览器控制台无新增 warning / error。
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [ADR-030 步骤 6 修正：统一重新匹配语义与固定面板滚动] 2026-08-29
+
+### 完成内容
+- 定位同季 / 同剧集重新匹配无候选的原因：批量范围此前调用通用元数据搜索，将标题和年份拼成单个关键词；仅当前集调用任务修正重匹配，向匹配器分别传递标题、年份、季号和集号，二者搜索语义不一致。
+- 三种修正范围统一调用 `POST /api/tasks/{id}/correction/rematch`，批量范围仅在响应侧保留剧集候选；标题、年份、季号和集号均继续以结构化字段传递。
+- “编辑识别信息”和“影响预览”左右面板统一固定为 `560px` 高度；候选列表和预览内容设置独立纵向滚动，候选或批量影响项数量增加时不再撑高面板。
+
+### 影响文件
+- `frontend/src/views/DashboardView.vue`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无；复用 ADR-028 已提供的任务修正重匹配接口。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- 使用本地模拟 API 和浏览器回归验证仅当前集、同季、同剧集：三种范围均向同一重匹配接口提交 `TV_SHOW / 万物生灵 / 2020 / S01E01` 结构化字段并返回候选。
+- 使用 18 个候选和 24 个批量影响项验证布局：左右面板高度均为 `560px`，候选列表及批量预览表格均出现内部滚动，面板高度保持不变。
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。

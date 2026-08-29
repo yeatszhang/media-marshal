@@ -269,6 +269,120 @@ export interface TaskCorrectionApplyResponse {
   preview: TaskCorrectionPreview
 }
 
+export type TaskCorrectionScope = 'SINGLE' | 'SAME_SEASON' | 'SAME_SERIES'
+export type TaskCorrectionBatchScope = Exclude<TaskCorrectionScope, 'SINGLE'>
+
+export interface TaskCorrectionScopesResponse {
+  anchorTaskId: number
+  batchSupported: boolean
+  singleCount: number
+  sameSeasonCount: number
+  sameSeriesCount: number
+  currentSeason: number | null
+  minSeason: number | null
+  maxSeason: number | null
+  warnings: string[]
+  unsupportedReasons: string[]
+}
+
+export interface TaskCorrectionBatchRequest {
+  scope: TaskCorrectionBatchScope
+  parsedTitle: string
+  parsedYear: number | null
+  tmdbId: number
+  regenerateNfo?: boolean
+  excludedTaskIds?: number[]
+  groupFingerprint?: string
+  idempotencyKey?: string
+}
+
+export interface TaskCorrectionBatchPreviewItem {
+  taskId: number
+  season: number | null
+  episode: number | null
+  episodeEnd: number | null
+  currentTargetPath: string | null
+  correctedTargetPath: string | null
+  sameTargetPath: boolean
+  associatedFileCount: number
+  operations: TaskCorrectionOperation[]
+  blockers: string[]
+  warnings: string[]
+  selected: boolean
+}
+
+export interface TaskCorrectionBatchPreview {
+  scope: TaskCorrectionBatchScope
+  totalCount: number
+  selectedCount: number
+  applicableCount: number
+  blockerCount: number
+  warningCount: number
+  canApply: boolean
+  groupFingerprint: string
+  selectedMatch: MatchResult | null
+  blockers: string[]
+  warnings: string[]
+  items: TaskCorrectionBatchPreviewItem[]
+}
+
+export type TaskCorrectionBatchStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'PARTIAL_FAILED'
+  | 'FAILED'
+  | 'INTERRUPTED'
+
+export type TaskCorrectionBatchItemStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'EXCLUDED'
+
+export interface TaskCorrectionBatchApplyResponse {
+  batchId: number
+  status: TaskCorrectionBatchStatus
+}
+
+export interface TaskCorrectionBatchItemResponse {
+  id: number
+  originalTaskId: number
+  correctedTaskId: number | null
+  season: number | null
+  episode: number | null
+  episodeEnd: number | null
+  currentTargetPath: string
+  correctedTargetPath: string | null
+  status: TaskCorrectionBatchItemStatus
+  executionOrder: number
+  retryCount: number
+  errorMessage: string | null
+  recoveryDetails: string | null
+  startedAt: string | null
+  completedAt: string | null
+}
+
+export interface TaskCorrectionBatchResponse {
+  id: number
+  anchorTaskId: number
+  scope: TaskCorrectionBatchScope
+  originalTmdbId: number
+  targetTmdbId: number
+  ruleId: number
+  parsedTitle: string
+  parsedYear: number | null
+  regenerateNfo: boolean
+  groupFingerprint: string
+  status: TaskCorrectionBatchStatus
+  totalCount: number
+  successCount: number
+  failedCount: number
+  excludedCount: number
+  errorMessage: string | null
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
+  currentItem: TaskCorrectionBatchItemResponse | null
+  items: TaskCorrectionBatchItemResponse[]
+}
+
 // ─── 模板变量帮助 ──────────────────────────────────────────────────
 export type TemplateVariableStatus = 'AVAILABLE' | 'RESERVED' | 'DEPRECATED' | 'UNAVAILABLE'
 
