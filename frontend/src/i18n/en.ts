@@ -12,12 +12,6 @@ export default {
     },
   },
   releaseNotes: {
-    v0_2_13: {
-      items: {
-        completedTvBatchCorrection: 'Organized TV episodes can reuse one correct TMDB selection across the same season or entire series.',
-        batchCorrectionProgress: 'Batch correction now shows persisted progress, per-episode results, recent job recovery, and failed-item retry.',
-      },
-    },
     ...releaseNoteMessages,
   },
   locale: {
@@ -584,6 +578,7 @@ export default {
     resetSystemSuccess: 'System reset completed',
   },
   common: {
+    backToTop: 'Back to top',
     confirm: 'Confirm',
     cancel: 'Cancel',
     close: 'Close',

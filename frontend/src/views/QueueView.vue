@@ -699,6 +699,8 @@
         </div>
       </template>
     </el-dialog>
+
+    <FloatingActionGroup :label="t('common.backToTop')" />
   </div>
 </template>
 
@@ -709,6 +711,7 @@ import { useMediaStore } from '@/stores/mediaStore'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { mediaApi } from '@/api/media'
+import FloatingActionGroup from '@/components/FloatingActionGroup.vue'
 import type {
   BatchConfirmItem,
   BatchRecognitionField,

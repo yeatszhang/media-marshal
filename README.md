@@ -6,7 +6,11 @@ Media Marshal is a self-hosted tool for organizing movie and TV files for Emby, 
 
 It watches your staging folders, identifies media with guessit and TMDB, sends uncertain matches to a review queue, and then moves, copies, or links files into your media library with the naming rules you choose.
 
-Current version: `v0.2.8`
+Source tree version: `v0.2.13.1` · 源码版本（已发布镜像以实际 Release 为准）
+
+[用户手册](docs/user-guide.md) · [部署指南](docs/deployment.md) · [常见问题](docs/faq.md)
+
+Maintainer documents / 维护文档：[当前需求与验收](.cursor/rules/requirements-status.mdc) · [路线图](.cursor/rules/project-roadmap.mdc)
 
 ---
 
@@ -58,7 +62,7 @@ Edit `.env` and set your media root:
 MEDIA_DIRS=/path/to/your/media
 ```
 
-Start the stack:
+Choose one deployment method. The image-based method requires a tag available for all three images; this source version does not prove that an image has been published. Set `MEDIA_MARSHAL_IMAGE_TAG` explicitly: the `latest` value copied from `.env.example` overrides Compose's alpha / beta defaults.
 
 ```bash
 # Start with a local build
@@ -121,12 +125,19 @@ Good fit today:
 - Chinese / bilingual title matching
 - movie Blu-ray folder organization
 - common sidecar files such as subtitles, NFO, posters, and `.md5`
+- previewing and correcting completed tasks, including same-season / same-series TV correction with background progress and failed-item retry
+- batch-editing recognition fields and assigning sequential episodes in the review queue
+- HTTP proxy settings for TMDB API requests, watch-rule import / export, and Sample filtering
 
 Keep in mind:
 
 - no built-in user authentication yet
 - trusted LAN / VPN deployment is recommended
 - TV Blu-ray folder organization is not supported yet
+- ISO images and bare `sourceDir/BDMV` are skipped; only contiguous multi-episode ranges are supported
+- queue batch actions are limited to the current page; completed-TV correction scopes are resolved across pages by the backend
+- reopening recent correction jobs currently depends on the same browser's local index
+- Webhook discovery and the email notification UI are not available yet
 
 ### Development
 
@@ -167,7 +178,7 @@ Media Marshal (MM) 是一个面向 Emby / Jellyfin / Plex 用户的自托管媒�
 * 从外部资源站下载媒体资源到本地路径，如：`/Resources/Download`
 * 在MediaMarshal中配置监控路径，例如：源路径设为`/Resources/Download`，目标路径为`/Resources/Emby`
 * 根据是否做种，设置不同的文件处理模式：如果需要保留源文件继续做种，则设置为硬链接；如果不需要保留源文件，则可以选择移动模式。
-* 在源路径`/Resources/Download`中有新增文件时，MM会自动自动解析并按规则从TMDB获取影片信息，根据硬盘信息将视频文件整理到目标路径`/Resources/Emby`下
+* 在源路径`/Resources/Download`中有新增文件时，MM会自动解析并从 TMDB 获取影片信息，按路径规则整理到目标路径`/Resources/Emby`下
 * 媒体服务器添加视频
 
 ### 快速开始
@@ -190,7 +201,7 @@ cp .env.example .env
 MEDIA_DIRS=/path/to/your/media
 ```
 
-启动服务：
+选择一种方式启动。使用预构建镜像前，需确认所选 tag 的三个镜像均已发布；源码版本不代表对应镜像已经存在。请显式设置 `MEDIA_MARSHAL_IMAGE_TAG`：从 `.env.example` 复制的 `latest` 会覆盖 alpha / beta Compose 的默认标签。
 
 ```bash
 # 本地构建方式启动
@@ -253,12 +264,19 @@ http://localhost:3000
 - 匹配中文 / 双语标题
 - 整理电影蓝光原盘目录
 - 携带字幕、NFO、封面、`.md5` 等常见附属文件
+- 预览并修正已完成任务，支持普通剧集同季 / 同剧集后台批量修正、进度查看和失败项重试
+- 在待确认队列批量编辑识别信息、顺序生成集号
+- 配置 TMDB API HTTP 代理、导入导出路径规则、过滤 Sample
 
 需要注意：
 
 - 当前版本暂无用户认证
 - 建议部署在可信内网、VPN 或本机环境
 - 暂不支持蓝光剧集整理
+- ISO 和裸 `sourceDir/BDMV` 当前跳过；多集仅支持连续范围
+- Queue 批量操作限当前页；已完成剧集批量修正由后端跨分页解析范围
+- 再次打开最近修正作业目前依赖同一浏览器的本地索引
+- Webhook 文件发现和邮件通知页面入口尚未开放
 
 ### 本地开发
 

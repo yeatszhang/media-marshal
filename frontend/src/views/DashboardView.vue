@@ -625,6 +625,8 @@
         </template>
       </template>
     </el-dialog>
+
+    <FloatingActionGroup :label="t('common.backToTop')" />
   </div>
 </template>
 
@@ -636,6 +638,7 @@ import { mediaApi } from '@/api/media'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, EditPen, Refresh, Search } from '@element-plus/icons-vue'
+import FloatingActionGroup from '@/components/FloatingActionGroup.vue'
 import type {
   MatchResult,
   MediaAssetType,

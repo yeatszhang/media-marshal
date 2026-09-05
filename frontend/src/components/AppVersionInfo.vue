@@ -61,18 +61,7 @@ import type { ReleaseNote, ReleaseNoteItem } from '@/types'
 const { t } = useI18n()
 
 const MAX_ITEMS_PER_VERSION = 5
-const currentReleaseNote: ReleaseNote = {
-  version: 'v0.2.13',
-  date: '2026-08-29',
-  items: [
-    { type: 'feature', key: 'releaseNotes.v0_2_13.items.completedTvBatchCorrection' },
-    { type: 'optimization', key: 'releaseNotes.v0_2_13.items.batchCorrectionProgress' },
-  ],
-}
-const visibleReleaseNotes = computed(() => [
-  currentReleaseNote,
-  ...releaseNotes.filter((note) => note.version !== currentReleaseNote.version),
-].slice(0, 3))
+const visibleReleaseNotes = computed(() => releaseNotes.slice(0, 3))
 const expandedVersions = ref<Set<string>>(new Set())
 
 const tagTypeMap: Record<string, TagProps['type']> = {
