@@ -28,6 +28,10 @@ alwaysApply: false
 | POST | `/api/tasks/{id}/correction/batch/preview` | ADR-030：按同季或同剧集重新解析完整范围，获取一次剧集详情并生成批次级只读预览 | `TaskCorrectionBatchRequest` | `TaskCorrectionBatchPreview` |
 | POST | `/api/tasks/{id}/correction/batch/apply` | ADR-030：重新解析范围、校验指纹和阻断项，持久化后台作业后立即返回；请求线程不移动文件 | `TaskCorrectionBatchRequest` | `TaskCorrectionBatchApplyResponse` |
 
+> 当前 `/api/tasks` 返回数组，仅支持上表中的状态参数；Dashboard 的分页与其他筛选在前端执行。后端分页、路径 / 时间 / 错误筛选属于 REQ-06，尚未生效。
+> 当前批次支持按已知 ID 查询及失败重试，尚无批次列表或按任务找回批次的接口。Dashboard 最近批次入口依赖浏览器本地索引；服务端检索属于 REQ-05。
+> 删除任务记录不删除媒体文件，但当前删除入口尚未协调活跃文件作业；系统重置和规则变更的互斥边界同样待 REQ-03 设计补齐，不能将“仅删记录”等同于“可以与作业任意并发”。
+
 ### MediaTask 字段
 ```typescript
 interface MediaTask {

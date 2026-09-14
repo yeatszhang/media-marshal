@@ -6,11 +6,12 @@ const scriptsDir = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(scriptsDir, '..')
 const versionText = (await readFile(path.join(rootDir, 'VERSION'), 'utf8')).trim()
 
-if (!/^v\d+\.\d+\.\d+$/.test(versionText)) {
+if (!/^v\d+\.\d+\.\d+(?:\.\d+)?$/.test(versionText)) {
   throw new Error(`Invalid VERSION value: ${versionText}`)
 }
 
-const packageVersion = versionText.slice(1)
+const displayVersion = versionText.slice(1)
+const packageVersion = displayVersion.replace(/^(\d+\.\d+\.\d+)\.(\d+)$/, '$1+patch.$2')
 
 async function updateText(relativePath, update) {
   const filePath = path.join(rootDir, relativePath)
@@ -58,5 +59,5 @@ await updateJson('frontend/package-lock.json', json => {
 
 await updateText('parser/main.py', current => current.replace(
   /APP_VERSION_FALLBACK = "[^"]+"/,
-  `APP_VERSION_FALLBACK = "${packageVersion}"`,
+  `APP_VERSION_FALLBACK = "${displayVersion}"`,
 ))

@@ -12,12 +12,6 @@ export default {
     },
   },
   releaseNotes: {
-    v0_2_13: {
-      items: {
-        completedTvBatchCorrection: '已整理剧集支持按同季或同剧集选择一次正确 TMDB，并批量修正全部分集。',
-        batchCorrectionProgress: '批量修正提供持久化进度、逐集结果、最近作业恢复和失败项重试。',
-      },
-    },
     ...releaseNoteMessages,
   },
   locale: {
@@ -584,6 +578,7 @@ export default {
     resetSystemSuccess: '系统已重置',
   },
   common: {
+    backToTop: '回到顶部',
     confirm: '确认',
     cancel: '取消',
     close: '关闭',

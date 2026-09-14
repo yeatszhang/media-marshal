@@ -3723,3 +3723,93 @@ alwaysApply: false
 
 ### 遗留问题 / 需 PM 决策
 - 无。
+
+---
+
+## [v0.2.13.1：Dashboard / Queue 悬浮回顶与补丁版本规则] 2026-08-29
+
+### 完成内容
+- 新增共用悬浮按钮组，Dashboard 和待确认队列滚动超过阈值后在右下角显示“回到顶部”按钮，并绑定主内容滚动容器。
+- 当前应用版本更新为 `v0.2.13.1`；该版本是基于 `v0.2.13` 的独立补丁版本，ReleaseNote 仅记录本补丁新增的悬浮回顶功能。
+- `v0.2.13` 与 `v0.2.13.1` ReleaseNote 拆分为两个独立分组；ReleaseNote 索引统一由 `frontend/src/meta/releaseNotes.ts` 管理，展示组件不再拼接当前版本内容。
+- 项目规则补充四段补丁版本约定；npm 私有包元数据将 `vA.B.C.D` 映射为合法 SemVer `A.B.C+patch.D`，应用展示、Maven 与 Parser 继续使用四段版本。
+
+### 影响文件
+- `frontend/src/components/FloatingActionGroup.vue`
+- `frontend/src/components/AppVersionInfo.vue`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `VERSION`
+- `package.json`
+- `package-lock.json`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `parser/main.py`
+- `scripts/sync-version.mjs`
+- `.cursor/rules/frontend-rules.mdc`
+- `.cursor/rules/project-roadmap.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [需求文档按 v0.2.13.1 工作区进度重整] 2026-09-05
+
+### 已完成
+- 新增 `requirements-status.mdc`，统一当前能力、代码依据、REQ-01～14、优先级、验收条件及候选需求；明确代码落地、历史验证与发行验收的区别。
+- 路线图移除失效的未来 v0.2.11 排期，改按发行硬化、异常恢复、并行工程治理、只读资产索引、播放统计的依赖推进。
+- 保留 ADR 全部 29 个编号及顺序，清理尾部 ADR-027/028/029 的过期待开发条目；ADR-022 标为部分落地，ADR-030 标为核心已落地但恢复体验仍有缺口。
+- 校准项目上下文与 API 能力说明：四种操作已实现、配置来源有例外、任务列表是数组、批次仅按已知 ID 查询。
+- README、文档首页与手册同步当前能力、Queue 当前页边界、批量修正跨页范围、同浏览器作业恢复限制及邮件入口状态。
+- 补齐部署指南与 FAQ；修正三份 Compose 都挂载 `/media`、`.env` 显式 tag 覆盖默认值、容器代理回环地址、完整数据备份及回滚边界。
+- 新增活跃作业与删除 / 重置互斥、解析歧义与重试抑制、服务端作业检索、NFO 语义 / 内容补偿等需求和待验收项。
+
+### 关键文件
+- `.cursor/rules/requirements-status.mdc`（新增）
+- `.cursor/rules/project-roadmap.mdc`
+- `.cursor/rules/design-decisions.mdc`
+- `.cursor/rules/project-context.mdc`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+- `README.md`
+- `.env.example`（仅修正注释，配置值不变）
+- `docs/index.md`
+- `docs/user-guide.md`
+- `docs/deployment.md`
+- `docs/faq.md`
+
+### 接口变更
+- 无。仅说明当前契约限制；需求中的新接口未提前加入生效接口表。
+
+### 偏离设计的地方
+- 本次是用户授权的需求 / PM 文档整理，对 ADR 仅校准状态、阅读指引和当前待办，不改既有业务决策，不实现新功能，不变更版本及 ReleaseNote。
+- 保留任务开始前已有的 v0.2.13.1 代码和版本改动。
+
+### 验证
+- 直接执行 `node node_modules/vitepress/bin/vitepress.js build docs`：VitePress 1.6.4 构建与页面渲染通过。`npm.cmd run docs:build` 首次因本机 npm 入口路径的 EPERM 未启动，使用同一项目 CLI 直接构建通过。
+- 检查本轮文档的 Markdown 代码围栏和 29 个本地链接，通过。
+- 对比 HEAD 与工作区 ADR 编号 / 顺序，29 条全部保留；REQ-01～14 齐全；部署 / FAQ 无 TODO 占位。
+- `git diff --check` 通过。
+- 本轮不运行应用业务测试、真实媒体处理、Docker 部署或远端发布验证；历史测试记录仅作为既有证据。
+
+### 遗留问题 / 需 PM 决策
+- REQ-01/02/03/09 的发行门禁及矩阵仍需实施 / 实测；文档补齐不等于升级和恢复已经通过。
+- REQ-04 的歧义人工处理入口、自动重试策略，REQ-03 的并发动作约束，REQ-05 的检索接口等在进入开发前需形成设计结论。
+- 新发现的 NFO 内容补偿、分集 / 多集 NFO 语义纳入 REQ-08，当前没有据此承诺完整回滚。
