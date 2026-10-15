@@ -200,6 +200,12 @@
             />
             <div class="file-path" :title="task.sourcePath">{{ task.sourcePath }}</div>
             <div class="header-tags">
+              <el-button size="small" type="primary" plain
+                         :loading="codexTaskId === task.id"
+                         :disabled="recognitionActionLoading !== null"
+                         @click="handleCodexRecognition(task)">
+                {{ t('queue.codexRematch') }}
+              </el-button>
               <el-tag :type="selectedTaskIds.has(task.id) ? (selectedOptionByTask[task.id] ? 'success' : 'info') : 'info'" size="small">
                 {{ taskSelectionStatus(task.id) }}
               </el-tag>
@@ -402,7 +408,7 @@
             {{ t('queue.saveRecognition') }}
           </el-button>
           <el-button :loading="recognitionActionLoading === 'codex'"
-                     :disabled="recognitionActionLoading !== null" @click="handleCodexRecognition">
+                     :disabled="recognitionActionLoading !== null" @click="handleCodexRecognition()">
             {{ t('queue.codexRematch') }}
           </el-button>
           <el-button
@@ -778,6 +784,7 @@ const recommendationExpanded = ref(false)
 const recognitionDrawerVisible = ref(false)
 const recognitionTask = ref<MediaTask | null>(null)
 const recognitionActionLoading = ref<'save' | 'rematch' | 'codex' | null>(null)
+const codexTaskId = ref<number | null>(null)
 const recognitionForm = reactive<QueueRecognitionRequest>({
   mediaType: 'MOVIE',
   parsedTitle: '',
@@ -1417,17 +1424,21 @@ async function handleSaveRecognitionAndRematch() {
   await submitRecognition(true)
 }
 
-async function handleCodexRecognition() {
-  const task = recognitionTask.value
+async function handleCodexRecognition(selectedTask?: MediaTask) {
+  const task = selectedTask ?? recognitionTask.value
   if (!task) return
   recognitionActionLoading.value = 'codex'
+  codexTaskId.value = task.id
   try {
     const res = await mediaApi.codexRematchTask(task.id)
     applyRecognitionResponse(task.id, res.data.data, true)
-    openRecognitionEditor(res.data.data.task)
+    if (recognitionDrawerVisible.value) openRecognitionEditor(res.data.data.task)
     ElMessage.success(t('queue.codexRematchSuccess'))
+  } catch {
+    // HTTP 层已展示失败原因；保留当前候选和文件。
   } finally {
     recognitionActionLoading.value = null
+    codexTaskId.value = null
   }
 }
 
@@ -1820,13 +1831,14 @@ h2 {
 
 .card-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 16px;
 }
 
 .file-path {
-  flex: 1;
+  flex: 1 1 240px;
   min-width: 0;
   padding: 8px 10px;
   border-radius: 8px;
@@ -1841,7 +1853,8 @@ h2 {
 
 .header-tags {
   display: flex;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  flex-shrink: 1;
   gap: 8px;
 }
 
