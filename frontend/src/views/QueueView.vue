@@ -220,6 +220,13 @@
           </div>
         </template>
 
+        <el-alert
+          v-if="task.errorMessage?.startsWith('Codex')"
+          :title="task.errorMessage"
+          type="info"
+          :closable="false"
+          style="margin-bottom: 12px; overflow-wrap: anywhere"
+        />
         <el-descriptions :column="4" size="small" border class="task-meta">
           <el-descriptions-item :label="t('queue.parsedTitle')">
             {{ formatParsedTitle(task) }}

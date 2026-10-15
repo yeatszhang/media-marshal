@@ -37,6 +37,7 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -166,12 +167,48 @@ class MediaProcessPipelineRecognitionTest {
         WatchRule rule = new WatchRule();
         when(taskRepository.findById(1L)).thenReturn(Optional.of(task));
         when(watchRuleRepository.findById(1L)).thenReturn(Optional.of(rule));
-        when(codexRecognitionService.recognize(any(), any(), any())).thenReturn(Optional.empty());
+        when(codexRecognitionService.recognize(any(), any(), any(), eq(true))).thenReturn(Optional.empty());
         assertThatThrownBy(() -> pipeline.recognizeWithCodex(1L)).hasMessageContaining("未能确定");
         verify(metadataMatcher, never()).search(any());
         verify(renameService, never()).rename(any());
         assertThat(Files.exists(source)).isTrue();
         assertThat(task.getStatus()).isEqualTo(MediaTask.TaskStatus.AWAITING_CONFIRMATION);
+    }
+
+    @Test
+    void manualCodexRetryKeepsEvidenceAndWaitsForConfirmation(@TempDir Path root) throws Exception {
+        Path source = Files.writeString(root.resolve("02.mkv"), "video");
+        MediaTask task = awaitingTask();
+        task.setSourcePath(source.toString());
+        task.setRuleId(1L);
+        WatchRule rule = new WatchRule();
+        when(taskRepository.findById(1L)).thenReturn(Optional.of(task));
+        when(watchRuleRepository.findById(1L)).thenReturn(Optional.of(rule));
+        ParseResult proposed = new ParseResult();
+        proposed.setTitle("正式剧名");
+        proposed.setType("episode");
+        proposed.setYear(2026);
+        proposed.setEpisode(2);
+        when(codexRecognitionService.recognize(eq(source), eq(rule), any(), eq(true))).thenReturn(Optional.of(
+                new CodexRecognitionService.Suggestion(proposed, 0.97, "官网 https://example.com/anime")));
+        MatchResult match = new MatchResult();
+        match.setSourceId("123");
+        match.setTitle("正式剧名");
+        match.setMediaType("TV_SHOW");
+        match.setConfidence(0.97);
+        when(metadataMatcher.search(proposed)).thenReturn(List.of(match));
+        TaskCandidate saved = candidate(123L, "正式剧名", 0.97);
+        when(candidateRepository.findByTask_IdOrderByRankAsc(1L)).thenReturn(List.of(saved));
+
+        var response = pipeline.recognizeWithCodex(1L);
+
+        assertThat(response.task().getStatus()).isEqualTo(MediaTask.TaskStatus.AWAITING_CONFIRMATION);
+        assertThat(response.task().getParsedEpisode()).isEqualTo(2);
+        assertThat(response.task().getParsedSeason()).isNull();
+        assertThat(response.task().getErrorMessage()).contains("https://example.com/anime");
+        assertThat(response.candidates()).containsExactly(saved);
+        verify(assetOrganizerService, never()).organize(any());
+        assertThat(Files.readString(source)).isEqualTo("video");
     }
 
     @Test

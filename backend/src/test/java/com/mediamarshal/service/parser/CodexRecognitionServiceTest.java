@@ -37,6 +37,7 @@ class CodexRecognitionServiceTest {
     @Test
     void explicitSeasonAndEpisodeOverrideModelGuess() throws Exception {
         ParseResult original = new ParseResult();
+        original.setOriginalFilename("01.mkv");
         original.setSeason(2);
         original.setEpisode(3);
         original.setEpisodeEnd(4);
@@ -45,6 +46,8 @@ class CodexRecognitionServiceTest {
                  "season":9,"episode":8,"confidence":0.95,"reason":"目录中含正式片名"}
                 """), rule(), original).orElseThrow().parsed();
         assertThat(result.getTitle()).isEqualTo("示例剧集");
+        assertThat(result.getOriginalFilename()).isEqualTo("示例剧集");
+        assertThat(original.getOriginalFilename()).isEqualTo("01.mkv");
         assertThat(result.getSeason()).isEqualTo(2);
         assertThat(result.getEpisode()).isEqualTo(3);
         assertThat(result.getEpisodeEnd()).isEqualTo(4);

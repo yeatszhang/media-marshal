@@ -216,7 +216,7 @@ public class MediaProcessPipeline {
             if (codexSuggestion != null && (codexRecognitionService.requiresConfirmation(codexSuggestion.confidence())
                     || (task.getMediaType() == MediaTask.MediaType.TV_SHOW
                     && (parseResult.getSeason() == null || parseResult.getEpisode() == null)))) {
-                moveToAwaitingConfirmation(task, "Codex 已提供 TMDB 候选，请确认作品及季集信息");
+                moveToAwaitingConfirmation(task, "Codex 已提供 TMDB 候选，请确认作品及季集信息。" + codexSuggestion.reason());
                 return;
             }
             if (topCandidate.getConfidence() == null || topCandidate.getConfidence() < confidenceThreshold) {
@@ -333,7 +333,7 @@ public class MediaProcessPipeline {
         }
         Path source = Path.of(task.getSourcePath());
         if (!Files.exists(source)) throw new IllegalStateException(SOURCE_MISSING_ERROR_MESSAGE);
-        var suggestion = codexRecognitionService.recognize(source, loadRule(task), toParseResult(task))
+        var suggestion = codexRecognitionService.recognize(source, loadRule(task), toParseResult(task), true)
                 .orElseThrow(() -> new IllegalStateException("Codex 未能确定作品身份，请补充正式片名或手动选择作品"));
         ParseResult parsed = suggestion.parsed();
         List<MatchResult> matches = metadataMatcher.search(parsed);
@@ -347,7 +347,7 @@ public class MediaProcessPipeline {
         fillParsedFields(task, parsed);
         List<TaskCandidate> candidates = saveCandidates(task, matches);
         task.setMatchConfidence(candidates.isEmpty() ? null : candidates.getFirst().getConfidence());
-        task.setErrorMessage("Codex 已提供 TMDB 候选，请确认作品及季集信息");
+        task.setErrorMessage("Codex 已提供 TMDB 候选，请确认作品及季集信息。" + suggestion.reason());
         taskRepository.save(task);
         return new QueueRecognitionResponse(task, candidates);
     }

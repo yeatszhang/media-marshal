@@ -35,14 +35,21 @@ public class CodexRecognitionService {
     }
 
     public Optional<Suggestion> recognize(Path source, WatchRule rule, ParseResult original) {
+        return recognize(source, rule, original, false);
+    }
+
+    /** 主动重试绕过短期 unknown 缓存，成功的作品身份仍可复用。 */
+    public Optional<Suggestion> recognize(Path source, WatchRule rule, ParseResult original, boolean retryUnknown) {
         if (!isEnabled()) return Optional.empty();
         try {
             String url = settings.get("codex.bridge-url", "http://host.docker.internal:18081");
             String token = settings.get("codex.bridge-token", "");
             if (token.isBlank()) return Optional.empty();
+            Map<String, Object> context = buildContext(source, rule, original);
+            context.put("retry_unknown", retryUnknown);
             JsonNode response = webClientBuilder.build().post().uri(url + "/recognize")
                     .header("X-Media-Marshal-Token", token)
-                    .bodyValue(buildContext(source, rule, original)).retrieve()
+                    .bodyValue(context).retrieve()
                     .bodyToMono(JsonNode.class).block(Duration.ofSeconds(240));
             return parseSuggestion(response, rule, original);
         } catch (Exception e) {
@@ -69,7 +76,9 @@ public class CodexRecognitionService {
             result.setTitle(title);
             result.setYear(integer(response, "year", 1880, 2100));
             result.setType(type);
-            result.setOriginalFilename(original.getOriginalFilename());
+            // 此对象仅用于再次检索；使用正式片名，避免 01.mkv 产生无关数字候选。
+            // 任务中的真实源路径和文件名保持不变。
+            result.setOriginalFilename(title);
             result.setScreenSize(original.getScreenSize());
             result.setVideoCodec(original.getVideoCodec());
             result.setReleaseGroup(original.getReleaseGroup());
