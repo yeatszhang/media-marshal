@@ -53,6 +53,11 @@ shutil.copy2(jars[0], output/'app.jar')
 if (output/'dist').exists(): shutil.rmtree(output/'dist')
 shutil.copytree(root/'frontend/dist', output/'dist')
 shutil.copy2(root/'frontend/nginx.conf', output/'nginx.conf')
+# 运行目录使用私有 umask，但网页资产必须能被 Nginx 非 root 工作进程读取。
+(output/'dist').chmod(0o755)
+for asset in (output/'dist').rglob('*'):
+    asset.chmod(0o755 if asset.is_dir() else 0o644)
+(output/'nginx.conf').chmod(0o644)
 for name in ('backend.Dockerfile', 'frontend.Dockerfile'):
     shutil.copy2(root/'deploy/local'/name, output/name)
 PY
