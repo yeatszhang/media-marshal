@@ -128,6 +128,21 @@ class BridgeTest(unittest.TestCase):
             recognizer.recognize(dict(self.context(), parents=['另一部剧']))
             self.assertEqual(len(calls), 2)
 
+    def test_series_cache_survives_a_completed_episode_leaving_folder(self):
+        calls = []
+        def runner(payload):
+            calls.append(payload)
+            return self.identified()
+        with tempfile.TemporaryDirectory() as tmp:
+            recognizer = bridge.Recognizer({'runtime_dir': tmp}, runner)
+            recognizer.recognize(self.context(1))
+            second = dict(self.context(2), siblings=['02.mkv', '03.mkv'])
+            self.assertEqual(recognizer.recognize(second)['episode'], 2)
+            self.assertEqual(len(calls), 1)
+            # 显式年份冲突时必须重新查证，不能沿用另一年份的作品。
+            recognizer.recognize(dict(second, parsed={'year': 2025}))
+            self.assertEqual(len(calls), 2)
+
     def test_http_requires_token_and_never_exposes_cli_error(self):
         class FailingRecognizer:
             def recognize(self, value):

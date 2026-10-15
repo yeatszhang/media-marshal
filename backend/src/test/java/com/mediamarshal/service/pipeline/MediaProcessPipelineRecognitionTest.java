@@ -212,6 +212,26 @@ class MediaProcessPipelineRecognitionTest {
     }
 
     @Test
+    void bothConfirmationModesRejectMissingSeasonBeforeAnySideEffects(@TempDir Path root) throws Exception {
+        MediaTask task = awaitingTask();
+        Path source = Files.writeString(root.resolve("02.mkv"), "video");
+        task.setSourcePath(source.toString());
+        task.setParsedEpisode(2);
+        when(taskRepository.findById(1L)).thenReturn(Optional.of(task));
+
+        assertThatThrownBy(() -> pipeline.confirm(1L, 123L, "TV_SHOW"))
+                .hasMessageContaining("季号和集号");
+        assertThatThrownBy(() -> pipeline.submitConfirm(1L, 123L, "TV_SHOW", MediaTask.ConfirmationSource.MANUAL_BATCH))
+                .hasMessageContaining("季号和集号");
+
+        verify(taskRepository, never()).save(any());
+        verify(candidateRepository, never()).save(any());
+        verify(assetOrganizerService, never()).organize(any());
+        assertThat(task.getStatus()).isEqualTo(MediaTask.TaskStatus.AWAITING_CONFIRMATION);
+        assertThat(Files.readString(source)).isEqualTo("video");
+    }
+
+    @Test
     void rematchUsesUpdatedRecognitionAndReplacesCandidateConfidence() {
         MediaTask task = awaitingTask();
         when(taskRepository.findById(1L)).thenReturn(Optional.of(task));

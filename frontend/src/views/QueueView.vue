@@ -1061,6 +1061,13 @@ async function handleGlobalSearch() {
 async function handleConfirm(taskId: number) {
   const selected = getTaskOptions(taskId).find((option) => option.key === selectedOptionByTask[taskId])
   if (!selected) return
+  const task = displayedTasks.value.find((item) => item.id === taskId)
+  if (selected.mediaType === 'TV_SHOW' && task
+    && (task.parsedSeason == null || task.parsedEpisode == null)) {
+    ElMessage.warning(t('queue.validation.seasonEpisodeRequired'))
+    openRecognitionEditor(task)
+    return
+  }
 
   actionLoadingByTask[taskId] = true
   try {

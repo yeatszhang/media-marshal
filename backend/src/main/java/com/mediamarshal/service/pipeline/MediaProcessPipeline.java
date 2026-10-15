@@ -213,10 +213,12 @@ public class MediaProcessPipeline {
             // Step 5: 置信度判断
             TaskCandidate topCandidate = savedCandidates.getFirst();
             task.setMatchConfidence(topCandidate.getConfidence());
-            if (codexSuggestion != null && (codexRecognitionService.requiresConfirmation(codexSuggestion.confidence())
+            if ((codexSuggestion != null && codexRecognitionService.requiresConfirmation(codexSuggestion.confidence()))
                     || (task.getMediaType() == MediaTask.MediaType.TV_SHOW
-                    && (parseResult.getSeason() == null || parseResult.getEpisode() == null)))) {
-                moveToAwaitingConfirmation(task, "Codex 已提供 TMDB 候选，请确认作品及季集信息。" + codexSuggestion.reason());
+                    && (parseResult.getSeason() == null || parseResult.getEpisode() == null))) {
+                moveToAwaitingConfirmation(task, codexSuggestion != null
+                        ? "Codex 已提供 TMDB 候选，请确认作品及季集信息。" + codexSuggestion.reason()
+                        : "剧集缺少季号或集号，请编辑补齐后确认");
                 return;
             }
             if (topCandidate.getConfidence() == null || topCandidate.getConfidence() < confidenceThreshold) {
@@ -275,6 +277,7 @@ public class MediaProcessPipeline {
         ensureSourceFileExists(task);
 
         MediaTask.MediaType confirmedType = MediaTask.MediaType.valueOf(mediaType);
+        ensureEpisodeCoordinates(task, confirmedType);
         TaskCandidate selectedCandidate = candidateRepository
                 .findByTask_IdAndTmdbIdAndMediaType(taskId, tmdbId, confirmedType)
                 .orElseGet(() -> createManualCandidate(task, tmdbId, confirmedType));
@@ -301,7 +304,7 @@ public class MediaProcessPipeline {
         }
         ensureSourceFileExists(task);
 
-        MediaTask.MediaType.valueOf(mediaType);
+        ensureEpisodeCoordinates(task, MediaTask.MediaType.valueOf(mediaType));
         task.setStatus(MediaTask.TaskStatus.PROCESSING);
         task.setConfirmationSource(confirmationSource);
         taskRepository.save(task);
@@ -435,6 +438,7 @@ public class MediaProcessPipeline {
                     .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
             ensureSourceFileExists(task);
             MediaTask.MediaType confirmedType = MediaTask.MediaType.valueOf(mediaType);
+            ensureEpisodeCoordinates(task, confirmedType);
             TaskCandidate selectedCandidate = candidateRepository
                     .findByTask_IdAndTmdbIdAndMediaType(taskId, tmdbId, confirmedType)
                     .orElseGet(() -> createManualCandidate(task, tmdbId, confirmedType));
@@ -448,6 +452,16 @@ public class MediaProcessPipeline {
         } catch (Exception e) {
             log.error("Submitted manual confirmation failed: taskId={}", taskId, e);
             taskRepository.findById(taskId).ifPresent(task -> recordFailure(task, e));
+        }
+    }
+
+    /** 在任何确认副作用前拒绝不完整坐标，防止模板输出未替换的季集占位符。 */
+    private void ensureEpisodeCoordinates(MediaTask task, MediaTask.MediaType type) {
+        if (type != MediaTask.MediaType.TV_SHOW) return;
+        if (task.getParsedSeason() == null || task.getParsedEpisode() == null
+                || task.getParsedSeason() < 0 || task.getParsedEpisode() < 1
+                || (task.getParsedEpisodeEnd() != null && task.getParsedEpisodeEnd() < task.getParsedEpisode())) {
+            throw new IllegalStateException("剧集任务必须填写有效季号和集号，请先编辑识别信息");
         }
     }
 

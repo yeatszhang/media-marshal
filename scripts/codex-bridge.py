@@ -41,6 +41,23 @@ PROMPT = '''你是媒体作品识别助手。根据下方 JSON 中的文件名�
 '''
 
 
+DIRECTORY_SCHEMA = dict(SCHEMA, required=SCHEMA['required'] + ['files'], properties=dict(
+    SCHEMA['properties'], files={'type': 'array', 'items': {
+        'type': 'object', 'additionalProperties': False,
+        'required': ['filename', 'season', 'episode', 'episode_end'],
+        'properties': {'filename': {'type': 'string'},
+                       'season': {'type': ['integer', 'null']},
+                       'episode': {'type': ['integer', 'null']},
+                       'episode_end': {'type': ['integer', 'null']}}}}))
+DIRECTORY_PROMPT = PROMPT.replace('输入数据：', '''
+本次识别整个目录，而非只识别 filename。结合 parents（从近到远）、siblings（同目录全部视频名）判断目录是否属于同一作品，以及电影或剧集类型。
+files 是需要返回解析结果的文件名列表。仅当有证据表明它们属于同一作品时才返回 identified，逐文件返回 filename、season、episode、episode_end；不要按排序补齐缺失集号，不要默认第一季。合并集保留起止集号。
+如果目录混有不同作品、多部电影、存在不能归属的文件或结构证据不足，返回 unknown 且 files=[]，禁止把一个文件的作品身份套给整个目录。
+电影只允许目录中有一个视频文件；剧集保留明确的 SxxExx、中文季集号与纯数字集号，不明确的坐标返回 null。顶层 season 和 episode 均返回 null；作品标题、年份、类型、置信度与依据在顶层返回。
+输入数据：
+''')
+
+
 def normalize_context(value):
     if not isinstance(value, dict):
         raise ValueError('请求必须为对象')
@@ -81,8 +98,50 @@ def validate_result(value):
     return value
 
 
+def normalize_directory_context(value):
+    context = normalize_context(value)
+    files = value.get('files')
+    if (not isinstance(files, list) or not 1 <= len(files) <= 80
+            or any(not isinstance(name, str) or name not in context['siblings'] for name in files)
+            or len(set(files)) != len(files)):
+        raise ValueError('目录文件列表无效')
+    context['files'] = sorted(files)
+    return context
+
+
+def validate_directory_result(value, context):
+    if not isinstance(value, dict) or set(value) != set(DIRECTORY_SCHEMA['required']):
+        raise ValueError('目录识别结构无效')
+    result = validate_result({key: value[key] for key in SCHEMA['required']})
+    files = value['files']
+    if not isinstance(files, list):
+        raise ValueError('目录识别文件列表无效')
+    if result['status'] == 'unknown':
+        if files:
+            raise ValueError('未知目录不能携带文件建议')
+        return dict(result, files=[])
+    if result['type'] == 'movie' and len(context['siblings']) != 1:
+        raise ValueError('多视频目录不能共享电影身份')
+    names = []
+    for item in files:
+        if not isinstance(item, dict) or set(item) != {'filename', 'season', 'episode', 'episode_end'}:
+            raise ValueError('文件解析结构无效')
+        name = item['filename']
+        if not isinstance(name, str) or name not in context['files']:
+            raise ValueError('模型返回未知文件')
+        validate_result(dict(result, season=item['season'], episode=item['episode']))
+        end = item['episode_end']
+        if end is not None and (type(end) is not int or item['episode'] is None
+                                or not item['episode'] <= end <= 10000):
+            raise ValueError('合并集范围无效')
+        names.append(name)
+    if len(names) != len(set(names)) or set(names) != set(context['files']):
+        raise ValueError('目录识别未完整覆盖文件')
+    return dict(result, files=files)
+
+
 class Recognizer:
-    def __init__(self, config, runner=None):
+    def __init__(self, config, runner=None, directory_runner=None):
         self.config = config
         self.root = Path(config['runtime_dir'])
         self.root.mkdir(parents=True, exist_ok=True)
@@ -94,12 +153,15 @@ class Recognizer:
         self.schema.write_text(json.dumps(SCHEMA))
         self.lock = threading.Lock()
         self.runner = runner or self.run_codex
+        self.directory_runner = directory_runner or (lambda payload: self.run_codex(
+            payload, DIRECTORY_SCHEMA, DIRECTORY_PROMPT))
 
     def cache_path(self, namespace, value):
         # 提示词、结构、模型或联网模式变化时，旧结果自动失效。
         policy = {'prompt': PROMPT, 'schema': SCHEMA,
                   'model': self.config.get('model', 'gpt-5.4-mini'),
-                  'web_search': self.config.get('web_search', 'live')}
+                  'web_search': self.config.get('web_search', 'live'),
+                  'directory_prompt': DIRECTORY_PROMPT, 'directory_schema': DIRECTORY_SCHEMA}
         payload = json.dumps([policy, namespace, value], ensure_ascii=False, sort_keys=True)
         return self.cache / (hashlib.sha256(payload.encode()).hexdigest() + '.json')
 
@@ -146,8 +208,7 @@ class Recognizer:
         parsed = context['parsed']
         if parsed.get('type') == 'movie' or parsed.get('episode') not in (None, episode):
             return None
-        identity = {'parents': context['parents'], 'siblings': sorted(siblings),
-                    'season': parsed.get('season'), 'year': parsed.get('year')}
+        identity = {'parents': context['parents'], 'season': parsed.get('season')}
         return self.cache_path('series', identity), episode
 
     def recognize(self, value):
@@ -167,7 +228,8 @@ class Recognizer:
                 return result
             if series is not None:
                 shared = self.read_cache(series[0])
-                if shared and shared['status'] == 'identified' and shared['type'] == 'episode':
+                if (shared and shared['status'] == 'identified' and shared['type'] == 'episode'
+                        and context['parsed'].get('year') in (None, shared['year'])):
                     result = dict(shared, episode=series[1])
                     self.write_cache(cache, result)
                     return result
@@ -182,9 +244,30 @@ class Recognizer:
         finally:
             self.lock.release()
 
-    def run_codex(self, payload):
+    def recognize_directory(self, value):
+        context = normalize_directory_context(value)
+        cache = self.cache_path('directory', context)
+        if not self.lock.acquire(timeout=self.config.get('timeout_seconds', 150) + 5):
+            raise TimeoutError('识别队列繁忙')
+        try:
+            try:
+                result = validate_directory_result(json.loads(cache.read_text()), context)
+                if result['status'] == 'identified' and 0 <= time.time() - cache.stat().st_mtime < 86400:
+                    return result
+            except (ValueError, OSError):
+                pass
+            result = validate_directory_result(self.directory_runner(
+                json.dumps(context, ensure_ascii=False, sort_keys=True)), context)
+            self.write_cache(cache, result)
+            return result
+        finally:
+            self.lock.release()
+
+    def run_codex(self, payload, schema=SCHEMA, prompt=PROMPT):
         with tempfile.TemporaryDirectory(prefix='request-', dir=self.root) as tmp:
             output = Path(tmp) / 'result.json'
+            schema_path = Path(tmp) / 'schema.json'
+            schema_path.write_text(json.dumps(schema))
             command = [self.config['codex_path'], '--ask-for-approval', 'never', 'exec',
                        '--ignore-user-config', '--skip-git-repo-check', '--ephemeral',
                        '--sandbox', 'read-only', '--cd', str(self.workspace),
@@ -192,7 +275,7 @@ class Recognizer:
                        '-c', 'model_reasoning_effort="low"',
                        '-c', 'features.shell_tool=false',
                        '-c', 'web_search=' + json.dumps(self.config.get('web_search', 'live')),
-                       '--output-schema', str(self.schema), '--output-last-message', str(output), '-']
+                       '--output-schema', str(schema_path), '--output-last-message', str(output), '-']
             env = {key: value for key, value in os.environ.items() if key in (
                 'HOME', 'PATH', 'TMPDIR', 'LANG', 'USER', 'SHELL', 'CODEX_HOME',
                 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY')}
@@ -220,7 +303,7 @@ class Recognizer:
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
             try:
-                process.communicate(PROMPT + payload, timeout=self.config.get('timeout_seconds', 150))
+                process.communicate(prompt + payload, timeout=self.config.get('timeout_seconds', 150))
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.communicate()
@@ -247,14 +330,15 @@ def make_handler(config, recognizer):
         def do_POST(self):
             if not hmac.compare_digest(self.headers.get('X-Media-Marshal-Token', ''), config['token']):
                 return self.reply(401, {'error': '未授权'})
-            if self.path != '/recognize':
+            if self.path not in ('/recognize', '/recognize-directory'):
                 return self.reply(404, {'error': '接口不存在'})
             try:
                 length = int(self.headers.get('Content-Length', '0'))
                 if not 0 < length <= 65536:
                     return self.reply(413, {'error': '请求大小无效'})
                 value = json.loads(self.rfile.read(length))
-                result = recognizer.recognize(value)
+                result = (recognizer.recognize_directory(value) if self.path == '/recognize-directory'
+                          else recognizer.recognize(value))
                 self.reply(200, result)
             except (ValueError, UnicodeError):
                 self.reply(400, {'error': '识别数据无效'})

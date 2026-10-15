@@ -710,13 +710,16 @@ public class FileDiscoveryService {
         if (rule.getId() == null) {
             return;
         }
+        // 外置盘/容器挂载暂时失效时，不能把整个媒体库误判为已删除。
+        Path root = Paths.get(rule.getSourceDir()).toAbsolutePath().normalize();
+        if (!Files.isDirectory(root) || !Files.isReadable(root)) return;
         List<MediaTask> pendingTasks = mediaTaskRepository.findByRuleIdAndStatusIn(
                 rule.getId(),
                 List.of(MediaTask.TaskStatus.PENDING, MediaTask.TaskStatus.AWAITING_CONFIRMATION)
         );
         for (MediaTask task : pendingTasks) {
             Path sourcePath = Paths.get(task.getSourcePath()).toAbsolutePath().normalize();
-            if (!Files.exists(sourcePath)) {
+            if (Files.notExists(sourcePath)) {
                 markMissingSourceFailed(task);
                 counter.missingFailed++;
             }
@@ -724,6 +727,8 @@ public class FileDiscoveryService {
     }
 
     private void failTaskIfSourceMissing(Path sourcePath) {
+        // notExists 与 !exists 不同：权限或挂载错误代表未知，不能据此认定已删除。
+        if (!Files.notExists(sourcePath)) return;
         String normalizedSourcePath = sourcePath.toAbsolutePath().normalize().toString();
         mediaTaskRepository.findBySourcePath(normalizedSourcePath).ifPresent(task -> {
             if (isMissingSourceFailureCandidate(task)) {
