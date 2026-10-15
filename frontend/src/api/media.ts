@@ -79,6 +79,12 @@ export const mediaApi = {
     return http.put<ApiResponse<QueueRecognitionResponse>>(`/api/queue/${id}/recognition`, request)
   },
 
+  codexRematchTask(id: number) {
+    return http.post<ApiResponse<QueueRecognitionResponse>>(`/api/queue/${id}/codex-rematch`, null, {
+      timeout: 300000,
+    })
+  },
+
   rematchTaskRecognition(id: number, request: QueueRecognitionRequest) {
     return http.post<ApiResponse<QueueRecognitionResponse>>(`/api/queue/${id}/recognition/rematch`, request, {
       timeout: TMDB_SINGLE_REMATCH_TIMEOUT_MS,

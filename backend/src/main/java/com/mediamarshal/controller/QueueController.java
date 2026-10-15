@@ -103,6 +103,15 @@ public class QueueController {
         }
     }
 
+    @PostMapping("/{id}/codex-rematch")
+    public ApiResponse<QueueRecognitionResponse> codexRematch(@PathVariable Long id) {
+        try {
+            return ApiResponse.ok(pipeline.recognizeWithCodex(id));
+        } catch (Exception error) {
+            return ApiResponse.fail(error.getMessage());
+        }
+    }
+
     @PostMapping("/{id}/recognition/rematch")
     public ApiResponse<QueueRecognitionResponse> updateRecognitionAndRematch(
             @PathVariable Long id,

@@ -51,6 +51,15 @@
 
       <el-card shadow="never" class="settings-section">
         <template #header>{{ t('settings.matchingSection') }}</template>
+        <el-form-item :label="t('settings.codexFallback')">
+          <div class="field-stack">
+            <el-switch v-model="form.codexEnabled" />
+            <div class="form-hint">{{ t('settings.codexFallbackHelp') }}</div>
+          </div>
+        </el-form-item>
+        <el-form-item :label="t('settings.codexConfirmation')">
+          <el-switch v-model="form.codexRequireConfirmation" :disabled="!form.codexEnabled" />
+        </el-form-item>
         <el-form-item :label="t('settings.confidenceThreshold')">
           <div class="field-stack">
             <el-slider
@@ -130,6 +139,8 @@ const form = reactive({
   tmdbProxyEnabled: false,
   tmdbProxyHttpUrl: '',
   confidenceThreshold: 80,
+  codexEnabled: false,
+  codexRequireConfirmation: true,
   emailEnabled: false,
   emailRecipient: '',
 })
@@ -138,6 +149,8 @@ onMounted(async () => {
   await settingsStore.fetchSettings()
   form.tmdbApiKey = settingsStore.getSetting('tmdb.api-key')
   form.tmdbLanguage = settingsStore.getSetting('tmdb.language') || 'zh-CN'
+  form.codexEnabled = settingsStore.getSetting('codex.enabled') === 'true'
+  form.codexRequireConfirmation = settingsStore.getSetting('codex.require-confirmation') !== 'false'
   await loadEffectiveTmdbProxy()
   form.confidenceThreshold = Math.round(
     Number(settingsStore.getSetting('watcher.confidence-threshold') || 0.8) * 100,
@@ -153,6 +166,8 @@ async function handleSave() {
   }
 
   const updates = [
+    settingsStore.updateSetting('codex.enabled', String(form.codexEnabled)),
+    settingsStore.updateSetting('codex.require-confirmation', String(form.codexRequireConfirmation)),
     settingsStore.updateSetting('tmdb.language', form.tmdbLanguage),
     settingsApi.updateTmdbProxy(form.tmdbProxyEnabled, form.tmdbProxyHttpUrl.trim()),
     settingsStore.updateSetting(

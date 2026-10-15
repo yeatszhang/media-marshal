@@ -396,13 +396,19 @@
           </el-button>
           <el-button
             :loading="recognitionActionLoading === 'save'"
+            :disabled="recognitionActionLoading !== null"
             @click="handleSaveRecognition"
           >
             {{ t('queue.saveRecognition') }}
           </el-button>
+          <el-button :loading="recognitionActionLoading === 'codex'"
+                     :disabled="recognitionActionLoading !== null" @click="handleCodexRecognition">
+            {{ t('queue.codexRematch') }}
+          </el-button>
           <el-button
             type="primary"
             :loading="recognitionActionLoading === 'rematch'"
+            :disabled="recognitionActionLoading !== null"
             @click="handleSaveRecognitionAndRematch"
           >
             {{ t('queue.saveAndRematch') }}
@@ -771,7 +777,7 @@ const searchPanelExpanded = ref(true)
 const recommendationExpanded = ref(false)
 const recognitionDrawerVisible = ref(false)
 const recognitionTask = ref<MediaTask | null>(null)
-const recognitionActionLoading = ref<'save' | 'rematch' | null>(null)
+const recognitionActionLoading = ref<'save' | 'rematch' | 'codex' | null>(null)
 const recognitionForm = reactive<QueueRecognitionRequest>({
   mediaType: 'MOVIE',
   parsedTitle: '',
@@ -1409,6 +1415,20 @@ async function handleSaveRecognition() {
 
 async function handleSaveRecognitionAndRematch() {
   await submitRecognition(true)
+}
+
+async function handleCodexRecognition() {
+  const task = recognitionTask.value
+  if (!task) return
+  recognitionActionLoading.value = 'codex'
+  try {
+    const res = await mediaApi.codexRematchTask(task.id)
+    applyRecognitionResponse(task.id, res.data.data, true)
+    openRecognitionEditor(res.data.data.task)
+    ElMessage.success(t('queue.codexRematchSuccess'))
+  } finally {
+    recognitionActionLoading.value = null
+  }
 }
 
 async function submitRecognition(rematch: boolean) {

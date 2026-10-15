@@ -18,6 +18,7 @@ import com.mediamarshal.service.matcher.MetadataMatcher;
 import com.mediamarshal.service.matcher.ParentFolderMatchEnhancer;
 import com.mediamarshal.service.nfo.NfoGeneratorService;
 import com.mediamarshal.service.parser.GuessitParserClient;
+import com.mediamarshal.service.parser.CodexRecognitionService;
 import com.mediamarshal.service.rename.AssetOrganizerService;
 import com.mediamarshal.service.rename.FileOperationStrategy;
 import com.mediamarshal.service.rename.RenameService;
@@ -73,6 +74,7 @@ public class MediaProcessPipeline {
     public static final String SOURCE_MISSING_ERROR_MESSAGE = "源文件不存在，无法继续处理";
 
     private final GuessitParserClient parserClient;
+    private final CodexRecognitionService codexRecognitionService;
     private final MetadataMatcher metadataMatcher;
     private final AssetOrganizerService assetOrganizerService;
     private final RenameService renameService;
@@ -140,11 +142,29 @@ public class MediaProcessPipeline {
             eventPublisher.publishTaskProcessing(task);
 
             // Step 2: guessit 解析文件名
-            ParseResult parseResult = parserClient.parse(asset.displayName());
+            ParseResult parseResult;
+            try {
+                parseResult = parserClient.parse(asset.displayName());
+            } catch (RuntimeException parserError) {
+                if (!codexRecognitionService.isEnabled()) throw parserError;
+                parseResult = new ParseResult();
+                parseResult.setOriginalFilename(asset.displayName());
+                log.warn("常规名称解析失败，尝试 Codex 兜底");
+            }
             fillParsedFields(task, parseResult);
+
+            CodexRecognitionService.Suggestion codexSuggestion = null;
 
             // Step 3: 确定媒体类型
             Optional<MediaTask.MediaType> mediaType = resolveMediaType(rule, parseResult, task.getAssetType());
+            if (mediaType.isEmpty()) {
+                codexSuggestion = codexRecognitionService.recognize(asset.rootPath(), rule, parseResult).orElse(null);
+                if (codexSuggestion != null) {
+                    parseResult = codexSuggestion.parsed();
+                    fillParsedFields(task, parseResult);
+                    mediaType = resolveMediaType(rule, parseResult, task.getAssetType());
+                }
+            }
             if (mediaType.isEmpty()) {
                 moveToAwaitingConfirmation(task, "Unable to detect media type from filename");
                 return;
@@ -161,6 +181,29 @@ public class MediaProcessPipeline {
                     metadataMatcher.search(parseResult),
                     confidenceThreshold
             );
+            if (codexSuggestion == null && bestConfidence(candidates) < confidenceThreshold) {
+                var suggestion = codexRecognitionService.recognize(asset.rootPath(), rule, parseResult);
+                if (suggestion.isPresent()) {
+                    var proposed = suggestion.get();
+                    List<MatchResult> proposedMatches;
+                    try {
+                        proposedMatches = metadataMatcher.search(proposed.parsed());
+                    } catch (RuntimeException unavailable) {
+                        log.warn("Codex 建议的 TMDB 校验暂不可用，保留原有候选");
+                        proposedMatches = List.of();
+                    }
+                    // 模型只提供解析建议；必须有 TMDB 候选，且不能降低已有匹配质量。
+                    if (!proposedMatches.isEmpty() && bestConfidence(proposedMatches) >= bestConfidence(candidates)) {
+                        codexSuggestion = proposed;
+                        parseResult = proposed.parsed();
+                        fillParsedFields(task, parseResult);
+                        mediaType = resolveMediaType(rule, parseResult, task.getAssetType());
+                        task.setMediaType(mediaType.orElseThrow());
+                        taskRepository.save(task);
+                        candidates = proposedMatches;
+                    }
+                }
+            }
             List<TaskCandidate> savedCandidates = saveCandidates(task, candidates);
             if (savedCandidates.isEmpty()) {
                 moveToAwaitingConfirmation(task, "No TMDB candidates found");
@@ -170,6 +213,12 @@ public class MediaProcessPipeline {
             // Step 5: 置信度判断
             TaskCandidate topCandidate = savedCandidates.getFirst();
             task.setMatchConfidence(topCandidate.getConfidence());
+            if (codexSuggestion != null && (codexRecognitionService.requiresConfirmation(codexSuggestion.confidence())
+                    || (task.getMediaType() == MediaTask.MediaType.TV_SHOW
+                    && (parseResult.getSeason() == null || parseResult.getEpisode() == null)))) {
+                moveToAwaitingConfirmation(task, "Codex 已提供 TMDB 候选，请确认作品及季集信息");
+                return;
+            }
             if (topCandidate.getConfidence() == null || topCandidate.getConfidence() < confidenceThreshold) {
                 moveToAwaitingConfirmation(task, "Low confidence match");
                 return;
@@ -186,6 +235,11 @@ public class MediaProcessPipeline {
             log.error("Pipeline failed: asset={}, taskId={}", asset.rootPath(), task.getId(), e);
             recordFailure(task, e);
         }
+    }
+
+    private double bestConfidence(List<MatchResult> matches) {
+        return matches == null ? 0 : matches.stream().map(MatchResult::getConfidence)
+                .filter(Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
     }
 
     /**
@@ -266,6 +320,34 @@ public class MediaProcessPipeline {
         ParseResult parseResult = toParseResult(task);
         List<TaskCandidate> candidates = saveCandidates(task, metadataMatcher.search(parseResult));
         task.setMatchConfidence(candidates.isEmpty() ? null : candidates.getFirst().getConfidence());
+        taskRepository.save(task);
+        return new QueueRecognitionResponse(task, candidates);
+    }
+
+    /** 对已有待确认记录重新识别；只更新建议和候选，不执行移动。 */
+    public QueueRecognitionResponse recognizeWithCodex(Long taskId) {
+        MediaTask task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException("任务不存在"));
+        if (task.getStatus() != MediaTask.TaskStatus.AWAITING_CONFIRMATION) {
+            throw new IllegalStateException("仅支持待确认任务");
+        }
+        Path source = Path.of(task.getSourcePath());
+        if (!Files.exists(source)) throw new IllegalStateException(SOURCE_MISSING_ERROR_MESSAGE);
+        var suggestion = codexRecognitionService.recognize(source, loadRule(task), toParseResult(task))
+                .orElseThrow(() -> new IllegalStateException("Codex 未能确定作品身份，请补充正式片名或手动选择作品"));
+        ParseResult parsed = suggestion.parsed();
+        List<MatchResult> matches = metadataMatcher.search(parsed);
+        if (matches.isEmpty()) throw new IllegalStateException("Codex 建议未通过 TMDB 校验，请手动选择作品");
+        // 网络请求期间可能有人确认任务，再次检查状态，避免覆盖新状态。
+        task = taskRepository.findById(taskId).orElseThrow();
+        if (task.getStatus() != MediaTask.TaskStatus.AWAITING_CONFIRMATION) {
+            throw new IllegalStateException("任务状态已变化，请刷新列表");
+        }
+        task.setMediaType("episode".equals(parsed.getType()) ? MediaTask.MediaType.TV_SHOW : MediaTask.MediaType.MOVIE);
+        fillParsedFields(task, parsed);
+        List<TaskCandidate> candidates = saveCandidates(task, matches);
+        task.setMatchConfidence(candidates.isEmpty() ? null : candidates.getFirst().getConfidence());
+        task.setErrorMessage("Codex 已提供 TMDB 候选，请确认作品及季集信息");
         taskRepository.save(task);
         return new QueueRecognitionResponse(task, candidates);
     }

@@ -16,6 +16,7 @@ import com.mediamarshal.service.matcher.MetadataMatcher;
 import com.mediamarshal.service.matcher.ParentFolderMatchEnhancer;
 import com.mediamarshal.service.nfo.NfoGeneratorService;
 import com.mediamarshal.service.parser.GuessitParserClient;
+import com.mediamarshal.service.parser.CodexRecognitionService;
 import com.mediamarshal.service.rename.AssetOrganizerService;
 import com.mediamarshal.service.rename.FileOperationStrategy;
 import com.mediamarshal.service.rename.RenameService;
@@ -52,6 +53,9 @@ class MediaProcessPipelineRecognitionTest {
     private AssetOrganizerService assetOrganizerService;
     private WatchRuleRepository watchRuleRepository;
     private SettingsService settingsService;
+    private GuessitParserClient parserClient;
+    private CodexRecognitionService codexRecognitionService;
+    private ParentFolderMatchEnhancer parentFolderMatchEnhancer;
     private MediaProcessPipeline pipeline;
 
     @BeforeEach
@@ -65,9 +69,13 @@ class MediaProcessPipelineRecognitionTest {
         assetOrganizerService = mock(AssetOrganizerService.class);
         watchRuleRepository = mock(WatchRuleRepository.class);
         settingsService = mock(SettingsService.class);
+        parserClient = mock(GuessitParserClient.class);
+        codexRecognitionService = mock(CodexRecognitionService.class);
+        parentFolderMatchEnhancer = mock(ParentFolderMatchEnhancer.class);
         when(settingsService.get(any(String.class), any(String.class))).thenAnswer(invocation -> invocation.getArgument(1));
         pipeline = new MediaProcessPipeline(
-                mock(GuessitParserClient.class),
+                parserClient,
+                codexRecognitionService,
                 metadataMatcher,
                 assetOrganizerService,
                 renameService,
@@ -78,10 +86,49 @@ class MediaProcessPipelineRecognitionTest {
                 settingsService,
                 eventPublisher,
                 emailNotificationService,
-                mock(ParentFolderMatchEnhancer.class),
+                parentFolderMatchEnhancer,
                 Map.<String, FileOperationStrategy>of()
         );
         when(taskRepository.save(any(MediaTask.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    }
+
+    @Test
+    void codexSuggestionRequiresTmdbAndConfirmationBeforeMoving(@TempDir Path root) throws Exception {
+        Path source = Files.writeString(root.resolve("01.mkv"), "video");
+        WatchRule rule = new WatchRule();
+        rule.setMediaType(WatchRule.RuleMediaType.AUTO);
+        rule.setOperation(FileOperationStrategy.OperationType.MOVE);
+        ParseResult original = new ParseResult();
+        original.setType("episode");
+        original.setTitle("混淆名");
+        ParseResult proposed = new ParseResult();
+        proposed.setType("episode");
+        proposed.setTitle("正式剧名");
+        proposed.setSeason(1);
+        proposed.setEpisode(1);
+        when(parserClient.parse("01.mkv")).thenReturn(original);
+        when(parentFolderMatchEnhancer.enhanceIfNeeded(any(), any(), any(), org.mockito.ArgumentMatchers.anyDouble())).thenReturn(List.of());
+        when(codexRecognitionService.recognize(source, rule, original)).thenReturn(Optional.of(
+                new CodexRecognitionService.Suggestion(proposed, 0.95, "父目录含正式剧名")));
+        when(codexRecognitionService.requiresConfirmation(0.95)).thenReturn(true);
+        MatchResult match = new MatchResult();
+        match.setSourceId("123");
+        match.setTitle("正式剧名");
+        match.setMediaType("TV_SHOW");
+        match.setConfidence(0.99);
+        when(metadataMatcher.search(original)).thenReturn(List.of());
+        when(metadataMatcher.search(proposed)).thenReturn(List.of(match));
+        TaskCandidate saved = candidate(123L, "正式剧名", 0.99);
+        when(candidateRepository.findByTask_IdOrderByRankAsc(any())).thenReturn(List.of(), List.of(saved));
+
+        pipeline.process(source, rule);
+
+        ArgumentCaptor<MediaTask> task = ArgumentCaptor.forClass(MediaTask.class);
+        verify(eventPublisher).publishAwaitingConfirmation(task.capture());
+        assertThat(task.getValue().getParsedTitle()).isEqualTo("正式剧名");
+        assertThat(task.getValue().getErrorMessage()).contains("Codex");
+        verify(renameService, never()).rename(any());
+        assertThat(Files.exists(source)).isTrue();
     }
 
     @Test
@@ -108,6 +155,23 @@ class MediaProcessPipelineRecognitionTest {
         assertThat(response.task().getParsedSeason()).isNull();
         assertThat(response.task().getParsedEpisode()).isNull();
         assertThat(response.task().getParsedEpisodeEnd()).isNull();
+    }
+
+    @Test
+    void codexCannotChangeUnknownTaskOrMoveFiles(@TempDir Path root) throws Exception {
+        Path source = Files.writeString(root.resolve("01.mkv"), "video");
+        MediaTask task = awaitingTask();
+        task.setSourcePath(source.toString());
+        task.setRuleId(1L);
+        WatchRule rule = new WatchRule();
+        when(taskRepository.findById(1L)).thenReturn(Optional.of(task));
+        when(watchRuleRepository.findById(1L)).thenReturn(Optional.of(rule));
+        when(codexRecognitionService.recognize(any(), any(), any())).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> pipeline.recognizeWithCodex(1L)).hasMessageContaining("未能确定");
+        verify(metadataMatcher, never()).search(any());
+        verify(renameService, never()).rename(any());
+        assertThat(Files.exists(source)).isTrue();
+        assertThat(task.getStatus()).isEqualTo(MediaTask.TaskStatus.AWAITING_CONFIRMATION);
     }
 
     @Test
