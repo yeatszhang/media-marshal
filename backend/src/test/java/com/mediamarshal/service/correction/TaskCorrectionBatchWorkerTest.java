@@ -15,7 +15,6 @@ import com.mediamarshal.repository.TaskCorrectionBatchItemRepository;
 import com.mediamarshal.repository.TaskCorrectionBatchRepository;
 import com.mediamarshal.repository.WatchRuleRepository;
 import com.mediamarshal.service.matcher.MetadataMatcher;
-import com.mediamarshal.service.nfo.NfoGeneratorService;
 import com.mediamarshal.service.rename.RenameService;
 import com.mediamarshal.service.rename.TemplatePathSafetyService;
 import com.mediamarshal.service.rename.TemplateRenderer;
@@ -135,7 +134,7 @@ class TaskCorrectionBatchWorkerTest {
         RenameService renameService = new RenameService(
                 Map.of(), watchRuleRepository, settingsService, templateRenderer, new TemplatePathSafetyService()
         );
-        TaskCorrectionFileExecutor fileExecutor = new TaskCorrectionFileExecutor(mock(NfoGeneratorService.class));
+        TaskCorrectionFileExecutor fileExecutor = new TaskCorrectionFileExecutor();
         TaskCorrectionPersistenceService persistenceService = new TaskCorrectionPersistenceService(
                 taskRepository, candidateRepository
         );
@@ -144,6 +143,7 @@ class TaskCorrectionBatchWorkerTest {
                 taskRepository,
                 watchRuleRepository,
                 metadataMatcher,
+                new com.mediamarshal.service.matcher.TmdbEpisodeService(metadataMatcher),
                 renameService,
                 templateRenderer,
                 settingsService,
@@ -187,8 +187,9 @@ class TaskCorrectionBatchWorkerTest {
         });
         when(watchRuleRepository.findById(9L)).thenReturn(Optional.of(rule));
         when(metadataMatcher.getById("2020", "TV_SHOW")).thenReturn(detail);
-        when(metadataMatcher.getEpisodeTitle("2020", 1, 1)).thenReturn("Horse Sense");
-        when(metadataMatcher.getEpisodeTitle("2020", 2, 1)).thenReturn("Where the Heart Is");
+        detail.setSeasons(List.of(new com.mediamarshal.model.dto.TmdbSeason(1, 6), new com.mediamarshal.model.dto.TmdbSeason(2, 6)));
+        when(metadataMatcher.getSeasonEpisodes("2020", 1)).thenReturn(List.of(new com.mediamarshal.model.dto.TmdbEpisode(1, 1, "Horse Sense")));
+        when(metadataMatcher.getSeasonEpisodes("2020", 2)).thenReturn(List.of(new com.mediamarshal.model.dto.TmdbEpisode(2, 1, "Where the Heart Is")));
         when(settingsService.get("tmdb.confirm-retry-attempts", "3")).thenReturn("1");
         TaskCorrectionBatch finished = batch();
         finished.setStatus(TaskCorrectionBatch.Status.SUCCEEDED);

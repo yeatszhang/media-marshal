@@ -143,6 +143,67 @@ class BridgeTest(unittest.TestCase):
             recognizer.recognize(dict(second, parsed={'year': 2025}))
             self.assertEqual(len(calls), 2)
 
+    def directory_context(self):
+        return dict(self.context(), files=['01.mkv', '02.mkv'])
+
+    def directory_result(self):
+        return dict(self.identified(), episode=None, files=[
+            {'filename': '01.mkv', 'season': None, 'episode': 1, 'episode_end': None},
+            {'filename': '02.mkv', 'season': 2, 'episode': 2, 'episode_end': 3}])
+
+    def test_directory_uses_one_model_call_and_caches_complete_result(self):
+        calls = []
+        def runner(payload):
+            calls.append(json.loads(payload))
+            return self.directory_result()
+        with tempfile.TemporaryDirectory() as tmp:
+            recognizer = bridge.Recognizer({'runtime_dir': tmp}, directory_runner=runner)
+            first = recognizer.recognize_directory(self.directory_context())
+            self.assertIsNone(first['files'][0]['season'])
+            self.assertEqual(first['files'][1]['episode_end'], 3)
+            self.assertEqual(recognizer.recognize_directory(self.directory_context()), first)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]['siblings'], self.context()['siblings'])
+
+    def test_directory_rejects_incomplete_duplicate_and_invented_files(self):
+        context = bridge.normalize_directory_context(self.directory_context())
+        first, second = self.directory_result()['files']
+        for files in [[first], [first, first], [first, dict(second, filename='other.mkv')],
+                      [first, dict(second, episode_end=1)], [first, dict(second, season=True)]]:
+            with self.assertRaises(ValueError):
+                bridge.validate_directory_result(dict(self.directory_result(), files=files), context)
+        with self.assertRaises(ValueError):
+            bridge.normalize_directory_context(dict(self.directory_context(), files=['missing.mkv']))
+
+    def test_directory_refuses_shared_movie_and_preserves_unknown(self):
+        context = bridge.normalize_directory_context(self.directory_context())
+        with self.assertRaises(ValueError):
+            bridge.validate_directory_result(dict(self.directory_result(), type='movie'), context)
+        unknown = dict(self.result(), files=[])
+        self.assertEqual(bridge.validate_directory_result(unknown, context), unknown)
+        with self.assertRaises(ValueError):
+            bridge.validate_directory_result(dict(unknown, files=self.directory_result()['files']), context)
+
+    def test_directory_http_dispatch(self):
+        class DirectoryRecognizer:
+            def recognize_directory(inner, value):
+                self.assertEqual(value, self.directory_context())
+                return self.directory_result()
+        server = ThreadingHTTPServer(('127.0.0.1', 0), bridge.make_handler(
+            {'token': 'test-token'}, DirectoryRecognizer()))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            req = urllib.request.Request(f'http://127.0.0.1:{server.server_port}/recognize-directory',
+                data=json.dumps(self.directory_context()).encode(),
+                headers={'X-Media-Marshal-Token': 'test-token'})
+            with urllib.request.urlopen(req) as response:
+                self.assertEqual(json.load(response), self.directory_result())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_http_requires_token_and_never_exposes_cli_error(self):
         class FailingRecognizer:
             def recognize(self, value):

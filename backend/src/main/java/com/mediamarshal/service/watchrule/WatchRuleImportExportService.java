@@ -522,7 +522,7 @@ public class WatchRuleImportExportService {
         rule.setEnabled(enabled);
         rule.setMoveAssociatedFiles(Boolean.TRUE.equals(req.getMoveAssociatedFiles()));
         rule.setCleanupEmptyDirs(Boolean.TRUE.equals(req.getCleanupEmptyDirs()));
-        rule.setGenerateNfo(Boolean.TRUE.equals(req.getGenerateNfo()));
+        rule.setGenerateNfo(false);
         rule.setIgnoredFilePatterns(req.getIgnoredFilePatterns());
         rule.setDiscoveryMode(req.getDiscoveryMode() != null ? req.getDiscoveryMode() : WatchRule.DiscoveryMode.HYBRID);
         rule.setScanIntervalMinutes(Math.max(req.getScanIntervalMinutes() != null ? req.getScanIntervalMinutes() : 10, 5));

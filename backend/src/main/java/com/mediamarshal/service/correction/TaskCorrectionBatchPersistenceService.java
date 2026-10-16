@@ -36,7 +36,7 @@ class TaskCorrectionBatchPersistenceService {
         batch.setRuleId(resolved.anchor().getRuleId());
         batch.setParsedTitle(request.getParsedTitle().trim());
         batch.setParsedYear(request.getParsedYear());
-        batch.setRegenerateNfo(Boolean.TRUE.equals(request.getRegenerateNfo()));
+        batch.setRegenerateNfo(false);
         batch.setGroupFingerprint(preview.groupFingerprint());
         batch.setIdempotencyKey(idempotencyKey);
         batch.setStatus(TaskCorrectionBatch.Status.QUEUED);

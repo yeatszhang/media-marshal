@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h2>{{ t('queue.title') }}</h2>
-        <p class="page-desc">{{ t('queue.description') }}</p>
+        <p class="page-desc">{{ t('queue.directory.description', { directories: queueDirectories.length, files: queueTasks.length }) }}</p>
       </div>
       <el-button :loading="loading" @click="loadQueue">
         {{ t('common.refresh') }}
@@ -13,6 +13,8 @@
     <el-empty v-if="!loading && queueTasks.length === 0" :description="t('queue.empty')" />
 
     <div v-else class="queue-list" v-loading="loading">
+      <details class="directory-advanced">
+        <summary>{{ t('queue.directory.advanced') }}</summary>
       <div class="global-search-panel">
         <div class="panel-header">
           <div>
@@ -161,7 +163,7 @@
         </el-text>
       </div>
 
-      <div v-if="visibleCandidateGroups.length > 0" class="candidate-groups">
+      <div v-if="visibleCandidateGroups.length > 0 && displayedDirectories.every(group => group.tasks.length === 1)" class="candidate-groups">
         <el-alert
           v-for="group in visibleCandidateGroups"
           :key="group.key"
@@ -191,7 +193,72 @@
         </el-button>
       </div>
 
-      <el-card v-for="task in displayedTasks" :key="task.id" class="queue-card" shadow="never">
+      </details>
+      <template v-for="group in displayedDirectories" :key="group.key">
+        <el-card v-if="group.tasks.length > 1" class="directory-card" shadow="never">
+          <template #header>
+            <div class="directory-header">
+              <div class="directory-heading">
+                <el-checkbox :model-value="group.tasks.every(task => selectedTaskIds.has(task.id))"
+                             :indeterminate="group.tasks.some(task => selectedTaskIds.has(task.id)) && !group.tasks.every(task => selectedTaskIds.has(task.id))"
+                             :aria-label="t('queue.directory.selectAll')"
+                             @change="(checked) => group.tasks.forEach(task => toggleTaskSelection(task.id, Boolean(checked)))" />
+                <div>
+                  <h3>{{ sourceFileName(group.directory) }}</h3>
+                  <div class="directory-path" :title="group.directory">{{ group.directory }}</div>
+                </div>
+                <el-tag>{{ t('queue.directory.fileCount', { count: group.tasks.length }) }}</el-tag>
+              </div>
+              <div class="directory-actions">
+                <el-button :loading="recognitionActionLoading === 'codex-directory' && group.tasks.some(task => task.id === codexTaskId)"
+                           :disabled="recognitionActionLoading !== null || directorySubmitting"
+                           @click="handleCodexDirectoryRecognition(group.tasks[0])">
+                  {{ t('queue.directory.recognize') }}
+                </el-button>
+                <el-button type="primary" :disabled="directoryOptions(group).length === 0 || recognitionActionLoading !== null || directorySubmitting"
+                           @click="openDirectoryReview(group)">
+                  {{ t('queue.directory.confirm', { count: group.tasks.length }) }}
+                </el-button>
+                <el-button link @click="toggleDirectoryDetails(group.key)">
+                  {{ expandedDirectories.has(group.key) ? t('queue.directory.collapse') : t('queue.directory.expand') }}
+                </el-button>
+              </div>
+            </div>
+          </template>
+          <div class="directory-identity">
+            <el-image v-if="directoryOptions(group)[0]?.posterUrl" class="directory-poster"
+                      :src="directoryOptions(group)[0].posterUrl!" fit="cover" />
+            <div>
+              <h3>{{ directoryOptions(group)[0] ? displayTitle(directoryOptions(group)[0]) : t('queue.directory.unrecognized') }}</h3>
+              <p>{{ directoryOptions(group)[0] ? t('queue.directory.sharedCandidate', { count: directoryOptions(group).length }) : t('queue.directory.recognizeHint') }}</p>
+              <el-tag v-if="directoryOptions(group)[0]" size="small" type="info">
+                {{ directoryOptions(group)[0].year ?? t('queue.unknown') }} · {{ t(`task.mediaType.${directoryOptions(group)[0].mediaType}`) }}
+              </el-tag>
+            </div>
+          </div>
+          <el-table :data="group.tasks" size="small" max-height="290" class="directory-files">
+            <el-table-column :label="t('queue.directory.filename')" min-width="180">
+              <template #default="{ row }">{{ sourceFileName(row.sourcePath) }}</template>
+            </el-table-column>
+            <el-table-column :label="t('queue.episode')" min-width="170">
+              <template #default="{ row }">{{ formatSeasonEpisode(row) }}</template>
+            </el-table-column>
+            <el-table-column :label="t('queue.directory.fileStatus')" min-width="180">
+              <template #default="{ row }">
+                <el-text v-if="batchErrorByTask[row.id]" type="danger">{{ batchErrorByTask[row.id] }}</el-text>
+                <el-text v-else-if="row.metadataWarning || row.errorMessage?.includes('TMDB')" type="warning">{{ row.metadataWarning || row.errorMessage }}</el-text>
+                <el-text v-else-if="row.mediaType === 'TV_SHOW' && row.parsedEpisode == null" type="warning">{{ t('queue.directory.needsCoordinates') }}</el-text>
+                <el-text v-else type="info">{{ t('queue.directory.readyToReview') }}</el-text>
+              </template>
+            </el-table-column>
+          </el-table>
+          <details v-if="group.tasks[0].errorMessage?.startsWith('Codex')" class="directory-evidence">
+            <summary>{{ t('queue.directory.evidence') }}</summary>
+            <p>{{ group.tasks[0].errorMessage }}</p>
+          </details>
+        </el-card>
+        <template v-if="group.tasks.length === 1 || expandedDirectories.has(group.key)">
+      <el-card v-for="task in group.tasks" :key="task.id" class="queue-card" shadow="never">
         <template #header>
           <div class="card-header">
             <el-checkbox
@@ -201,11 +268,21 @@
             <div class="file-path" :title="task.sourcePath">{{ task.sourcePath }}</div>
             <div class="header-tags">
               <el-button size="small" type="primary" plain
-                         :loading="codexTaskId === task.id"
+                         :loading="codexTaskId === task.id && recognitionActionLoading === 'codex'"
                          :disabled="recognitionActionLoading !== null"
                          @click="handleCodexRecognition(task)">
                 {{ t('queue.codexRematch') }}
               </el-button>
+              <el-tooltip v-if="!task.assetType || task.assetType === 'VIDEO_FILE'"
+                          :content="t('queue.codexDirectoryHelp')" placement="top">
+                <el-button
+                           size="small" type="primary" plain
+                           :loading="codexTaskId === task.id && recognitionActionLoading === 'codex-directory'"
+                           :disabled="recognitionActionLoading !== null"
+                           @click="handleCodexDirectoryRecognition(task)">
+                  {{ t('queue.codexDirectoryRematch') }}
+                </el-button>
+              </el-tooltip>
               <el-tag :type="selectedTaskIds.has(task.id) ? (selectedOptionByTask[task.id] ? 'success' : 'info') : 'info'" size="small">
                 {{ taskSelectionStatus(task.id) }}
               </el-tag>
@@ -221,10 +298,18 @@
         </template>
 
         <el-alert
-          v-if="task.errorMessage?.startsWith('Codex')"
+          v-if="task.errorMessage"
           :title="task.errorMessage"
-          type="info"
+          :type="task.errorMessage.startsWith('Codex') ? 'info' : 'warning'"
           :closable="false"
+          style="margin-bottom: 12px; overflow-wrap: anywhere"
+        />
+        <el-alert
+          v-if="task.metadataWarning && task.metadataWarning !== task.errorMessage"
+          :title="task.metadataWarning"
+          type="warning"
+          :closable="false"
+          show-icon
           style="margin-bottom: 12px; overflow-wrap: anywhere"
         />
         <el-descriptions :column="4" size="small" border class="task-meta">
@@ -331,16 +416,78 @@
           </el-button>
         </div>
       </el-card>
+        </template>
+      </template>
       <div class="pagination-row">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50, 100]"
-          :total="sortedQueueTasks.length"
+          :total="queueDirectories.length"
           layout="total, sizes, prev, pager, next"
         />
       </div>
     </div>
+
+    <el-dialog v-model="directoryReviewVisible" :title="t('queue.directory.reviewTitle')"
+               width="min(96vw, 960px)" align-center destroy-on-close
+               :close-on-click-modal="!directorySubmitting" :close-on-press-escape="!directorySubmitting"
+               :show-close="!directorySubmitting" :before-close="closeDirectoryReview">
+      <div v-loading="directorySubmitting">
+        <p class="directory-path">{{ directoryReviewPath }}</p>
+        <p>{{ t('queue.directory.reviewHint', { count: directoryReviewRows.length }) }}</p>
+        <el-form label-position="top">
+          <el-form-item :label="t('queue.directory.oneCandidate')" required>
+            <el-select v-model="directoryReviewChoice" class="recognition-field" :placeholder="t('queue.directory.chooseCandidate')">
+              <el-option v-for="option in directoryReviewOptions" :key="option.key" :value="option.key"
+                         :label="`${displayTitle(option)} · ${option.year ?? t('queue.unknown')} · ${t(`task.mediaType.${option.mediaType}`)}`" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <div v-if="directorySelectedOption?.mediaType === 'TV_SHOW'" class="directory-season-row">
+          <span>{{ t('queue.directory.uniformSeason') }}</span>
+          <el-input-number v-model="directoryReviewSeason" :min="0" :max="999" controls-position="right" />
+          <el-button :disabled="directoryReviewSeason == null" @click="applyDirectorySeason">{{ t('queue.directory.applySeason') }}</el-button>
+          <el-text type="info" size="small">{{ t('queue.directory.seasonDefault') }}</el-text>
+        </div>
+        <el-alert v-if="directoryReviewIssue" :title="directoryReviewIssue" type="warning" :closable="false" class="batch-alert" />
+        <el-table :data="directoryReviewRows" max-height="400" size="small">
+          <el-table-column width="52">
+            <template #default="{ row }"><el-checkbox v-model="row.included" :aria-label="t('queue.directory.includeFile')" /></template>
+          </el-table-column>
+          <el-table-column :label="t('queue.directory.filename')" min-width="150">
+            <template #default="{ row }">{{ sourceFileName(row.task.sourcePath) }}</template>
+          </el-table-column>
+          <template v-if="directorySelectedOption?.mediaType === 'TV_SHOW'">
+            <el-table-column :label="t('queue.parsedSeason')" width="140">
+              <template #default="{ row }"><el-input-number v-model="row.season" :disabled="!row.included" :min="0" :max="999" size="small" controls-position="right" class="directory-coordinate" /></template>
+            </el-table-column>
+            <el-table-column :label="t('queue.parsedEpisode')" width="140">
+              <template #default="{ row }"><el-input-number v-model="row.episode" :disabled="!row.included" :min="1" :max="10000" size="small" controls-position="right" class="directory-coordinate" /></template>
+            </el-table-column>
+            <el-table-column :label="t('queue.directory.episodeEnd')" width="140">
+              <template #default="{ row }"><el-input-number v-model="row.episodeEnd" :disabled="!row.included" :min="1" :max="10000" size="small" controls-position="right" class="directory-coordinate" /></template>
+            </el-table-column>
+          </template>
+          <el-table-column :label="t('queue.directory.fileStatus')" min-width="130">
+            <template #default="{ row }"><el-text :type="row.error ? 'danger' : 'info'">{{ row.error || t('queue.directory.readyToReview') }}</el-text></template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <div class="directory-review-footer">
+          <el-text size="small" type="info">{{ t('queue.directory.organizeHint') }}</el-text>
+          <div>
+            <el-button :disabled="directorySubmitting" @click="directoryReviewVisible = false">{{ t('common.cancel') }}</el-button>
+            <el-button type="primary" :loading="directorySubmitting"
+                       :disabled="!!directoryReviewIssue || directoryIncludedRows.length === 0 || directorySubmitting"
+                       @click="confirmDirectory">
+              {{ t('queue.directory.organize', { count: directoryIncludedRows.length }) }}
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
 
     <el-drawer
       v-model="recognitionDrawerVisible"
@@ -731,6 +878,9 @@ import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { mediaApi } from '@/api/media'
 import FloatingActionGroup from '@/components/FloatingActionGroup.vue'
+import { groupQueueDirectories, commonDirectoryOptions, directoryEpisodeIssue, resolveEpisodeSeason } from '@/utils/queueDirectories'
+import type { DirectoryEpisodeRow } from '@/utils/queueDirectories'
+import { submitDirectoryConfirmation } from '@/utils/confirmQueueDirectory'
 import type {
   BatchConfirmItem,
   BatchRecognitionField,
@@ -786,11 +936,11 @@ const globalSearchLoading = ref(false)
 const globalSearchPerformed = ref(false)
 const globalSearchResults = ref<QueueOption[]>([])
 const currentCandidate = ref<QueueOption | null>(null)
-const searchPanelExpanded = ref(true)
+const searchPanelExpanded = ref(false)
 const recommendationExpanded = ref(false)
 const recognitionDrawerVisible = ref(false)
 const recognitionTask = ref<MediaTask | null>(null)
-const recognitionActionLoading = ref<'save' | 'rematch' | 'codex' | null>(null)
+const recognitionActionLoading = ref<'save' | 'rematch' | 'codex' | 'codex-directory' | null>(null)
 const codexTaskId = ref<number | null>(null)
 const recognitionForm = reactive<QueueRecognitionRequest>({
   mediaType: 'MOVIE',
@@ -799,6 +949,27 @@ const recognitionForm = reactive<QueueRecognitionRequest>({
   parsedSeason: null,
   parsedEpisode: null,
   parsedEpisodeEnd: null,
+})
+type DirectoryGroup = ReturnType<typeof groupQueueDirectories>[number]
+interface DirectoryReviewRow extends DirectoryEpisodeRow {
+  task: MediaTask
+  included: boolean
+  error: string
+}
+const expandedDirectories = reactive(new Set<string>())
+const directoryReviewVisible = ref(false)
+const directoryReviewPath = ref('')
+const directoryReviewOptions = ref<QueueOption[]>([])
+const directoryReviewChoice = ref('')
+const directoryReviewRows = ref<DirectoryReviewRow[]>([])
+const directoryReviewSeason = ref<number | undefined>()
+const directorySubmitting = ref(false)
+const directorySelectedOption = computed(() => directoryReviewOptions.value.find(option => option.key === directoryReviewChoice.value))
+const directoryIncludedRows = computed(() => directoryReviewRows.value.filter(row => row.included))
+const directoryReviewIssue = computed(() => {
+  if (!directorySelectedOption.value) return t('queue.directory.chooseCandidate')
+  const issue = directoryEpisodeIssue(directoryIncludedRows.value, directorySelectedOption.value.mediaType)
+  return issue ? t(`queue.directory.issue.${issue}`) : ''
 })
 const batchRecognitionDialogVisible = ref(false)
 const batchRecognitionPreviewLoading = ref(false)
@@ -839,10 +1010,13 @@ const sortedQueueTasks = computed(() => {
   return [...queueTasks.value].sort(compareQueueTaskByFileNameAsc)
 })
 
-const displayedTasks = computed(() => {
+const queueDirectories = computed(() => groupQueueDirectories(sortedQueueTasks.value))
+const displayedDirectories = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
-  return sortedQueueTasks.value.slice(start, start + pageSize.value)
+  return queueDirectories.value.slice(start, start + pageSize.value)
 })
+// 按目录分页，整部剧不会被文件分页截断。
+const displayedTasks = computed(() => displayedDirectories.value.flatMap(group => group.tasks))
 
 const currentPageBatchItems = computed<BatchConfirmItem[]>(() => {
   return displayedTasks.value
@@ -987,7 +1161,7 @@ watch(pageSize, () => {
 })
 
 watch(sortedQueueTasks, () => {
-  const maxPage = Math.max(1, Math.ceil(sortedQueueTasks.value.length / pageSize.value))
+  const maxPage = Math.max(1, Math.ceil(queueDirectories.value.length / pageSize.value))
   if (currentPage.value > maxPage) {
     currentPage.value = maxPage
   }
@@ -1017,7 +1191,10 @@ async function loadQueue() {
 }
 
 async function loadCurrentPageCandidates() {
-  await Promise.all(displayedTasks.value.map((task) => loadCandidates(task.id)))
+  const tasks = displayedTasks.value
+  for (let start = 0; start < tasks.length; start += 8) {
+    await Promise.allSettled(tasks.slice(start, start + 8).map(task => loadCandidates(task.id)))
+  }
 }
 
 async function loadCandidates(taskId: number) {
@@ -1063,7 +1240,7 @@ async function handleConfirm(taskId: number) {
   if (!selected) return
   const task = displayedTasks.value.find((item) => item.id === taskId)
   if (selected.mediaType === 'TV_SHOW' && task
-    && (task.parsedSeason == null || task.parsedEpisode == null)) {
+    && task.parsedEpisode == null) {
     ElMessage.warning(t('queue.validation.seasonEpisodeRequired'))
     openRecognitionEditor(task)
     return
@@ -1420,7 +1597,7 @@ function openRecognitionEditor(task: MediaTask) {
   recognitionForm.mediaType = task.mediaType ?? 'MOVIE'
   recognitionForm.parsedTitle = task.parsedTitle ?? ''
   recognitionForm.parsedYear = task.parsedYear
-  recognitionForm.parsedSeason = task.parsedSeason
+  recognitionForm.parsedSeason = task.mediaType === 'TV_SHOW' ? resolveEpisodeSeason(task) : task.parsedSeason
   recognitionForm.parsedEpisode = task.parsedEpisode
   recognitionForm.parsedEpisodeEnd = task.parsedEpisodeEnd
   globalSearchMediaType.value = recognitionForm.mediaType
@@ -1450,6 +1627,132 @@ async function handleCodexRecognition(selectedTask?: MediaTask) {
     ElMessage.success(t('queue.codexRematchSuccess'))
   } catch {
     // HTTP 层已展示失败原因；保留当前候选和文件。
+  } finally {
+    recognitionActionLoading.value = null
+    codexTaskId.value = null
+  }
+}
+
+function directoryOptions(group: DirectoryGroup) {
+  return commonDirectoryOptions(group.tasks, getTaskOptions)
+}
+
+function toggleDirectoryDetails(key: string) {
+  if (expandedDirectories.has(key)) expandedDirectories.delete(key)
+  else expandedDirectories.add(key)
+}
+
+function openDirectoryReview(group: DirectoryGroup) {
+  const options = directoryOptions(group)
+  if (!options.length) {
+    ElMessage.warning(t('queue.directory.noCommonCandidate'))
+    return
+  }
+  directoryReviewPath.value = group.directory
+  directoryReviewOptions.value = options
+  const selected = getSelectedOption(group.tasks[0].id)
+  const sharedSelection = selected && group.tasks.every(task => getSelectedOption(task.id)?.key === selected.key)
+  directoryReviewChoice.value = sharedSelection ? selected.key : (options.length === 1 ? options[0].key : '')
+  directoryReviewRows.value = group.tasks.map(task => ({
+    taskId: task.id, task, included: true, error: '',
+    season: resolveEpisodeSeason(task), episode: task.parsedEpisode, episodeEnd: task.parsedEpisodeEnd,
+  }))
+  const seasons = new Set(directoryReviewRows.value.map(row => row.season))
+  directoryReviewSeason.value = seasons.size === 1 ? (directoryReviewRows.value[0].season ?? undefined) : undefined
+  directoryReviewVisible.value = true
+}
+
+function closeDirectoryReview(done: () => void) {
+  if (!directorySubmitting.value) done()
+}
+
+function applyDirectorySeason() {
+  if (directoryReviewSeason.value == null) return
+  for (const row of directoryIncludedRows.value) row.season = directoryReviewSeason.value
+}
+
+async function confirmDirectory() {
+  const option = directorySelectedOption.value
+  if (!option || directoryReviewIssue.value || directorySubmitting.value) return
+  const rows = [...directoryIncludedRows.value]
+  if (!rows.length) return
+  directorySubmitting.value = true
+  const failed = new Set<number>()
+  try {
+    for (const row of rows) {
+      row.error = ''
+      delete batchErrorByTask[row.taskId]
+    }
+    const results = await submitDirectoryConfirmation(rows, option, {
+      findTask: id => queueTasks.value.find(task => task.id === id),
+      save: async (id, request) => {
+        const res = await mediaApi.updateTaskRecognition(id, request)
+        mediaStore.updateTask(res.data.data.task)
+      },
+      confirm: async items => (await mediaApi.batchConfirm(items)).data.data.results,
+    }, {
+      stateChanged: t('queue.directory.stateChanged'),
+      saveFailed: t('queue.recognitionSaveFailed'),
+      confirmFailed: t('queue.batchConfirmUnknownError'),
+    })
+    let submitted = 0
+    for (const result of results) {
+      if (result.success) {
+        submitted++
+        mediaStore.updateTaskStatus(result.taskId, 'PROCESSING')
+        selectedTaskIds.delete(result.taskId)
+        selectedOptionByTask[result.taskId] = ''
+        manualSelectedTaskIds.delete(result.taskId)
+      } else {
+        failed.add(result.taskId)
+        const row = rows.find(row => row.taskId === result.taskId)!
+        row.error = result.message || t('queue.batchConfirmUnknownError')
+        batchErrorByTask[result.taskId] = row.error
+      }
+    }
+    const message = t('queue.directory.submitted', { success: submitted, failed: failed.size })
+    if (failed.size) {
+      directoryReviewRows.value = rows.filter(row => failed.has(row.taskId))
+      ElMessage.warning(message)
+    } else {
+      directoryReviewVisible.value = false
+      ElMessage.success(message)
+    }
+    await loadQueue()
+  } catch {
+    // 保留确认面板与输入；刷新实际状态，已被接收的任务不会再次提交。
+    await loadQueue()
+    directoryReviewRows.value = directoryReviewRows.value.filter(row => queueTasks.value.some(task => task.id === row.taskId))
+    if (!directoryReviewRows.value.length) directoryReviewVisible.value = false
+  } finally {
+    directorySubmitting.value = false
+  }
+}
+
+async function handleCodexDirectoryRecognition(task: MediaTask) {
+  recognitionActionLoading.value = 'codex-directory'
+  codexTaskId.value = task.id
+  const editorTask = recognitionTask.value
+  const editorTaskId = editorTask?.id
+  try {
+    const res = await mediaApi.codexRematchDirectory(task.id)
+    for (const response of res.data.data.updated) {
+      applyRecognitionResponse(response.task.id, response, true)
+    }
+    const editorResponse = res.data.data.updated.find((response) => response.task.id === editorTaskId)
+    recognitionTask.value = editorResponse?.task ?? editorTask
+    if (recognitionDrawerVisible.value && editorResponse) openRecognitionEditor(editorResponse.task)
+    const message = t('queue.codexDirectorySuccess', {
+      count: res.data.data.updated.length,
+      skipped: res.data.data.skipped.length,
+    })
+    if (res.data.data.skipped.length) ElMessage.warning(message)
+    else ElMessage.success(message)
+    const updatedIds = new Set(res.data.data.updated.map(response => response.task.id))
+    const group = queueDirectories.value.find(group => group.tasks.some(item => item.id === task.id))
+    if (group && updatedIds.size) openDirectoryReview({ ...group, tasks: group.tasks.filter(item => updatedIds.has(item.id)) })
+  } catch {
+    // HTTP 层展示失败原因，原有候选继续可用。
   } finally {
     recognitionActionLoading.value = null
     codexTaskId.value = null
@@ -1827,6 +2130,33 @@ h2 {
 .candidate-groups :deep(.el-alert__title span) {
   margin-right: 8px;
 }
+
+.directory-advanced > summary { cursor: pointer; color: #909399; font-size: 13px; }
+.directory-advanced[open] > summary { margin-bottom: 14px; }
+.directory-advanced .batch-toolbar { margin-top: 12px; }
+.directory-card {
+  border-radius: 14px;
+  border-color: #dce5f0;
+}
+.directory-header, .directory-heading, .directory-actions, .directory-season-row, .directory-review-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.directory-header, .directory-review-footer { justify-content: space-between; }
+.directory-heading { min-width: 0; flex: 1; }
+.directory-heading > div { min-width: 0; }
+.directory-heading h3, .directory-identity h3 { margin: 0 0 6px; font-size: 17px; }
+.directory-path { color: #909399; font-size: 12px; overflow-wrap: anywhere; }
+.directory-identity { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.directory-identity p { color: #909399; font-size: 13px; margin: 8px 0; }
+.directory-poster { width: 60px; height: 90px; border-radius: 6px; flex-shrink: 0; }
+.directory-evidence { color: #909399; font-size: 12px; margin-top: 14px; overflow-wrap: anywhere; }
+.directory-evidence summary { cursor: pointer; }
+.directory-season-row { margin-bottom: 16px; }
+.directory-coordinate { width: 112px; }
+.directory-review-footer { gap: 16px; }
 
 .queue-card {
   border: 1px solid #e4e7ed;

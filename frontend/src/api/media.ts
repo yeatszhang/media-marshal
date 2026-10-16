@@ -12,6 +12,7 @@ import type {
   QueueBatchRecognitionSaveResponse,
   QueueRecognitionRequest,
   QueueRecognitionResponse,
+  QueueDirectoryRecognitionResponse,
   TaskCandidate,
   TaskCorrectionApplyResponse,
   TaskCorrectionBatchApplyResponse,
@@ -81,6 +82,12 @@ export const mediaApi = {
 
   codexRematchTask(id: number) {
     return http.post<ApiResponse<QueueRecognitionResponse>>(`/api/queue/${id}/codex-rematch`, null, {
+      timeout: 300000,
+    })
+  },
+
+  codexRematchDirectory(id: number) {
+    return http.post<ApiResponse<QueueDirectoryRecognitionResponse>>(`/api/queue/${id}/codex-directory-rematch`, null, {
       timeout: 300000,
     })
   },

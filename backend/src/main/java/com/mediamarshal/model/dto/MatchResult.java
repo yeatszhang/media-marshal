@@ -45,6 +45,9 @@ public class MatchResult {
     /** TV 单集分集标题，多集范围为空 */
     private String episodeTitle;
 
+    /** 作品详情中的 TMDB 季列表；搜索候选不携带此字段。 */
+    private List<TmdbSeason> seasons;
+
     /** 匹配置信度 0.0-1.0 */
     private Double confidence;
 }

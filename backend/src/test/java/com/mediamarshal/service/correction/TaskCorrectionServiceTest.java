@@ -12,7 +12,6 @@ import com.mediamarshal.repository.TaskCandidateRepository;
 import com.mediamarshal.repository.TaskCorrectionBatchItemRepository;
 import com.mediamarshal.repository.WatchRuleRepository;
 import com.mediamarshal.service.matcher.MetadataMatcher;
-import com.mediamarshal.service.nfo.NfoGeneratorService;
 import com.mediamarshal.service.rename.RenameService;
 import com.mediamarshal.service.rename.TemplatePathSafetyService;
 import com.mediamarshal.service.rename.TemplateRenderer;
@@ -27,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -66,8 +66,7 @@ class TaskCorrectionServiceTest {
                 templateRenderer,
                 new TemplatePathSafetyService()
         );
-        NfoGeneratorService nfoGeneratorService = mock(NfoGeneratorService.class);
-        TaskCorrectionFileExecutor fileExecutor = new TaskCorrectionFileExecutor(nfoGeneratorService);
+        TaskCorrectionFileExecutor fileExecutor = new TaskCorrectionFileExecutor();
         TaskCorrectionPersistenceService persistenceService = new TaskCorrectionPersistenceService(
                 taskRepository,
                 candidateRepository
@@ -80,6 +79,7 @@ class TaskCorrectionServiceTest {
                 taskRepository,
                 watchRuleRepository,
                 metadataMatcher,
+                new com.mediamarshal.service.matcher.TmdbEpisodeService(metadataMatcher),
                 renameService,
                 templateRenderer,
                 settingsService,
@@ -104,7 +104,11 @@ class TaskCorrectionServiceTest {
         when(watchRuleRepository.findById(9L)).thenReturn(Optional.of(rule));
         when(metadataMatcher.getById("100", "MOVIE")).thenReturn(movieMatch(100L, "Movie", 2024));
 
-        service.apply(1L, movieRequest("Movie", 2024, 100L, false));
+        TaskCorrectionRequest legacyRequest = movieRequest("Movie", 2024, 100L, true);
+        assertThat(service.preview(1L, legacyRequest).getOperations())
+                .noneMatch(operation -> operation.getType() == com.mediamarshal.model.dto.TaskCorrectionOperation.OperationType.GENERATE_NFO);
+        service.apply(1L, legacyRequest);
+        assertThat(Files.exists(target.resolveSibling("Movie (2024).nfo"))).isFalse();
 
         ArgumentCaptor<MediaTask> taskCaptor = ArgumentCaptor.forClass(MediaTask.class);
         verify(taskRepository, org.mockito.Mockito.times(3)).saveAndFlush(taskCaptor.capture());
@@ -194,6 +198,52 @@ class TaskCorrectionServiceTest {
         Path corrected = tempDir.resolve("library/New (2025)/New (2025).mkv");
         assertThat(Files.exists(current)).isTrue();
         assertThat(Files.exists(corrected)).isFalse();
+        assertThat(original.getStatus()).isEqualTo(MediaTask.TaskStatus.DONE);
+    }
+
+    @Test
+    void correctionPreviewUsesTmdbSeasonAndShowsConflictBeforeMovingFiles() throws Exception {
+        Path current = tempDir.resolve("library/青之箱 (2024)/S02/青之箱 - S02E26.mkv");
+        Files.createDirectories(current.getParent());
+        Files.writeString(current, "video");
+        MediaTask original = doneTask(current);
+        original.setMediaType(MediaTask.MediaType.TV_SHOW);
+        original.setParsedSeason(2);
+        original.setParsedEpisode(26);
+        WatchRule rule = movieRule("{title} ({year})/{title} ({year}){ext}");
+        rule.setTvPathTemplate("{title} ({year})/S{season:02d}/{title} - S{season:02d}E{episode:02d}{ext}");
+        MatchResult detail = new MatchResult();
+        detail.setSourceId("207347");
+        detail.setTitle("青之箱");
+        detail.setYear(2024);
+        detail.setMediaType("TV_SHOW");
+        detail.setSeasons(List.of(new com.mediamarshal.model.dto.TmdbSeason(1, 37)));
+        when(taskRepository.findById(1L)).thenReturn(Optional.of(original));
+        when(watchRuleRepository.findById(9L)).thenReturn(Optional.of(rule));
+        when(metadataMatcher.getById("207347", "TV_SHOW")).thenReturn(detail);
+        when(metadataMatcher.getSeasonEpisodes("207347", 1))
+                .thenReturn(List.of(new com.mediamarshal.model.dto.TmdbEpisode(1, 26, "似曾相识")));
+        TaskCorrectionRequest request = new TaskCorrectionRequest();
+        request.setMediaType("TV_SHOW");
+        request.setParsedTitle("青之箱");
+        request.setParsedYear(2024);
+        request.setParsedSeason(2);
+        request.setParsedEpisode(26);
+        request.setTmdbId(207347L);
+
+        TaskCorrectionPreview preview = service.preview(1L, request);
+
+        assertThat(preview.isCanApply()).isTrue();
+        assertThat(preview.getCorrectedTargetPath()).contains("S01/青之箱 - S01E26.mkv");
+        assertThat(preview.getWarnings()).anyMatch(warning -> warning.contains("S02E26") && warning.contains("S01E26"));
+        assertThat(Files.exists(current)).isTrue();
+        assertThat(original.getParsedSeason()).isEqualTo(2);
+
+        when(metadataMatcher.getSeasonEpisodes("207347", 1)).thenThrow(new IllegalStateException("HTTP 503"));
+        TaskCorrectionPreview unavailable = service.preview(1L, request);
+        assertThat(unavailable.isCanApply()).isFalse();
+        assertThat(unavailable.getBlockers()).anyMatch(blocker -> blocker.contains("TMDB 分集列表暂不可用"));
+        assertThat(Files.exists(current)).isTrue();
         assertThat(original.getStatus()).isEqualTo(MediaTask.TaskStatus.DONE);
     }
 

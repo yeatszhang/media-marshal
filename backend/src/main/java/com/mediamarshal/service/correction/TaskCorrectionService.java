@@ -13,6 +13,7 @@ import com.mediamarshal.model.entity.WatchRule;
 import com.mediamarshal.repository.MediaTaskRepository;
 import com.mediamarshal.repository.WatchRuleRepository;
 import com.mediamarshal.service.matcher.MetadataMatcher;
+import com.mediamarshal.service.matcher.TmdbEpisodeService;
 import com.mediamarshal.service.rename.RenameService;
 import com.mediamarshal.service.rename.TemplateRenderer;
 import com.mediamarshal.service.settings.SettingsService;
@@ -50,6 +51,7 @@ public class TaskCorrectionService {
     private final MediaTaskRepository taskRepository;
     private final WatchRuleRepository watchRuleRepository;
     private final MetadataMatcher metadataMatcher;
+    private final TmdbEpisodeService tmdbEpisodeService;
     private final RenameService renameService;
     private final TemplateRenderer templateRenderer;
     private final SettingsService settingsService;
@@ -138,7 +140,8 @@ public class TaskCorrectionService {
 
         RecognitionInput recognition = parseRecognitionOrBlock(request, preview);
         Long tmdbId = request == null ? null : request.getTmdbId();
-        boolean regenerateNfo = request != null && Boolean.TRUE.equals(request.getRegenerateNfo());
+        // 兼容旧请求字段，NFO 由媒体服务器负责生成。
+        boolean regenerateNfo = false;
 
         Path currentTarget = parseCurrentTarget(originalTask, preview);
         WatchRule rule = loadRuleOrBlock(originalTask, preview);
@@ -165,7 +168,10 @@ public class TaskCorrectionService {
                     throw new IllegalArgumentException("所选 TMDB 候选与修正请求不一致");
                 }
                 correctedTask = buildCorrectedTask(originalTask, recognition, selectedMatch);
-                fillEpisodeTitleIfNeeded(correctedTask, selectedMatch);
+                tmdbEpisodeService.reconcile(correctedTask, selectedMatch);
+                if (correctedTask.getMetadataWarning() != null) {
+                    preview.getWarnings().add(correctedTask.getMetadataWarning());
+                }
                 applyMatchToTask(correctedTask, selectedMatch);
                 correctedTarget = buildCorrectedTarget(originalTask, correctedTask, rule, currentTarget);
                 correctedTask.setTargetPath(correctedTarget.toString());
@@ -173,7 +179,7 @@ public class TaskCorrectionService {
                 preview.setSelectedMatch(selectedMatch);
                 preview.setSameTargetPath(isSamePath(currentTarget, correctedTarget));
                 collectTargetBlockers(originalTask, currentTarget, correctedTarget, preview);
-                collectOperations(originalTask, rule, currentTarget, correctedTarget, regenerateNfo, preview, moves);
+                collectOperations(originalTask, rule, currentTarget, correctedTarget, preview, moves);
                 cleanupStartDir = cleanupStartDir(originalTask, currentTarget);
                 cleanupStopDir = ruleTargetRoot(rule);
             } catch (Exception e) {
@@ -467,7 +473,6 @@ public class TaskCorrectionService {
             WatchRule rule,
             Path currentTarget,
             Path correctedTarget,
-            boolean regenerateNfo,
             TaskCorrectionPreview preview,
             List<TaskCorrectionFileMove> moves
     ) throws IOException {
@@ -488,18 +493,6 @@ public class TaskCorrectionService {
 
         if (!MediaAssetType.BLURAY_DIRECTORY.equals(originalTask.getAssetType())) {
             collectAssociatedFileOperations(currentTarget, correctedTarget, preview, moves);
-        }
-
-        if (regenerateNfo) {
-            Path nfoTarget = MediaAssetType.BLURAY_DIRECTORY.equals(originalTask.getAssetType())
-                    ? correctedTarget.resolve("movie.nfo")
-                    : replaceExtension(correctedTarget, ".nfo");
-            preview.getOperations().add(TaskCorrectionOperation.builder()
-                    .type(TaskCorrectionOperation.OperationType.GENERATE_NFO)
-                    .targetPath(nfoTarget.toString())
-                    .description("按修正后的 TMDB 信息重新生成 NFO")
-                    .build());
-            preview.getWarnings().add("重新生成 NFO 可能覆盖目标位置已有 NFO");
         }
 
         Path cleanupStart = cleanupStartDir(originalTask, currentTarget);
@@ -635,31 +628,6 @@ public class TaskCorrectionService {
         }
     }
 
-    private void fillEpisodeTitleIfNeeded(MediaTask task, MatchResult detail) {
-        if (!MediaTask.MediaType.TV_SHOW.name().equals(detail.getMediaType())
-                || task.getParsedSeason() == null
-                || task.getParsedEpisode() == null
-                || task.getParsedEpisodeEnd() != null) {
-            detail.setEpisodeTitle(null);
-            return;
-        }
-
-        try {
-            detail.setEpisodeTitle(metadataMatcher.getEpisodeTitle(
-                    detail.getSourceId(),
-                    task.getParsedSeason(),
-                    task.getParsedEpisode()
-            ));
-        } catch (RuntimeException e) {
-            if (renameService.templateUsesVariable(task, "episode_title")) {
-                throw new IllegalStateException("TMDB 分集详情不可用，无法填充 {episode_title}", e);
-            }
-            log.warn("TMDB episode detail lookup failed during correction but template does not use episode_title: taskId={}, tmdbId={}, season={}, episode={}, error={}",
-                    task.getCorrectedFromTaskId(), detail.getSourceId(), task.getParsedSeason(), task.getParsedEpisode(), e.getMessage());
-            detail.setEpisodeTitle(null);
-        }
-    }
-
     private String genreAt(MatchResult match, int index) {
         List<String> genres = match.getGenres();
         if (genres == null || genres.size() <= index) {
@@ -682,6 +650,7 @@ public class TaskCorrectionService {
         copy.setGenres(source.getGenres() == null ? List.of() : List.copyOf(source.getGenres()));
         copy.setCountry(source.getCountry());
         copy.setEpisodeTitle(source.getEpisodeTitle());
+        copy.setSeasons(source.getSeasons());
         copy.setConfidence(source.getConfidence());
         return copy;
     }

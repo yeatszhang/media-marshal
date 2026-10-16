@@ -10,6 +10,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,6 +55,19 @@ class CodexRecognitionServiceTest {
     }
 
     @Test
+    void missingSeasonDefaultsToFirstWithoutInventingEpisode() throws Exception {
+        var result = service.parseSuggestion(mapper.readTree("""
+                {"status":"identified","title":"某剧","type":"episode","season":null,"episode":null,"confidence":0.96}
+                """), rule(), new ParseResult()).orElseThrow().parsed();
+        assertThat(result.getSeason()).isEqualTo(1);
+        assertThat(result.getEpisode()).isNull();
+        var movie = service.parseSuggestion(mapper.readTree("""
+                {"status":"identified","title":"电影","type":"movie","confidence":0.96}
+                """), rule(), new ParseResult()).orElseThrow().parsed();
+        assertThat(movie.getSeason()).isNull();
+    }
+
+    @Test
     void rejectsUnknownWeakOrInvalidResults() throws Exception {
         for (String value : new String[]{
                 "{\"status\":\"unknown\",\"title\":\"猜测\",\"type\":\"movie\",\"confidence\":0.99}",
@@ -70,6 +84,41 @@ class CodexRecognitionServiceTest {
         assertThat(service.parseSuggestion(mapper.readTree("""
                 {"status":"identified","title":"剧集","type":"episode","confidence":0.99}
                 """), rule, new ParseResult())).isEmpty();
+    }
+
+    @Test
+    void directoryPreservesEachFileCoordinatesAndEpisodeRange() throws Exception {
+        ParseResult first = new ParseResult();
+        first.setSeason(2);
+        first.setEpisode(8);
+        ParseResult second = new ParseResult();
+        var response = mapper.readTree("""
+                {"status":"identified","title":"正式剧名","type":"episode","year":2026,
+                 "confidence":0.96,"reason":"目录依据","files":[
+                 {"filename":"01.mkv","season":1,"episode":1,"episode_end":null},
+                 {"filename":"02-03.mkv","season":null,"episode":2,"episode_end":3}]}
+                """);
+        var results = service.parseDirectorySuggestions(response, rule(), Map.of("01.mkv", first, "02-03.mkv", second));
+        assertThat(results).hasSize(2);
+        assertThat(results.get("01.mkv").parsed().getSeason()).isEqualTo(2);
+        assertThat(results.get("01.mkv").parsed().getEpisode()).isEqualTo(8);
+        assertThat(results.get("02-03.mkv").parsed().getSeason()).isEqualTo(1);
+        assertThat(results.get("02-03.mkv").parsed().getEpisodeEnd()).isEqualTo(3);
+    }
+
+    @Test
+    void directoryRejectsMissingDuplicateForeignOrInvalidFiles() throws Exception {
+        var originals = Map.of("01.mkv", new ParseResult(), "02.mkv", new ParseResult());
+        for (String files : new String[]{
+                "[{\"filename\":\"01.mkv\",\"season\":1,\"episode\":1}]",
+                "[{\"filename\":\"01.mkv\"},{\"filename\":\"01.mkv\"}]",
+                "[{\"filename\":\"01.mkv\"},{\"filename\":\"other.mkv\"}]",
+                "[{\"filename\":\"01.mkv\",\"episode\":true},{\"filename\":\"02.mkv\"}]"}) {
+            var response = mapper.readTree("""
+                    {"status":"identified","title":"剧名","type":"episode","confidence":0.96,"files":%s}
+                    """.formatted(files));
+            assertThat(service.parseDirectorySuggestions(response, rule(), originals)).isEmpty();
+        }
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.mediamarshal.websocket;
 
 import com.mediamarshal.model.entity.MediaTask;
+import com.mediamarshal.service.emby.EmbyLibraryRefreshService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -30,6 +31,7 @@ public class EventPublisher {
     private static final String TOPIC_TASKS = "/topic/tasks";
 
     private final SimpMessagingTemplate messagingTemplate;
+    private final EmbyLibraryRefreshService embyLibraryRefreshService;
 
     public void publishTaskCreated(MediaTask task) {
         publish("task.created", task);
@@ -40,6 +42,7 @@ public class EventPublisher {
     }
 
     public void publishTaskDone(MediaTask task) {
+        embyLibraryRefreshService.requestRefresh();
         publish("task.done", task);
     }
 

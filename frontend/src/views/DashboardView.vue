@@ -179,6 +179,7 @@
               <span class="detail-message">{{ taskDetails(row) }}</span>
             </div>
             <span v-else>{{ taskDetails(row) }}</span>
+            <el-text v-if="row.metadataWarning" type="warning" tag="div">{{ row.metadataWarning }}</el-text>
           </template>
         </el-table-column>
         <el-table-column prop="matchConfidence" :label="t('dashboard.confidence')" width="90">
@@ -449,9 +450,6 @@
                     <el-button native-type="button" size="small" :icon="Refresh" :loading="correctionRematching" @click="rematchCorrection">
                       {{ t('dashboard.correction.rematch') }}
                     </el-button>
-                    <el-checkbox v-model="correctionForm.regenerateNfo" @change="handleRegenerateNfoChange">
-                      {{ t('dashboard.correction.regenerateNfo') }}
-                    </el-checkbox>
                   </div>
                 </el-form>
               </section>
@@ -1111,13 +1109,6 @@ async function handleCorrectionScopeChange(value: string | number | boolean | un
   invalidateCorrectionPreview()
   if (selectedCorrectionCandidate.value) {
     await refreshCorrectionPreview()
-  }
-}
-
-function handleRegenerateNfoChange() {
-  invalidateCorrectionPreview()
-  if (selectedCorrectionCandidate.value) {
-    void refreshCorrectionPreview()
   }
 }
 

@@ -1,7 +1,5 @@
 package com.mediamarshal.service.correction;
 
-import com.mediamarshal.service.nfo.NfoGeneratorService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -19,10 +17,7 @@ import java.util.List;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 class TaskCorrectionFileExecutor {
-
-    private final NfoGeneratorService nfoGeneratorService;
 
     TaskCorrectionFileExecution execute(TaskCorrectionPlan plan) {
         List<TaskCorrectionFileMove> executedMoves = new ArrayList<>();
@@ -30,9 +25,6 @@ class TaskCorrectionFileExecutor {
             for (TaskCorrectionFileMove move : plan.moves()) {
                 movePath(move.source(), move.target());
                 executedMoves.add(move);
-            }
-            if (plan.regenerateNfo()) {
-                nfoGeneratorService.generate(plan.correctedTask(), plan.selectedMatch(), plan.correctedTarget());
             }
             return new TaskCorrectionFileExecution(List.copyOf(executedMoves));
         } catch (Exception e) {

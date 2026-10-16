@@ -46,10 +46,10 @@ public class MediaTask {
     /** guessit 解析出的年份 */
     private Integer parsedYear;
 
-    /** guessit 解析出的季号（剧集） */
+    /** 待整理季号：初始来自名称解析，经 TMDB 校验后可修正。 */
     private Integer parsedSeason;
 
-    /** guessit 解析出的集号（剧集） */
+    /** 待整理集号，必须在 TMDB 对应季的分集列表中存在。 */
     private Integer parsedEpisode;
 
     private Integer parsedEpisodeEnd;
@@ -121,6 +121,10 @@ public class MediaTask {
     /** 失败或警告信息 */
     @Column(columnDefinition = "TEXT")
     private String errorMessage;
+
+    /** 元数据冲突及采用 TMDB 的说明，整理完成后继续保留供用户核对。 */
+    @Column(columnDefinition = "TEXT")
+    private String metadataWarning;
 
     /** 跳过原因，仅 status=SKIPPED 时使用 */
     @Column(length = 500)

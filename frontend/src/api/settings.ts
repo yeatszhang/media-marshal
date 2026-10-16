@@ -2,6 +2,14 @@ import http from './http'
 import type { ApiResponse, AppSetting, EffectiveSetting } from '@/types'
 
 export const settingsApi = {
+  getEmby() {
+    return http.get<ApiResponse<{ enabled: boolean; serverUrl: string; apiKeyConfigured: boolean }>>('/api/emby/settings')
+  },
+
+  updateEmby(enabled: boolean, serverUrl: string, apiKey: string) {
+    return http.put<ApiResponse<void>>('/api/emby/settings', { enabled, serverUrl, apiKey })
+  },
+
   getAll() {
     return http.get<ApiResponse<AppSetting[]>>('/api/settings')
   },
