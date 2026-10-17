@@ -4,11 +4,16 @@ import com.mediamarshal.service.settings.SettingsService;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -80,6 +85,43 @@ class TmdbInMemoryCacheTest {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);
         }
+    }
+
+    @Test
+    void failedRequestCanBeRetriedWithoutRetainingFailedFuture() {
+        for (int i = 0; i < 100; i++) {
+            String key = "season-episodes|retry|" + i;
+            assertThatThrownBy(() -> cache.getWithStatus(key, () -> {
+                throw new IllegalStateException("连接失败");
+            }, ignored -> Duration.ofMinutes(1))).hasMessage("连接失败");
+            assertThat(cache.getWithStatus(key, () -> "重试成功", ignored -> Duration.ofMinutes(1)).value())
+                    .isEqualTo("重试成功");
+        }
+    }
+
+    @Test
+    void reusesSuccessfulPersistentValueAfterMemoryCacheRestart() {
+        var persistent = mock(TmdbPersistentCache.class);
+        var expiry = Instant.now().plusSeconds(60);
+        when(persistent.find("detail|movie|1")).thenReturn(Optional.of(new TmdbPersistentCache.Value("电影详情", expiry)));
+        var restarted = new TmdbInMemoryCache(settingsService, persistent);
+        assertThat(restarted.getWithStatus("detail|movie|1", () -> {
+            throw new AssertionError("有效持久缓存不应请求网络");
+        }, ignored -> Duration.ofMinutes(1)).value()).isEqualTo("电影详情");
+        verify(persistent, never()).save(anyString(), any(), any(), anyInt());
+    }
+
+    @Test
+    void persistsOnlySuccessfulLoads() {
+        var persistent = mock(TmdbPersistentCache.class);
+        when(persistent.find(anyString())).thenReturn(Optional.empty());
+        var cached = new TmdbInMemoryCache(settingsService, persistent);
+        assertThatThrownBy(() -> cached.getWithStatus("detail|movie|1", () -> {
+            throw new IllegalStateException("限流");
+        }, ignored -> Duration.ofMinutes(1))).hasMessage("限流");
+        verify(persistent, never()).save(anyString(), any(), any(), anyInt());
+        cached.getWithStatus("detail|movie|1", () -> "电影详情", ignored -> Duration.ofMinutes(1));
+        verify(persistent).save(eq("detail|movie|1"), eq("电影详情"), any(), eq(5000));
     }
 
     private void sleepBriefly() {

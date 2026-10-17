@@ -30,10 +30,11 @@ export async function submitDirectoryConfirmation(
       const season = tv ? (row.season ?? null) : null
       const episode = tv ? (row.episode ?? null) : null
       const episodeEnd = tv ? (row.episodeEnd ?? null) : null
-      if (task.mediaType !== option.mediaType || task.parsedSeason !== season
+      const title = option.title || option.originalTitle || task.parsedTitle || ''
+      if (task.mediaType !== option.mediaType || task.parsedTitle !== title || task.parsedYear !== option.year || task.parsedSeason !== season
           || task.parsedEpisode !== episode || task.parsedEpisodeEnd !== episodeEnd) {
         await api.save(task.id, {
-          mediaType: option.mediaType, parsedTitle: option.title || option.originalTitle || task.parsedTitle || '',
+          mediaType: option.mediaType, parsedTitle: title,
           parsedYear: option.year, parsedSeason: season, parsedEpisode: episode, parsedEpisodeEnd: episodeEnd,
         })
       }

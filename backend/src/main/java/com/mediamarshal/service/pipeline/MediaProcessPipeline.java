@@ -91,6 +91,8 @@ public class MediaProcessPipeline {
     private final EmailNotificationService emailNotificationService;
     private final ParentFolderMatchEnhancer parentFolderMatchEnhancer;
     private final Map<String, FileOperationStrategy> fileOperationStrategies;
+    private final AutomaticOrganizationGuard automaticOrganizationGuard;
+    private final Map<Path, Long> automaticTargets = new LinkedHashMap<>();
     private final ExecutorService manualConfirmationExecutor = Executors.newFixedThreadPool(
             4,
             Thread.ofVirtual().name("manual-confirm-", 0).factory()
@@ -158,10 +160,22 @@ public class MediaProcessPipeline {
             fillParsedFields(task, parseResult);
 
             CodexRecognitionService.Suggestion codexSuggestion = null;
+            boolean clusterHandled = false;
+            if (asset.type() == MediaAssetType.VIDEO_FILE) {
+                var cluster = codexRecognitionService.recognizeCluster(asset.rootPath(), rule, parseResult);
+                if (cluster != null) {
+                    clusterHandled = cluster.clustered();
+                    codexSuggestion = cluster.suggestion().orElse(null);
+                    if (codexSuggestion != null) {
+                        parseResult = codexSuggestion.parsed();
+                        fillParsedFields(task, parseResult);
+                    }
+                }
+            }
 
             // Step 3: 确定媒体类型
             Optional<MediaTask.MediaType> mediaType = resolveMediaType(rule, parseResult, task.getAssetType());
-            if (mediaType.isEmpty()) {
+            if (mediaType.isEmpty() && !clusterHandled) {
                 codexSuggestion = codexRecognitionService.recognize(asset.rootPath(), rule, parseResult).orElse(null);
                 if (codexSuggestion != null) {
                     parseResult = codexSuggestion.parsed();
@@ -185,7 +199,7 @@ public class MediaProcessPipeline {
                     metadataMatcher.search(parseResult),
                     confidenceThreshold
             );
-            if (codexSuggestion == null && bestConfidence(candidates) < confidenceThreshold) {
+            if (codexSuggestion == null && !clusterHandled && bestConfidence(candidates) < confidenceThreshold) {
                 var suggestion = codexRecognitionService.recognize(asset.rootPath(), rule, parseResult);
                 if (suggestion.isPresent()) {
                     var proposed = suggestion.get();
@@ -215,38 +229,11 @@ public class MediaProcessPipeline {
             }
             List<TaskCandidate> savedCandidates = saveCandidates(task, candidates);
             if (savedCandidates.isEmpty()) {
-                moveToAwaitingConfirmation(task, "No TMDB candidates found");
+                moveToAwaitingConfirmation(task, "没有 TMDB 作品候选，请手动搜索作品或重新识别。");
                 return;
             }
 
-            // Step 5: 置信度判断
-            TaskCandidate topCandidate = savedCandidates.getFirst();
-            task.setMatchConfidence(topCandidate.getConfidence());
-            if (task.getMediaType() == MediaTask.MediaType.TV_SHOW
-                    && task.getParsedSeason() != null && task.getParsedEpisode() != null
-                    && topCandidate.getConfidence() != null && topCandidate.getConfidence() >= confidenceThreshold) {
-                // 作品分数不等于季集正确；即使稍后需要 Codex 确认，也先展示 TMDB 的冲突建议。
-                loadReviewedMatch(task, topCandidate);
-            }
-            if ((codexSuggestion != null && codexRecognitionService.requiresConfirmation(codexSuggestion.confidence()))
-                    || (task.getMediaType() == MediaTask.MediaType.TV_SHOW
-                    && (parseResult.getSeason() == null || parseResult.getEpisode() == null))) {
-                moveToAwaitingConfirmation(task, codexSuggestion != null
-                        ? "Codex 已提供 TMDB 候选，请确认作品及季集信息。" + codexSuggestion.reason()
-                        : "剧集缺少季号或集号，请编辑补齐后确认");
-                return;
-            }
-            if (topCandidate.getConfidence() == null || topCandidate.getConfidence() < confidenceThreshold) {
-                moveToAwaitingConfirmation(task, "Low confidence match");
-                return;
-            }
-
-            // 高置信度自动采纳 rank=1 候选，继续 Step 6-8
-            MatchResult topMatch = enrichSelectedMatch(task, topCandidate);
-            applyMatchToTask(task, topMatch);
-            task.setConfirmationSource(MediaTask.ConfirmationSource.AUTO_MATCH);
-            taskRepository.save(task);
-            continueAfterMetadataConfirmed(task, topMatch);
+            reviewAutomaticOrganization(List.of(new AutomaticReview(task, savedCandidates, codexSuggestion)), false);
 
         } catch (EpisodeMetadataException e) {
             moveToAwaitingConfirmation(task, e.getMessage());
@@ -329,6 +316,7 @@ public class MediaProcessPipeline {
 
         ensureEpisodeCoordinates(task, MediaTask.MediaType.valueOf(mediaType));
         task.setStatus(MediaTask.TaskStatus.PROCESSING);
+        task.setErrorMessage(null);
         task.setConfirmationSource(confirmationSource);
         taskRepository.save(task);
         eventPublisher.publishTaskProcessing(task);
@@ -350,7 +338,7 @@ public class MediaProcessPipeline {
         return new QueueRecognitionResponse(task, candidates);
     }
 
-    /** 对已有待确认记录重新识别；只更新建议和候选，不执行移动。 */
+    /** 重新识别后统一校验，仅无冲突的可靠结果继续自动整理。 */
     public QueueRecognitionResponse recognizeWithCodex(Long taskId) {
         MediaTask task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new IllegalArgumentException("任务不存在"));
@@ -364,10 +352,12 @@ public class MediaProcessPipeline {
         ParseResult parsed = suggestion.parsed();
         List<MatchResult> matches = metadataMatcher.search(parsed);
         if (matches.isEmpty()) throw new IllegalStateException("Codex 建议未通过 TMDB 校验，请手动选择作品");
-        return applyCodexSuggestion(taskId, suggestion, matches);
+        QueueRecognitionResponse response = applyCodexSuggestion(taskId, suggestion, matches);
+        reviewAutomaticOrganization(List.of(new AutomaticReview(response.task(), response.candidates(), suggestion)), true);
+        return response;
     }
 
-    /** 同一规则、直接父目录中的待确认视频一次识别；仅更新候选。 */
+    /** 整目录先回填全部解析，再检查冲突，避免先移动其中一个重复副本。 */
     public QueueDirectoryRecognitionResponse recognizeDirectoryWithCodex(Long taskId) {
         MediaTask anchor = taskRepository.findById(taskId).orElseThrow(() -> new IllegalArgumentException("任务不存在"));
         if (anchor.getStatus() != MediaTask.TaskStatus.AWAITING_CONFIRMATION
@@ -406,16 +396,21 @@ public class MediaProcessPipeline {
         List<MatchResult> matches = metadataMatcher.search(identity);
         if (matches.isEmpty()) throw new IllegalStateException("Codex 目录建议未通过 TMDB 校验，已保留原识别信息");
         List<QueueRecognitionResponse> updated = new ArrayList<>();
+        List<AutomaticReview> reviews = new ArrayList<>();
         for (MediaTask task : tasks) {
             var suggestion = suggestions.get(Path.of(task.getSourcePath()).getFileName().toString());
             if (suggestion == null) continue;
             try {
-                updated.add(applyCodexSuggestion(task.getId(), suggestion, matches));
+                QueueRecognitionResponse response = applyCodexSuggestion(task.getId(), suggestion, matches);
+                updated.add(response);
+                reviews.add(new AutomaticReview(response.task(), response.candidates(), suggestion));
             } catch (Exception e) {
-                skipped.add(new QueueDirectoryRecognitionResponse.SkippedTask(task.getId(), "任务已变化或更新失败，请刷新后重试"));
+                skipped.add(new QueueDirectoryRecognitionResponse.SkippedTask(task.getId(), "更新 " + Path.of(task.getSourcePath()).getFileName()
+                        + " 失败：" + e.getMessage() + "。请刷新后重试"));
                 log.warn("目录识别更新失败：taskId={}, error={}", task.getId(), e.getClass().getSimpleName());
             }
         }
+        reviewAutomaticOrganization(reviews, true);
         return new QueueDirectoryRecognitionResponse(parent.toString(), updated, skipped);
     }
 
@@ -430,12 +425,106 @@ public class MediaProcessPipeline {
         ParseResult parsed = suggestion.parsed();
         task.setMediaType("episode".equals(parsed.getType()) ? MediaTask.MediaType.TV_SHOW : MediaTask.MediaType.MOVIE);
         fillParsedFields(task, parsed);
+        if (task.getMediaType() == MediaTask.MediaType.TV_SHOW) {
+            task.setParsedSeason(EpisodeSeasonResolver.resolve(task.getParsedSeason(), null, Path.of(task.getSourcePath())));
+        }
         List<TaskCandidate> candidates = saveCandidates(task, matches);
         task.setMatchConfidence(candidates.isEmpty() ? null : candidates.getFirst().getConfidence());
-        task.setErrorMessage("Codex 已提供 TMDB 候选，请确认作品及季集信息。" + suggestion.reason());
+        task.setErrorMessage("Codex 已更新识别，正在校验作品、季集与目标路径。" + suggestion.reason());
         taskRepository.save(task);
-        eventPublisher.publishAwaitingConfirmation(task);
         return new QueueRecognitionResponse(task, candidates);
+    }
+
+    private record AutomaticReview(MediaTask task, List<TaskCandidate> candidates,
+                                   CodexRecognitionService.Suggestion suggestion) {}
+
+    private record AutomaticPlan(AutomaticReview review, TaskCandidate candidate, MatchResult match, Path target) {}
+
+    /** 统一处理新发现与重新识别；先审查整批计划，再提交文件操作。 */
+    private synchronized void reviewAutomaticOrganization(List<AutomaticReview> reviews, boolean background) {
+        List<AutomaticPlan> plans = new ArrayList<>();
+        Map<Long, String> blockers = new LinkedHashMap<>();
+        Map<Long, Path> targets = new LinkedHashMap<>();
+        Map<Long, List<Integer>> sourceSeasons = new LinkedHashMap<>();
+        for (AutomaticReview review : reviews) {
+            MediaTask task = review.task();
+            try {
+                if (review.candidates().isEmpty()) throw new EpisodeMetadataException("没有 TMDB 作品候选，请手动搜索作品或重新识别。");
+                TaskCandidate candidate = review.candidates().getFirst();
+                if (candidate.getMediaType() != task.getMediaType()) {
+                    throw new EpisodeMetadataException("作品候选类型与识别类型不一致，请手动选择作品。");
+                }
+                double threshold = getConfidenceThreshold();
+                if (candidate.getConfidence() == null || !Double.isFinite(candidate.getConfidence())
+                        || candidate.getConfidence() < threshold) {
+                    throw new EpisodeMetadataException("作品匹配置信度不足（当前 "
+                            + (candidate.getConfidence() == null ? "未知" : "%.0f%%".formatted(candidate.getConfidence() * 100))
+                            + "，要求 %.0f%%）。请核对作品或重新识别。".formatted(threshold * 100));
+                }
+                if (review.suggestion() != null && codexRecognitionService.requiresConfirmation(review.suggestion().confidence())) {
+                    throw new EpisodeMetadataException("Codex 识别置信度 %.0f%%，低于自动整理要求 90%%。请核对作品及季集。"
+                            .formatted(review.suggestion().confidence() * 100));
+                }
+                ensureSourceFileExists(task);
+                ensureEpisodeCoordinates(task, candidate.getMediaType());
+                Integer sourceSeason = task.getParsedSeason();
+                task.setMediaType(candidate.getMediaType());
+                MatchResult match = loadReviewedMatch(task, candidate, true);
+                if (task.getMediaType() == MediaTask.MediaType.TV_SHOW && task.getMetadataWarning() != null) {
+                    sourceSeasons.put(task.getId(), List.of(sourceSeason,
+                            EpisodeSeasonResolver.resolve(null, null, Path.of(task.getSourcePath()))));
+                }
+                applyMatchToTask(task, match);
+                Path target = Objects.requireNonNull(assetOrganizerService.previewTarget(task), "无法生成目标路径")
+                        .toAbsolutePath().normalize();
+                if (target.toString().matches(".*\\{[a-z_][a-z0-9_]*(?::[^}]*)?}.*")) {
+                    throw new EpisodeMetadataException("目标路径含有未填充的模板变量：" + target + "。请补齐元数据或修改路径模板。");
+                }
+                targets.put(task.getId(), target);
+                plans.add(new AutomaticPlan(review, candidate, match, target));
+            } catch (Exception e) {
+                if (task.getStatus() != MediaTask.TaskStatus.FAILED) blockers.put(task.getId(), e.getMessage());
+                log.info("自动整理保留复核：taskId={}, reason={}", task.getId(), e.getMessage());
+            }
+        }
+        Map<Long, String> conflicts = automaticOrganizationGuard.conflicts(
+                reviews.stream().map(AutomaticReview::task).toList(), targets, sourceSeasons);
+        conflicts.forEach((id, reason) -> blockers.merge(id, reason, (a, b) -> a + "\n" + b));
+        for (AutomaticPlan plan : plans) {
+            Long owner = automaticTargets.get(plan.target());
+            if (owner != null) blockers.put(plan.review().task().getId(), "目标路径正在由任务 " + owner
+                    + " 整理：" + plan.target() + "。请等待完成后检查目标文件。");
+        }
+        for (AutomaticReview review : reviews) {
+            String blocker = blockers.get(review.task().getId());
+            if (blocker != null && review.task().getStatus() != MediaTask.TaskStatus.FAILED) {
+                String evidence = review.suggestion() == null ? "" : "\n识别依据：" + review.suggestion().reason();
+                moveToAwaitingConfirmation(review.task(), blocker + evidence);
+            }
+        }
+        for (AutomaticPlan plan : plans) {
+            MediaTask task = plan.review().task();
+            if (blockers.containsKey(task.getId()) || task.getStatus() == MediaTask.TaskStatus.FAILED) continue;
+            plan.candidate().setSelected(true);
+            candidateRepository.save(plan.candidate());
+            task.setConfirmationSource(MediaTask.ConfirmationSource.AUTO_MATCH);
+            task.setStatus(MediaTask.TaskStatus.PROCESSING);
+            task.setErrorMessage(null);
+            taskRepository.save(task);
+            eventPublisher.publishTaskProcessing(task);
+            automaticTargets.put(plan.target(), task.getId());
+            Runnable organize = () -> {
+                try {
+                    continueAfterMetadataConfirmed(task, plan.match());
+                } finally {
+                    synchronized (MediaProcessPipeline.this) {
+                        automaticTargets.remove(plan.target(), task.getId());
+                    }
+                }
+            };
+            if (background) manualConfirmationExecutor.submit(organize);
+            else organize.run();
+        }
     }
 
     private MediaTask updateRecognitionFields(Long taskId, QueueRecognitionRequest request) {
@@ -782,7 +871,14 @@ public class MediaProcessPipeline {
             log.info("Pipeline completed: taskId={}, target={}", task.getId(), target);
         } catch (Exception e) {
             log.error("Pipeline finalization failed: taskId={}", task.getId(), e);
-            recordFailure(task, e);
+            if (task.getConfirmationSource() == MediaTask.ConfirmationSource.AUTO_MATCH
+                    && e instanceof MediaTaskFailureException failure
+                    && (failure.getErrorCode() == MediaTask.TaskErrorCode.TARGET_CONFLICT
+                    || failure.getErrorCode() == MediaTask.TaskErrorCode.UNSAFE_TARGET_PATH)) {
+                moveToAwaitingConfirmation(task, e.getMessage() + "。请检查目标路径后重试。");
+            } else {
+                recordFailure(task, e);
+            }
         }
     }
 
@@ -941,19 +1037,26 @@ public class MediaProcessPipeline {
     }
 
     private MatchResult loadReviewedMatch(MediaTask task, TaskCandidate candidate) {
+        return loadReviewedMatch(task, candidate, false);
+    }
+
+    private MatchResult loadReviewedMatch(MediaTask task, TaskCandidate candidate, boolean acceptValidatedSeasonMapping) {
         MatchResult detail;
         try {
             detail = getByIdWithRetry(candidate.getTmdbId(), candidate.getMediaType());
         } catch (RuntimeException e) {
             if (candidate.getMediaType() == MediaTask.MediaType.TV_SHOW) {
-                throw new EpisodeMetadataException("TMDB 剧集详情暂不可用，季集号未经校验；已暂停文件整理，请稍后重试");
+                throw new EpisodeMetadataException("TMDB 剧集详情获取失败：" + e.getMessage()
+                        + "；季集号未经校验，已暂停文件整理，请重试");
             }
             throw e;
         }
         detail.setConfidence(candidate.getConfidence());
         if (tmdbEpisodeService.reconcile(task, detail)) {
             taskRepository.save(task);
-            throw new EpisodeMetadataException(task.getMetadataWarning());
+            if (!acceptValidatedSeasonMapping) {
+                throw new EpisodeMetadataException(task.getMetadataWarning() + "请核对后确认。");
+            }
         }
         return detail;
     }

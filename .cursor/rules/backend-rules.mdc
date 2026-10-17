@@ -17,6 +17,8 @@ alwaysApply: false
 - `model/dto/` — 数据传输对象，API 入参/出参用 DTO，不直接暴露实体
 
 ## API 响应
+错误响应、任务记录及异常事件必须保留可供界面展示的具体原因与关联对象，遵循 [错误与异常反馈要求](error-feedback.mdc)，不得仅记录日志或返回笼统的失败信息。
+
 所有接口返回 `ApiResponse<T>`，不裸返回对象：
 ```java
 // ✅

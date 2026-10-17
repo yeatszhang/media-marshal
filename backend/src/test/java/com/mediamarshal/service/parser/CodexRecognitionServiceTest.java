@@ -29,9 +29,30 @@ class CodexRecognitionServiceTest {
     }
 
     @Test
+    void reliableResultsNoLongerReadLegacyForcedApprovalSetting() {
+        assertThat(service.requiresConfirmation(0.9)).isFalse();
+        assertThat(service.requiresConfirmation(0.99)).isFalse();
+        assertThat(service.requiresConfirmation(0.89)).isTrue();
+        assertThat(service.requiresConfirmation(Double.NaN)).isTrue();
+        verifyNoInteractions(settings);
+    }
+
+    @Test
     void disabledDoesNotCallBridge() {
         when(settings.get("codex.enabled", "false")).thenReturn("false");
         assertThat(service.recognize(Path.of("/missing"), rule(), new ParseResult())).isEmpty();
+        assertThat(service.recognizeCluster(Path.of("/missing"), rule(), new ParseResult()).clustered()).isFalse();
+        verifyNoInteractions(builder);
+    }
+
+    @Test
+    void movieRulesAndMissingTokenNeverRequestClusterBridge() {
+        when(settings.get("codex.enabled", "false")).thenReturn("true");
+        WatchRule movieRule = rule();
+        movieRule.setMediaType(WatchRule.RuleMediaType.MOVIE);
+        assertThat(service.recognizeCluster(Path.of("/missing"), movieRule, new ParseResult()).clustered()).isFalse();
+        when(settings.get("codex.bridge-token", "")).thenReturn("");
+        assertThat(service.recognizeCluster(Path.of("/missing"), rule(), new ParseResult()).clustered()).isFalse();
         verifyNoInteractions(builder);
     }
 
@@ -134,5 +155,107 @@ class CodexRecognitionServiceTest {
         assertThat(context.get("siblings").toString()).contains("01.mkv", "02.mkv").doesNotContain("secret.txt");
         assertThatThrownBy(() -> service.buildContext(root.resolve("../outside.mkv"), rule, new ParseResult()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void clusterScopeSharesSeriesAcrossSeasonsButNotOtherPathsOrRules(@TempDir Path root) throws Exception {
+        WatchRule rule = rule();
+        rule.setId(1L);
+        rule.setSourceDir(root.toString());
+        Path first = Files.writeString(Files.createDirectories(root.resolve("小城日常/S01")).resolve("01.mp4"), "video");
+        Path second = Files.writeString(Files.createDirectories(root.resolve("小城日常/Season 02")).resolve("02.mp4"), "video");
+        String scope = service.buildContext(first, rule, new ParseResult()).get("cluster_scope").toString();
+        assertThat(scope).matches("[a-f0-9]{64}");
+        assertThat(service.buildContext(second, rule, new ParseResult()).get("cluster_scope")).isEqualTo(scope);
+        for (String name : new String[]{"第三季", "特别篇", "Specials"}) {
+            Path video = Files.writeString(Files.createDirectories(root.resolve("小城日常/" + name)).resolve("01.mp4"), "video");
+            assertThat(service.buildContext(video, rule, new ParseResult()).get("cluster_scope")).isEqualTo(scope);
+        }
+        rule.setId(2L);
+        assertThat(service.buildContext(first, rule, new ParseResult()).get("cluster_scope")).isNotEqualTo(scope);
+        rule.setId(1L);
+        Path other = Files.writeString(Files.createDirectories(root.resolve("另一部剧/S01")).resolve("01.mp4"), "video");
+        assertThat(service.buildContext(other, rule, new ParseResult()).get("cluster_scope")).isNotEqualTo(scope);
+    }
+
+    @Test
+    void clusterContextMarksTruncatedSiblings(@TempDir Path root) throws Exception {
+        WatchRule rule = rule();
+        rule.setSourceDir(root.toString());
+        Path directory = Files.createDirectories(root.resolve("长篇动画/S01"));
+        for (int n = 1; n <= 81; n++) Files.writeString(directory.resolve(n + ".mp4"), "video");
+        var context = service.buildContext(directory.resolve("1.mp4"), rule, new ParseResult());
+        assertThat(context.get("siblings_truncated")).isEqualTo(true);
+        assertThat((java.util.List<?>) context.get("siblings")).hasSize(80);
+    }
+
+    @Test
+    void clusterBridgePreservesExplicitCoordinatesAndReturnsHandledUnknown(@TempDir Path root) throws Exception {
+        WatchRule rule = rule();
+        rule.setSourceDir(root.toString());
+        Path source = Files.writeString(root.resolve("01.mp4"), "video");
+        var response = new java.util.concurrent.atomic.AtomicReference<>("""
+                {"clustered":true,"status":"identified","title":"同一作品","type":"episode","year":2025,
+                 "season":9,"episode":8,"episode_end":null,"confidence":0.87,"reason":"同簇身份"}
+                """);
+        var request = new java.util.concurrent.atomic.AtomicReference<com.fasterxml.jackson.databind.JsonNode>();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/recognize-cluster", exchange -> {
+            request.set(mapper.readTree(exchange.getRequestBody().readAllBytes()));
+            byte[] data = response.get().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, data.length);
+            exchange.getResponseBody().write(data);
+            exchange.close();
+        });
+        server.start();
+        try {
+            when(settings.get(anyString(), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+            when(settings.get("codex.enabled", "false")).thenReturn("true");
+            when(settings.get("codex.bridge-token", "")).thenReturn("test-token");
+            when(settings.get("codex.bridge-url", "http://host.docker.internal:18081"))
+                    .thenReturn("http://127.0.0.1:" + server.getAddress().getPort());
+            var client = new CodexRecognitionService(settings, WebClient.builder());
+            ParseResult original = new ParseResult();
+            original.setSeason(2);
+            original.setEpisode(3);
+            original.setEpisodeEnd(4);
+            var result = client.recognizeCluster(source, rule, original);
+            assertThat(result.clustered()).isTrue();
+            assertThat(result.suggestion().orElseThrow().parsed().getSeason()).isEqualTo(2);
+            assertThat(result.suggestion().orElseThrow().parsed().getEpisode()).isEqualTo(3);
+            assertThat(result.suggestion().orElseThrow().parsed().getEpisodeEnd()).isEqualTo(4);
+            assertThat(request.get().path("cluster_scope").asText()).hasSize(64);
+            original = new ParseResult();
+            response.set("""
+                    {"clustered":true,"status":"identified","title":"同一作品","type":"episode",
+                     "season":2,"episode":3,"episode_end":4,"confidence":0.87}
+                    """);
+            var merged = client.recognizeCluster(source, rule, original).suggestion().orElseThrow().parsed();
+            assertThat(merged.getSeason()).isEqualTo(2);
+            assertThat(merged.getEpisode()).isEqualTo(3);
+            assertThat(merged.getEpisodeEnd()).isEqualTo(4);
+            for (String invalidEnd : new String[]{"true", "2", "10001", "\"4\""}) {
+                response.set("""
+                        {"clustered":true,"status":"identified","title":"同一作品","type":"episode",
+                         "season":2,"episode":3,"episode_end":%s,"confidence":0.87}
+                        """.formatted(invalidEnd));
+                var invalid = client.recognizeCluster(source, rule, original);
+                assertThat(invalid.clustered()).isTrue();
+                assertThat(invalid.suggestion()).isEmpty();
+            }
+            response.set("""
+                    {"clustered":true,"status":"identified","title":"电影","type":"movie","confidence":0.99}
+                    """);
+            assertThat(client.recognizeCluster(source, rule, original).suggestion()).isEmpty();
+            response.set("{\"clustered\":true,\"status\":\"unknown\"}");
+            var unknown = client.recognizeCluster(source, rule, original);
+            assertThat(unknown.clustered()).isTrue();
+            assertThat(unknown.suggestion()).isEmpty();
+            response.set("{\"clustered\":false,\"status\":\"unknown\"}");
+            assertThat(client.recognizeCluster(source, rule, original).clustered()).isFalse();
+        } finally {
+            server.stop(0);
+        }
     }
 }

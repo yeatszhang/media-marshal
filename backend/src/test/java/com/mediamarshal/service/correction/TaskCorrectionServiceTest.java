@@ -242,7 +242,7 @@ class TaskCorrectionServiceTest {
         when(metadataMatcher.getSeasonEpisodes("207347", 1)).thenThrow(new IllegalStateException("HTTP 503"));
         TaskCorrectionPreview unavailable = service.preview(1L, request);
         assertThat(unavailable.isCanApply()).isFalse();
-        assertThat(unavailable.getBlockers()).anyMatch(blocker -> blocker.contains("TMDB 分集列表暂不可用"));
+        assertThat(unavailable.getBlockers()).anyMatch(blocker -> blocker.contains("获取失败") && blocker.contains("HTTP 503"));
         assertThat(Files.exists(current)).isTrue();
         assertThat(original.getStatus()).isEqualTo(MediaTask.TaskStatus.DONE);
     }

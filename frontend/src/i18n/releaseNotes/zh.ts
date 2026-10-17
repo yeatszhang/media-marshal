@@ -1,6 +1,9 @@
 export default {
   v0_2_13_1: {
     items: {
+      organizationFailures: '批量整理显示持续更新的逐文件结果和失败原因，修复较大 TMDB 分集响应无法读取的问题。',
+      tmdbCache: '同一作品及同一季分集共享缓存，成功结果在重启后继续复用，减少重复请求。',
+      automaticRecognition: '识别结果通过作品、季集和目标路径校验后自动整理，仅重复文件、低置信度及冲突需要人工处理，并显示具体原因。',
       floatingBackToTop: '仪表盘和待确认队列新增右下角悬浮按钮组，可快速回到页面顶部。',
     },
   },

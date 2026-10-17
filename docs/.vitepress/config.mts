@@ -11,6 +11,7 @@ export default defineConfig({
       { text: '首页', link: '/' },
       { text: '用户手册', link: '/user-guide' },
       { text: '部署指南', link: '/deployment' },
+      { text: '架构文档', link: '/architecture/' },
       { text: '常见问题', link: '/faq' },
     ],
 
@@ -22,6 +23,15 @@ export default defineConfig({
           { text: '用户手册', link: '/user-guide' },
           { text: '部署指南', link: '/deployment' },
           { text: '常见问题', link: '/faq' },
+        ],
+      },
+      {
+        text: '开发与架构',
+        items: [
+          { text: '架构总览', link: '/architecture/' },
+          { text: '发现与整理流程', link: '/architecture/processing' },
+          { text: '数据与恢复机制', link: '/architecture/data-and-recovery' },
+          { text: 'Codex 识别兜底', link: '/codex-fallback' },
         ],
       },
     ],

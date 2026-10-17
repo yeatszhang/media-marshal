@@ -1,6 +1,9 @@
 export default {
   v0_2_13_1: {
     items: {
+      organizationFailures: 'Batch organization shows live per-file outcomes and failure reasons, and supports larger TMDB season responses.',
+      tmdbCache: 'Reuse cached titles and season episodes across tasks and restarts to reduce repeated requests.',
+      automaticRecognition: 'Reliable recognition results now organize automatically after title, episode and target-path validation. Only duplicates, low confidence and conflicts require review, with specific reasons shown.',
       floatingBackToTop: 'Dashboard and Review Queue now include a bottom-right floating action group for quickly returning to the top.',
     },
   },

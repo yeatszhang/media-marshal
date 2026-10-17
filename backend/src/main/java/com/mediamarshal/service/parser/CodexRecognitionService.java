@@ -13,6 +13,9 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.security.MessageDigest;
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,11 +35,49 @@ public class CodexRecognitionService {
     }
 
     public boolean requiresConfirmation(double confidence) {
-        return Boolean.parseBoolean(settings.get("codex.require-confirmation", "true")) || confidence < 0.9;
+        // 仅按识别质量决定是否需要复核，旧的强制审批配置不再阻止可靠结果。
+        return !Double.isFinite(confidence) || confidence < 0.9 || confidence > 1;
     }
 
     public Optional<Suggestion> recognize(Path source, WatchRule rule, ParseResult original) {
         return recognize(source, rule, original, false);
+    }
+
+    /** 路径与文件名先聚类，同簇仅识别作品一次；集号由当前文件的明确特征回填。 */
+    public ClusterRecognition recognizeCluster(Path source, WatchRule rule, ParseResult original) {
+        if (!isEnabled() || rule.getMediaType() == WatchRule.RuleMediaType.MOVIE) {
+            return new ClusterRecognition(false, Optional.empty());
+        }
+        try {
+            String token = settings.get("codex.bridge-token", "");
+            if (token.isBlank()) return new ClusterRecognition(false, Optional.empty());
+            JsonNode response = webClientBuilder.build().post()
+                    .uri(settings.get("codex.bridge-url", "http://host.docker.internal:18081") + "/recognize-cluster")
+                    .header("X-Media-Marshal-Token", token).bodyValue(buildContext(source, rule, original))
+                    .retrieve().bodyToMono(JsonNode.class).block(Duration.ofSeconds(240));
+            if (response == null || !response.path("clustered").asBoolean(false)) {
+                return new ClusterRecognition(false, Optional.empty());
+            }
+            try {
+                Optional<Suggestion> suggestion = parseSuggestion(response, rule, original, source)
+                        .filter(item -> "episode".equals(item.parsed().getType()));
+                if (suggestion.isPresent() && original.getEpisodeEnd() == null) {
+                    Integer end = integer(response, "episode_end", 1, 10000);
+                    ParseResult parsed = suggestion.get().parsed();
+                    if (end != null && (parsed.getEpisode() == null || end < parsed.getEpisode())) {
+                        return new ClusterRecognition(true, Optional.empty());
+                    }
+                    parsed.setEpisodeEnd(end);
+                }
+                return new ClusterRecognition(true, suggestion);
+            } catch (IllegalArgumentException invalidResult) {
+                // 同簇已经尝试过，格式错误也不能触发逐文件重复模型调用。
+                return new ClusterRecognition(true, Optional.empty());
+            }
+        } catch (Exception e) {
+            log.warn("剧集聚类识别暂不可用：{}", e.getClass().getSimpleName());
+            return new ClusterRecognition(false, Optional.empty());
+        }
     }
 
     /** 主动重试绕过短期 unknown 缓存，成功的作品身份仍可复用。 */
@@ -193,9 +234,18 @@ public class CodexRecognitionService {
         context.put("parents", parents);
         context.put("siblings", siblings.size() > 80 ? siblings.subList(0, 80) : siblings);
         context.put("siblings_truncated", siblings.size() > 80);
+        Path identityDirectory = file.getParent();
+        while (!identityDirectory.equals(root) && identityDirectory.getFileName().toString().matches(
+                "(?i)s\\d{1,3}|season[ ._-]*\\d+|第.+季|specials?|ova|oad|sp|特别篇|特別篇|特典")) {
+            identityDirectory = identityDirectory.getParent();
+        }
+        String scope = rule.getId() + "|" + root + "|" + identityDirectory;
+        context.put("cluster_scope", HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(scope.getBytes(StandardCharsets.UTF_8))));
         context.put("parsed", original);
         return context;
     }
 
     public record Suggestion(ParseResult parsed, double confidence, String reason) {}
+    public record ClusterRecognition(boolean clustered, Optional<Suggestion> suggestion) {}
 }

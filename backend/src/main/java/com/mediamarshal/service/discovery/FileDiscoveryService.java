@@ -100,6 +100,9 @@ public class FileDiscoveryService {
     /** 正在扫描的规则集合，确保同一 WatchRule 同一时间只跑一个扫描。 */
     private final Set<String> activeScanKeys = ConcurrentHashMap.newKeySet();
 
+    /** 每条规则独立维护目录索引，热重载规则后重建。 */
+    private final Map<String, IncrementalDirectoryScanner> directoryScanners = new ConcurrentHashMap<>();
+
     /** 执行防抖、稳定性检测和周期补扫。 */
     private final ScheduledExecutorService discoveryExecutor = Executors.newScheduledThreadPool(4);
 
@@ -131,6 +134,7 @@ public class FileDiscoveryService {
         rebuildWatchService();
         cancelPeriodicScans();
         cancelMissingSourceInspections();
+        directoryScanners.clear();
 
         List<WatchRule> rules = watchRuleRepository.findByEnabledTrue();
         if (rules.isEmpty()) {
@@ -171,7 +175,7 @@ public class FileDiscoveryService {
         if (!Files.isDirectory(root)) {
             throw new IllegalArgumentException("WatchRule sourceDir is not a directory: " + rule.getSourceDir());
         }
-        startScan(rule, root, "manual full scan", true, true);
+        startScan(rule, root, "manual full scan", true, true, true);
     }
 
     private void schedulePeriodicScan(WatchRule rule) {
@@ -224,7 +228,7 @@ public class FileDiscoveryService {
                     rule.getId(), root);
             return;
         }
-        startScan(rule, root, "periodic scan", false, true);
+        startScan(rule, root, "periodic incremental scan", false, true, false);
     }
 
     private void startScan(
@@ -232,7 +236,8 @@ public class FileDiscoveryService {
             Path root,
             String label,
             boolean rejectWhenRunning,
-            boolean inspectMissingSources
+            boolean inspectMissingSources,
+            boolean fullScan
     ) {
         String scanKey = scanKey(rule);
         if (!activeScanKeys.add(scanKey)) {
@@ -246,16 +251,16 @@ public class FileDiscoveryService {
 
         Thread.ofVirtual()
                 .name("file-discovery-scan-" + rule.getId())
-                .start(() -> runScan(root, rule, scanKey, label, inspectMissingSources));
+                .start(() -> runScan(root, rule, scanKey, label, inspectMissingSources, fullScan));
     }
 
-    private void runScan(Path root, WatchRule rule, String scanKey, String label, boolean inspectMissingSources) {
+    private void runScan(Path root, WatchRule rule, String scanKey, String label, boolean inspectMissingSources, boolean fullScan) {
         log.info("{} started: ruleId={}, rule='{}', root={}",
                 label, rule.getId(), rule.getName(), root);
 
         ScanCounter counter = new ScanCounter();
         try {
-            discoverTree(root, rule, counter);
+            discoverTree(root, rule, counter, fullScan);
             if (inspectMissingSources) {
                 failMissingPendingTasks(rule, counter);
             }
@@ -269,46 +274,25 @@ public class FileDiscoveryService {
         }
     }
 
-    private void discoverTree(Path root, WatchRule rule, ScanCounter counter) throws IOException {
-        Path normalizedRoot = root.toAbsolutePath().normalize();
-        Files.walkFileTree(normalizedRoot, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                Path normalized = dir.toAbsolutePath().normalize();
-                if (!normalized.equals(normalizedRoot) && discoveryIgnoreService.isIgnored(normalized, rule)) {
-                    counter.skipped++;
-                    log.debug("Scan ignored directory subtree: {}", normalized);
-                    return FileVisitResult.SKIP_SUBTREE;
-                }
-                if (!normalized.equals(normalizedRoot)) {
-                    counter.scanned++;
-                    var asset = mediaAssetDetectionService.detect(normalized, rule);
-                    if (asset.isPresent()) {
-                        DiscoveryProcessResult result = processAssetIfNotDuplicated(asset.get(), rule);
-                        if (result == DiscoveryProcessResult.QUEUED) {
-                            counter.queued++;
-                        } else if (result == DiscoveryProcessResult.DUPLICATE) {
-                            counter.duplicates++;
-                        } else {
-                            counter.skipped++;
-                        }
-                        return asset.get().shouldPruneChildren()
-                                ? FileVisitResult.SKIP_SUBTREE
-                                : FileVisitResult.CONTINUE;
-                    }
-                }
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                discoverPath(file.toAbsolutePath().normalize(), rule, counter);
-                return FileVisitResult.CONTINUE;
-            }
-        });
+    private void discoverTree(Path root, WatchRule rule, ScanCounter counter, boolean fullScan) throws IOException {
+        IncrementalDirectoryScanner scanner = directoryScanners.computeIfAbsent(
+                scanKey(rule), unused -> new IncrementalDirectoryScanner());
+        scanner.scan(root, fullScan, path -> discoveryIgnoreService.isIgnored(path, rule), dir -> {
+            counter.scanned++;
+            var asset = mediaAssetDetectionService.detect(dir, rule);
+            if (asset.isEmpty()) return false;
+            countResult(processAssetIfNotDuplicated(asset.get(), rule, fullScan), counter);
+            return asset.get().shouldPruneChildren();
+        }, file -> discoverPath(file, rule, counter, fullScan));
     }
 
-    private void discoverPath(Path path, WatchRule rule, ScanCounter counter) {
+    private void countResult(DiscoveryProcessResult result, ScanCounter counter) {
+        if (result == DiscoveryProcessResult.QUEUED) counter.queued++;
+        else if (result == DiscoveryProcessResult.DUPLICATE) counter.duplicates++;
+        else counter.skipped++;
+    }
+
+    private void discoverPath(Path path, WatchRule rule, ScanCounter counter, boolean retryFailed) {
         counter.scanned++;
         if (discoveryIgnoreService.isIgnored(path, rule)) {
             counter.skipped++;
@@ -321,7 +305,7 @@ public class FileDiscoveryService {
 
         var asset = mediaAssetDetectionService.detect(path, rule);
         if (asset.isPresent()) {
-            DiscoveryProcessResult result = processAssetIfNotDuplicated(asset.get(), rule);
+            DiscoveryProcessResult result = processAssetIfNotDuplicated(asset.get(), rule, retryFailed);
             if (result == DiscoveryProcessResult.QUEUED) {
                 counter.queued++;
             } else if (result == DiscoveryProcessResult.DUPLICATE) {
@@ -342,7 +326,8 @@ public class FileDiscoveryService {
                 path,
                 rule,
                 MediaAssetType.VIDEO_FILE,
-                "非视频文件，已跳过处理"
+                "非视频文件，已跳过处理",
+                retryFailed
         );
         if (result == DiscoveryProcessResult.QUEUED) {
             counter.queued++;
@@ -464,6 +449,12 @@ public class FileDiscoveryService {
 
         for (WatchEvent<?> event : key.pollEvents()) {
             if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
+                // 事件溢出时废弃索引，重新核对路径；数据库仍阻止旧任务重新识别。
+                if (rule != null) {
+                    directoryScanners.remove(scanKey(rule));
+                    startScan(rule, Paths.get(rule.getSourceDir()).toAbsolutePath().normalize(),
+                            "watch overflow reconciliation", false, true, false);
+                }
                 continue;
             }
 
@@ -507,7 +498,7 @@ public class FileDiscoveryService {
             log.info("New directory detected, registering recursively and scanning once: {} (rule='{}')",
                     fullPath, rule.getName());
             registerDirectoryTree(fullPath, rule);
-            startScan(rule, fullPath, "new directory scan", false, false);
+            startScan(rule, fullPath, "new directory scan", false, false, false);
             return;
         }
 
@@ -620,7 +611,7 @@ public class FileDiscoveryService {
 
     /**
      * ADR-005 第二层防护：数据库查重。
-     * 同一路径存在非 FAILED 任务时跳过，避免重复入库。
+     * 自动发现跳过所有已有路径；失败任务仅在用户手动全量补扫时允许重试。
      */
     private DiscoveryProcessResult processDetectedPathIfNotDuplicated(Path path, WatchRule rule) {
         if (isDefaultSampleVideo(path, rule)) {
@@ -635,9 +626,13 @@ public class FileDiscoveryService {
     }
 
     private DiscoveryProcessResult processAssetIfNotDuplicated(MediaAsset asset, WatchRule rule) {
+        return processAssetIfNotDuplicated(asset, rule, false);
+    }
+
+    private DiscoveryProcessResult processAssetIfNotDuplicated(MediaAsset asset, WatchRule rule, boolean retryFailed) {
         MediaAsset effectiveAsset = applyRuleSupportScope(asset, rule);
         String sourcePath = effectiveAsset.rootPath().toString();
-        boolean exists = mediaTaskRepository.existsBySourcePathAndStatusIn(sourcePath, ACTIVE_DEDUP_STATUSES);
+        boolean exists = isKnownSource(sourcePath, retryFailed);
 
         if (exists) {
             log.debug("Duplicate media task skipped: sourcePath={}", sourcePath);
@@ -649,7 +644,8 @@ public class FileDiscoveryService {
                     effectiveAsset.rootPath(),
                     rule,
                     effectiveAsset.type(),
-                    effectiveAsset.skipReason()
+                    effectiveAsset.skipReason(),
+                    retryFailed
             );
         }
 
@@ -685,8 +681,14 @@ public class FileDiscoveryService {
             MediaAssetType assetType,
             String skipReason
     ) {
+        return recordSkippedIfNotDuplicated(path, rule, assetType, skipReason, false);
+    }
+
+    private DiscoveryProcessResult recordSkippedIfNotDuplicated(
+            Path path, WatchRule rule, MediaAssetType assetType, String skipReason, boolean retryFailed
+    ) {
         String sourcePath = path.toString();
-        boolean exists = mediaTaskRepository.existsBySourcePathAndStatusIn(sourcePath, ACTIVE_DEDUP_STATUSES);
+        boolean exists = isKnownSource(sourcePath, retryFailed);
 
         if (exists) {
             log.debug("Duplicate skipped task ignored: sourcePath={}", sourcePath);
@@ -704,6 +706,12 @@ public class FileDiscoveryService {
         log.info("Media asset skipped: path={}, type={}, rule='{}', reason={}",
                 path, assetType, rule.getName(), skipReason);
         return DiscoveryProcessResult.QUEUED;
+    }
+
+    private boolean isKnownSource(String sourcePath, boolean retryFailed) {
+        return retryFailed
+                ? mediaTaskRepository.existsBySourcePathAndStatusIn(sourcePath, ACTIVE_DEDUP_STATUSES)
+                : mediaTaskRepository.existsBySourcePath(sourcePath);
     }
 
     private void failMissingPendingTasks(WatchRule rule, ScanCounter counter) {

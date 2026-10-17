@@ -15,14 +15,21 @@ public class AssetOrganizerService {
 
     private final List<AssetOrganizerStrategy> strategies;
 
+    public Path previewTarget(MediaTask task) {
+        return strategyFor(task).previewTarget(task);
+    }
+
     public Path organize(MediaTask task) throws IOException {
+        return strategyFor(task).organize(task);
+    }
+
+    private AssetOrganizerStrategy strategyFor(MediaTask task) {
         MediaAssetType assetType = task.getAssetType() != null
                 ? task.getAssetType()
                 : MediaAssetType.VIDEO_FILE;
         return strategies.stream()
                 .filter(strategy -> strategy.supports(assetType))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unsupported media asset type: " + assetType))
-                .organize(task);
+                .orElseThrow(() -> new IllegalArgumentException("Unsupported media asset type: " + assetType));
     }
 }

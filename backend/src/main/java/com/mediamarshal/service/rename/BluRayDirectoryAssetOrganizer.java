@@ -37,6 +37,11 @@ public class BluRayDirectoryAssetOrganizer implements AssetOrganizerStrategy {
     }
 
     @Override
+    public Path previewTarget(MediaTask task) {
+        return buildTargetRoot(task, loadRule(task));
+    }
+
+    @Override
     public Path organize(MediaTask task) throws IOException {
         WatchRule rule = loadRule(task);
         Path sourceRoot = Paths.get(task.getSourcePath()).toAbsolutePath().normalize();

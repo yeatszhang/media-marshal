@@ -10,6 +10,29 @@
       </el-button>
     </div>
 
+    <el-card v-if="organizationTasks.length" class="organization-results" shadow="never" style="margin-bottom: 20px">
+      <el-alert :title="t('queue.organization.summary', organizationSummary)" :closable="false" show-icon
+                :type="organizationSummary.blocked ? 'warning' : organizationSummary.pending ? 'info' : 'success'" />
+      <el-alert v-if="organizationRefreshError" :title="organizationRefreshError" type="error" :closable="false" show-icon />
+      <el-button v-if="organizationRefreshError" link type="primary" @click="refreshOrganization">
+        {{ t('common.refresh') }}
+      </el-button>
+      <el-table :data="organizationTasks" size="small" max-height="280">
+        <el-table-column :label="t('queue.directory.filename')" min-width="220">
+          <template #default="{ row }">{{ sourceFileName(row.sourcePath) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('queue.directory.fileStatus')" min-width="100">
+          <template #default="{ row }">{{ t(`task.status.${row.status}`) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('queue.organization.result')" min-width="300">
+          <template #default="{ row }">
+            <el-text v-if="row.errorMessage || row.skipReason" type="danger">{{ row.errorMessage || row.skipReason }}</el-text>
+            <span v-else>{{ row.targetPath || t('queue.organization.processing') }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <el-empty v-if="!loading && queueTasks.length === 0" :description="t('queue.empty')" />
 
     <div v-else class="queue-list" v-loading="loading">
@@ -215,27 +238,36 @@
                            @click="handleCodexDirectoryRecognition(group.tasks[0])">
                   {{ t('queue.directory.recognize') }}
                 </el-button>
-                <el-button type="primary" :disabled="directoryOptions(group).length === 0 || recognitionActionLoading !== null || directorySubmitting"
-                           @click="openDirectoryReview(group)">
-                  {{ t('queue.directory.confirm', { count: group.tasks.length }) }}
-                </el-button>
-                <el-button link @click="toggleDirectoryDetails(group.key)">
-                  {{ expandedDirectories.has(group.key) ? t('queue.directory.collapse') : t('queue.directory.expand') }}
-                </el-button>
+                <el-tooltip :content="directoryConfirmationReason(group)" :disabled="!directoryConfirmationReason(group)" placement="top">
+                  <span class="directory-confirm-trigger" :tabindex="directoryConfirmationReason(group) ? 0 : undefined"
+                        :aria-describedby="directoryConfirmationReason(group) ? `directory-confirm-reason-${group.tasks[0].id}` : undefined">
+                    <el-button type="primary" :disabled="!!directoryConfirmationReason(group)"
+                               @click="openDirectoryReview(group)">
+                      {{ t('queue.directory.confirm', { count: group.tasks.length }) }}
+                    </el-button>
+                  </span>
+                </el-tooltip>
               </div>
             </div>
           </template>
           <div class="directory-identity">
-            <el-image v-if="directoryOptions(group)[0]?.posterUrl" class="directory-poster"
-                      :src="directoryOptions(group)[0].posterUrl!" fit="cover" />
+            <el-image v-if="directorySummary(group).option?.posterUrl" class="directory-poster"
+                      :src="directorySummary(group).option!.posterUrl!" fit="cover" />
             <div>
-              <h3>{{ directoryOptions(group)[0] ? displayTitle(directoryOptions(group)[0]) : t('queue.directory.unrecognized') }}</h3>
-              <p>{{ directoryOptions(group)[0] ? t('queue.directory.sharedCandidate', { count: directoryOptions(group).length }) : t('queue.directory.recognizeHint') }}</p>
-              <el-tag v-if="directoryOptions(group)[0]" size="small" type="info">
-                {{ directoryOptions(group)[0].year ?? t('queue.unknown') }} · {{ t(`task.mediaType.${directoryOptions(group)[0].mediaType}`) }}
+              <h3>{{ directorySummary(group).option ? displayTitle(directorySummary(group).option!) : t('queue.directory.unrecognized') }}</h3>
+              <p v-if="directorySummary(group).sharedOptions.length">{{ t('queue.directory.sharedCandidate', { count: directorySummary(group).sharedOptions.length }) }}</p>
+              <p v-else-if="directorySummary(group).option">{{ t('queue.directory.partialCandidate', {
+                count: directorySummary(group).supportedFiles, total: group.tasks.length,
+              }) }}</p>
+              <p v-else>{{ t('queue.directory.recognizeHint') }}</p>
+              <el-tag v-if="directorySummary(group).option" size="small" type="info">
+                {{ directorySummary(group).option!.year ?? t('queue.unknown') }} · {{ t(`task.mediaType.${directorySummary(group).option!.mediaType}`) }}
               </el-tag>
             </div>
           </div>
+          <el-alert v-if="directoryConfirmationReason(group)" :id="`directory-confirm-reason-${group.tasks[0].id}`"
+                    :title="directoryConfirmationReason(group)" :closable="false" show-icon
+                    :type="directoryConfirmationBusy(group) ? 'info' : 'warning'" class="directory-confirm-reason" />
           <el-table :data="group.tasks" size="small" max-height="290" class="directory-files">
             <el-table-column :label="t('queue.directory.filename')" min-width="180">
               <template #default="{ row }">{{ sourceFileName(row.sourcePath) }}</template>
@@ -246,18 +278,22 @@
             <el-table-column :label="t('queue.directory.fileStatus')" min-width="180">
               <template #default="{ row }">
                 <el-text v-if="batchErrorByTask[row.id]" type="danger">{{ batchErrorByTask[row.id] }}</el-text>
-                <el-text v-else-if="row.metadataWarning || row.errorMessage?.includes('TMDB')" type="warning">{{ row.metadataWarning || row.errorMessage }}</el-text>
+                <el-text v-else-if="row.errorMessage" type="warning">{{ row.errorMessage }}</el-text>
+                <el-text v-else-if="row.metadataWarning" type="warning">{{ row.metadataWarning }}</el-text>
+                <el-text v-else-if="candidateLoadingByTask[row.id]" type="info">{{ t('queue.directory.loadingCandidates') }}</el-text>
+                <el-text v-else-if="!getTaskOptions(row.id).length && directorySummary(group).reviewOptions.length" type="info">{{ t('queue.directory.reuseCandidate') }}</el-text>
+                <el-text v-else-if="!getTaskOptions(row.id).length" type="warning">{{ t('queue.directory.noCandidate') }}</el-text>
                 <el-text v-else-if="row.mediaType === 'TV_SHOW' && row.parsedEpisode == null" type="warning">{{ t('queue.directory.needsCoordinates') }}</el-text>
                 <el-text v-else type="info">{{ t('queue.directory.readyToReview') }}</el-text>
               </template>
             </el-table-column>
           </el-table>
-          <details v-if="group.tasks[0].errorMessage?.startsWith('Codex')" class="directory-evidence">
+          <details v-if="directoryEvidence(group).length" class="directory-evidence">
             <summary>{{ t('queue.directory.evidence') }}</summary>
-            <p>{{ group.tasks[0].errorMessage }}</p>
+            <p v-for="reason in directoryEvidence(group)" :key="reason">{{ reason }}</p>
           </details>
         </el-card>
-        <template v-if="group.tasks.length === 1 || expandedDirectories.has(group.key)">
+        <template v-if="group.tasks.length === 1">
       <el-card v-for="task in group.tasks" :key="task.id" class="queue-card" shadow="never">
         <template #header>
           <div class="card-header">
@@ -444,13 +480,25 @@
             </el-select>
           </el-form-item>
         </el-form>
+        <el-alert v-if="directoryReviewCoverage && directoryReviewCoverage.count < directoryReviewCoverage.total"
+                  :title="t('queue.directory.reviewReuse', directoryReviewCoverage)" type="info" show-icon
+                  :closable="false" class="batch-alert" />
         <div v-if="directorySelectedOption?.mediaType === 'TV_SHOW'" class="directory-season-row">
           <span>{{ t('queue.directory.uniformSeason') }}</span>
           <el-input-number v-model="directoryReviewSeason" :min="0" :max="999" controls-position="right" />
           <el-button :disabled="directoryReviewSeason == null" @click="applyDirectorySeason">{{ t('queue.directory.applySeason') }}</el-button>
           <el-text type="info" size="small">{{ t('queue.directory.seasonDefault') }}</el-text>
         </div>
-        <el-alert v-if="directoryReviewIssue" :title="directoryReviewIssue" type="warning" :closable="false" class="batch-alert" />
+        <el-alert v-if="directoryReviewIssue" :title="t('queue.directory.organizeBlocked', { reason: directoryReviewIssue })"
+                  type="warning" show-icon :closable="false" class="batch-alert">
+          <ul v-if="directoryReviewDetails.length" class="directory-review-issues">
+            <li v-for="(detail, index) in directoryReviewDetails" :key="index">{{ detail.message }}</li>
+          </ul>
+        </el-alert>
+        <details v-if="directoryReviewPreviousIssues.length" class="directory-evidence" open>
+          <summary>{{ t('queue.directory.previousIssues') }}</summary>
+          <p v-for="issue in directoryReviewPreviousIssues" :key="issue">{{ issue }}</p>
+        </details>
         <el-table :data="directoryReviewRows" max-height="400" size="small">
           <el-table-column width="52">
             <template #default="{ row }"><el-checkbox v-model="row.included" :aria-label="t('queue.directory.includeFile')" /></template>
@@ -460,23 +508,29 @@
           </el-table-column>
           <template v-if="directorySelectedOption?.mediaType === 'TV_SHOW'">
             <el-table-column :label="t('queue.parsedSeason')" width="140">
-              <template #default="{ row }"><el-input-number v-model="row.season" :disabled="!row.included" :min="0" :max="999" size="small" controls-position="right" class="directory-coordinate" /></template>
+              <template #default="{ row }"><el-input-number v-model="row.season" @change="row.error = ''" :disabled="!row.included" :min="0" :max="999" size="small" controls-position="right" class="directory-coordinate" /></template>
             </el-table-column>
             <el-table-column :label="t('queue.parsedEpisode')" width="140">
-              <template #default="{ row }"><el-input-number v-model="row.episode" :disabled="!row.included" :min="1" :max="10000" size="small" controls-position="right" class="directory-coordinate" /></template>
+              <template #default="{ row }"><el-input-number v-model="row.episode" @change="row.error = ''" :disabled="!row.included" :min="1" :max="10000" size="small" controls-position="right" class="directory-coordinate" /></template>
             </el-table-column>
             <el-table-column :label="t('queue.directory.episodeEnd')" width="140">
-              <template #default="{ row }"><el-input-number v-model="row.episodeEnd" :disabled="!row.included" :min="1" :max="10000" size="small" controls-position="right" class="directory-coordinate" /></template>
+              <template #default="{ row }"><el-input-number v-model="row.episodeEnd" @change="row.error = ''" :disabled="!row.included" :min="1" :max="10000" size="small" controls-position="right" class="directory-coordinate" /></template>
             </el-table-column>
           </template>
           <el-table-column :label="t('queue.directory.fileStatus')" min-width="130">
-            <template #default="{ row }"><el-text :type="row.error ? 'danger' : 'info'">{{ row.error || t('queue.directory.readyToReview') }}</el-text></template>
+            <template #default="{ row }">
+              <el-text v-if="!row.included" type="info">{{ t('queue.directory.excluded') }}</el-text>
+              <el-text v-else-if="directoryRowIssues.has(row.taskId)" type="danger">{{ directoryRowIssues.get(row.taskId) }}</el-text>
+              <el-text v-else :type="row.error ? 'danger' : 'info'">{{ row.error || t(row.included ? 'queue.directory.readyToReview' : 'queue.directory.excluded') }}</el-text>
+            </template>
           </el-table-column>
         </el-table>
       </div>
       <template #footer>
         <div class="directory-review-footer">
-          <el-text size="small" type="info">{{ t('queue.directory.organizeHint') }}</el-text>
+          <el-text size="small" :type="directoryReviewIssue ? 'warning' : 'info'" class="directory-review-hint">
+            {{ directoryReviewIssue ? t('queue.directory.organizeBlocked', { reason: directoryReviewIssue }) : t('queue.directory.organizeHint') }}
+          </el-text>
           <div>
             <el-button :disabled="directorySubmitting" @click="directoryReviewVisible = false">{{ t('common.cancel') }}</el-button>
             <el-button type="primary" :loading="directorySubmitting"
@@ -871,16 +925,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMediaStore } from '@/stores/mediaStore'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { mediaApi } from '@/api/media'
 import FloatingActionGroup from '@/components/FloatingActionGroup.vue'
-import { groupQueueDirectories, commonDirectoryOptions, directoryEpisodeIssue, resolveEpisodeSeason } from '@/utils/queueDirectories'
+import { groupQueueDirectories, summarizeDirectoryCandidates, directoryConfirmationIssue, directoryEpisodeIssues, resolveEpisodeSeason } from '@/utils/queueDirectories'
 import type { DirectoryEpisodeRow } from '@/utils/queueDirectories'
 import { submitDirectoryConfirmation } from '@/utils/confirmQueueDirectory'
+import { summarizeRecognitionResults } from '@/utils/queueRecognition'
+import { summarizeOrganizationTasks } from '@/utils/queueOrganization'
+import { onTaskEvent } from '@/websocket/wsClient'
 import type {
   BatchConfirmItem,
   BatchRecognitionField,
@@ -929,6 +986,65 @@ const selectedTaskIds = reactive(new Set<number>())
 const currentPage = ref(1)
 const pageSize = ref(20)
 const batchConfirming = ref(false)
+const organizationTasks = ref<MediaTask[]>([])
+const organizationSummary = computed(() => summarizeOrganizationTasks(organizationTasks.value))
+const organizationRefreshError = ref('')
+let organizationTimer: ReturnType<typeof setTimeout> | undefined
+let queueEventTimer: ReturnType<typeof setTimeout> | undefined
+let organizationRefreshing = false
+let disposed = false
+
+function trackOrganization(taskIds: number[]) {
+  if (!taskIds.length) return
+  const ids = new Set([...organizationTasks.value
+    .filter(task => task.status === 'PENDING' || task.status === 'PROCESSING').map(task => task.id), ...taskIds])
+  organizationTasks.value = [...ids].flatMap(id => {
+    const task = mediaStore.tasks.find(task => task.id === id) ?? organizationTasks.value.find(task => task.id === id)
+    return task ? [{ ...task, status: 'PROCESSING' as const, errorMessage: null, metadataWarning: null }] : []
+  })
+  void refreshOrganization()
+}
+
+async function refreshOrganization() {
+  if (organizationRefreshing || disposed || !organizationTasks.value.length) return
+  clearTimeout(organizationTimer)
+  organizationRefreshing = true
+  try {
+    const response = await mediaApi.listTasks()
+    if (disposed) return
+    const byId = new Map(response.data.data.map(task => [task.id, task]))
+    organizationTasks.value = organizationTasks.value.map(task => byId.get(task.id) ?? {
+      ...task, status: 'FAILED', errorMessage: t('queue.organization.missing', { id: task.id }),
+    })
+    for (const task of organizationTasks.value) mediaStore.updateTask(task)
+    organizationRefreshError.value = ''
+  } catch (error) {
+    organizationRefreshError.value = t('queue.organization.refreshFailed', {
+      reason: error instanceof Error ? error.message : t('common.requestFailed'),
+    })
+  } finally {
+    organizationRefreshing = false
+    if (!disposed && !organizationRefreshError.value && organizationSummary.value.pending) {
+      organizationTimer = setTimeout(() => { void refreshOrganization() }, 2000)
+    }
+  }
+}
+
+const unsubscribeTaskEvents = onTaskEvent(() => {
+  clearTimeout(queueEventTimer)
+  queueEventTimer = setTimeout(() => {
+    if (organizationTasks.value.length) void refreshOrganization()
+    else void loadQueue().catch(() => { /* 请求层已显示具体失败原因。 */ })
+  }, 250)
+})
+
+onUnmounted(() => {
+  disposed = true
+  clearTimeout(organizationTimer)
+  clearTimeout(queueEventTimer)
+  clearTimeout(batchRecognitionPreviewTimer)
+  unsubscribeTaskEvents()
+})
 const batchSkipping = ref(false)
 const globalSearchKeyword = ref('')
 const globalSearchMediaType = ref<MediaType>('TV_SHOW')
@@ -956,7 +1072,6 @@ interface DirectoryReviewRow extends DirectoryEpisodeRow {
   included: boolean
   error: string
 }
-const expandedDirectories = reactive(new Set<string>())
 const directoryReviewVisible = ref(false)
 const directoryReviewPath = ref('')
 const directoryReviewOptions = ref<QueueOption[]>([])
@@ -966,10 +1081,47 @@ const directoryReviewSeason = ref<number | undefined>()
 const directorySubmitting = ref(false)
 const directorySelectedOption = computed(() => directoryReviewOptions.value.find(option => option.key === directoryReviewChoice.value))
 const directoryIncludedRows = computed(() => directoryReviewRows.value.filter(row => row.included))
+const directoryReviewPreviousIssues = computed(() => directoryReviewRows.value
+  .filter(row => row.task.errorMessage || row.task.metadataWarning)
+  .map(row => `${sourceFileName(row.task.sourcePath)}：${row.task.errorMessage || row.task.metadataWarning}`))
+const directoryReviewCoverage = computed(() => {
+  const option = directorySelectedOption.value
+  if (!option) return null
+  return {
+    count: directoryIncludedRows.value.filter(row => getTaskOptions(row.taskId).some(item => item.key === option.key)).length,
+    total: directoryIncludedRows.value.length,
+  }
+})
+const directoryValidationIssues = computed(() => directorySelectedOption.value
+  ? directoryEpisodeIssues(directoryIncludedRows.value, directorySelectedOption.value.mediaType) : [])
+const directoryReviewDetails = computed(() => {
+  const filenames = new Map(directoryReviewRows.value.map(row => [row.taskId, sourceFileName(row.task.sourcePath)]))
+  return directoryValidationIssues.value.map(issue => {
+    const files = issue.taskIds.map(id => filenames.get(id)).join('、')
+    if (issue.kind !== 'duplicate') {
+      return { taskIds: issue.taskIds, message: t(`queue.directory.issueDetail.${issue.kind}`, { files }) }
+    }
+    const season = `S${String(issue.season).padStart(2, '0')}`
+    const start = `E${String(issue.episode).padStart(2, '0')}`
+    const end = issue.episodeEnd === issue.episode ? '' : `–E${String(issue.episodeEnd).padStart(2, '0')}`
+    return { taskIds: issue.taskIds, message: t('queue.directory.issueDetail.duplicate', { files, episodes: `${season}${start}${end}` }) }
+  })
+})
+const directoryRowIssues = computed(() => {
+  const messages = new Map<number, string>()
+  for (const detail of directoryReviewDetails.value) {
+    for (const id of detail.taskIds) {
+      const previous = messages.get(id)
+      messages.set(id, previous ? `${previous}\n${detail.message}` : detail.message)
+    }
+  }
+  return messages
+})
 const directoryReviewIssue = computed(() => {
+  if (!directoryIncludedRows.value.length) return t('queue.directory.noIncludedFiles')
   if (!directorySelectedOption.value) return t('queue.directory.chooseCandidate')
-  const issue = directoryEpisodeIssue(directoryIncludedRows.value, directorySelectedOption.value.mediaType)
-  return issue ? t(`queue.directory.issue.${issue}`) : ''
+  const issue = directoryValidationIssues.value[0]
+  return issue ? t(`queue.directory.issue.${issue.kind}`) : ''
 })
 const batchRecognitionDialogVisible = ref(false)
 const batchRecognitionPreviewLoading = ref(false)
@@ -1249,7 +1401,10 @@ async function handleConfirm(taskId: number) {
   actionLoadingByTask[taskId] = true
   try {
     await mediaStore.confirmTask(taskId, selected.tmdbId, selected.mediaType)
-    ElMessage.success(t('queue.confirmSuccess'))
+    const updated = (await mediaApi.getTask(taskId)).data.data
+    mediaStore.updateTask(updated)
+    if (updated.status === 'DONE') ElMessage.success(t('queue.confirmSuccess'))
+    else ElMessage.warning(updated.errorMessage || t('queue.organization.processing'))
   } finally {
     actionLoadingByTask[taskId] = false
   }
@@ -1400,7 +1555,10 @@ async function handleBatchConfirm() {
       batchErrorByTask[result.taskId] = result.message || t('queue.batchConfirmUnknownError')
     }
 
-    ElMessage.success(t('queue.batchConfirmResult', { success: successCount, failed: failedResults.length }))
+    trackOrganization(results.filter(result => result.success).map(result => result.taskId))
+    const message = t('queue.batchConfirmResult', { success: successCount, failed: failedResults.length })
+    if (failedResults.length) ElMessage.warning(message)
+    else ElMessage.info(message)
     await loadQueue()
   } finally {
     batchConfirming.value = false
@@ -1624,7 +1782,16 @@ async function handleCodexRecognition(selectedTask?: MediaTask) {
     const res = await mediaApi.codexRematchTask(task.id)
     applyRecognitionResponse(task.id, res.data.data, true)
     if (recognitionDrawerVisible.value) openRecognitionEditor(res.data.data.task)
-    ElMessage.success(t('queue.codexRematchSuccess'))
+    const response = res.data.data
+    if (response.task.status === 'PROCESSING') trackOrganization([response.task.id])
+    if (response.task.status === 'AWAITING_CONFIRMATION') {
+      ElMessage.warning(t('queue.codexRematchReview'))
+    } else if (response.task.status === 'FAILED') {
+      ElMessage.error(response.task.errorMessage || t('queue.recognitionSaveFailed'))
+    } else {
+      recognitionDrawerVisible.value = false
+      ElMessage.success(t('queue.codexRematchSuccess'))
+    }
   } catch {
     // HTTP 层已展示失败原因；保留当前候选和文件。
   } finally {
@@ -1633,17 +1800,38 @@ async function handleCodexRecognition(selectedTask?: MediaTask) {
   }
 }
 
-function directoryOptions(group: DirectoryGroup) {
-  return commonDirectoryOptions(group.tasks, getTaskOptions)
+const directorySummaries = computed(() => new Map(displayedDirectories.value.map(group => [
+  group.key, summarizeDirectoryCandidates(group.tasks, getTaskOptions),
+])))
+
+function directorySummary(group: DirectoryGroup) {
+  return directorySummaries.value.get(group.key)!
 }
 
-function toggleDirectoryDetails(key: string) {
-  if (expandedDirectories.has(key)) expandedDirectories.delete(key)
-  else expandedDirectories.add(key)
+function directoryEvidence(group: DirectoryGroup) {
+  return [...new Set(group.tasks.map(task => task.errorMessage).filter((reason): reason is string => typeof reason === 'string' && reason.startsWith('Codex')))]
+}
+
+function directoryConfirmationBusy(group: DirectoryGroup) {
+  return recognitionActionLoading.value !== null || directorySubmitting.value
+    || group.tasks.some(task => candidateLoadingByTask[task.id])
+}
+
+function directoryConfirmationReason(group: DirectoryGroup) {
+  const summary = directorySummary(group)
+  const issue = directoryConfirmationIssue(summary, {
+    loading: group.tasks.some(task => candidateLoadingByTask[task.id]),
+    recognizing: recognitionActionLoading.value !== null,
+    submitting: directorySubmitting.value,
+  })
+  return issue ? t(`queue.directory.confirmationBlocked.${issue}`, {
+    count: summary.missingFiles, total: summary.totalFiles,
+  }) : ''
 }
 
 function openDirectoryReview(group: DirectoryGroup) {
-  const options = directoryOptions(group)
+  // 已有作品可由用户确认为整组身份，无需每个文件都先单独识别。
+  const options = summarizeDirectoryCandidates(group.tasks, getTaskOptions).reviewOptions
   if (!options.length) {
     ElMessage.warning(t('queue.directory.noCommonCandidate'))
     return
@@ -1668,7 +1856,10 @@ function closeDirectoryReview(done: () => void) {
 
 function applyDirectorySeason() {
   if (directoryReviewSeason.value == null) return
-  for (const row of directoryIncludedRows.value) row.season = directoryReviewSeason.value
+  for (const row of directoryIncludedRows.value) {
+    row.season = directoryReviewSeason.value
+    row.error = ''
+  }
 }
 
 async function confirmDirectory() {
@@ -1710,13 +1901,14 @@ async function confirmDirectory() {
         batchErrorByTask[result.taskId] = row.error
       }
     }
+    trackOrganization(results.filter(result => result.success).map(result => result.taskId))
     const message = t('queue.directory.submitted', { success: submitted, failed: failed.size })
     if (failed.size) {
       directoryReviewRows.value = rows.filter(row => failed.has(row.taskId))
       ElMessage.warning(message)
     } else {
       directoryReviewVisible.value = false
-      ElMessage.success(message)
+      ElMessage.info(message)
     }
     await loadQueue()
   } catch {
@@ -1742,15 +1934,18 @@ async function handleCodexDirectoryRecognition(task: MediaTask) {
     const editorResponse = res.data.data.updated.find((response) => response.task.id === editorTaskId)
     recognitionTask.value = editorResponse?.task ?? editorTask
     if (recognitionDrawerVisible.value && editorResponse) openRecognitionEditor(editorResponse.task)
-    const message = t('queue.codexDirectorySuccess', {
-      count: res.data.data.updated.length,
-      skipped: res.data.data.skipped.length,
-    })
-    if (res.data.data.skipped.length) ElMessage.warning(message)
+    const outcome = summarizeRecognitionResults(res.data.data.updated, res.data.data.skipped)
+    trackOrganization(res.data.data.updated.filter(response => response.task.status === 'PROCESSING').map(response => response.task.id))
+    for (const skipped of res.data.data.skipped) batchErrorByTask[skipped.taskId] = skipped.reason
+    const message = t('queue.codexDirectorySuccess', outcome)
+    if (outcome.review || outcome.failed) ElMessage.warning(message)
     else ElMessage.success(message)
-    const updatedIds = new Set(res.data.data.updated.map(response => response.task.id))
-    const group = queueDirectories.value.find(group => group.tasks.some(item => item.id === task.id))
-    if (group && updatedIds.size) openDirectoryReview({ ...group, tasks: group.tasks.filter(item => updatedIds.has(item.id)) })
+    const reviewTasks = res.data.data.updated.map(response => response.task)
+      .filter(item => item.status === 'AWAITING_CONFIRMATION')
+    const group = queueDirectories.value.find(group => group.tasks.some(item => reviewTasks.some(review => review.id === item.id)))
+    if (group && reviewTasks.length) openDirectoryReview({ ...group, tasks: reviewTasks })
+    if (editorResponse && editorResponse.task.status !== 'AWAITING_CONFIRMATION') recognitionDrawerVisible.value = false
+
   } catch {
     // HTTP 层展示失败原因，原有候选继续可用。
   } finally {
@@ -2152,11 +2347,15 @@ h2 {
 .directory-identity { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
 .directory-identity p { color: #909399; font-size: 13px; margin: 8px 0; }
 .directory-poster { width: 60px; height: 90px; border-radius: 6px; flex-shrink: 0; }
+.directory-confirm-trigger { display: inline-flex; }
+.directory-confirm-reason { margin-bottom: 16px; }
 .directory-evidence { color: #909399; font-size: 12px; margin-top: 14px; overflow-wrap: anywhere; }
 .directory-evidence summary { cursor: pointer; }
 .directory-season-row { margin-bottom: 16px; }
 .directory-coordinate { width: 112px; }
 .directory-review-footer { gap: 16px; }
+.directory-review-hint { flex: 1; min-width: 200px; text-align: left; }
+.directory-review-issues { margin: 8px 0 0; padding-left: 20px; max-height: 160px; overflow-y: auto; overflow-wrap: anywhere; }
 
 .queue-card {
   border: 1px solid #e4e7ed;

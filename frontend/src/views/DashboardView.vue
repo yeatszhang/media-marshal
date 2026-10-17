@@ -918,8 +918,8 @@ function formatCreatedAt(value: string) {
 }
 
 function taskDetails(task: MediaTask) {
-  if (task.status === 'FAILED') {
-    return localizedTaskDetail(task.errorMessage)
+  if (task.status === 'FAILED' || task.status === 'AWAITING_CONFIRMATION') {
+    return localizedTaskDetail(task.errorMessage || task.metadataWarning)
   }
   if (task.status === 'SKIPPED') {
     return localizedTaskDetail(task.skipReason)

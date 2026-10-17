@@ -375,6 +375,8 @@ public class TmdbMetadataMatcher implements MetadataMatcher {
 
         WebClient client = webClientBuilder.clone()
                 .baseUrl(getBaseUrl())
+                // 动漫整季可能包含数十集，完整季详情会超过 WebClient 默认的 256 KiB。
+                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(8 * 1024 * 1024))
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
         return new TmdbRequestContext(client, proxyConfig, timeoutSeconds);
@@ -401,6 +403,14 @@ public class TmdbMetadataMatcher implements MetadataMatcher {
     ) {
         if (error instanceof WebClientResponseException responseException) {
             int status = responseException.getStatusCode().value();
+            if (hasCauseClassName(error, "DataBufferLimitException")) {
+                return "TMDB 响应内容超过读取上限，请提高响应大小限制后重试";
+            }
+            if (status == 429) {
+                String retryAfter = responseException.getHeaders().getFirst("Retry-After");
+                return "TMDB 请求受到限流，请" + (retryAfter == null || !retryAfter.matches("\\d+")
+                        ? "稍后" : "等待 " + retryAfter + " 秒后") + "重试";
+            }
             if (status == 407) {
                 return "TMDB 代理认证失败：当前版本不支持需要认证的 HTTP 代理";
             }

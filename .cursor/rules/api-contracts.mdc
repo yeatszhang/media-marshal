@@ -65,7 +65,7 @@ interface MediaTask {
   errorCode: 'TARGET_CONFLICT' | 'UNSAFE_TARGET_PATH' | 'SOURCE_MISSING' | 'PIPELINE_FAILED' | null // status=FAILED 时用于系统内部判定和重复失败聚合
   failureCount: number | null      // status=FAILED 时同源文件、同规则、同 errorCode 的累计失败次数
   lastFailedAt: string | null      // 最近一次失败时间，ISO 8601
-  errorMessage: string | null       // status=FAILED 时说明失败原因，如目标文件冲突
+  errorMessage: string | null       // FAILED 或退回 AWAITING_CONFIRMATION 时说明具体失败/阻断原因
   skipReason: string | null         // status=SKIPPED 时说明跳过原因
   correctedFromTaskId: number | null // status=DONE 且来自纠错时，指向被修正的旧任务
   correctedToTaskId: number | null   // status=CORRECTED 时，指向修正后的新 DONE 任务；关联记录被删除时可能悬空
@@ -77,6 +77,7 @@ interface MediaTask {
 ```
 
 > 前端任务列表“详情”列组合展示：`FAILED` 读取 `failureCount` + `errorMessage`，`SKIPPED` 读取 `skipReason`。
+> Queue 批量提交的 success 仅代表接收；页面通过任务事件和进行中每 2 秒查询 `/api/tasks` 更新逐文件结果。退回 `AWAITING_CONFIRMATION` 同样算未完成，保留 `errorMessage`，提交成功提示不代替最终结果。
 > `CORRECTED` 表示旧的已完成任务已经被用户手动修正，仅作为历史记录展示，不代表当前有效媒体资产；当前有效资产由新的 `DONE` 任务承载，且 `confirmationSource=MANUAL_CORRECTION`。
 > 系统内部判断同类失败必须使用 `errorCode`，不能依赖 `errorMessage` 文案；重复失败聚合维度为 `sourcePath + ruleId + errorCode`，命中后只递增 `failureCount` 并刷新 `lastFailedAt` / `errorMessage`，不新增失败任务记录。扫描成功后历史失败记录保留，用于用户溯源。
 > 当前有效任务查重口径：同一路径存在 `PENDING` / `PROCESSING` / `AWAITING_CONFIRMATION` / `DONE` / `SKIPPED` 时视为已有有效记录；只有 `FAILED` / `CORRECTED` 历史记录时，不阻止后续发现或重新扫描。
@@ -275,6 +276,8 @@ interface TaskCorrectionBatchItemResponse {
 | POST | `/api/queue/recognition/batch/preview` | ADR-029：预览当前页已选 Queue 任务的公共识别信息批量编辑和顺序集号生成结果；不落库、不访问 TMDB | `QueueBatchRecognitionRequest` | `QueueBatchRecognitionPreview` |
 | PATCH | `/api/queue/recognition/batch` | ADR-029：仅保存批量识别信息；不访问 TMDB、不替换候选、不自动确认 | `QueueBatchRecognitionRequest` | `QueueBatchRecognitionSaveResponse` |
 | POST | `/api/queue/recognition/batch/rematch` | ADR-029：先保存批量识别信息，再逐任务重新 TMDB 匹配；替换旧候选，任务仍保持 AWAITING_CONFIRMATION，不自动确认 | `QueueBatchRecognitionRequest` | `QueueBatchRecognitionRematchResponse` |
+| POST | `/api/queue/{id}/codex-rematch` | Codex 重新识别并校验；可靠且无冲突的文件后台自动整理，其余保留待确认并返回具体原因 | — | `QueueRecognitionResponse` |
+| POST | `/api/queue/{id}/codex-directory-rematch` | 同规则同直接父目录整体识别，先完成全批校验，再自动整理无冲突项；逐项返回更新及跳过原因 | — | `QueueDirectoryRecognitionResponse` |
 | GET | `/api/queue/{id}/search?q={keyword}` | **Deprecated**：旧任务绑定搜索接口，前端新功能不再使用；保留兼容，结果不写入候选表 | — | `MatchResult[]` |
 | POST | `/api/queue/{id}/confirm` | 人工确认：指定 TMDB ID 后继续处理；源文件不存在时任务转为 FAILED 并返回失败信息 | `ConfirmRequest` | — |
 | POST | `/api/queue/batch-confirm` | 批量人工确认；逐条提交后台整理，源文件缺失或单条提交失败不回滚整个批次 | `BatchConfirmRequest` | `BatchConfirmResponse` |
@@ -843,3 +846,13 @@ interface TaskEvent {
 ```
 
 连接地址：`ws://{host}/ws`（SockJS endpoint）
+
+
+### Codex 自动整理响应语义
+
+`QueueRecognitionResponse` 为 `{ task: MediaTask, candidates: TaskCandidate[] }`。`QueueDirectoryRecognitionResponse` 为 `{ directory: string, updated: QueueRecognitionResponse[], skipped: { taskId: number, reason: string }[] }`。
+
+- `updated[].task.status` 可为 `PROCESSING` / `DONE`（自动通过）、`AWAITING_CONFIRMATION`（保留人工处理，`errorMessage` 包含具体原因及识别依据）、`FAILED`（文件操作等执行失败）。前端按实际状态统计，不能把 `updated.length` 当成整理成功数量。
+- Codex 自动整理要求模型置信度至少 0.9、TMDB 候选达到 `watcher.confidence-threshold`，并通过类型、季集存在性、重复/重叠、目标路径存在性及批内目标冲突校验。历史 `codex.require-confirmation` 值不再生效。
+- 路径季号仅作初始线索；原季缺失或不包含全部集号时，依据实际分集列表寻找唯一匹配正片季。可靠映射保留集号及 `metadataWarning` 后继续自动校验，不因季号不同或历史映射提示固定转人工；多季歧义、缺集和列表获取失败仍保留具体原因并暂停。人工确认首次修正季号仍需再次核对。
+- 单条与目录重新识别都会后台自动整理通过项，来源记录为 `AUTO_MATCH`；只有仍待确认的任务才进入人工面板。显式“仅保存”及手动编辑的 TMDB rematch 接口保持其原契约。

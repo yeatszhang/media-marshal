@@ -4,7 +4,7 @@ import { loadUtility } from './loadUtility.mjs';
 const { submitDirectoryConfirmation } = await loadUtility('confirmQueueDirectory');
 const messages = { stateChanged: '任务已变化', saveFailed: '保存失败', confirmFailed: '提交失败' };
 const option = { tmdbId: 123, mediaType: 'TV_SHOW', title: '某剧', originalTitle: null, year: 2026 };
-const task = (id) => ({ id, status: 'AWAITING_CONFIRMATION', mediaType: 'TV_SHOW', parsedSeason: null,
+const task = (id) => ({ id, parsedTitle: '某剧', parsedYear: 2026, status: 'AWAITING_CONFIRMATION', mediaType: 'TV_SHOW', parsedSeason: null,
     parsedEpisode: id, parsedEpisodeEnd: null });
 test('整目录的每集先保存统一季号，再用一次批量确认提交全部任务及同一作品', async () => {
     const saved = new Map();
@@ -47,4 +47,23 @@ test('坐标未变化时不重复保存，不将没有服务端回执的文件�
         confirm: async () => [],
     }, messages);
     assert.deepEqual(result, [{ taskId: 1, success: false, message: '提交失败' }]);
+});
+
+
+test('复用一个文件的正确作品，给其余文件保存共同片名且只提交一次批量确认', async () => {
+    const saved = [];
+    const rows = Array.from({ length: 13 }, (_, n) => ({ taskId: n + 1, season: 3, episode: 48 + n, episodeEnd: null }));
+    const result = await submitDirectoryConfirmation(rows, option, {
+        findTask: id => ({ ...task(id), parsedTitle: id === 3 ? '某剧' : null, parsedYear: id === 3 ? 2026 : null,
+            parsedSeason: 3, parsedEpisode: 47 + id }),
+        save: async (id, request) => { saved.push({ id, request }); },
+        confirm: async items => {
+            assert.equal(items.length, 13);
+            assert.ok(items.every(item => item.tmdbId === option.tmdbId));
+            return items.map(item => ({ taskId: item.taskId, success: true, message: null }));
+        },
+    }, messages);
+    assert.equal(saved.length, 12);
+    assert.ok(saved.every(item => item.request.parsedTitle === '某剧' && item.request.parsedSeason === 3));
+    assert.equal(result.filter(item => item.success).length, 13);
 });

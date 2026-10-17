@@ -3813,3 +3813,144 @@ alwaysApply: false
 - REQ-01/02/03/09 的发行门禁及矩阵仍需实施 / 实测；文档补齐不等于升级和恢复已经通过。
 - REQ-04 的歧义人工处理入口、自动重试策略，REQ-03 的并发动作约束，REQ-05 的检索接口等在进入开发前需形成设计结论。
 - 新发现的 NFO 内容补偿、分集 / 多集 NFO 语义纳入 REQ-08，当前没有据此承诺完整回滚。
+
+---
+
+## [可靠识别自动整理，仅异常保留人工处理] 2026-10-17
+
+### 完成内容
+- 自动发现、Codex 单条重新识别和整目录重新识别使用相同自动放行逻辑。模型置信度至少 0.9、TMDB 匹配达到配置阈值，并通过类型、季集存在性、目录重复及目标路径校验后，自动继续整理，来源记录为 `AUTO_MATCH`。
+- 停用历史 `codex.require-confirmation` 固定审批配置，移除设置页的强制确认开关；既有保存值不再使可靠识别固定进入人工队列。
+- 整目录先回填全部解析并完成全批目标检查，再提交后台文件操作；重复或重叠季集号的双方均保留，其他无冲突集可以继续。检查尚未入队的同目录数字文件、动漫方括号集号及哈希副本。
+- 文件操作策略新增只读目标预览，复用实际重命名及蓝光路径规则。目标已存在、批内目标相同、目标正在整理、路径不安全或残留模板变量时保留明确原因；不覆盖已有文件。
+- 队列显示具体拦截原因；识别响应区分自动提交、保留复核、失败或跳过；仅为仍待确认的文件打开面板。按钮改为“识别并整理”，面板保留上次未通过原因，编辑后的季集冲突实时重新校验。
+- 修正目录扫描测试的时间戳夹具：连续增删可能将 mtime 重置到同一毫秒，测试时间改为单调递增；未修改扫描器生产逻辑。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/AutomaticOrganizationGuard.java`
+- `backend/src/main/java/com/mediamarshal/service/parser/CodexRecognitionService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/{AssetOrganizerService,AssetOrganizerStrategy,VideoFileAssetOrganizer,IsoImageAssetOrganizer,BluRayDirectoryAssetOrganizer,RenameService}.java`
+- `backend/src/test/java/com/mediamarshal/service/pipeline/{MediaProcessPipelineRecognitionTest,AutomaticOrganizationGuardTest}.java`
+- `backend/src/test/java/com/mediamarshal/service/parser/CodexRecognitionServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/discovery/IncrementalDirectoryScannerTest.java`
+- `frontend/src/views/{QueueView,SystemSettingsView}.vue`
+- `frontend/src/utils/queueRecognition.ts`、`frontend/tests/queueRecognition.test.mjs`
+- `frontend/src/i18n/{zh,en}.ts`、`frontend/src/meta/releaseNotes.ts`、`frontend/src/i18n/releaseNotes/{zh,en}.ts`
+- `docs/codex-fallback.md`、`.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `POST /api/queue/{id}/codex-rematch` 和 `POST /api/queue/{id}/codex-directory-rematch` 在重新识别后自动校验及提交后台整理。响应结构保持不变，任务状态可为 `PROCESSING` / `DONE` / `AWAITING_CONFIRMATION` / `FAILED`，前端按实际状态统计。
+- 显式“仅保存”及手动编辑的 TMDB rematch 接口保留原契约。
+
+### 验证
+- Docker Maven / Java 21 执行 `mvn -q package`：252 项测试全部通过。
+- `npm run build`：类型检查及生产构建通过。
+- `npm run test:queue`：17 项测试通过。
+- 新增回归覆盖自动发现聚类、单条重识别、目录全通过、重复双方保留且其他集自动整理、已有目标不覆盖、批内目标碰撞、模型/TMDB 低置信度、季号映射冲突、尚未入队哈希副本、合并集重叠及目录检查异常。
+- `git diff --check` 通过。
+
+### 遗留问题 / 需 PM 决策
+- 无。本次按用户明确要求停用固定人工审批，保留异常复核及手动确认能力。
+
+### 本机部署验证
+- 已通过 `scripts/local-service.sh deploy` 构建并更新本机服务，镜像 tag：`ca12543-auto-review-20261017-1331`；部署前自动备份数据库。
+- 部署构建再次通过后端全部测试，Codex 桥接 30 项回归通过。
+- 网页与 Queue API 健康检查均为 HTTP 200；实际提供的前端资源包含“批量识别并整理”和新统计文案，已移除固定人工审批开关。
+- 未主动对现有队列调用识别或整理接口；旧任务由用户点击新按钮触发重新校验。
+
+---
+
+## [咒术回战：来源分季与元数据单季 case] 2026-10-17
+
+### 已完成
+- 补充 `S03/48` 来源目录 case：元数据仅有一个正片季且该季存在第 48 集时，采用 `S01E48`，保留累计集号，不推测季内偏移。
+- 回归验证来源路径保持不变，映射提示同时保留 `S03E48` 和 `S01E48`；特别篇不计入正片季数量。
+- 文档区分用户反馈中的 TVDB 与项目实际使用的 TMDB；单季列表为回归夹具，未据此断言线上季列表。
+
+### 关键文件
+- `backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java`
+- `docs/codex-fallback.md`
+
+### 接口变更
+- 无。
+
+### 偏离设计的地方
+- 无，本次补充 case 与回归，未变更现有自动整理及人工确认行为。
+
+### 验证
+- Docker Maven / Java 21 执行咒术回战定向回归：1 项通过。
+- `git diff --check` 通过。
+
+### 遗留问题 / 需 PM 决策
+- 当时未实施自动映射行为变更；用户后续澄清及实际实现见下一条记录。
+
+---
+
+## [结合路径、季结构与实际分集判断季号] 2026-10-17
+
+### 已完成
+- 路径季号作为线索；来源季缺失或不包含完整集号范围时检查其他正片季的实际分集列表，唯一匹配才修正季号，保留集号及来源路径。已有季号存在也不能绕过分集校验。
+- 自动整理允许可靠季号映射；映射提示继续展示，历史提示不再固定拦截重新识别。人工确认首次修正仍先提示，已完成任务修正保留预览确认。
+- 重复检查兼容修正前季号和来源目录季号，覆盖尚未入队的哈希副本及已映射任务的重试。
+- 咒术回战 `S03/48 → S01E48` 覆盖目录自动整理、累计集号保留、历史映射提示及重复副本拦截。多季歧义、缺集及远端失败保留可定位原因，校验失败不修改任务季号。
+- 模型提示补充数字语义区分，在可信集号候选中通常保留较大的累计集号，再用元数据校验；排除年份、分辨率、编码与哈希。
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbEpisodeService.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/{MediaProcessPipeline,AutomaticOrganizationGuard}.java`
+- `backend/src/test/java/com/mediamarshal/service/{matcher/TmdbEpisodeServiceTest,pipeline/MediaProcessPipelineRecognitionTest}.java`
+- `scripts/codex-bridge.py`
+- `docs/codex-fallback.md`、`docs/architecture/processing.md`、`.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 响应结构不变；自动识别入口在唯一季集映射及其余校验通过后继续整理，`metadataWarning` 保留采用依据。
+
+### 偏离设计的地方
+- 按用户澄清调整季号判断，未改动 `design-decisions.mdc`。
+
+### 验证
+- Docker Maven / Java 21：季集校验、识别流水线、重复文件拦截及任务修正共 58 项回归通过。
+- 后端全量 `mvn -q test`：45 个测试类、267 项测试通过，无失败或跳过。
+- Codex 桥接 30 项测试通过；`git diff --check` 通过。
+
+### 遗留问题 / 需 PM 决策
+- 无；元数据不完整或多个季均能匹配时保留人工处理，不按集数总量猜测偏移。
+
+
+## [TMDB 大响应、持久缓存与后台整理结果反馈] 2026-10-17
+
+### 已完成
+- 用相同 Java / Reactor 客户端复现《咒术回战》第 1 季返回 HTTP 200 后因 256 KiB 缓冲上限读取失败；提高上限至 8 MiB，并保留响应大小、HTTP 限流与连接错误的具体原因。
+- 修复缓存进行中请求的清理时序；先注册占位再加载，失败后可重新请求。同作品详情、同季分集、同搜索词按各自缓存键合并并发请求。
+- 成功元数据写入 SQLite `tmdb_cache_entry`，重启后恢复未到期结果；保留现有 TTL 与 5000 项上限，错误不写入缓存。
+- Queue 增加逐文件后台结果，接入任务事件并以 2 秒轮询补偿；提交提示区分已接收和最终完成，失败退回待确认时保留具体原因。单条确认也回读实际状态。
+- Dashboard 的待确认任务展示错误及阻断原因，修复历史记录详情为空的问题；同步中英文 ReleaseNote。
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbInMemoryCache.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbPersistentCache.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/TmdbCacheEntry.java`
+- `backend/src/main/java/com/mediamarshal/repository/TmdbCacheEntryRepository.java`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/utils/queueOrganization.ts`
+- `docs/architecture/data-and-recovery.md`
+
+### 接口变更
+- 无新增接口；补充既有 `errorMessage` 在 AWAITING_CONFIRMATION 下的含义和批量提交最终结果查询约定。
+
+### 偏离设计的地方
+- 无；继续保留季集校验阻断，不因网络问题绕过文件安全检查。
+
+### 验证
+- 宿主机与 Docker 的直连 / 代理读请求：搜索、作品详情成功；第 3 季确实返回 404。相同 Java 客户端读取第 1 季 HTTP 200 的大响应稳定复现缓冲溢出，修复后完整读取 59 集。
+- 真实 Java 客户端重复搜索、电影详情及分集请求命中缓存；4 个并发分集请求只发送一次网络请求，未收到 429。
+- 后端全量测试通过，当前 Surefire 报告 267 项、0 失败；覆盖超过 256 KiB 的真实本地 HTTP 响应、缓存并发、失败重试、持久数据恢复及 HTTP 429。
+- 前端 18 项测试通过；类型检查及生产构建通过；Codex 桥接 30 项测试通过。
+- 独立数据库、合成视频和模拟 TMDB 的页面验收：提交后显示处理中，随后自动显示“0 完成、1 未完成”和“限流、等待 3 秒重试”的具体原因；切换历史记录仍显示原因。该测试未挂载真实媒体卷。
+- 本机部署与网页 / API 健康检查通过；SQLite 已有成功搜索缓存，真实 12 个源视频仍在。`git diff --check` 通过。
+
+### 遗留问题 / 需 PM 决策
+- 本次结果面板跟随当前页面会话；任务状态及失败原因保存在服务端，刷新后可在待确认队列和历史记录查看。缓存按有效期刷新，连载数据不永久冻结。

@@ -20,7 +20,7 @@ Vue 3 Composition API + TypeScript + Element Plus + Pinia + vue-i18n
 
 ## API 调用
 - 通过 `src/api/*.ts` 调用，禁止在组件中直接使用 axios
-- 错误由 `http.ts` 拦截器统一处理（ElMessage.error），组件不需要重复处理网络错误
+- 网络错误由 `http.ts` 拦截器统一提示（ElMessage.error），组件避免重复弹出同一错误；本地校验、操作拦截、逐项失败及后台任务异常仍须在对应界面展示具体原因，遵循 [错误与异常反馈要求](error-feedback.mdc)。
 ```typescript
 // ✅
 const res = await mediaApi.listTasks()

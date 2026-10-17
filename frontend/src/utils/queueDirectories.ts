@@ -25,6 +25,57 @@ export function commonDirectoryOptions<T extends { key: string }>(tasks: MediaTa
   return options(tasks[0].id).filter(option => keys.every(set => set.has(option.key)))
 }
 
+/** 共同候选优先；部分文件已有的候选也可由用户选为整组身份。 */
+export function summarizeDirectoryCandidates<T extends { key: string; confidence?: number | null }>(
+  tasks: MediaTask[], options: (id: number) => T[],
+) {
+  const candidates = new Map<string, { option: T; count: number; confidence: number }>()
+  let missingFiles = 0
+  for (const task of tasks) {
+    const seen = new Set<string>()
+    const taskOptions = options(task.id)
+    if (!taskOptions.length) missingFiles++
+    for (const option of taskOptions) {
+      if (seen.has(option.key)) continue
+      seen.add(option.key)
+      const current = candidates.get(option.key)
+      if (current) {
+        current.count++
+        current.confidence += option.confidence ?? 0
+      } else {
+        candidates.set(option.key, { option, count: 1, confidence: option.confidence ?? 0 })
+      }
+    }
+  }
+  const sharedOptions = commonDirectoryOptions(tasks, options)
+  const ranked = [...candidates.values()].sort((a, b) => b.count - a.count || b.confidence - a.confidence)
+  const sharedKeys = new Set(sharedOptions.map(option => option.key))
+  const reviewOptions = [...sharedOptions, ...ranked.filter(item => !sharedKeys.has(item.option.key)).map(item => item.option)]
+  const leading = sharedOptions.length
+    ? candidates.get(sharedOptions[0].key)
+    : ranked[0]
+  return {
+    option: leading?.option,
+    supportedFiles: leading?.count ?? 0,
+    totalFiles: tasks.length,
+    missingFiles,
+    sharedOptions,
+    reviewOptions,
+  }
+}
+
+/** 卡片与按钮共用同一禁用原因，避免看得到作品却不知道为何无法确认。 */
+export function directoryConfirmationIssue(
+  summary: { reviewOptions: unknown[] },
+  state: { loading: boolean; recognizing: boolean; submitting: boolean },
+) {
+  if (state.submitting) return 'submitting'
+  if (state.recognizing) return 'recognizing'
+  if (state.loading) return 'loading'
+  if (!summary.reviewOptions.length) return 'noCandidates'
+  return null
+}
+
 /** 优先保留已解析季号及路径中的明确标记，其余按用户约定使用第一季。 */
 export function resolveEpisodeSeason(task: Pick<MediaTask, 'parsedSeason' | 'sourcePath'>): number {
   if (task.parsedSeason != null) return task.parsedSeason
@@ -64,22 +115,39 @@ export interface DirectoryEpisodeRow {
   episodeEnd: number | null | undefined
 }
 
-export function directoryEpisodeIssue(rows: DirectoryEpisodeRow[], type: MediaType) {
-  if (type !== 'TV_SHOW') return null
-  const coordinates = new Set<string>()
+export type DirectoryEpisodeIssueDetail =
+  | { kind: 'missing' | 'range'; taskIds: number[] }
+  | { kind: 'duplicate'; taskIds: number[]; season: number; episode: number; episodeEnd: number }
+
+/** 返回所有受影响文件和实际重叠范围，供拦截提示与行状态共用。 */
+export function directoryEpisodeIssues(rows: DirectoryEpisodeRow[], type: MediaType): DirectoryEpisodeIssueDetail[] {
+  if (type !== 'TV_SHOW') return []
+  const issues: DirectoryEpisodeIssueDetail[] = []
+  const valid: { taskId: number; season: number; episode: number; episodeEnd: number }[] = []
   for (const row of rows) {
     const { season, episode, episodeEnd } = row
-    if (season == null || episode == null) return 'missing'
+    if (season == null || episode == null) {
+      issues.push({ kind: 'missing', taskIds: [row.taskId] })
+      continue
+    }
     if (!Number.isInteger(season) || season < 0 || season > 999
         || !Number.isInteger(episode) || episode < 1 || episode > 10000
         || (episodeEnd != null && (!Number.isInteger(episodeEnd) || episodeEnd < episode || episodeEnd > 10000))) {
-      return 'range'
+      issues.push({ kind: 'range', taskIds: [row.taskId] })
+      continue
     }
-    for (let n = episode; n <= (episodeEnd ?? episode); n++) {
-      const key = `${season}:${n}`
-      if (coordinates.has(key)) return 'duplicate'
-      coordinates.add(key)
+    for (const other of valid) {
+      const start = Math.max(episode, other.episode)
+      const end = Math.min(episodeEnd ?? episode, other.episodeEnd)
+      if (season === other.season && start <= end) {
+        issues.push({ kind: 'duplicate', taskIds: [other.taskId, row.taskId], season, episode: start, episodeEnd: end })
+      }
     }
+    valid.push({ taskId: row.taskId, season, episode, episodeEnd: episodeEnd ?? episode })
   }
-  return null
+  return issues
+}
+
+export function directoryEpisodeIssue(rows: DirectoryEpisodeRow[], type: MediaType) {
+  return directoryEpisodeIssues(rows, type)[0]?.kind ?? null
 }

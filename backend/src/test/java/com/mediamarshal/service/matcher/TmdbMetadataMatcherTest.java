@@ -85,6 +85,43 @@ class TmdbMetadataMatcherTest {
     }
 
     @Test
+    void reportsRateLimitAndRetryDelay() {
+        when(exchange.exchange(any())).thenReturn(Mono.just(ClientResponse.create(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "15").build()));
+        assertThatThrownBy(() -> matcher.getSeasonEpisodes("95479", 1)).hasMessageContaining("限流").hasMessageContaining("15");
+    }
+
+    @Test
+    void readsLargeSeasonResponseAndSharesItAcrossEpisodeRequests() throws Exception {
+        var requests = new java.util.concurrent.atomic.AtomicInteger();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        String episodes = java.util.stream.IntStream.rangeClosed(1, 59).mapToObj(number ->
+                "{\"season_number\":1,\"episode_number\":" + number + ",\"name\":\"第" + number
+                        + "集\",\"overview\":\"" + "a".repeat(6000) + "\"}")
+                .collect(java.util.stream.Collectors.joining(","));
+        byte[] body = ("{\"season_number\":1,\"episodes\":[" + episodes + "]}")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(body.length).isGreaterThan(262144);
+        server.createContext("/tv/95479/season/1", call -> {
+            requests.incrementAndGet();
+            call.getResponseHeaders().add("Content-Type", "application/json");
+            call.sendResponseHeaders(200, body.length);
+            try (var output = call.getResponseBody()) { output.write(body); }
+        });
+        server.start();
+        try {
+            when(settings.get(eq("tmdb.base-url"), anyString())).thenReturn("http://127.0.0.1:" + server.getAddress().getPort());
+            var actual = new TmdbMetadataMatcher(settings, proxy, WebClient.builder(), new TitleSearchPlanBuilder(),
+                    new TmdbInMemoryCache(settings), new TmdbConfidenceScorer());
+            assertThat(actual.getSeasonEpisodes("95479", 1)).hasSize(59);
+            assertThat(actual.getSeasonEpisodes("95479", 1)).hasSize(59);
+            assertThat(requests).hasValue(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void keepsSearchYearForFirstSeasonTv() {
         assertThat(TmdbMetadataMatcher.resolveSearchYear("tv", parse("episode", 2025, 1))).isEqualTo(2025);
     }
@@ -92,6 +129,31 @@ class TmdbMetadataMatcherTest {
     @Test
     void keepsSearchYearForMovies() {
         assertThat(TmdbMetadataMatcher.resolveSearchYear("movie", parse("movie", 2025, null))).isEqualTo(2025);
+    }
+
+    @Test
+    void searchesCleanAnimeTitleWhenGuessitDidNotReturnTitle() {
+        matcher = new TmdbMetadataMatcher(settings, proxy, WebClient.builder().exchangeFunction(exchange),
+                new TitleSearchPlanBuilder(), new TmdbInMemoryCache(settings), new TmdbConfidenceScorer());
+        when(exchange.exchange(any())).thenReturn(response("""
+                {"results":[{"id":95479,"name":"咒术回战","original_name":"呪術廻戦",
+                  "first_air_date":"2020-10-03"}]}
+                """));
+        ParseResult parsed = parse("episode", null, null);
+        parsed.setOriginalFilename("[BeanSub&FZSD][Jujutsu_Kaisen][48][GB][1080P][x264_AAC].mp4");
+        parsed.setReleaseGroup("BeanSub&FZSD");
+        parsed.setEpisode(48);
+
+        var matches = matcher.search(parsed);
+
+        assertThat(matches).singleElement().satisfies(match -> {
+            assertThat(match.getSourceId()).isEqualTo("95479");
+            assertThat(match.getTitle()).isEqualTo("咒术回战");
+            assertThat(match.getMediaType()).isEqualTo("TV_SHOW");
+        });
+        verify(exchange, times(1)).exchange(argThat(request ->
+                request.url().getPath().equals("/3/search/tv")
+                        && request.url().getQuery().contains("query=Jujutsu Kaisen&")));
     }
 
     private ParseResult parse(String type, Integer year, Integer season) {
