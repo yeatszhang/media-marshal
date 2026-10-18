@@ -26,6 +26,13 @@ export default defineConfig({
         ],
       },
       {
+        text: '产品规划',
+        items: [
+          { text: '产品定位与运营方向', link: '/product/positioning' },
+          { text: '商业与付费策略', link: '/product/business-and-operations' },
+        ],
+      },
+      {
         text: '开发与架构',
         items: [
           { text: '架构总览', link: '/architecture/' },

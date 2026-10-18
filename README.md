@@ -10,7 +10,7 @@ Source tree version: `v0.2.13.1` · 源码版本（已发布镜像以实际 Rele
 
 [用户手册](docs/user-guide.md) · [部署指南](docs/deployment.md) · [常见问题](docs/faq.md)
 
-Maintainer documents / 维护文档：[架构总览](docs/architecture/index.md) · [处理流程](docs/architecture/processing.md) · [数据与恢复](docs/architecture/data-and-recovery.md) · [当前需求与验收](.cursor/rules/requirements-status.mdc) · [路线图](.cursor/rules/project-roadmap.mdc)
+Maintainer documents / 维护文档：[产品定位与运营方向](docs/product/positioning.md) · [商业与付费策略](docs/product/business-and-operations.md) · [架构总览](docs/architecture/index.md) · [处理流程](docs/architecture/processing.md) · [数据与恢复](docs/architecture/data-and-recovery.md) · [当前需求与验收](.cursor/rules/requirements-status.mdc) · [路线图](.cursor/rules/project-roadmap.mdc)
 
 ---
 
