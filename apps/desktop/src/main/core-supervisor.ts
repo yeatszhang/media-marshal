@@ -1,0 +1,241 @@
+import {
+  MessageChannelMain,
+  utilityProcess,
+  type UtilityProcess,
+  type MessagePortMain,
+} from "electron";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  DesktopError,
+  PROTOCOL_VERSION,
+  MAX_RESPONSE_BYTES,
+  checkMessageSize,
+  coreActions,
+  responseSchema,
+  type CoreAction,
+  type CoreInput,
+  type CoreOutput,
+  type DesktopRuntime,
+} from "@media-marshal/contracts";
+
+interface Pending {
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+export class CoreSupervisor {
+  private child?: UtilityProcess;
+  private port?: MessagePortMain;
+  private exited?: Promise<void>;
+  private pending = new Map<string, Pending>();
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private attempts = 0;
+  private stopping = false;
+  private starting?: Promise<void>;
+  state: DesktopRuntime["core"] = "starting";
+  detail: string | null = null;
+  constructor(
+    private readonly workerPath: string,
+    private readonly dataDir: string,
+  ) {}
+
+  start(): Promise<void> {
+    if (this.starting) return this.starting;
+    this.stopping = false;
+    this.starting = this.spawn().finally(() => {
+      this.starting = undefined;
+    });
+    return this.starting;
+  }
+  private async spawn(): Promise<void> {
+    if (this.child) throw new DesktopError("CONFLICT", "旧核心尚未退出");
+    this.state = "starting";
+    this.detail = null;
+    const child = utilityProcess.fork(this.workerPath, [], {
+      serviceName: "Media Marshal Core",
+      stdio: "pipe",
+    });
+    this.child = child;
+    const { port1, port2 } = new MessageChannelMain();
+    this.port = port1;
+    // 子进程错误不直接输出，避免原始数据库/文件错误泄漏个人路径。
+    child.stdout?.on("data", () => {});
+    child.stderr?.on("data", () => {});
+    let readyResolve!: () => void, readyReject!: (error: unknown) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+    const readyTimer = setTimeout(() => {
+      readyReject(new DesktopError("TIMEOUT", "核心启动超时", true));
+      child.kill();
+    }, 15000);
+    const fail = () => {
+      clearTimeout(readyTimer);
+      readyReject(
+        new DesktopError("CORE_UNAVAILABLE", "媒体核心启动失败或已中断", true),
+      );
+    };
+    port1.on("message", (event) => {
+      const message: unknown = event.data;
+      try {
+        checkMessageSize(message, MAX_RESPONSE_BYTES);
+      } catch {
+        child.kill();
+        return;
+      }
+      if (
+        message &&
+        typeof message === "object" &&
+        "kind" in message &&
+        message.kind === "ready"
+      ) {
+        if (
+          !("protocolVersion" in message) ||
+          message.protocolVersion !== PROTOCOL_VERSION
+        ) {
+          fail();
+          child.kill();
+          return;
+        }
+        clearTimeout(readyTimer);
+        this.state = "ready";
+        this.detail = null;
+        readyResolve();
+        return;
+      }
+      const parsed = responseSchema.safeParse(message);
+      if (!parsed.success) return;
+      const response = parsed.data,
+        pending = this.pending.get(response.requestId);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(response.requestId);
+      if (response.ok) pending.resolve(response.result);
+      else
+        pending.reject(
+          new DesktopError(
+            response.error.code,
+            response.error.message,
+            response.error.retryable,
+          ),
+        );
+    });
+    port1.start();
+    this.exited = new Promise<void>((resolve) =>
+      child.once("exit", () => {
+        fail();
+        port1.close();
+        if (this.child === child) {
+          this.child = undefined;
+          this.port = undefined;
+        }
+        for (const pending of this.pending.values()) {
+          clearTimeout(pending.timer);
+          pending.reject(
+            new DesktopError(
+              "INTERRUPTED",
+              "核心已中断，请查询当前状态后重试",
+              true,
+            ),
+          );
+        }
+        this.pending.clear();
+        this.state = this.stopping ? "stopping" : "failed";
+        this.detail = this.stopping
+          ? null
+          : "媒体核心已中断，正在恢复或等待重试";
+        resolve();
+        if (!this.stopping && this.attempts < 3) {
+          this.attempts++;
+          this.retryTimer = setTimeout(() => {
+            void this.start().catch(() => {});
+          }, this.attempts * 1000);
+        }
+      }),
+    );
+    child.once("spawn", () =>
+      child.postMessage(
+        {
+          kind: "initialize",
+          protocolVersion: PROTOCOL_VERSION,
+          databasePath: join(this.dataDir, "desktop.sqlite3"),
+        },
+        [port2],
+      ),
+    );
+    try {
+      await ready;
+    } catch (error) {
+      this.state = "failed";
+      this.detail = "媒体核心不可用，请重试或检查诊断";
+      throw error;
+    }
+  }
+  async request<K extends CoreAction>(
+    action: K,
+    payload: CoreInput<K>,
+  ): Promise<CoreOutput<K>> {
+    if (this.state !== "ready" || !this.port)
+      throw new DesktopError("CORE_UNAVAILABLE", "媒体核心尚未就绪", true);
+    if (this.pending.size >= 64)
+      throw new DesktopError("CONFLICT", "请求过多，请稍后重试", true);
+    const input = coreActions[action].input.parse(payload);
+    const requestId = randomUUID();
+    const message = {
+      kind: "request",
+      protocolVersion: PROTOCOL_VERSION,
+      requestId,
+      action,
+      payload: input,
+    };
+    checkMessageSize(message);
+    const result = await new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(
+          new DesktopError(
+            "TIMEOUT",
+            "请求等待超时，请查询状态，不要重复提交",
+            true,
+          ),
+        );
+      }, 15000);
+      this.pending.set(requestId, { resolve, reject, timer });
+      try {
+        this.port!.postMessage(message);
+      } catch {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(new DesktopError("INTERRUPTED", "核心通信已中断", true));
+      }
+    });
+    return coreActions[action].output.parse(result) as CoreOutput<K>;
+  }
+  async restart(): Promise<void> {
+    await this.stop();
+    await this.starting?.catch(() => {});
+    this.attempts = 0;
+    await this.start();
+  }
+  async stop(): Promise<void> {
+    this.stopping = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    // 启动也受管理；关闭不能遗漏尚未握手的子进程。
+    const child = this.child;
+    this.state = "stopping";
+    if (!child) return;
+    this.port?.postMessage({
+      kind: "shutdown",
+      protocolVersion: PROTOCOL_VERSION,
+    });
+    const timer = setTimeout(() => child.kill(), 8000);
+    try {
+      await this.exited;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}

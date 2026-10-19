@@ -1,25 +1,25 @@
 # 实施任务
 
-全部为待实施项。目标为 npm workspaces monorepo 中采用 `@yeatz/app-framework` 的独立 Electron + React 客户端；一期所需 Java 业务迁入 TypeScript Utility Process，三进程分别使用 Application 与静态模块。旧 Web/Java/Docker 工程保留作参考，不作为桌面运行依赖或同步交付门槛。每项随实现提交对应验证；本轮不创建工程或移植代码。
+按复选框记录实际完成状态。目标为 npm workspaces monorepo 中采用 `@yeatz/app-framework` 的独立 Electron + React 客户端；一期所需 Java 业务迁入 TypeScript Utility Process，三进程分别使用 Application 与静态模块。旧 Web/Java/Docker 工程保留作参考，不作为桌面运行依赖或同步交付门槛。每项记录对应验证，未满足完整验收的项目保留未勾选。
 
 ## 1. 迁移基线与 monorepo 原型
 
-- [ ] 1.1 从 Java 服务、测试和现有页面建立模块迁移矩阵，区分迁移、重做和一期排除项；交付可追溯到源码/测试的功能清单，覆盖规则、匹配、季集、模板、确认、修正、历史和 Emby，不把旧 Web 全功能列为一期承诺。
-- [ ] 1.2 建立 npm workspaces 的 `apps/desktop`、`packages/contracts`、`packages/media-core`，保留根文档脚本和旧工程独立入口；验证干净安装、定向构建、类型检查和依赖方向，Renderer 不导入 Node/媒体核心。
+- [x] 1.1 从 Java 服务、测试和现有页面建立模块迁移矩阵，区分迁移、重做和一期排除项；交付可追溯到源码/测试的功能清单，覆盖规则、匹配、季集、模板、确认、修正、历史和 Emby，不把旧 Web 全功能列为一期承诺。
+- [x] 1.2 建立 npm workspaces 的 `apps/desktop`、`packages/contracts`、`packages/media-core`，保留根文档脚本和旧工程独立入口；验证干净安装、定向构建、类型检查和依赖方向，Renderer 不导入 Node/媒体核心。
 - [ ] 1.3 建立 electron-vite/electron-builder 原型、React 窗口和 Utility Process 入口，核心加载 better-sqlite3；在 Windows x64、macOS arm64/x64 运行真实打包产物，验证 ABI、资源路径、无 JRE 和无旧服务依赖。
 - [ ] 1.4 在 `tools/desktop-parser` 建立只依赖 guessit 的 JSON Lines stdio 入口与 PyInstaller 目录模式构建；用现有解析响应夹具验证名称解析、超时、非法输出和管道关闭，三平台无需系统 Python 且无 FastAPI/uvicorn 监听服务。
-- [ ] 1.5 为原型记录支持系统、文件系统、冷/热启动、全进程空闲内存/CPU、安装体积和解析延迟；交付可重复命令与未验证矩阵，区分 dev、打包及正式签名产物，不将单机结果推广到全部平台。
-- [ ] 1.6 固定 `@yeatz/app-framework` 的可还原源码和构建包快照，记录上游 commit、工作树差异、工具版本、MIT 许可与包校验值，采用仓库内相对包引用及根锁文件；验证没有 wenger 目录和全局链接的干净环境可 npm 安装、导入公开 ESM/CJS/React 入口并构建。若实施时已有公开包，核对 API 后使用精确版本，更新来源记录。
-- [ ] 1.7 建立 Main/Core/Renderer 三套独立 Application 组装及静态模块清单，Preload 不引入框架；验证服务与注册表隔离、缺失/循环依赖拒绝启动、部分启动失败资源回收及新实例重试。框架先于迁移服务接入，领域与 contracts 保持无框架依赖，不启用动态插件。
-- [ ] 1.8 统一使用 legacy TS 装饰器与显式注入标识，配置 electron-vite 和测试编译入口；以打包后的实例验证注入可用，Core 不加载 React、Renderer 不加载 Node/Electron 原生入口，不使用深层源码导入或第二套 DI 容器。
+- [x] 1.5 为原型记录支持系统、文件系统、冷/热启动、全进程空闲内存/CPU、安装体积和解析延迟；交付可重复命令与未验证矩阵，区分 dev、打包及正式签名产物，不将单机结果推广到全部平台。
+- [x] 1.6 固定 `@yeatz/app-framework` 的可还原源码和构建包快照，记录上游 commit、工作树差异、工具版本、MIT 许可与包校验值，采用仓库内相对包引用及根锁文件；验证没有 wenger 目录和全局链接的干净环境可 npm 安装、导入公开 ESM/CJS/React 入口并构建。若实施时已有公开包，核对 API 后使用精确版本，更新来源记录。
+- [x] 1.7 建立 Main/Core/Renderer 三套独立 Application 组装及静态模块清单，Preload 不引入框架；验证服务与注册表隔离、缺失/循环依赖拒绝启动、部分启动失败资源回收及新实例重试。框架先于迁移服务接入，领域与 contracts 保持无框架依赖，不启用动态插件。
+- [x] 1.8 统一使用 legacy TS 装饰器与显式注入标识，配置 electron-vite 和测试编译入口；以打包后的实例验证注入可用，Core 不加载 React、Renderer 不加载 Node/Electron 原生入口，不使用深层源码导入或第二套 DI 容器。
 
 原型依赖顺序：1.2 → 1.6 → 1.7/1.8 → 1.3，1.4 可独立准备，1.5 记录最终组合；不能在框架集成尚未验证时批量迁移业务服务。
 
 ## 2. 进程边界、桌面数据和生命周期
 
-- [ ] 2.1 定义 contracts 中的命令、DTO、错误、requestId 和协议版本，完成 Main/Preload/核心受控消息桥；契约测试覆盖参数上限、未知命令、版本不一致和错误返回，文档明确没有 HTTP/WS 业务监听端口。
-- [ ] 2.2 实现可信页面协议、sandbox、contextIsolation、最小 Preload API、sender/frame 与原生动作校验；测试不可信来源、任意 URL/channel/SQL/shell 请求被拒绝，原有 8000/8080 端口被占用不影响启动。
-- [ ] 2.3 实现核心独占 SQLite、桌面基础 schema、显式 SQL 迁移、schema_version 与配置读取；真实 SQLite 测试覆盖新库、桌面旧版升级、迁移失败、未知版本、唯一约束及前端无数据库权限，不读取旧 Java 库。
+- [x] 2.1 定义 contracts 中的命令、DTO、错误、requestId 和协议版本，完成 Main/Preload/核心受控消息桥；契约测试覆盖参数上限、未知命令、版本不一致和错误返回，文档明确没有 HTTP/WS 业务监听端口。
+- [x] 2.2 实现可信页面协议、sandbox、contextIsolation、最小 Preload API、sender/frame 与原生动作校验；测试不可信来源、任意 URL/channel/SQL/shell 请求被拒绝，原有 8000/8080 端口被占用不影响启动。
+- [x] 2.3 实现核心独占 SQLite、桌面基础 schema、显式 SQL 迁移、schema_version 与配置读取；真实 SQLite 测试覆盖新库、桌面旧版升级、迁移失败、未知版本、唯一约束及前端无数据库权限，不读取旧 Java 库。
 - [ ] 2.4 实现 Main 的 safeStorage 凭据保存与核心内存注入、脱敏诊断；验证密钥不出现在业务库明文、查询响应、命令行、日志和默认诊断中，核心重启仍能恢复必要凭据。
 - [ ] 2.5 实现单实例锁、核心/解析器握手、超时和最多三次恢复；故障注入验证旧核心退出后才打开新实例，旧请求明确中断，变更命令不会被自动重放。
 - [ ] 2.6 实现托盘、首次关闭提示、可选登录启动、显式退出及父通道/stdio 关闭清理；在三平台测试窗口关闭继续工作、重复启动唤起、Main/Core 强杀和 parser 超时，无孤儿写入者，不按进程名杀进程。
@@ -66,7 +66,7 @@
 
 ## 7. React 客户端界面
 
-- [ ] 7.1 建立 shadcn/ui、Tailwind 语义 Token、React Router 与中英文文案，在组件树外启动 Renderer Application 并注入 ContainerProvider，完成窗口导航和错误/空状态；验证键盘、焦点返回、最小窗口和长中文路径，不引入独立 Web 发布入口。
+- [x] 7.1 建立 shadcn/ui、Tailwind 语义 Token、React Router 与中英文文案，在组件树外启动 Renderer Application 并注入 ContainerProvider，完成窗口导航和错误/空状态；验证键盘、焦点返回、最小窗口和长中文路径，不引入独立 Web 发布入口。
 - [ ] 7.2 实现 Emby 连接、原生来源/目标目录选择、TMDB 配置和首次小范围预览；测试取消选择不改设置、失败可存草稿、第一次不自动整理全部历史文件，配置流程无需产品账户。
 - [ ] 7.3 实现来源健康、网盘标签、自定义来源、暂停和自动开关；验证未知行为仍要求确认、盘符/挂载变化明确提示，不显示云端登录或虚构下载进度。
 - [ ] 7.4 实现总览、任务分页/筛选、文件与交付状态，以及有界可取消轮询；测试 StrictMode 重挂载、窗口重开和缓存丢失不重复提交，核心离线展示恢复入口。
@@ -83,7 +83,7 @@
 - [ ] 8.3 实现核心协调的升级前一致性备份、迁移兼容检查和恢复入口；测试 WAL 数据完整、失败停止接入、旧版拒绝新 schema，恢复备份后重新核对磁盘。
 - [ ] 8.4 完成 DMG/NSIS 安装、重复安装和保留数据卸载；三平台验证只读安装目录、中文/空格路径、重新安装和手动升级，不触碰来源及目标媒体，不读取旧 Java 数据。
 - [ ] 8.5 在官网文档增加客户端架构下载、系统/客户端前置条件、发行说明及校验值；运行 `npm run docs:build` 并核对链接与版本，实际上传发布按后续用户指令执行。
-- [ ] 8.6 记录 monorepo 开发命令、核心模块映射与旧工程边界；验证客户端定向构建不运行 Maven/旧 Vue 构建，既有文档和旧部署入口未因目录组织被破坏。
+- [x] 8.6 记录 monorepo 开发命令、核心模块映射与旧工程边界；验证客户端定向构建不运行 Maven/旧 Vue 构建，既有文档和旧部署入口未因目录组织被破坏。
 - [ ] 8.7 将框架包来源、内容校验、公开入口检查与 MIT 许可纳入发布清单；验证包内依赖完整、npm 锁文件无个人路径/跨仓链接，框架源码变更不隐式改变产物，显式升级后重跑 DI、React 与生命周期集成检查。
 
 ## 9. 跨组件验收与内测
@@ -94,7 +94,7 @@
 
 ## 后续工作参考
 
-- 实施及用户评审通过后再归档；本清单只定义客户端迁移，不自动开始实现。
+- 当前已按清单实施；全部相关实现、验收及用户评审通过后再归档，不以局部任务完成替代整体验收。
 - 访谈、招募、安装包公开发布和付款实验按用户后续明确指令执行。
 - 新 Web/NAS 产品、旧 Java 数据导入、非复制入库、音乐/原盘、纯 TS 名称解析替换、官方 API、托管通知、商店版分别评估，不作为一期的隐藏前置条件。
 - 桌面端和整理核心免费，商业方向见[商业与付费策略](../../../docs/product/business-and-operations.md)。

@@ -38,6 +38,8 @@ export default defineConfig({
           { text: '架构总览', link: '/architecture/' },
           { text: '发现与整理流程', link: '/architecture/processing' },
           { text: '数据与恢复机制', link: '/architecture/data-and-recovery' },
+          { text: '桌面迁移基线', link: '/architecture/desktop-migration' },
+          { text: '桌面客户端开发', link: '/architecture/desktop-development' },
           { text: 'Codex 识别兜底', link: '/codex-fallback' },
         ],
       },

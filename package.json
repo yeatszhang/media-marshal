@@ -1,17 +1,45 @@
 {
-  "name": "media-marshal-docs",
+  "name": "media-marshal",
   "version": "0.2.13+patch.1",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
+    "desktop:dev": "npm run dev -w @media-marshal/desktop",
+    "desktop:build": "npm run build -w @media-marshal/contracts && npm run build -w @media-marshal/media-core && npm run build -w @media-marshal/desktop",
+    "desktop:pack": "npm run desktop:build && npm run pack -w @media-marshal/desktop",
+    "desktop:rebuild": "npm run rebuild -w @media-marshal/desktop",
+    "typecheck": "npm run build -w @media-marshal/contracts && npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:electron-node": "node scripts/test-electron-node.mjs",
+    "test:desktop": "playwright test --config apps/desktop/playwright.config.ts",
+    "test:packaged": "node scripts/check-desktop-artifact.mjs && node scripts/test-packaged-desktop.mjs",
+    "desktop:benchmark": "node scripts/benchmark-desktop.mjs",
+    "check:boundaries": "node scripts/check-desktop-boundaries.mjs",
+    "check:framework": "node scripts/check-framework-package.mjs",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
-    "vitepress": "1.6.4"
+    "@electron/asar": "3.4.1",
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.19.15",
+    "@vitejs/plugin-react": "6.1.2",
+    "jsdom": "28.1.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.4",
+    "vitepress": "1.6.4",
+    "vitest": "4.1.12"
   }
 }

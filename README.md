@@ -12,6 +12,8 @@ Source tree version: `v0.2.13.1` · 源码版本（已发布镜像以实际 Rele
 
 Maintainer documents / 维护文档：[产品定位与运营方向](docs/product/positioning.md) · [商业与付费策略](docs/product/business-and-operations.md) · [架构总览](docs/architecture/index.md) · [处理流程](docs/architecture/processing.md) · [数据与恢复](docs/architecture/data-and-recovery.md) · [当前需求与验收](.cursor/rules/requirements-status.mdc) · [路线图](.cursor/rules/project-roadmap.mdc)
 
+桌面客户端迁移已开始，当前为 Electron + React 原型，接入 `@yeatz/app-framework`，尚未接通自动整理。开发方式见[桌面客户端开发](docs/architecture/desktop-development.md)，旧能力迁移范围见[迁移基线](docs/architecture/desktop-migration.md)。
+
 ---
 
 ## English

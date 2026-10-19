@@ -1,0 +1,26 @@
+appId: org.mediamarshal.desktop
+productName: Media Marshal
+directories:
+  output: release
+files:
+  - out/**
+  - resources/framework-origin.json
+  - resources/app-framework.LICENSE
+  - resources/media-marshal.LICENSE
+  - package.json
+asarUnpack:
+  - '**/*.node'
+mac:
+  category: public.app-category.video
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+publish: null

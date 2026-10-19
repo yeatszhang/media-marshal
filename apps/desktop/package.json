@@ -1,0 +1,42 @@
+{
+  "name": "@media-marshal/desktop",
+  "productName": "Media Marshal",
+  "description": "本机影视下载目录整理与 Emby 入库助手",
+  "author": "Media Marshal contributors",
+  "license": "GPL-3.0",
+  "version": "0.1.0",
+  "private": true,
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "rebuild": "electron-builder install-app-deps",
+    "pack": "electron-builder --dir --config electron-builder.yml",
+    "dist": "electron-builder --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@base-ui/react": "1.9.0",
+    "@yeatz/app-framework": "0.1.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "i18next": "26.5.2",
+    "lucide-react": "1.59.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-i18next": "17.1.0",
+    "react-router-dom": "7.18.4",
+    "tailwind-merge": "3.5.0",
+    "better-sqlite3": "13.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "electron": "44.9.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "6.0.0",
+    "tailwindcss": "4.3.3",
+    "@media-marshal/contracts": "0.1.0",
+    "@media-marshal/media-core": "0.1.0"
+  }
+}

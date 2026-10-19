@@ -11,6 +11,15 @@ HELP.md                           # Spring Initializr 自动生成，无实际�
 node_modules/
 frontend/dist/
 frontend/.vite/                   # Vite 构建缓存
+apps/desktop/out/
+apps/desktop/release/
+packages/*/dist/
+tools/desktop-parser/.venv/
+tools/desktop-parser/build/
+tools/desktop-parser/dist/
+tools/desktop-parser/*.spec
+test-results/
+playwright-report/
 frontend/.env.local
 frontend/src/auto-imports.d.ts
 frontend/src/components.d.ts

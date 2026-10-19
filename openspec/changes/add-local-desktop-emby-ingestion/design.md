@@ -100,7 +100,7 @@ packages/media-core/    TS 业务规则、存储与文件/网络适配
   migrations/           桌面库有序 SQL 迁移
   tests/fixtures/       脱敏行为及故障夹具
 tools/desktop-parser/   guessit stdio 入口、冻结构建与依赖清单
-vendor/yeatz-app-framework/  未发布阶段的固定包快照、来源与校验清单
+vendor/yeatz-app-framework/  仅未发布时备用；本次使用已发布的精确版本
 docs/                   现有文档站
 backend/ frontend/ parser/  旧实现，保留原位置与构建入口
 ```
@@ -161,6 +161,8 @@ Renderer 在组件树之外创建并启动 Application，再挂载 `ContainerPro
 2026-10-18 对公开 npm registry 执行 `npm view @yeatz/app-framework` 返回 E404；package.json 已有 public publishConfig，但配置与提交记录不能作为包已上线的证据。首个实现从确认过的上游源码快照构建并 `npm pack`，将 `.tgz`、MIT 许可和来源清单放入 `vendor/yeatz-app-framework/`，使用仓库内相对 `file:` 包引用与 npm 根锁文件。清单记录上游 commit、可还原源码引用、构建工具版本、包内容摘要和 integrity；若实施时采用未提交修改，还需归档对应源码快照/补丁，不能只记录 `0.1.0`。
 
 该目录保存固定依赖产物，不发展第二份框架实现；改进回到上游仓库，再通过显式更换快照更新。后续公开包可用时核对所需 API 和产物内容，通过单独依赖更新切换精确版本。个人绝对路径、跨仓软链接及全局安装只可用于临时开发联调，不进入正式锁文件或 CI；此前全局链接的偏好针对个人 Skills，不使应用运行依赖另一份可随时变化的源码。
+
+实施复核时公开包 `@yeatz/app-framework@0.1.0` 已可取得，因此直接采用精确 npm 版本，不创建 vendor 副本。公开入口、类型、React 适配、真实 Electron DI 和包内许可已在本机验证；registry 未提供 gitHead，来源清单分别记录已评估源码 commit 与实际包 integrity，不声称二者构建字节一致。
 
 本轮在上游当前工作树运行 typecheck、Jest、build 和包 smoke，全部通过：23 个套件、112 个测试，smoke 覆盖包导出、Node ESM/CJS、浏览器入口及 React 适配器。旧 hooks 测试使用 React 18 的兼容入口并有弃用警告，不能把 peerDependencies 中 React 16～19 的范围当作全部版本已验收。实际接入还须锁定 React/React DOM 的一致版本，验证 createRoot、StrictMode、选择性订阅、异步清理和真实 Electron 产物。实现任务必须覆盖干净 npm 安装、双进程隔离及打包后的装饰器注入，框架自身测试不能替代应用的业务与安装态验证。
 
@@ -297,4 +299,4 @@ better-sqlite3 按目标 Electron ABI 和平台架构重建，作为原生依赖
 5. 完成平台签名、安装/手动升级/卸载和全进程生命周期验收，以官网内测交付。旧 Web/Docker 独立保留，既不要求同步 React 化，也不自动导入旧库。
 6. 依据内测再规划官方 API、会员通知、网盘云端接入、NAS、音乐或商店版；不自动扩展本次实现。
 
-当前仅为规划更新，未创建 monorepo 工程、未移植 Java、未构建客户端或验证安装包。回退必须匹配桌面数据版本并核对磁盘；旧 Docker 可独立使用，但不是桌面数据库的自动恢复方案。
+实施已开始，实际完成项以 tasks 复选框和[桌面客户端开发记录](../../../docs/architecture/desktop-development.md)为准。当前独立工程及 macOS arm64 原型已运行，三平台验收、业务迁移和正式发行仍未完成；不能以本机目录包测试替代 DMG/NSIS 安装态验收。回退必须匹配桌面数据版本并核对磁盘；旧 Docker 可独立使用，但不是桌面数据库的自动恢复方案。
