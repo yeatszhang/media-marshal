@@ -64,6 +64,7 @@ jobs:
       - run: npm run desktop:build
       - run: node tools/desktop-sidecars/host_smoke.mjs
       - run: npm run desktop:rebuild
+      - run: node tools/desktop-sidecars/supervisor_smoke.mjs
       - run: npm run test:desktop
       - uses: actions/upload-artifact@v4
         if: always()

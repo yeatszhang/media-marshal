@@ -78,11 +78,13 @@ export class ManagedGuardian {
     });
     child.stdin.on("error", () => { this.healthy = false; });
     child.once("error", () => { clearTimeout(deadline); readyReject(new CloudError("COMPONENT_UNAVAILABLE")); });
-    this.exited = new Promise<void>((resolve) => child.once("close", () => {
+    this.exited = new Promise<void>((resolve) => child.once("close", (code) => {
       clearTimeout(deadline); clearInterval(this.heartbeat); this.healthy = false;
       readyReject(new CloudError("COMPONENT_UNAVAILABLE"));
       for (const pending of this.pending.values()) { clearTimeout(pending.deadline); pending.reject(new CloudError("COMPONENT_UNAVAILABLE")); }
-      this.pending.clear(); if (!this.closing) this.observe({ type: "lost" }); resolve();
+      this.pending.clear();
+      this.observe({ type: "exited", executionId: this.guardianId, code: code ?? -1 });
+      if (!this.closing) this.observe({ type: "lost" }); resolve();
     }));
     child.once("spawn", () => {
       this.observe({ type: "started", executionId: this.guardianId, pid: child.pid!, program: "guardian" });

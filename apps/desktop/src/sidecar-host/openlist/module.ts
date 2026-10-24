@@ -3,11 +3,11 @@ import { SidecarBinariesToken, type HostBinding } from "../application";
 import { OpenListRuntime, OpenListRuntimeToken } from "./runtime";
 import type { NativeObservation } from "../guardian";
 
-export function openListModule(options: { privateRoot: string; hostGeneration: string; bindings: readonly HostBinding[]; observe?: (event: NativeObservation) => void; ready?: (runtime: OpenListRuntime) => void }): ApplicationModule {
+export function openListModule(options: { privateRoot: string; hostGeneration: string; bindings: readonly HostBinding[]; observe?: (event: NativeObservation) => void; failed?: () => void; ready?: (runtime: OpenListRuntime) => void }): ApplicationModule {
   return {
     id: "sidecar.openlist", dependencies: ["sidecar.resources"],
     async start(ctx) {
-      const runtime = new OpenListRuntime({ privateRoot: options.privateRoot, hostGeneration: options.hostGeneration, binaries: ctx.get(SidecarBinariesToken), observe: options.observe });
+      const runtime = new OpenListRuntime({ privateRoot: options.privateRoot, hostGeneration: options.hostGeneration, binaries: ctx.get(SidecarBinariesToken), observe: options.observe, failed: options.failed });
       // 下游初始化失败也必须先停止已启动的守护与服务。
       ctx.disposables.add(() => runtime.stop());
       await runtime.start();

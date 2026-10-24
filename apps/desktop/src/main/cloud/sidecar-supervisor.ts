@@ -7,8 +7,10 @@ import { CloudError, cloudFailure } from "@media-marshal/contracts";
 import { HOST_PROTOCOL_VERSION } from "@media-marshal/contracts/internal";
 import { RestrictedHostRelay, parseHostRequest, type CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
 import { guardianManifestSchema, hostBindingSchema, credentialInstallSchema, credentialDropSchema } from "../../sidecar-host/protocol";
-import { sidecarTarget } from "../../sidecar-host/binary-resolver";
+import { sidecarTarget, SidecarBinaryResolver, lockedDefinitions } from "../../sidecar-host/binary-resolver";
 import type { HostBinding } from "../../sidecar-host/application";
+import { NativeProcessOwnership } from "./process-ownership";
+import { ensurePrivateDirectory } from "./private-files";
 
 export class SidecarSupervisor implements CoreHostBridge {
   generation = randomUUID();
@@ -25,6 +27,7 @@ export class SidecarSupervisor implements CoreHostBridge {
   private uncertain = false;
   private epoch = 0;
   private cleanStop = false;
+  private ownership?: NativeProcessOwnership;
   private credentialRequests = new Map<string, { resolve: () => void; reject: (error: unknown) => void; deadline: ReturnType<typeof setTimeout> }>();
   constructor(private readonly options: { workerPath: string; appPath: string; resourceRoot: string; privateRoot: string }) {}
   attachCore(generation: string, send: (value: unknown) => void) {
@@ -66,6 +69,11 @@ export class SidecarSupervisor implements CoreHostBridge {
       guardian = guardianManifestSchema.parse(JSON.parse(await readFile(join(this.options.appPath, "resources/sidecars", target, "guardian.json"), "utf8")));
       if (guardian.target !== target) throw new Error();
     } catch { throw new CloudError("COMPONENT_UNAVAILABLE"); }
+    const binaries = await new SidecarBinaryResolver(this.options.resourceRoot, target, lockedDefinitions(target, guardian.binary)).resolve();
+    await ensurePrivateDirectory(this.options.privateRoot);
+    this.ownership = new NativeProcessOwnership(this.options.privateRoot, binaries);
+    // 新 Main 同样从 OS 扫描旧 session，覆盖强杀前 started 消息尚未送达的窗口。
+    await this.ownership.reap();
     if (epoch !== this.epoch || this.stopping || coreGeneration !== this.coreGeneration) throw new CloudError("INTERRUPTED");
     this.generation = randomUUID(); this.bindings = bindings; this.stopping = false;
     this.cleanStop = false;
@@ -77,9 +85,29 @@ export class SidecarSupervisor implements CoreHostBridge {
     let resolveReady!: () => void, rejectReady!: (reason: unknown) => void;
     const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
     const deadline = setTimeout(() => { rejectReady(new CloudError("TIMEOUT")); child.kill(); }, 30000);
+    let nativeBarrier = Promise.resolve();
+    let guardianExecutionId: string | undefined;
     port1.on("message", ({ data }) => {
-      if (data?.kind === "sidecar.ready" && data.protocolVersion === HOST_PROTOCOL_VERSION && data.hostGeneration === this.generation) { clearTimeout(deadline); resolveReady(); return; }
-      if (data?.kind === "sidecar.failed") { rejectReady(new CloudError("COMPONENT_UNAVAILABLE")); return; }
+      if (data?.kind === "sidecar.native" && data.hostGeneration === this.generation) {
+        nativeBarrier = nativeBarrier.then(async () => {
+          if (data.type === "started" && z.uuid().safeParse(data.executionId).success && Number.isSafeInteger(data.pid) && data.pid > 0 && (data.program === "guardian" || data.program === "openlist" || data.program === "rclone")) {
+            if (data.program === "guardian") guardianExecutionId = data.executionId;
+            const parent = data.program === "guardian" ? child.pid : guardianExecutionId ? this.ownership?.parent(guardianExecutionId) : undefined;
+            if (!parent) throw new CloudError("CONFLICT");
+            await this.ownership!.register(data.executionId, data.pid, parent, binaries[data.program as keyof typeof binaries]);
+          } else if (data.type === "exited" && z.uuid().safeParse(data.executionId).success) await this.ownership!.stopped(data.executionId);
+          else if (data.type === "lost") throw new CloudError("COMPONENT_UNAVAILABLE");
+          else throw new CloudError("INVALID_REQUEST");
+        }).catch(() => { this.uncertain = true; this.relay?.invalidate(); child.kill(); });
+        return;
+      }
+      if (data?.kind === "sidecar.ready" && data.protocolVersion === HOST_PROTOCOL_VERSION && data.hostGeneration === this.generation) {
+        void nativeBarrier.then(() => { clearTimeout(deadline); if (this.uncertain) rejectReady(new CloudError("CONFLICT")); else resolveReady(); }); return;
+      }
+      if (data?.kind === "sidecar.failed") {
+        this.relay?.invalidate(); this.toCore?.({ kind: "sidecar.lost", hostGeneration: this.generation });
+        rejectReady(new CloudError("COMPONENT_UNAVAILABLE")); return;
+      }
       if (data?.kind === "sidecar.stopped" && data.hostGeneration === this.generation && data.stopped === true) { this.cleanStop = true; return; }
       if (data?.kind === "sidecar.credential.result" && data.ok === true) {
         const pending = this.credentialRequests.get(data.requestId);
@@ -91,13 +119,17 @@ export class SidecarSupervisor implements CoreHostBridge {
     this.exited = new Promise<void>((resolve) => child.once("exit", () => {
       clearTimeout(deadline); clearInterval(this.heartbeat); port1.close();
       rejectReady(new CloudError("COMPONENT_UNAVAILABLE"));
-      if (this.child === child) { this.child = undefined; this.port = undefined; }
       this.relay?.invalidate();
       for (const pending of this.credentialRequests.values()) { clearTimeout(pending.deadline); pending.reject(new CloudError("INTERRUPTED")); }
       this.credentialRequests.clear();
-      this.uncertain = !this.cleanStop;
       if (!this.stopping) this.toCore?.({ kind: "sidecar.lost", hostGeneration: this.generation });
-      resolve();
+      void (async () => {
+        await nativeBarrier;
+        try { await this.ownership!.reap(); this.uncertain = false; }
+        catch { this.uncertain = true; }
+        if (this.child === child) { this.child = undefined; this.port = undefined; }
+        resolve();
+      })();
     }));
     child.once("spawn", () => {
       child.postMessage({ kind: "sidecar.initialize", protocolVersion: HOST_PROTOCOL_VERSION, hostGeneration: this.generation, coreGeneration: this.coreGeneration, resourceRoot: this.options.resourceRoot, privateRoot: this.options.privateRoot, guardian, bindings }, [port2]);
@@ -138,7 +170,7 @@ export class SidecarSupervisor implements CoreHostBridge {
     this.epoch++;
     this.relay?.invalidate();
     const child = this.child;
-    if (!child) return;
+    if (!child) { if (this.uncertain) { await this.ownership?.reap(); this.uncertain = false; } return; }
     this.port?.postMessage({ kind: "sidecar.shutdown" });
     const deadline = setTimeout(() => child.kill(), 8000);
     try { await this.exited; if (this.uncertain) throw new CloudError("COMPONENT_UNAVAILABLE"); } finally { clearTimeout(deadline); }

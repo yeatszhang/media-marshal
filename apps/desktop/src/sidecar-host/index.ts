@@ -18,7 +18,7 @@ process.parentPort.once("message", (initial) => {
     resolver: new SidecarBinaryResolver(config.resourceRoot, target, lockedDefinitions(target, config.guardian.binary)),
     modules: [openListModule({ privateRoot: config.privateRoot, hostGeneration: config.hostGeneration, bindings: config.bindings, observe: (event) => {
       if (event.type === "started" || event.type === "exited" || event.type === "lost") port.postMessage({ kind: "sidecar.native", hostGeneration: config.hostGeneration, ...event });
-    } })],
+    }, failed: () => { port.postMessage({ kind: "sidecar.failed", protocolVersion: HOST_PROTOCOL_VERSION }); void stop(); } })],
   });
   let heartbeat = Date.now();
   let stopping: Promise<void> | undefined;

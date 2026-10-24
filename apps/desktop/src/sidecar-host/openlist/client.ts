@@ -12,7 +12,7 @@ export class OpenListClient {
   private expiresAt = 0;
   private authenticating?: Promise<void>;
   readonly origin: string;
-  constructor(readonly port: number, private readonly jwtSecret: string, private readonly password: string, private readonly alive: () => boolean) {
+  constructor(readonly port: number, private readonly jwtSecret: string, private readonly password: string, private readonly alive: () => boolean, private readonly authorizationTimeout = 5000) {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new CloudError("COMPONENT_UNAVAILABLE");
     this.origin = `http://127.0.0.1:${port}`;
   }
@@ -42,7 +42,7 @@ export class OpenListClient {
   }
   private async login() {
     if (!this.alive()) throw new CloudError("COMPONENT_UNAVAILABLE");
-    const response = await this.raw("POST", "/api/auth/login", { username: "admin", password: this.password });
+    const response = await this.raw("POST", "/api/auth/login", { username: "admin", password: this.password }, undefined, this.authorizationTimeout);
     let token: string;
     try {
       const value = envelope.parse(JSON.parse(response.bytes.toString("utf8")));
@@ -76,7 +76,7 @@ export class OpenListClient {
     }
   }
   private async authorized(method: string, path: string, body: unknown, token?: string): Promise<unknown> {
-    const response = await this.raw(method, path, body, token);
+    const response = await this.raw(method, path, body, token, path === "/api/me" ? this.authorizationTimeout : 5000);
     const parsed = envelope.safeParse((() => { try { return JSON.parse(response.bytes.toString("utf8")); } catch { return null; } })());
     if (!parsed.success) throw new CloudError("COMPONENT_UNAVAILABLE");
     if (response.status !== 200 || parsed.data.code !== 200) throw new OpenListApiError(parsed.data.code, response.status);

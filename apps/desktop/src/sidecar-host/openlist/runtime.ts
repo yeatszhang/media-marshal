@@ -27,7 +27,7 @@ export class OpenListRuntime {
   private stopping = false;
   private starting?: Promise<void>;
   readonly sessionRoot: string;
-  constructor(private readonly options: { privateRoot: string; hostGeneration: string; binaries: Readonly<Record<BinaryName, string>>; observe?: (event: NativeObservation) => void; port?: () => Promise<number> }) {
+  constructor(private readonly options: { privateRoot: string; hostGeneration: string; binaries: Readonly<Record<BinaryName, string>>; observe?: (event: NativeObservation) => void; failed?: () => void; port?: () => Promise<number> }) {
     this.sessionRoot = join(options.privateRoot, "sessions", options.hostGeneration);
   }
   get client(): OpenListClient { if (!this.gateway || !this.execution?.running || this.stopping) throw new CloudError("COMPONENT_UNAVAILABLE"); return this.gateway; }
@@ -44,7 +44,12 @@ export class OpenListRuntime {
     const data = join(this.sessionRoot, "openlist"); await ensurePrivateDirectory(data);
     const configPath = join(data, "config.json");
     const password = secret(), jwt = secret();
-    const guardian = new ManagedGuardian(this.sessionRoot, this.options.binaries, this.options.observe); this.guardian = guardian;
+    const guardian = new ManagedGuardian(this.sessionRoot, this.options.binaries, (event) => {
+      this.options.observe?.(event);
+      if (!this.stopping && (event.type === "lost" || (event.type === "exited" && this.gateway && event.executionId === this.execution?.id))) {
+        this.gateway = undefined; this.options.failed?.();
+      }
+    }); this.guardian = guardian;
     await guardian.launch();
     for (let attempt = 0; attempt < 3; attempt++) {
       const port = await (this.options.port ?? unusedPort)();
@@ -52,15 +57,16 @@ export class OpenListRuntime {
       await ensurePrivateFile(configPath);
       const execution = await guardian.start("openlist", randomUUID(), ["--data", data, "--config", configPath, "server"], { OPENLIST_ADMIN_PASSWORD: password });
       this.execution = execution;
-      const client = new OpenListClient(port, jwt, password, () => execution.running && !this.stopping);
+      const client = new OpenListClient(port, jwt, password, () => execution.running && !this.stopping, 1000);
         const deadline = Date.now() + 3000;
       try {
+        let authenticated = false;
         while (Date.now() < deadline) {
           if (!execution.running || this.stopping) throw new CloudError("COMPONENT_UNAVAILABLE");
-          try { if (await client.ping()) { await client.authenticate(); break; } } catch {}
+          try { if (await client.ping()) { await client.authenticate(); authenticated = true; break; } } catch {}
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
-        await client.authenticate();
+        if (!authenticated) throw new CloudError("TIMEOUT");
         const users = z.object({ content: z.array(z.object({ role: z.number(), disabled: z.boolean() })) }).parse(await client.api("GET", "/api/admin/user/list?page=1&per_page=100"));
         if (!users.content.some((user) => user.role === 1 && user.disabled)) throw new CloudError("COMPONENT_UNAVAILABLE");
         const anonymous = await client.raw("GET", "/dav/");
