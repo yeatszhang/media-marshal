@@ -38,7 +38,11 @@ if (process.parentPort) {
     require("node:readline").createInterface({ input: guardian.stdout }).on("line", (line) => {
       try { send(JSON.parse(line)); } catch { send({ kind: "failure", component: "guardian" }); void stop(); }
     });
-    guardian.once("exit", () => { clearInterval(check); process.exit(0); });
+    guardian.once("exit", (code, signal) => {
+      clearInterval(check);
+      if (!stopping) send({ kind: "failure", reason: `守护提前退出：code=${code} signal=${signal}` });
+      process.exit(0);
+    });
     guardian.once("error", () => { send({ kind: "failure", component: "guardian" }); void stop(); });
     check = setInterval(() => { if (Date.now() - heartbeat > 10000) void stop(); }, 100);
     send({ kind: "host-started", pid: process.pid });
@@ -86,8 +90,9 @@ if (process.parentPort) {
       }
       if (data.kind === "failure") { emit(data); void stop(); }
     });
-    host.once("exit", () => {
+    host.once("exit", (code) => {
       clearInterval(timer);
+      if (!stopping && owned.size < 3) emit({ kind: "failure", reason: `宿主在就绪前退出：code=${code}` });
       // Host 崩溃后仍须核对本次已登记身份，不能按进程名或 PID 文件清理。
       void stop();
     });
@@ -101,5 +106,5 @@ if (process.parentPort) {
       } catch { emit({ kind: "failure", reason: "测试命令无效" }); }
     });
     process.stdin.on("end", () => { void stop(); });
-  }).catch(() => app.exit(1));
+  }).catch(() => { emit({ kind: "failure", reason: "Electron 宿主初始化失败" }); app.exit(1); });
 }

@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -25,21 +24,26 @@ type child struct {
 }
 
 func main() {
+	output := json.NewEncoder(os.Stdout)
+	failure := func(stage string) {
+		_ = output.Encode(map[string]any{"kind": "failure", "component": "guardian", "reason": "守护初始化失败：" + stage})
+	}
 	closeJob, err := ownJob()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "无法建立进程所有权")
+		failure("进程所有权（" + err.Error() + "）")
 		os.Exit(1)
 	}
 	defer closeJob()
 	var config configuration
 	decoder := json.NewDecoder(os.Stdin)
 	if decoder.Decode(&config) != nil || !filepath.IsAbs(config.Root) {
+		failure("配置输入")
 		os.Exit(1)
 	}
 	if len(os.Args) != 2 || os.Args[1] != "--fixture-root="+config.Root {
+		failure("执行标识")
 		os.Exit(1)
 	}
-	output := json.NewEncoder(os.Stdout)
 	children := []*child{}
 	exited := make(chan struct{}, 2)
 	stop := func() {
@@ -63,18 +67,25 @@ func main() {
 	start := func(name string, args ...string) bool {
 		binary := config.Native[name]
 		if !filepath.IsAbs(binary) {
+			failure(name + " 资源路径")
 			return false
 		}
 		cmd := exec.Command(binary, args...)
 		cmd.Dir = config.Root
 		configureChild(cmd)
 		if cmd.Start() != nil {
+			failure(name + " 启动")
 			return false
 		}
 		c := &child{cmd: cmd, done: make(chan struct{})}
 		children = append(children, c)
 		_ = output.Encode(map[string]any{"kind": "native-started", "name": name, "pid": cmd.Process.Pid})
-		go func() { _ = cmd.Wait(); close(c.done); exited <- struct{}{} }()
+		go func() {
+			_ = cmd.Wait()
+			_ = output.Encode(map[string]any{"kind": "native-exited", "name": name, "code": cmd.ProcessState.ExitCode()})
+			close(c.done)
+			exited <- struct{}{}
+		}()
 		return true
 	}
 	if !start("openlist", "--data", filepath.Join(config.Root, "openlist"), "--config", filepath.Join(config.Root, "openlist/config.json"), "server") {
