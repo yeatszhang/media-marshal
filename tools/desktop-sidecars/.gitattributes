@@ -1,0 +1,2 @@
+# 上游许可按摘要原样保留，不改写其末尾空行。
+licenses/*.LICENSE whitespace=-blank-at-eof

@@ -70,3 +70,5 @@ ehthumbs.db
 # ── Logs ─────────────────────────────────────────────────────
 *.log
 logs/
+
+apps/desktop/resources/sidecars/

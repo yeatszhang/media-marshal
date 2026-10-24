@@ -1,0 +1,54 @@
+name: 内置下载组件 M0 验收
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/sidecar-validation-*']
+    paths:
+      - 'tools/desktop-sidecars/**'
+      - '.github/workflows/sidecar-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sidecars:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+          - os: windows-2022
+            target: win32-x64
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.14'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.0'
+          cache: false
+      - run: npm ci
+      - run: python tools/desktop-sidecars/prepare.py --target ${{ matrix.target }}
+      - run: python -m unittest discover -s tools/desktop-sidecars/tests -v
+      - run: python tools/desktop-sidecars/contract_smoke.py
+      - run: python tools/desktop-sidecars/rclone_smoke.py
+      - run: node tools/desktop-sidecars/process-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sidecar-evidence-${{ matrix.target }}
+          path: test-results/sidecars/
+          if-no-files-found: warn
+          retention-days: 14

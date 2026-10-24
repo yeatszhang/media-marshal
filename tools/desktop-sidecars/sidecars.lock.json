@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-24",
+  "components": {
+    "openlist": {
+      "version": "v4.2.7",
+      "source": {
+        "repository": "https://github.com/OpenListTeam/OpenList",
+        "tag": "v4.2.7",
+        "commit": "3b28270a4066ea52943a69ecddd850d83f7e8bdc",
+        "archiveUrl": "https://codeload.github.com/OpenListTeam/OpenList/tar.gz/3b28270a4066ea52943a69ecddd850d83f7e8bdc",
+        "sha256": "b9d6e5b86eb601981961d935a29f47e6d22d40b0cca686c4dc043b97bcbd24cd"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "licenses/openlist.LICENSE",
+        "url": "https://raw.githubusercontent.com/OpenListTeam/OpenList/3b28270a4066ea52943a69ecddd850d83f7e8bdc/LICENSE",
+        "sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef"
+      },
+      "assets": {
+        "darwin-arm64": {
+          "archive": {
+            "name": "openlist-darwin-arm64-lite.tar.gz",
+            "url": "https://github.com/OpenListTeam/OpenList/releases/download/v4.2.7/openlist-darwin-arm64-lite.tar.gz",
+            "sha256": "58feaf457e34da349d5cc7ac441928d3822620646ffb8333c291c3386c028cea"
+          },
+          "binary": {
+            "name": "openlist",
+            "member": "openlist",
+            "size": 89880338,
+            "sha256": "7b203d85cb01e57c83bc4cce9037981636afd9966320f3762df0630447ed4698"
+          }
+        },
+        "darwin-x64": {
+          "archive": {
+            "name": "openlist-darwin-amd64-lite.tar.gz",
+            "url": "https://github.com/OpenListTeam/OpenList/releases/download/v4.2.7/openlist-darwin-amd64-lite.tar.gz",
+            "sha256": "706fcb37088b3b2a0e4fbc9c4aff3fca8827ce2a3927876c73d9c501ffeb7668"
+          },
+          "binary": {
+            "name": "openlist",
+            "member": "openlist",
+            "size": 95375640,
+            "sha256": "b8f09cd2a11b593d68a2e6346f743a7809f9afeb662e9dbb2e8c96e8bafa8ba0"
+          }
+        },
+        "win32-x64": {
+          "archive": {
+            "name": "openlist-windows-amd64-lite.zip",
+            "url": "https://github.com/OpenListTeam/OpenList/releases/download/v4.2.7/openlist-windows-amd64-lite.zip",
+            "sha256": "d5d731deac7081ec834ad9a10856972ba36b274176b32795929ed65d048a4372"
+          },
+          "binary": {
+            "name": "openlist.exe",
+            "member": "openlist.exe",
+            "size": 96381440,
+            "sha256": "9b15b4dd0bbb42d6f4a05e251cc0b76b70fd345892528da1d35c3235e31893b0"
+          }
+        }
+      }
+    },
+    "rclone": {
+      "version": "v1.75.2",
+      "source": {
+        "repository": "https://github.com/rclone/rclone",
+        "tag": "v1.75.2",
+        "commit": "be8d6044eacb843b74d335db0c5fbe09222031fe",
+        "archiveUrl": "https://codeload.github.com/rclone/rclone/tar.gz/be8d6044eacb843b74d335db0c5fbe09222031fe",
+        "sha256": "df4670e174b0de36ca877a66935bf91db5f05a6ff019ac1b540b9bf575317434"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "licenses/rclone.LICENSE",
+        "url": "https://raw.githubusercontent.com/rclone/rclone/be8d6044eacb843b74d335db0c5fbe09222031fe/COPYING",
+        "sha256": "8cd2e9e750b90a04b7d82dbbca3930c696ae0309d7c10464f90a44f45754cd04"
+      },
+      "assets": {
+        "darwin-arm64": {
+          "archive": {
+            "name": "rclone-v1.75.2-osx-arm64.zip",
+            "url": "https://github.com/rclone/rclone/releases/download/v1.75.2/rclone-v1.75.2-osx-arm64.zip",
+            "sha256": "610ab7d48615135dfc60b763858b11a426a0d3d1160c1bb76fb0ae6011b02edd"
+          },
+          "binary": {
+            "name": "rclone",
+            "member": "rclone-v1.75.2-osx-arm64/rclone",
+            "size": 88766114,
+            "sha256": "af0257730173748dc9706ad3c83288bf3a0c5d5e9768fef20235e375e9d835e1"
+          }
+        },
+        "darwin-x64": {
+          "archive": {
+            "name": "rclone-v1.75.2-osx-amd64.zip",
+            "url": "https://github.com/rclone/rclone/releases/download/v1.75.2/rclone-v1.75.2-osx-amd64.zip",
+            "sha256": "574e1f31cf1c464e5fb0325cb66fcbdeaf1efa1802bd9b17f13c256fd74b6561"
+          },
+          "binary": {
+            "name": "rclone",
+            "member": "rclone-v1.75.2-osx-amd64/rclone",
+            "size": 95882488,
+            "sha256": "b365cc20e94296c51bed5b2fe2db8f5b975a7484dccb92438a93c2c080528752"
+          }
+        },
+        "win32-x64": {
+          "archive": {
+            "name": "rclone-v1.75.2-windows-amd64.zip",
+            "url": "https://github.com/rclone/rclone/releases/download/v1.75.2/rclone-v1.75.2-windows-amd64.zip",
+            "sha256": "8a9db2bad1dc79a65b3348fd857069598e2aab7cf4d118b77b1df23055aff818"
+          },
+          "binary": {
+            "name": "rclone.exe",
+            "member": "rclone-v1.75.2-windows-amd64/rclone.exe",
+            "size": 85500928,
+            "sha256": "41eab3e118d264920b62c3327966c5ece0dc4dd715ee617d9e30450d8ead95a4"
+          }
+        }
+      }
+    }
+  }
+}
