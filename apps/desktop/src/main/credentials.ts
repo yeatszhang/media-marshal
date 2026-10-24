@@ -25,6 +25,7 @@ export class Credentials {
       return valuesSchema.parse(JSON.parse(await readFile(this.path, "utf8")));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+      if (error instanceof DesktopError) throw error;
       throw new DesktopError(
         "STORAGE_ERROR",
         "凭据文件无法读取，请检查数据目录",
@@ -102,7 +103,7 @@ export class Credentials {
           if (value !== null) values[key] = (await this.encryption.encryptStringAsync(value)).toString("base64");
           else delete values[key];
           await this.write(values);
-        } catch { throw new DesktopError("STORAGE_ERROR", "凭据保存失败，请检查系统保护与私有目录", true); }
+        } catch (error) { if (error instanceof DesktopError) throw error; throw new DesktopError("STORAGE_ERROR", "凭据保存失败，请检查系统保护与私有目录", true); }
       });
     this.queue = task;
     return task;
