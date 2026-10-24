@@ -151,7 +151,8 @@ def run(output: Path) -> None:
             assert dav("GET", "电影 样片.txt") == payload
             dav("HEAD", "sample.txt")
             assert dav("GET", "sample.txt", headers={"Range": "bytes=0-4"}, expected=206) == payload[:5]
-            dav("PUT", "forbidden.txt", body=b"do not write", expected=403)
+            # 空文件 PUT 仍是写操作；拒绝检查不需要请求体，避免提前拒绝时的未读数据影响 Windows 连接关闭。
+            dav("PUT", "forbidden.txt", body=b"", expected=403)
             assert not (content / "forbidden.txt").exists()
             for route in ["/d/fixture/sample.txt", "/p/fixture/sample.txt"]:
                 try:
