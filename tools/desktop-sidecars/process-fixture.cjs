@@ -52,13 +52,16 @@ if (process.parentPort) {
   const { app, utilityProcess } = require("electron");
   const { createInterface } = require("node:readline");
   const root = process.argv.find((value) => value.startsWith("--fixture-root="))?.slice("--fixture-root=".length);
-  if (!root) throw new Error("缺少测试目录");
+  const controlPath = process.argv.find((value) => value.startsWith("--fixture-control="))?.slice("--fixture-control=".length);
+  if (!root || !controlPath) throw new Error("缺少测试目录或控制通道");
+  // Windows 的 Electron GUI 进程不依赖控制台 stdin/stdout 传递测试协议。
+  const control = require("node:net").createConnection(controlPath);
   app.setPath("userData", join(root, "electron"));
   const native = JSON.parse(readFileSync(join(root, "native.json"), "utf8"));
   const owned = new Map();
   let host, timer, stopping;
-  const emit = (value) => process.stdout.write(JSON.stringify(value) + "\n");
-  const exit = (code) => process.stdout.write("", () => app.exit(code));
+  const emit = (value) => control.write(JSON.stringify(value) + "\n");
+  const exit = (code) => control.end(() => app.exit(code));
   const stop = () => stopping ??= (async () => {
     clearInterval(timer);
     try { host?.postMessage({ kind: "stop" }); } catch {}
@@ -101,7 +104,7 @@ if (process.parentPort) {
       // Host 崩溃后仍须核对本次已登记身份，不能按进程名或 PID 文件清理。
       void stop();
     });
-    const input = createInterface({ input: process.stdin });
+    const input = createInterface({ input: control });
     input.on("line", (line) => {
       try {
         const command = JSON.parse(line);
@@ -110,6 +113,7 @@ if (process.parentPort) {
         if (command.action === "kill-native" && owned.has(command.name)) stopVerified(owned.get(command.name), root);
       } catch { emit({ kind: "failure", reason: "测试命令无效" }); }
     });
-    process.stdin.on("end", () => { void stop(); });
   }).catch(() => { emit({ kind: "failure", reason: "Electron 宿主初始化失败" }); exit(1); });
+  control.on("close", () => { void stop(); });
+  control.on("error", () => { void stop(); });
 }

@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -28,7 +28,8 @@ if (build.status !== 0) throw new Error("无法构建平台守护验证程序");
 const report = { target, electron: (await import("electron/package.json", { with: { type: "json" } })).default.version, scope: "开发态最小 Main/Utility Host/两个 Go 进程；不证明正式安装包或完整下载业务", cases: [] };
 for (const scenario of ["graceful", "kill-main", "kill-host", "kill-openlist", "kill-rclone", "kill-guardian"]) {
   const directory = await mkdtemp(join(tmpdir(), "marshal-sidecar-process-"));
-  let child, ready;
+  const controlPath = process.platform === "win32" ? `\\\\.\\pipe\\marshal-m0-${randomUUID()}` : join(tmpdir(), `mm-${randomUUID().slice(0, 12)}.sock`);
+  let child, ready, control, input, controller, readyTimer;
   try {
     await Promise.all(["openlist", "source", "electron"].map((name) => mkdir(join(directory, name), { mode: 0o700 })));
     await writeFile(join(directory, "source/fixture.bin"), Buffer.alloc(32 * 1024 * 1024, 37));
@@ -41,23 +42,32 @@ for (const scenario of ["graceful", "kill-main", "kill-host", "kill-openlist", "
     await writeFile(join(directory, "openlist/config.json"), JSON.stringify({ force: true, jwt_secret: randomUUID(), scheme: { address: "127.0.0.1", http_port: port, https_port: -1 }, log: { enable: false }, s3: { enable: false }, ftp: { enable: false }, sftp: { enable: false }, mcp: { enable: false } }), { mode: 0o600 });
     const environment = { ...process.env };
     delete environment.ELECTRON_RUN_AS_NODE;
-    child = spawn(electron, [join(import.meta.dirname, "process-fixture.cjs"), `--fixture-root=${directory}`], { env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-    let errors = "";
-    child.stderr.on("data", (chunk) => { errors = (errors + chunk).slice(-4000); });
-    const input = createInterface({ input: child.stdout });
-    ready = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("进程树就绪超时")), 30000);
-      child.once("error", reject);
-      // Windows 的 exit 可能先于 stdout 排空；close 后才能断言没有收到就绪/失败消息。
-      child.once("close", (code) => { clearTimeout(timer); reject(new Error(`进程树启动中退出：${code} ${errors.replaceAll(directory, "<临时目录>")}`)); });
+    let acceptReady, rejectReady;
+    const readiness = new Promise((resolve, reject) => { acceptReady = resolve; rejectReady = reject; });
+    controller = createServer((socket) => {
+      if (control) { socket.destroy(); return; }
+      control = socket;
+      input = createInterface({ input: socket });
       input.on("line", (line) => {
         try {
           const data = JSON.parse(line);
-          if (data.kind === "failure") { clearTimeout(timer); reject(new Error(data.reason || "组件失败")); }
-          if (data.kind === "ready") { clearTimeout(timer); resolve(data); }
+          if (data.kind === "failure") rejectReady(new Error(data.reason || "组件失败"));
+          if (data.kind === "ready") acceptReady(data);
         } catch {}
       });
+      socket.on("error", () => rejectReady(new Error("测试控制通道失败")));
     });
+    await new Promise((resolve, reject) => { controller.once("error", reject); controller.listen(controlPath, resolve); });
+    if (process.platform !== "win32") await chmod(controlPath, 0o600);
+    child = spawn(electron, [join(import.meta.dirname, "process-fixture.cjs"), `--fixture-root=${directory}`, `--fixture-control=${controlPath}`], { env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let errors = "";
+    child.stderr.on("data", (chunk) => { errors = (errors + chunk).slice(-4000); });
+    child.stdout.resume();
+    readyTimer = setTimeout(() => rejectReady(new Error("进程树就绪超时")), 30000);
+    child.once("error", rejectReady);
+    child.once("close", (code) => rejectReady(new Error(`进程树启动中退出：${code} ${errors.replaceAll(directory, "<临时目录>")}`)));
+    ready = await readiness;
+    clearTimeout(readyTimer);
     // 不只验证成功 spawn：两个 Go 必须实际提供服务和开始写入暂存区。
     const activeDeadline = Date.now() + 15000;
     while (true) {
@@ -69,9 +79,9 @@ for (const scenario of ["graceful", "kill-main", "kill-host", "kill-openlist", "
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     if (scenario === "kill-main") child.kill("SIGKILL");
-    else if (scenario === "kill-host") child.stdin.write(JSON.stringify({ action: "kill-host" }) + "\n");
-    else if (scenario.startsWith("kill-")) child.stdin.write(JSON.stringify({ action: "kill-native", name: scenario.slice(5) }) + "\n");
-    else child.stdin.write(JSON.stringify({ action: "stop" }) + "\n");
+    else if (scenario === "kill-host") control.write(JSON.stringify({ action: "kill-host" }) + "\n");
+    else if (scenario.startsWith("kill-")) control.write(JSON.stringify({ action: "kill-native", name: scenario.slice(5) }) + "\n");
+    else control.write(JSON.stringify({ action: "stop" }) + "\n");
     const deadline = Date.now() + 15000;
     while (Object.values(ready.native).some((identity) => matches(identity, directory))) {
       if (Date.now() > deadline) throw new Error(`出现孤儿 Go 进程：${scenario}`);
@@ -84,8 +94,13 @@ for (const scenario of ["graceful", "kill-main", "kill-host", "kill-openlist", "
     console.log(`${target} ${scenario}：自有 Go 进程已全部停止`);
     input.close();
   } finally {
+    clearTimeout(readyTimer);
     if (ready) for (const identity of Object.values(ready.native)) stopVerified(identity, directory);
     child?.kill("SIGKILL");
+    input?.close();
+    control?.destroy();
+    if (controller?.listening) await new Promise((resolve) => controller.close(resolve));
+    if (process.platform !== "win32") await rm(controlPath, { force: true });
     await new Promise((resolve) => setTimeout(resolve, 250));
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
   }
