@@ -5,14 +5,21 @@ function identify(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("进程 ID 无效");
   try {
     if (process.platform === "win32") {
-      const code = `$p=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if($p){[pscustomobject]@{pid=$p.ProcessId;parent=$p.ParentProcessId;created=$p.CreationDate.ToUniversalTime().ToString('o');command=$p.CommandLine}|ConvertTo-Json -Compress}`;
+      const code = `$ErrorActionPreference='Stop'; $p=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if($p){[pscustomobject]@{pid=$p.ProcessId;parent=$p.ParentProcessId;created=$p.CreationDate.ToUniversalTime().ToString('o');command=$p.CommandLine}|ConvertTo-Json -Compress}`;
       const text = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", code], { encoding: "utf8", windowsHide: true, timeout: 10000, stdio: ["ignore", "pipe", "ignore"] }).trim();
       return text ? JSON.parse(text) : undefined;
     }
     const text = execFileSync("/bin/ps", ["-ww", "-p", String(pid), "-o", "ppid=", "-o", "lstart=", "-o", "command="], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).trim();
     const match = text.match(/^(\d+)\s+(.{24})\s+(.+)$/);
-    return match ? { pid, parent: Number(match[1]), created: match[2], command: match[3] } : undefined;
-  } catch { return undefined; }
+    if (!match) throw new Error("无法解析进程身份");
+    return { pid, parent: Number(match[1]), created: match[2], command: match[3] };
+  } catch (error) {
+    // 查询超时或工具失败不能算作进程已停止；只有 OS 明确报告不存在才接受。
+    if (process.platform !== "win32" && error.status === 1) {
+      try { process.kill(pid, 0); } catch (probe) { if (probe.code === "ESRCH") return undefined; }
+    }
+    throw new Error("无法核实自有进程是否停止", { cause: error });
+  }
 }
 
 function matches(identity, marker) {

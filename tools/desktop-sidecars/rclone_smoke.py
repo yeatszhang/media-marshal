@@ -39,8 +39,15 @@ def run(output: Path):
                 entry = json.loads(line)
                 # 测试输入均为自造文件；实际临时目录和时间不进入版本控制。
                 entry.pop("time", None)
-                serialized = json.dumps(entry, ensure_ascii=False).replace(str(root), "<临时目录>")
-                result.append(json.loads(serialized))
+                def sanitize(value):
+                    if isinstance(value, str):
+                        return value.replace(str(root), "<临时目录>").replace(root.as_posix(), "<临时目录>")
+                    if isinstance(value, dict):
+                        return {key: sanitize(item) for key, item in value.items()}
+                    if isinstance(value, list):
+                        return [sanitize(item) for item in value]
+                    return value
+                result.append(sanitize(entry))
             return result
 
         def execute(args):
