@@ -58,6 +58,7 @@ if (process.parentPort) {
   const owned = new Map();
   let host, timer, stopping;
   const emit = (value) => process.stdout.write(JSON.stringify(value) + "\n");
+  const exit = (code) => process.stdout.write("", () => app.exit(code));
   const stop = () => stopping ??= (async () => {
     clearInterval(timer);
     try { host?.postMessage({ kind: "stop" }); } catch {}
@@ -66,7 +67,7 @@ if (process.parentPort) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     for (const identity of owned.values()) stopVerified(identity, root);
     try { host?.kill(); } catch {}
-    app.exit(0);
+    exit(0);
   })();
   app.whenReady().then(() => {
     host = utilityProcess.fork(__filename, [], { stdio: "pipe", serviceName: "Sidecar M0 Host" });
@@ -89,6 +90,10 @@ if (process.parentPort) {
         if (owned.size === 3) emit({ kind: "ready", main: process.pid, host: host.pid, native: Object.fromEntries(owned) });
       }
       if (data.kind === "failure") { emit(data); void stop(); }
+      if (data.kind === "native-exited" && !stopping) {
+        emit({ kind: "failure", reason: `组件提前退出：${data.name} code=${data.code}` });
+        void stop();
+      }
     });
     host.once("exit", (code) => {
       clearInterval(timer);
@@ -106,5 +111,5 @@ if (process.parentPort) {
       } catch { emit({ kind: "failure", reason: "测试命令无效" }); }
     });
     process.stdin.on("end", () => { void stop(); });
-  }).catch(() => { emit({ kind: "failure", reason: "Electron 宿主初始化失败" }); app.exit(1); });
+  }).catch(() => { emit({ kind: "failure", reason: "Electron 宿主初始化失败" }); exit(1); });
 }

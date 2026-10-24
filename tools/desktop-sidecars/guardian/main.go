@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -25,8 +26,14 @@ type child struct {
 
 func main() {
 	output := json.NewEncoder(os.Stdout)
+	var outputLock sync.Mutex
+	send := func(event map[string]any) {
+		outputLock.Lock()
+		defer outputLock.Unlock()
+		_ = output.Encode(event)
+	}
 	failure := func(stage string) {
-		_ = output.Encode(map[string]any{"kind": "failure", "component": "guardian", "reason": "守护初始化失败：" + stage})
+		send(map[string]any{"kind": "failure", "component": "guardian", "reason": "守护初始化失败：" + stage})
 	}
 	closeJob, err := ownJob()
 	if err != nil {
@@ -79,10 +86,10 @@ func main() {
 		}
 		c := &child{cmd: cmd, done: make(chan struct{})}
 		children = append(children, c)
-		_ = output.Encode(map[string]any{"kind": "native-started", "name": name, "pid": cmd.Process.Pid})
+		send(map[string]any{"kind": "native-started", "name": name, "pid": cmd.Process.Pid})
 		go func() {
 			_ = cmd.Wait()
-			_ = output.Encode(map[string]any{"kind": "native-exited", "name": name, "code": cmd.ProcessState.ExitCode()})
+			send(map[string]any{"kind": "native-exited", "name": name, "code": cmd.ProcessState.ExitCode()})
 			close(c.done)
 			exited <- struct{}{}
 		}()

@@ -48,7 +48,8 @@ for (const scenario of ["graceful", "kill-main", "kill-host", "kill-openlist", "
     ready = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("进程树就绪超时")), 30000);
       child.once("error", reject);
-      child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`进程树启动中退出：${code} ${errors.replaceAll(directory, "<临时目录>")}`)); });
+      // Windows 的 exit 可能先于 stdout 排空；close 后才能断言没有收到就绪/失败消息。
+      child.once("close", (code) => { clearTimeout(timer); reject(new Error(`进程树启动中退出：${code} ${errors.replaceAll(directory, "<临时目录>")}`)); });
       input.on("line", (line) => {
         try {
           const data = JSON.parse(line);
