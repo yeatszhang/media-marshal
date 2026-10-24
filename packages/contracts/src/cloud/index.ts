@@ -99,6 +99,10 @@ export const downloadProgressSchema = z.strictObject({
   completedItems: count, totalItems: count.nullable(),
 });
 export type DownloadProgress = z.infer<typeof downloadProgressSchema>;
+export const cloudDiagnosticCountsSchema = z.strictObject({
+  pausedItems: count, authenticationRequiredAccounts: count, authenticationRequiredItems: count, componentFailedItems: count,
+});
+export type CloudDiagnosticCounts = z.infer<typeof cloudDiagnosticCountsSchema>;
 export const downloadJobSchema = z.strictObject({
   id, accountId: id, state: downloadStateSchema, progress: downloadProgressSchema,
   failure: cloudFailureSchema.nullable(), updatedAt: timestamp,

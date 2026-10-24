@@ -1,9 +1,15 @@
-import { CloudError, cloudAccountSchema, type CloudAccount } from "@media-marshal/contracts";
+import { CloudError, cloudAccountSchema, cloudDiagnosticCountsSchema, type CloudAccount } from "@media-marshal/contracts";
 import { cloudAccountWriteSchema } from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
 
 export class CloudRepository {
   constructor(readonly database: CoreDatabase) {}
+  diagnosticCounts() {
+    const db = this.database.connection;
+    const result = db.prepare("SELECT count(*) FILTER (WHERE state='PAUSED') AS pausedItems, count(*) FILTER (WHERE state='AUTH_REQUIRED') AS authenticationRequiredItems, count(*) FILTER (WHERE failure_code='COMPONENT_UNAVAILABLE') AS componentFailedItems FROM download_item").get() as Record<string, number>;
+    const accounts = db.prepare("SELECT count(*) AS count FROM cloud_account WHERE status='AUTH_REQUIRED'").get() as { count: number };
+    return cloudDiagnosticCountsSchema.parse({ ...result, authenticationRequiredAccounts: accounts.count });
+  }
   createAccount(value: unknown): CloudAccount {
     const parsed = cloudAccountWriteSchema.safeParse(value);
     if (!parsed.success) throw new CloudError("INVALID_REQUEST");

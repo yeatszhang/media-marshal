@@ -42,6 +42,15 @@ function claim(database: CoreDatabase, seeded: ReturnType<typeof seed>, attemptI
 }
 
 describe("云端 schema v2 的实际 SQLite 约束", () => {
+  it("诊断仅聚合状态计数，区分暂停、认证失效与组件故障", async () => {
+    const { database } = await open(), paused = seed(database), auth = seed(database), failed = seed(database);
+    const db = database.connection;
+    db.prepare("UPDATE download_item SET state='PAUSED' WHERE id=?").run(paused.itemId);
+    db.prepare("UPDATE download_item SET state='AUTH_REQUIRED',failure_code='AUTH_REQUIRED' WHERE id=?").run(auth.itemId);
+    db.prepare("UPDATE cloud_account SET status='AUTH_REQUIRED' WHERE id=?").run(auth.accountId);
+    db.prepare("UPDATE download_item SET state='FAILED',failure_code='COMPONENT_UNAVAILABLE' WHERE id=?").run(failed.itemId);
+    expect(new CloudRepository(database).diagnosticCounts()).toEqual({ pausedItems: 1, authenticationRequiredAccounts: 1, authenticationRequiredItems: 1, componentFailedItems: 1 });
+  });
   it("升级保留 v1 本地来源和任务，云账号保持空且有匹配备份", async () => {
     const directory = await mkdtemp(join(tmpdir(), "marshal-cloud-v1-")); directories.push(directory);
     const path = join(directory, "desktop.sqlite3");

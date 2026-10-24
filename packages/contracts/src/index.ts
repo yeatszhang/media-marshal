@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cloudDiagnosticCountsSchema } from "./cloud/index.js";
 export * from "./cloud/index.js";
 
 export const PROTOCOL_VERSION = 1 as const;
@@ -134,6 +135,7 @@ export type DesktopRuntime = z.infer<typeof runtimeSchema>;
 
 const empty = z.strictObject({});
 export const coreActions = {
+  "cloud.diagnostics": { input: empty, output: cloudDiagnosticCountsSchema },
   "runtime.get": { input: empty, output: coreStatusSchema },
   "sources.list": { input: empty, output: z.array(sourceSchema).max(1000) },
   "sources.save": { input: sourceDraftSchema, output: sourceSchema },

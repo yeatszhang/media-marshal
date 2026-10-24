@@ -15,9 +15,11 @@ import { CoreDatabase } from "../infrastructure/database.js";
 import { CoreService, DatabaseToken } from "../application/core-service.js";
 import type { CoreHostGateway } from "@media-marshal/contracts/internal/rpc";
 import { CloudHostToken, unavailableHost } from "../cloud/host-gateway.js";
+import { CloudRepository } from "../cloud/repository.js";
 
 declare module "@yeatz/app-framework/command" {
   interface Commands {
+    "media.cloud.diagnostics": () => CoreOutput<"cloud.diagnostics">;
     "media.runtime.get": () => CoreOutput<"runtime.get">;
     "media.sources.list": () => CoreOutput<"sources.list">;
     "media.sources.save": (
@@ -66,6 +68,7 @@ export function createMediaApplication(
       const service = ctx.get(CoreService);
       const registry = ctx.commandRegistry;
       const add = (dispose: () => void) => ctx.disposables.add(dispose);
+      add(registry.register("media.cloud.diagnostics", () => new CloudRepository(ctx.get(DatabaseToken)).diagnosticCounts()));
       add(registry.register("media.runtime.get", () => service.getRuntime()));
       add(registry.register("media.sources.list", () => service.listSources()));
       add(

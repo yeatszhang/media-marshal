@@ -3,9 +3,17 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { CloudError } from "@media-marshal/contracts";
 
-const envelope = z.object({ code: z.number().int(), data: z.unknown().optional() });
+const envelope = z.object({ code: z.number().int(), data: z.unknown().optional(), message: z.string().optional() });
+export type OpenListFailureReason = "authentication" | "rate-limit" | "not-found" | "unknown";
+function failureReason(code: number, status: number, message = ""): OpenListFailureReason {
+  const hint = message.slice(0, 4096);
+  if (code === 429 || status === 429 || /too many requests|rate.?limit|请求(?:过于|太)?频繁|访问(?:过于|太)?频繁/i.test(hint)) return "rate-limit";
+  if (/not.?login|not logged in|(?:need|require|please)\s+login|login\s+(?:required|expired)|请(?:先|重新)(?:登录|登陆)|(?:登录|登陆)(?:已过期|过期|失效)/i.test(hint)) return "authentication";
+  if (/object not found|path not found|file not found|文件不存在|目录不存在/i.test(hint)) return "not-found";
+  return "unknown";
+}
 export class OpenListApiError extends Error {
-  constructor(readonly code: number, readonly httpStatus: number) { super("受管网关请求失败"); this.name = "OpenListApiError"; }
+  constructor(readonly code: number, readonly httpStatus: number, readonly reason: OpenListFailureReason = "unknown", readonly resourceId?: number) { super("受管网关请求失败"); this.name = "OpenListApiError"; }
 }
 export class OpenListClient {
   private token?: string;
@@ -79,7 +87,10 @@ export class OpenListClient {
     const response = await this.raw(method, path, body, token, path === "/api/me" ? this.authorizationTimeout : 5000);
     const parsed = envelope.safeParse((() => { try { return JSON.parse(response.bytes.toString("utf8")); } catch { return null; } })());
     if (!parsed.success) throw new CloudError("COMPONENT_UNAVAILABLE");
-    if (response.status !== 200 || parsed.data.code !== 200) throw new OpenListApiError(parsed.data.code, response.status);
+    if (response.status !== 200 || parsed.data.code !== 200) {
+      const resource = path === "/api/admin/storage/create" ? z.object({ id: z.number().int().positive() }).safeParse(parsed.data.data) : undefined;
+      throw new OpenListApiError(parsed.data.code, response.status, failureReason(parsed.data.code, response.status, parsed.data.message), resource?.success ? resource.data.id : undefined);
+    }
     return parsed.data.data;
   }
 }

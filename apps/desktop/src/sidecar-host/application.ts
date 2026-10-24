@@ -48,6 +48,7 @@ export function createSidecarApplication(options: {
     app,
     dispatch: (value: unknown) => server.receive(value),
     installCredential(binding: HostBinding, secret: string) {
+      for (const [key, previous] of bindings) if (previous.accountId === binding.accountId) bindings.delete(key);
       bindings.set(binding.bindingId, { ...binding });
       credentials.set(binding.accountId, { bindingId: binding.bindingId, generation: binding.generation, secret });
     },

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { createHmac } from "node:crypto";
 import { OpenListClient } from "./client";
@@ -11,6 +11,19 @@ async function serve(handler: Parameters<typeof createServer>[0]) {
 }
 afterEach(async () => { await Promise.all(servers.splice(0).map((server) => { server.closeAllConnections(); return new Promise<void>((resolve) => server.close(() => resolve())); })); });
 describe("受管网关实例与 HTTP 边界", () => {
+  it.each([
+    [500, "upstream NotLogin fixture-cookie", "authentication"],
+    [429, "Too Many Requests fixture-cookie", "rate-limit"],
+    [500, "file not found /private/fixture", "not-found"],
+    [500, "unknown failure fixture-cookie /private/fixture", "unknown"],
+  ])("业务错误 %s 仅保留归一化类别 %s", async (code, message, reason) => {
+    const port = await serve((_req, res) => res.end(JSON.stringify({ code, message, data: { id: 7 } })));
+    const client = new OpenListClient(port, "fixture", "password", () => true);
+    vi.spyOn(client, "authenticate").mockResolvedValue(undefined);
+    const error = await client.api("POST", "/api/admin/storage/create", {}).catch((error: unknown) => error);
+    expect(error).toMatchObject({ code, reason, resourceId: 7 });
+    expect(String(error)).not.toMatch(/fixture-cookie|private|NotLogin/);
+  });
   it("授权失效后只重新授权一次，业务错误不重放", async () => {
     let logins = 0, calls = 0, writes = 0;
     const signed = () => {

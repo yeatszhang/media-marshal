@@ -305,7 +305,8 @@ async function bootstrap() {
             if (action === "desktop.diagnostics.export") {
               const selected = await dialog.showSaveDialog(window!, { title: "导出诊断", defaultPath: "media-marshal-diagnostics.json", filters: [{ name: "JSON", extensions: ["json"] }] });
               if (selected.canceled || !selected.filePath) return { ok: true, result: false };
-              const diagnostic = defaultDiagnostic({ appVersion: app.getVersion(), electronVersion: process.versions.electron, target: `${process.platform}-${process.arch}`, core: supervisor.state, cloud: ctx.get(sidecarToken).diagnostic() });
+              const activity = supervisor.state === "ready" ? await supervisor.request("cloud.diagnostics", {}).catch(() => null) : null;
+              const diagnostic = defaultDiagnostic({ appVersion: app.getVersion(), electronVersion: process.versions.electron, target: `${process.platform}-${process.arch}`, core: supervisor.state, cloud: ctx.get(sidecarToken).diagnostic(), activity });
               await writeFile(selected.filePath, diagnostic, { mode: 0o600 });
               return { ok: true, result: true };
             }

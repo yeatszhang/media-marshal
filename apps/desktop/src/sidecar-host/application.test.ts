@@ -20,13 +20,16 @@ describe("独立 SidecarHost Application", () => {
   });
   it("凭据仅在当前绑定的私有内存中读取，轮换与解除撤销旧引用", async () => {
     const configured = binding();
-    const runtime = createSidecarApplication({ hostGeneration: randomUUID(), coreGeneration: randomUUID(), bindings: [configured], resolver: { resolve: async () => ({ guardian: "/g", openlist: "/o", rclone: "/r" }) } });
+    const hostGeneration = randomUUID(), coreGeneration = randomUUID();
+    const runtime = createSidecarApplication({ hostGeneration, coreGeneration, bindings: [configured], resolver: { resolve: async () => ({ guardian: "/g", openlist: "/o", rclone: "/r" }) } });
     await runtime.app.start();
     runtime.installCredential(configured, "fixture-cookie-secret");
     expect(runtime.readCredential(configured)).toBe("fixture-cookie-secret");
-    const changed = { ...configured, generation: randomUUID() }; runtime.installCredential(changed, "rotated-fixture-secret");
+    const changed = { ...configured, bindingId: randomUUID(), generation: randomUUID() }; runtime.installCredential(changed, "rotated-fixture-secret");
     expect(() => runtime.readCredential(configured)).toThrow();
     expect(runtime.readCredential(changed)).toBe("rotated-fixture-secret");
+    const response = await runtime.dispatch({ kind: "host.request", protocolVersion: 1, requestId: randomUUID(), idempotencyKey: randomUUID(), context: { coreGeneration, hostGeneration, bindingGeneration: configured.generation, attemptId: randomUUID() }, action: "provider.capabilities", payload: { accountId: configured.accountId, bindingId: configured.bindingId, generation: configured.generation } });
+    expect(response).toMatchObject({ ok: false, error: { code: "INTERRUPTED" } });
     runtime.dropCredential(configured.accountId);
     expect(() => runtime.readCredential(changed)).toThrow();
     await runtime.stop();
