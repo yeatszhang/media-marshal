@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { DesktopError } from "@media-marshal/contracts";
 
-// 路径通过 stdin 当数据传入，不拼进 PowerShell 源码或 argv。
+// 模板只插入 Base64 路径数据和布尔常量；没有 Cookie 或可执行的用户文本。
 const windowsAclScript = `
 $ErrorActionPreference='Stop'
 function Send-PrivateResult([string]$value){
@@ -12,13 +12,12 @@ function Send-PrivateResult([string]$value){
 }
 $stage='input'
 try {
-$reader=[IO.StreamReader]::new([Console]::OpenStandardInput(),[Text.UTF8Encoding]::new($false))
-$request=$reader.ReadToEnd() | ConvertFrom-Json
-$path=[IO.Path]::GetFullPath([string]$request.path)
+$directory=__PRIVATE_IS_DIRECTORY__
+$path=[IO.Path]::GetFullPath([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PRIVATE_PATH_BASE64__')))
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
 $system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $stage='construct'
-if($request.directory){$security=[Security.AccessControl.DirectorySecurity]::new();$inherit=[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'}
+if($directory){$security=[Security.AccessControl.DirectorySecurity]::new();$inherit=[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'}
 else{$security=[Security.AccessControl.FileSecurity]::new();$inherit=[Security.AccessControl.InheritanceFlags]::None}
 $security.SetOwner($sid)
 $security.SetAccessRuleProtection($true,$false)
@@ -27,9 +26,9 @@ foreach($identity in @($sid,$system)){
   $security.AddAccessRule($rule)
 }
 $stage='apply'
-if($request.directory){[IO.Directory]::SetAccessControl($path,$security)}else{[IO.File]::SetAccessControl($path,$security)}
+if($directory){[IO.Directory]::SetAccessControl($path,$security)}else{[IO.File]::SetAccessControl($path,$security)}
 $stage='verify'
-$actual=if($request.directory){[IO.Directory]::GetAccessControl($path)}else{[IO.File]::GetAccessControl($path)}
+$actual=if($directory){[IO.Directory]::GetAccessControl($path)}else{[IO.File]::GetAccessControl($path)}
 if(!$actual.AreAccessRulesProtected -or $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'private-acl-check'}
 $rules=@($actual.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
 if($rules.Count -ne 2){throw 'private-acl-count'}
@@ -53,9 +52,10 @@ async function windowsPrivate(path: string, directory: boolean): Promise<void> {
   if (!systemRoot || !isAbsolute(systemRoot)) throw new Error();
   const executable = join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe");
   // 不继承宿主的 PSModulePath，防止 PowerShell 7 的模块环境污染系统 5.1 进程。
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => ["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE", "PROGRAMFILES", "PROGRAMW6432"].includes(name.toUpperCase())));
+  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "PSMODULEPATH"));
+  const script = windowsAclScript.replace("__PRIVATE_PATH_BASE64__", Buffer.from(path, "utf8").toString("base64")).replace("__PRIVATE_IS_DIRECTORY__", directory ? "$true" : "$false");
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(windowsAclScript, "utf16le").toString("base64")], { env: environment, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env: environment, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     let output = "";
     const deadline = setTimeout(() => { child.kill(); reject(new Error()); }, 15000);
     child.stdout.on("data", (chunk) => { output = (output + chunk).slice(0, 100); });
@@ -68,8 +68,6 @@ async function windowsPrivate(path: string, directory: boolean): Promise<void> {
         reject(new PrivateFileError(failure?.[1] ?? "powershell-control", failure ? `${failure[2]}:${failure[3]}` : undefined));
       }
     });
-    child.stdin.on("error", () => {});
-    child.stdin.end(JSON.stringify({ path, directory }));
   });
 }
 async function secure(path: string, directory: boolean): Promise<void> {
