@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { cloudDiagnosticCountsSchema } from "./cloud/index.js";
+import { cloudDiagnosticCountsSchema, CloudError, cloudFailure } from "./cloud/index.js";
 export * from "./cloud/index.js";
 
 export const PROTOCOL_VERSION = 1 as const;
@@ -17,12 +17,14 @@ export const errorCodeSchema = z.enum([
   "UNSAFE_PATH",
   "STORAGE_ERROR",
   "INTERNAL_ERROR",
+  "AUTH_REQUIRED", "RATE_LIMITED", "NETWORK_UNAVAILABLE", "REMOTE_CHANGED", "REMOTE_NOT_FOUND", "LOCAL_UNAVAILABLE", "UNSUPPORTED_CAPABILITY", "COMPONENT_UNAVAILABLE",
 ]);
 export type ErrorCode = z.infer<typeof errorCodeSchema>;
 export const rpcErrorSchema = z.strictObject({
   code: errorCodeSchema,
   message: z.string().max(500),
   retryable: z.boolean(),
+  retryAfterSeconds: z.number().int().min(1).max(3600).optional(),
 });
 export type RpcError = z.infer<typeof rpcErrorSchema>;
 export class DesktopError extends Error {
@@ -30,6 +32,7 @@ export class DesktopError extends Error {
     readonly code: ErrorCode,
     message: string,
     readonly retryable = false,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "DesktopError";
@@ -247,11 +250,13 @@ export function parseCoreRequest(value: unknown): CoreRequest {
   return { ...request.data, payload: payload.data };
 }
 export function publicError(error: unknown): RpcError {
+  if (error instanceof CloudError) return cloudFailure(error);
   if (error instanceof DesktopError)
     return {
       code: error.code,
       message: error.message,
       retryable: error.retryable,
+      ...(error.code === "RATE_LIMITED" && error.retryAfterSeconds && error.retryAfterSeconds <= 3600 ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
     };
   // 文件系统、数据库和网络原始错误可能包含个人路径或凭据。
   return {

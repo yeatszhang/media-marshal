@@ -18,6 +18,7 @@ export class FakeDriveProvider implements CloudDriveProvider {
   async stat(input: SourceRequest) { return { accountId: input.binding.accountId, name: "sample.txt", type: "file" as const, size: 10, modifiedAt: null, version: null }; }
   async acquireSource(input: SourceRequest) { this.acquired++; return { leaseId: randomUUID(), generation: input.binding.generation, kind: "webdav" as const, endpoint: "http://127.0.0.1:5244/dav/", root: "/", credentialHandle: randomUUID() }; }
   async releaseSource(_: string) { this.released++; }
+  async disconnect(_: BindingRef) {}
 }
 export class FakeTransferEngine implements TransferEngine {
   readonly implementationId = "test.transfer";

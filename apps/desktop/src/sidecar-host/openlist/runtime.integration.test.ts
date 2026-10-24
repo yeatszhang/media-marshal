@@ -7,6 +7,8 @@ import { join, resolve } from "node:path";
 import { OpenListRuntime, unusedPort } from "./runtime";
 import { SidecarBinaryResolver, lockedDefinitions, sidecarTarget } from "../binary-resolver";
 import { guardianManifestSchema } from "../protocol";
+import { OpenListQuarkProvider } from "./provider";
+import { SourceCredentialBroker } from "../source-credentials";
 
 const running: OpenListRuntime[] = [], directories: string[] = [], servers: Server[] = [];
 async function fixture(port?: () => Promise<number>) {
@@ -23,6 +25,12 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 describe.runIf(process.env.MARSHAL_NATIVE_TESTS === "1")("真实受管 OpenList 初始化", () => {
+  it.runIf(process.env.MARSHAL_QUARK_INVALID_PROBE === "1")("合成失效 Cookie 在固定普通 Quark 驱动中映射认证失效并清理挂载", async () => {
+    const { runtime } = await fixture(); await runtime.start();
+    const provider = new OpenListQuarkProvider(runtime, new SourceCredentialBroker());
+    await expect(provider.validateCredential({ binding: { accountId: randomUUID(), bindingId: randomUUID(), generation: randomUUID() }, cookie: "__pus=invalid; __puus=invalid" })).rejects.toMatchObject({ code: "AUTH_REQUIRED" });
+    expect(await runtime.client.api("GET", "/api/admin/storage/list?page=1&per_page=100")).toMatchObject({ total: 0 });
+  }, 60000);
   it("私有实例、匿名拒绝与限定范围只读用户均实际生效", async () => {
     const { runtime, directory } = await fixture(); await runtime.start();
     const accountId = randomUUID();

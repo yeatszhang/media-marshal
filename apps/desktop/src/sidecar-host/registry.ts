@@ -8,17 +8,19 @@ export class StaticTransferRegistry {
   private providers = new Map<string, CloudDriveProvider>();
   private engines = new Map<string, TransferEngine>();
   constructor(providers: readonly CloudDriveProvider[], engines: readonly TransferEngine[]) {
-    for (const provider of providers) {
-      implementationIdSchema.parse(provider.implementationId);
-      if (this.providers.has(provider.implementationId)) throw new CloudError("CONFLICT");
-      this.providers.set(provider.implementationId, provider);
-    }
+    for (const provider of providers) this.registerProvider(provider);
     for (const engine of engines) {
       implementationIdSchema.parse(engine.implementationId);
       if (this.engines.has(engine.implementationId)) throw new CloudError("CONFLICT");
       this.engines.set(engine.implementationId, engine);
     }
   }
+  registerProvider(provider: CloudDriveProvider) {
+    implementationIdSchema.parse(provider.implementationId);
+    if (this.providers.has(provider.implementationId)) throw new CloudError("CONFLICT");
+    this.providers.set(provider.implementationId, provider);
+  }
+  findProvider(implementationId: string): CloudDriveProvider | undefined { return this.providers.get(implementationId); }
   provider(implementationId: string): CloudDriveProvider {
     const provider = this.providers.get(implementationId);
     if (!provider) throw new CloudError("UNSUPPORTED_CAPABILITY");

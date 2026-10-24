@@ -133,6 +133,7 @@ export class CoreSupervisor {
             response.error.code,
             response.error.message,
             response.error.retryable,
+            response.error.retryAfterSeconds,
           ),
         );
     });

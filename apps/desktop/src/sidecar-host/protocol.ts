@@ -8,6 +8,7 @@ export const guardianManifestSchema = z.strictObject({
 export const hostBindingSchema = bindingRefSchema.extend({ implementationId: implementationIdSchema });
 export const credentialInstallSchema = z.strictObject({ kind: z.literal("sidecar.credential.install"), requestId: z.uuid(), binding: hostBindingSchema, secret: z.string().min(1).max(32768) });
 export const credentialDropSchema = z.strictObject({ kind: z.literal("sidecar.credential.drop"), requestId: z.uuid(), accountId: z.uuid() });
+export const credentialRefreshSchema = z.strictObject({ kind: z.literal("sidecar.credential.refresh"), requestId: z.uuid(), binding: bindingRefSchema, secret: z.string().min(1).max(32768).refine((value) => !/[\r\n\0]/.test(value)) });
 export const sidecarInitializeSchema = z.strictObject({
   kind: z.literal("sidecar.initialize"), protocolVersion: z.literal(HOST_PROTOCOL_VERSION),
   hostGeneration: z.uuid(), coreGeneration: z.uuid(),

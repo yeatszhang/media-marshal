@@ -18,6 +18,7 @@ async function invoke(action: string, payload: unknown): Promise<any> {
       reply.error.code,
       reply.error.message,
       reply.error.retryable,
+      reply.error.retryAfterSeconds,
     );
   return reply.result;
 }

@@ -6,13 +6,14 @@ import { z } from "zod";
 import { CloudError, cloudFailure, cloudFailureSchema, type CloudErrorCode } from "@media-marshal/contracts";
 import { HOST_PROTOCOL_VERSION } from "@media-marshal/contracts/internal";
 import { RestrictedHostRelay, parseHostRequest, type CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
-import { guardianManifestSchema, hostBindingSchema, credentialInstallSchema, credentialDropSchema } from "../../sidecar-host/protocol";
+import { guardianManifestSchema, hostBindingSchema, credentialInstallSchema, credentialDropSchema, credentialRefreshSchema } from "../../sidecar-host/protocol";
 import { sidecarTarget, SidecarBinaryResolver, lockedDefinitions } from "../../sidecar-host/binary-resolver";
 import type { HostBinding } from "../../sidecar-host/application";
 import { NativeProcessOwnership } from "./process-ownership";
 import { ensurePrivateDirectory } from "./private-files";
 import { clearPrivateSessions } from "./private-sessions";
 import type { ComponentDiagnostic } from "./diagnostics";
+import type { BindingRef } from "@media-marshal/contracts/internal";
 
 export class SidecarSupervisor implements CoreHostBridge {
   generation = randomUUID();
@@ -31,8 +32,10 @@ export class SidecarSupervisor implements CoreHostBridge {
   private cleanStop = false;
   private ownership?: NativeProcessOwnership;
   private fault?: CloudErrorCode;
-  private credentialRequests = new Map<string, { resolve: () => void; reject: (error: unknown) => void; deadline: ReturnType<typeof setTimeout> }>();
+  private credentialRequests = new Map<string, { binding?: HostBinding; resolve: () => void; reject: (error: unknown) => void; deadline: ReturnType<typeof setTimeout> }>();
+  private refreshCredential?: (binding: BindingRef, secret: string) => Promise<void>;
   constructor(private readonly options: { workerPath: string; appPath: string; resourceRoot: string; privateRoot: string }) {}
+  onCredentialRefresh(handler: (binding: BindingRef, secret: string) => Promise<void>) { this.refreshCredential = handler; }
   diagnostic(): ComponentDiagnostic {
     return { state: this.uncertain ? "UNCERTAIN" : this.stopping && this.child ? "STOPPING" : this.starting ? "STARTING" : this.fault ? "FAILED" : this.child ? "READY" : "DISABLED", configuredAccounts: this.bindings.length, lastFailure: this.fault ?? null };
   }
@@ -97,6 +100,17 @@ export class SidecarSupervisor implements CoreHostBridge {
     let guardianExecutionId: string | undefined;
     port1.on("message", ({ data }) => {
       if (this.child !== child) return;
+      if (data?.kind === "sidecar.credential.refresh") {
+        const parsed = credentialRefreshSchema.safeParse(data);
+        if (!parsed.success) { child.kill(); return; }
+        const request = parsed.data;
+        const known = [...this.bindings, ...[...this.credentialRequests.values()].flatMap((pending) => pending.binding ? [pending.binding] : [])].some((binding) => binding.accountId === request.binding.accountId && binding.bindingId === request.binding.bindingId && binding.generation === request.binding.generation);
+        void (async () => {
+          let ok = false;
+          try { if (!known || !this.refreshCredential) throw new CloudError("INTERRUPTED"); await this.refreshCredential(request.binding, request.secret); ok = true; } catch {}
+          if (this.child === child) port1.postMessage({ kind: "sidecar.credential.refresh.result", requestId: request.requestId, ok });
+        })(); return;
+      }
       if (data?.kind === "sidecar.native" && data.hostGeneration === this.generation) {
         nativeBarrier = nativeBarrier.then(async () => {
           if (data.type === "started" && z.uuid().safeParse(data.executionId).success && Number.isSafeInteger(data.pid) && data.pid > 0 && (data.program === "guardian" || data.program === "openlist" || data.program === "rclone")) {
@@ -120,9 +134,12 @@ export class SidecarSupervisor implements CoreHostBridge {
         rejectReady(new CloudError("COMPONENT_UNAVAILABLE")); return;
       }
       if (data?.kind === "sidecar.stopped" && data.hostGeneration === this.generation && data.stopped === true) { this.cleanStop = true; return; }
-      if (data?.kind === "sidecar.credential.result" && data.ok === true) {
+      if (data?.kind === "sidecar.credential.result" && typeof data.ok === "boolean") {
         const pending = this.credentialRequests.get(data.requestId);
-        if (pending) { clearTimeout(pending.deadline); this.credentialRequests.delete(data.requestId); pending.resolve(); } return;
+        if (pending) {
+          clearTimeout(pending.deadline); this.credentialRequests.delete(data.requestId);
+          if (data.ok) pending.resolve(); else { const error = cloudFailureSchema.safeParse(data.error); pending.reject(new CloudError(error.success ? error.data.code : "COMPONENT_UNAVAILABLE")); }
+        } return;
       }
       this.relay?.receiveHost(data);
     });
@@ -156,7 +173,9 @@ export class SidecarSupervisor implements CoreHostBridge {
   }
   async installCredential(binding: HostBinding, secret: string): Promise<void> {
     const payload = credentialInstallSchema.parse({ kind: "sidecar.credential.install", requestId: randomUUID(), binding, secret });
+    if (this.starting) await this.starting;
     if (!this.child) await this.start([payload.binding]);
+    if (this.stopping || this.uncertain) throw new CloudError("CONFLICT");
     await this.credentialRequest(payload);
     this.bindings = [...this.bindings.filter((entry) => entry.accountId !== payload.binding.accountId), { ...payload.binding }];
   }
@@ -172,8 +191,11 @@ export class SidecarSupervisor implements CoreHostBridge {
   private credentialRequest(payload: z.infer<typeof credentialInstallSchema> | z.infer<typeof credentialDropSchema>): Promise<void> {
     if (!this.port || this.credentialRequests.size >= 32) return Promise.reject(new CloudError("COMPONENT_UNAVAILABLE"));
     return new Promise((resolve, reject) => {
-      const deadline = setTimeout(() => { this.credentialRequests.delete(payload.requestId); reject(new CloudError("TIMEOUT")); }, 10000);
-      this.credentialRequests.set(payload.requestId, { resolve, reject, deadline });
+      const deadline = setTimeout(() => {
+        this.credentialRequests.delete(payload.requestId); this.uncertain = true; this.relay?.invalidate();
+        reject(new CloudError("TIMEOUT")); void this.stop().catch(() => {});
+      }, 30000);
+      this.credentialRequests.set(payload.requestId, { binding: payload.kind === "sidecar.credential.install" ? payload.binding : undefined, resolve, reject, deadline });
       try { this.port!.postMessage(payload); } catch { clearTimeout(deadline); this.credentialRequests.delete(payload.requestId); reject(new CloudError("INTERRUPTED")); }
     });
   }

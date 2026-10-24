@@ -6,6 +6,7 @@ import { join } from "node:path";
 vi.mock("electron", () => ({ safeStorage: {} }));
 import { Credentials, type CredentialEncryption } from "./credentials";
 import { AccountCredentials } from "./cloud/account-credentials";
+import type { BindingRef } from "@media-marshal/contracts/internal";
 
 const directories: string[] = [];
 function encryption(): CredentialEncryption & { available: boolean } {
@@ -76,6 +77,32 @@ describe("账号级系统保护保险箱", () => {
   });
 });
 describe("私有注入与账号生命周期顺序", () => {
+  it("注入过程中刷新不会死锁，旧绑定刷新与覆盖活动引用均被拒绝", async () => {
+    const { store } = await vault();
+    let refresh!: (binding: BindingRef, secret: string) => Promise<void>;
+    const host = { quiesceAccount: async () => {}, dropCredential: async () => {}, onCredentialRefresh(handler: typeof refresh) { refresh = handler; }, installCredential: async (binding: BindingRef, secret: string) => { await refresh(binding, secret + "-refreshed"); } };
+    const manager = new AccountCredentials(store, host), reference = randomUUID();
+    const binding = { accountId: randomUUID(), bindingId: randomUUID(), generation: randomUUID(), implementationId: "test.drive" };
+    await manager.rotate(binding, reference, "first-cookie"); expect(await store.readAccount(reference)).toBe("first-cookie-refreshed");
+    await expect(manager.rotate(binding, reference, "bad-cookie")).rejects.toMatchObject({ code: "CONFLICT" }); expect(await store.readAccount(reference)).toBe("first-cookie-refreshed");
+    const replacement = { ...binding, bindingId: randomUUID(), generation: randomUUID() }, next = randomUUID();
+    await manager.rotate(replacement, next, "second-cookie");
+    await expect(refresh(binding, "stale-cookie")).rejects.toMatchObject({ code: "INTERRUPTED" }); expect(await store.readAccount(next)).toBe("second-cookie-refreshed");
+  }, 60000);
+  it("解除连接等待已开始的刷新落盘，之后不接受迟到刷新", async () => {
+    const { store } = await vault(); let refresh!: (binding: BindingRef, secret: string) => Promise<void>;
+    const host = { quiesceAccount: async () => {}, dropCredential: async () => {}, installCredential: async () => {}, onCredentialRefresh(handler: typeof refresh) { refresh = handler; } };
+    const manager = new AccountCredentials(store, host), reference = randomUUID(), binding = { accountId: randomUUID(), bindingId: randomUUID(), generation: randomUUID(), implementationId: "test.drive" };
+    await manager.rotate(binding, reference, "initial-cookie");
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; }), observed = new Promise<void>((resolve) => { entered = resolve; });
+    const save = store.saveAccount.bind(store); vi.spyOn(store, "saveAccount").mockImplementationOnce(async (ref, secret) => { entered(); await gate; await save(ref, secret); });
+    const removing = vi.spyOn(store, "removeAccount");
+    const updating = refresh(binding, "updated-cookie"); await observed;
+    const disconnecting = manager.disconnect(binding.accountId, reference); await Promise.resolve(); expect(removing).not.toHaveBeenCalled();
+    release(); await updating; await disconnecting;
+    expect(await store.readAccount(reference)).toBeNull(); await expect(refresh(binding, "late-cookie")).rejects.toMatchObject({ code: "INTERRUPTED" });
+  }, 60000);
   it("等待旧执行停止后才持久化并注入，解除只影响当前账号", async () => {
     const { store } = await vault(); const reference = randomUUID(), other = randomUUID();
     await store.saveAccount(other, "other-fixture-secret");

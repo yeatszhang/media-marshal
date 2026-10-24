@@ -5,6 +5,7 @@ import type { BindingRef, CloudDriveProvider, HostInput, TransferEngine } from "
 import { RestrictedHostServer, type HostHandlers } from "@media-marshal/contracts/internal/rpc";
 import type { SidecarBinaryResolver, BinaryName } from "./binary-resolver";
 import { StaticTransferRegistry } from "./registry";
+import { SourceCredentialBroker, SourceCredentialBrokerToken } from "./source-credentials";
 
 export interface HostBinding extends BindingRef { implementationId: string }
 export const SidecarRegistryToken = createIdentifier<StaticTransferRegistry>("sidecar.registry");
@@ -18,6 +19,17 @@ export function createSidecarApplication(options: {
   let coreGeneration: string | null = options.coreGeneration;
   const bindings = new Map(options.bindings.map((binding) => [binding.bindingId, { ...binding }]));
   const credentials = new Map<string, { bindingId: string; generation: string; secret: string }>();
+  const sourceCredentials = new SourceCredentialBroker();
+  let retiring = false;
+  const privateOperations = new Set<Promise<unknown>>();
+  const accountQueues = new Map<string, Promise<unknown>>();
+  function privateOperation<T>(accountId: string, work: () => Promise<T>): Promise<T> {
+    if (retiring) return Promise.reject(new CloudError("INTERRUPTED"));
+    const task = (accountQueues.get(accountId) ?? Promise.resolve()).catch(() => {}).then(() => { if (retiring) throw new CloudError("INTERRUPTED"); if (app.state !== "running") throw new CloudError("COMPONENT_UNAVAILABLE"); return work(); });
+    accountQueues.set(accountId, task); privateOperations.add(task);
+    void task.finally(() => { privateOperations.delete(task); if (accountQueues.get(accountId) === task) accountQueues.delete(accountId); }).catch(() => {});
+    return task;
+  }
   const registry = new StaticTransferRegistry(options.providers ?? [], options.engines ?? []);
   const resourceModule: ApplicationModule = {
     id: "sidecar.resources",
@@ -26,7 +38,7 @@ export function createSidecarApplication(options: {
       if (bindings.size) ctx.container.bind(SidecarBinariesToken).toConstantValue(await options.resolver.resolve());
     },
   };
-  const services: ApplicationModule = { id: "sidecar.services", dependencies: ["sidecar.resources"], register(bind) { bind(SidecarRegistryToken).toConstantValue(registry); } };
+  const services: ApplicationModule = { id: "sidecar.services", dependencies: ["sidecar.resources"], register(bind) { bind(SidecarRegistryToken).toConstantValue(registry); bind(SourceCredentialBrokerToken).toConstantValue(sourceCredentials); } };
   const app = createApplication({ modules: [resourceModule, services, ...options.modules ?? []] });
   function provider(ref: BindingRef) {
     const configured = bindings.get(ref.bindingId);
@@ -47,21 +59,29 @@ export function createSidecarApplication(options: {
   return {
     app,
     dispatch: (value: unknown) => server.receive(value),
-    installCredential(binding: HostBinding, secret: string) {
+    installCredential(binding: HostBinding, secret: string) { return privateOperation(binding.accountId, async () => {
+      const provider = registry.findProvider(binding.implementationId);
+      const identity = await provider?.validateCredential({ binding, cookie: secret }) ?? { stableKey: null };
+      if (retiring) throw new CloudError("INTERRUPTED");
+      try {
+        for (const previous of bindings.values()) if (previous.accountId === binding.accountId && previous.generation !== binding.generation) await registry.findProvider(previous.implementationId)?.disconnect(previous);
+      } catch (error) { await provider?.disconnect(binding).catch(() => {}); throw error; }
       for (const [key, previous] of bindings) if (previous.accountId === binding.accountId) bindings.delete(key);
       bindings.set(binding.bindingId, { ...binding });
       credentials.set(binding.accountId, { bindingId: binding.bindingId, generation: binding.generation, secret });
-    },
+      return identity;
+    }); },
     readCredential(binding: BindingRef): string {
       const value = credentials.get(binding.accountId);
       if (!value || value.bindingId !== binding.bindingId || value.generation !== binding.generation) throw new CloudError("AUTH_REQUIRED");
       return value.secret;
     },
-    dropCredential(accountId: string) {
+    dropCredential(accountId: string) { return privateOperation(accountId, async () => {
+      for (const binding of bindings.values()) if (binding.accountId === accountId) await registry.findProvider(binding.implementationId)?.disconnect(binding);
       credentials.delete(accountId);
       for (const [key, binding] of bindings) if (binding.accountId === accountId) bindings.delete(key);
-    },
+    }); },
     authorizeCore(generation: string) { coreGeneration = generation; },
-    async stop() { coreGeneration = null; server.retire(); credentials.clear(); await app.stop(); },
+    async stop() { retiring = true; coreGeneration = null; server.retire(); credentials.clear(); sourceCredentials.clear(); await app.stop(); await Promise.allSettled([...privateOperations]); },
   };
 }

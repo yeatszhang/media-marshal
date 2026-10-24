@@ -112,6 +112,7 @@ export interface CloudDriveProvider {
   stat(input: SourceRequest): Promise<HostOutput<"provider.stat">>;
   acquireSource(input: SourceRequest): Promise<TransferSourceLease>;
   releaseSource(leaseId: string): Promise<void>;
+  disconnect(binding: BindingRef): Promise<void>;
 }
 export interface TransferEngine {
   readonly implementationId: string;

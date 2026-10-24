@@ -6,6 +6,8 @@ import {
   parseCoreRequest,
   publicError,
   sourceDraftSchema,
+  CloudError,
+  rpcErrorSchema,
 } from "./index";
 const request = (action = "runtime.get", payload: unknown = {}) => ({
   kind: "request",
@@ -15,6 +17,11 @@ const request = (action = "runtime.get", payload: unknown = {}) => ({
   payload,
 });
 describe("受限进程契约", () => {
+  it("云端错误经过公开核心通道仍保留固定分类和有界退避", () => {
+    expect(rpcErrorSchema.parse(publicError(new CloudError("RATE_LIMITED", 30)))).toEqual({ code: "RATE_LIMITED", message: "网盘请求受到限制，请稍后重试", retryable: true, retryAfterSeconds: 30 });
+    expect(publicError(new CloudError("AUTH_REQUIRED"))).toMatchObject({ code: "AUTH_REQUIRED", retryable: false });
+    expect(publicError(new Error("fixture-cookie /private/path"))).not.toHaveProperty("message", "fixture-cookie /private/path");
+  });
   it("拒绝任意命令、SQL、URL 代理和多余参数", () => {
     for (const action of ["shell.exec", "sql.query", "http.fetch", "__proto__"])
       expect(() => parseCoreRequest(request(action))).toThrow(DesktopError);

@@ -1,8 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createSidecarApplication } from "./application";
+import { FakeDriveProvider } from "./testing/fakes";
 const binding = () => ({ accountId: randomUUID(), bindingId: randomUUID(), generation: randomUUID(), implementationId: "test.drive" });
 describe("独立 SidecarHost Application", () => {
+  it("关闭期间迟到的授权结果不能重新发布绑定或秘密", async () => {
+    const configured = binding(), provider = new FakeDriveProvider();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; }), observed = new Promise<void>((resolve) => { entered = resolve; });
+    vi.spyOn(provider, "validateCredential").mockImplementation(async () => { entered(); await gate; return { stableKey: null }; });
+    const runtime = createSidecarApplication({ hostGeneration: randomUUID(), coreGeneration: randomUUID(), bindings: [configured], providers: [provider], resolver: { resolve: async () => ({ guardian: "/g", openlist: "/o", rclone: "/r" }) } });
+    await runtime.app.start();
+    const install = runtime.installCredential(configured, "fixture-secret"); await observed;
+    const closing = runtime.stop(); release();
+    await expect(install).rejects.toMatchObject({ code: "INTERRUPTED" }); await closing;
+    expect(() => runtime.readCredential(configured)).toThrow();
+  });
   it("未配置账号时不解析或启动外部组件", async () => {
     const resolve = vi.fn(async () => { throw new Error("不应访问资源"); });
     const runtime = createSidecarApplication({ hostGeneration: randomUUID(), coreGeneration: randomUUID(), bindings: [], resolver: { resolve } });
@@ -23,14 +36,14 @@ describe("独立 SidecarHost Application", () => {
     const hostGeneration = randomUUID(), coreGeneration = randomUUID();
     const runtime = createSidecarApplication({ hostGeneration, coreGeneration, bindings: [configured], resolver: { resolve: async () => ({ guardian: "/g", openlist: "/o", rclone: "/r" }) } });
     await runtime.app.start();
-    runtime.installCredential(configured, "fixture-cookie-secret");
+    await runtime.installCredential(configured, "fixture-cookie-secret");
     expect(runtime.readCredential(configured)).toBe("fixture-cookie-secret");
-    const changed = { ...configured, bindingId: randomUUID(), generation: randomUUID() }; runtime.installCredential(changed, "rotated-fixture-secret");
+    const changed = { ...configured, bindingId: randomUUID(), generation: randomUUID() }; await runtime.installCredential(changed, "rotated-fixture-secret");
     expect(() => runtime.readCredential(configured)).toThrow();
     expect(runtime.readCredential(changed)).toBe("rotated-fixture-secret");
     const response = await runtime.dispatch({ kind: "host.request", protocolVersion: 1, requestId: randomUUID(), idempotencyKey: randomUUID(), context: { coreGeneration, hostGeneration, bindingGeneration: configured.generation, attemptId: randomUUID() }, action: "provider.capabilities", payload: { accountId: configured.accountId, bindingId: configured.bindingId, generation: configured.generation } });
     expect(response).toMatchObject({ ok: false, error: { code: "INTERRUPTED" } });
-    runtime.dropCredential(configured.accountId);
+    await runtime.dropCredential(configured.accountId);
     expect(() => runtime.readCredential(changed)).toThrow();
     await runtime.stop();
   });

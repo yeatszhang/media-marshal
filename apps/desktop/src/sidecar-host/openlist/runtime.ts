@@ -83,6 +83,7 @@ export class OpenListRuntime {
     if (!z.uuid().safeParse(accountId).success) throw new CloudError("INVALID_REQUEST");
     const existing = this.readers.get(accountId); if (existing) return existing;
     const pending = this.pendingReaders.get(accountId); if (pending) return pending;
+    if (this.readers.size + this.pendingReaders.size >= 256) throw new CloudError("CONFLICT");
     const creating = this.createReader(accountId);
     this.pendingReaders.set(accountId, creating);
     try { return await creating; } finally { this.pendingReaders.delete(accountId); }
