@@ -153,11 +153,15 @@ test("主进程异常退出后核心不成为孤儿写入者", async () => {
         ?.pid,
   );
   expect(pid).toBeTruthy();
+  // Windows 的启动器与真正 Main 可能不是同一 PID，必须从运行中的 Main 取得身份。
+  const mainPid = await application.evaluate(() => process.pid);
+  const mainIdentity = identify(mainPid);
+  expect(mainIdentity).toBeTruthy();
   const identity = identify(pid!);
-  expect(identity?.parent).toBe(application.process().pid);
+  expect(identity?.parent).toBe(mainPid);
   // 来自本次 Main 的 AppMetrics，并复核 OS 创建时间和完整命令；不按裸 PID 回收。
   const marker = identity.command;
-  application.process().kill("SIGKILL");
+  stopVerified(mainIdentity, mainIdentity.command);
   const alive = () => matches(identity, marker);
   try {
     await expect.poll(alive, { timeout: 10000 }).toBe(false);
