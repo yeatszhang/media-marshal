@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
-const { identify, matches, stopVerified } = createRequire(import.meta.url)(resolve("tools/desktop-sidecars/process-identity.cjs"));
+const { identify, matches, stopVerified } = createRequire(resolve("package.json"))(resolve("tools/desktop-sidecars/process-identity.cjs"));
 const occupied: Server[] = [];
 test.beforeAll(async () => {
   for (const port of [8000, 8080]) {
