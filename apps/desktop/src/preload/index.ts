@@ -38,5 +38,6 @@ const api: DesktopApi = {
   restartCore: async () => {
     await invoke("desktop.restart-core", {});
   },
+  exportDiagnostics: () => invoke("desktop.diagnostics.export", {}),
 };
 contextBridge.exposeInMainWorld("desktopApi", api);

@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "runId": 40097458744,
+  "commit": "431de4c",
+  "url": "https://github.com/yeatszhang/media-marshal/actions/runs/40097458744",
+  "scope": "正式 Core/SidecarSupervisor/Host/Guardian/OpenList 六场景三平台运行；Rclone 实际写入和签名安装包另行验收",
+  "targets": [
+    {
+      "target": "darwin-arm64",
+      "cases": [
+        {
+          "case": "normal",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "core",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "host",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "openlist",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "guardian",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "main",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": false
+        }
+      ],
+      "artifact": {
+        "id": 12560654124,
+        "digest": "sha256:3b94d3c3a37786d7d33c9077576f190c6064487dabc8c9a1f9ebae879a293422"
+      }
+    },
+    {
+      "target": "darwin-x64",
+      "cases": [
+        {
+          "case": "normal",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "core",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "host",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "openlist",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "guardian",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "main",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": false
+        }
+      ],
+      "artifact": {
+        "id": 12561851328,
+        "digest": "sha256:6eb2527ec6b15263c015b2968c9fd12bc90aaeb963478781606881484bf1af83"
+      }
+    },
+    {
+      "target": "win32-x64",
+      "cases": [
+        {
+          "case": "normal",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "core",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "host",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "openlist",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "guardian",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "main",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": false
+        }
+      ],
+      "artifact": {
+        "id": 12560559630,
+        "digest": "sha256:b727c882e7f03a409ea765cc26b89a27cacc8bb84953883ae3b3aa00d74b0b9b"
+      }
+    }
+  ]
+}

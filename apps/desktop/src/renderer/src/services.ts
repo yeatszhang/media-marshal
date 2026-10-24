@@ -212,6 +212,10 @@ export class SettingsViewModel extends StatefulService<{
       throw error;
     }
   }
+  async exportDiagnostics() {
+    try { return await this.client.exportDiagnostics(); }
+    catch (error) { this.setState({ error: message(error) }); throw error; }
+  }
 }
 export function createRendererApplication(client: DesktopApi) {
   const connection: ApplicationModule = {

@@ -193,6 +193,7 @@ export const nativeActions = {
   "desktop.credentials.save": credentialSchema,
   "desktop.settings": empty,
   "desktop.restart-core": empty,
+  "desktop.diagnostics.export": empty,
 } as const;
 export type NativeAction = keyof typeof nativeActions;
 
@@ -208,6 +209,7 @@ export interface DesktopApi {
   saveCredential(kind: "tmdb" | "emby", value: string): Promise<void>;
   chooseDirectory(purpose: "source" | "target"): Promise<string | null>;
   restartCore(): Promise<void>;
+  exportDiagnostics(): Promise<boolean>;
 }
 
 export function checkMessageSize(

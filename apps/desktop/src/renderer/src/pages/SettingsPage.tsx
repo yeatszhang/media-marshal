@@ -144,6 +144,14 @@ export function SettingsPage() {
               </div>
             ))}
           </section>
+          <section className="panel settings-form">
+            <div className="panel-heading"><h2>{t("diagnosticsTitle")}</h2></div>
+            <p>{t("diagnosticsHelp")}</p>
+            <Button variant="outline" disabled={busy} onClick={() => {
+              setBusy(true);
+              void model.exportDiagnostics().then((saved) => { if (saved) setNotice(t("diagnosticsSaved")); }).catch(() => {}).finally(() => setBusy(false));
+            }}>{t("diagnosticsExport")}</Button>
+          </section>
         </>
       )}
       {notice && (

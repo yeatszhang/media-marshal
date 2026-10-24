@@ -9,6 +9,10 @@ export const i18nReady = i18n.use(initReactI18next).init({
     "zh-CN": {
       translation: {
         overview: "总览",
+        diagnosticsTitle: "诊断",
+        diagnosticsHelp: "仅导出版本和组件状态，不包含账号、目录、凭据或原始日志。",
+        diagnosticsExport: "导出诊断",
+        diagnosticsSaved: "诊断已导出",
         tasks: "任务",
         review: "待处理",
         sources: "来源",
@@ -110,6 +114,10 @@ export const i18nReady = i18n.use(initReactI18next).init({
     en: {
       translation: {
         overview: "Overview",
+        diagnosticsTitle: "Diagnostics",
+        diagnosticsHelp: "Exports versions and component status without accounts, paths, credentials or raw logs.",
+        diagnosticsExport: "Export diagnostics",
+        diagnosticsSaved: "Diagnostics exported",
         tasks: "Tasks",
         review: "Needs attention",
         sources: "Sources",

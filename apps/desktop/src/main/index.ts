@@ -16,7 +16,7 @@ import {
 import { createIdentifier } from "@yeatz/app-framework/ioc";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { realpath } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import {
   DESKTOP_CHANNEL,
   DesktopError,
@@ -33,6 +33,7 @@ import { APP_ORIGIN, assetPath, requireTrustedRequest } from "./security";
 import { trayIcon } from "./tray-icon";
 import { SidecarSupervisor } from "./cloud/sidecar-supervisor";
 import { AccountCredentials } from "./cloud/account-credentials";
+import { defaultDiagnostic } from "./cloud/diagnostics";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -300,6 +301,13 @@ async function bootstrap() {
             if (action === "desktop.restart-core") {
               await supervisor.restart();
               return { ok: true, result: null };
+            }
+            if (action === "desktop.diagnostics.export") {
+              const selected = await dialog.showSaveDialog(window!, { title: "导出诊断", defaultPath: "media-marshal-diagnostics.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+              if (selected.canceled || !selected.filePath) return { ok: true, result: false };
+              const diagnostic = defaultDiagnostic({ appVersion: app.getVersion(), electronVersion: process.versions.electron, target: `${process.platform}-${process.arch}`, core: supervisor.state, cloud: ctx.get(sidecarToken).diagnostic() });
+              await writeFile(selected.filePath, diagnostic, { mode: 0o600 });
+              return { ok: true, result: true };
             }
           }
           const request = parseCoreRequest({ ...value, kind: "request" });

@@ -4,7 +4,7 @@ import {
   _electron,
   type ElectronApplication,
 } from "@playwright/test";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { resolve, join } from "node:path";
@@ -192,4 +192,22 @@ test("最小窗口下键盘取消新增来源恢复焦点", async () => {
     ),
   ).toBe(true);
   await window.screenshot({ path: "test-results/desktop/minimum-window.png" });
+});
+
+test("诊断导出使用原生保存授权且不包含个人路径", async () => {
+  const window = await application.firstWindow();
+  await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const output = join(directory, "diagnostics.json");
+  await application.evaluate(({ dialog }, path) => {
+    let calls = 0;
+    dialog.showSaveDialog = (async () => ++calls === 1 ? { canceled: true, filePath: undefined } : { canceled: false, filePath: path }) as typeof dialog.showSaveDialog;
+  }, output);
+  await window.getByRole("link", { name: "设置", exact: true }).click();
+  const button = window.getByRole("button", { name: "导出诊断", exact: true });
+  await button.click(); await expect(button).toBeEnabled();
+  await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+  await button.click(); await expect(window.getByText("诊断已导出", { exact: true })).toBeVisible();
+  const text = await readFile(output, "utf8"), report = JSON.parse(text);
+  expect(text).not.toContain(directory); expect(text).not.toMatch(/Cookie|raw_url|authorization|password|data\.db/i);
+  expect(report.privateDataIncluded).toBe(false); expect(report.cloud.state).toBe("DISABLED");
 });
