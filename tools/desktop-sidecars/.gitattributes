@@ -1,2 +1,2 @@
-# 上游许可按摘要原样保留，不改写其末尾空行。
-licenses/*.LICENSE whitespace=-blank-at-eof
+# 上游许可按摘要逐字节保留，禁止 Windows 检出时转换行尾。
+licenses/*.LICENSE -text whitespace=-blank-at-eof
