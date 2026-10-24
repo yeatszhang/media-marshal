@@ -27,9 +27,9 @@ foreach($identity in @($sid,$system)){
   $security.AddAccessRule($rule)
 }
 $stage='apply'
-Set-Acl -LiteralPath $path -AclObject $security
+if($request.directory){[IO.Directory]::SetAccessControl($path,$security)}else{[IO.File]::SetAccessControl($path,$security)}
 $stage='verify'
-$actual=Get-Acl -LiteralPath $path
+$actual=if($request.directory){[IO.Directory]::GetAccessControl($path)}else{[IO.File]::GetAccessControl($path)}
 if(!$actual.AreAccessRulesProtected -or $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'private-acl-check'}
 $rules=@($actual.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
 if($rules.Count -ne 2){throw 'private-acl-count'}
@@ -52,8 +52,10 @@ async function windowsPrivate(path: string, directory: boolean): Promise<void> {
   const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
   if (!systemRoot || !isAbsolute(systemRoot)) throw new Error();
   const executable = join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe");
+  // 不继承宿主的 PSModulePath，防止 PowerShell 7 的模块环境污染系统 5.1 进程。
+  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => ["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE", "PROGRAMFILES", "PROGRAMW6432"].includes(name.toUpperCase())));
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(windowsAclScript, "utf16le").toString("base64")], { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(windowsAclScript, "utf16le").toString("base64")], { env: environment, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
     let output = "";
     const deadline = setTimeout(() => { child.kill(); reject(new Error()); }, 15000);
     child.stdout.on("data", (chunk) => { output = (output + chunk).slice(0, 100); });
