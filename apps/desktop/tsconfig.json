@@ -6,6 +6,8 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
+      "@media-marshal/contracts/internal": ["../../packages/contracts/src/internal/index.ts"],
+      "@media-marshal/contracts/internal/rpc": ["../../packages/contracts/src/internal/rpc.ts"],
       "@media-marshal/contracts": ["../../packages/contracts/src/index.ts"],
       "@media-marshal/media-core": ["../../packages/media-core/src/index.ts"]
     }

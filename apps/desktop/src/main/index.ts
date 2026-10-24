@@ -31,6 +31,8 @@ import { CoreSupervisor } from "./core-supervisor";
 import { Credentials } from "./credentials";
 import { APP_ORIGIN, assetPath, requireTrustedRequest } from "./security";
 import { trayIcon } from "./tray-icon";
+import { SidecarSupervisor } from "./cloud/sidecar-supervisor";
+import { AccountCredentials } from "./cloud/account-credentials";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -50,6 +52,8 @@ else void app.whenReady().then(bootstrap);
 async function bootstrap() {
   const coreToken = createIdentifier<CoreSupervisor>("desktop.core");
   const credentialToken = createIdentifier<Credentials>("desktop.credentials");
+  const sidecarToken = createIdentifier<SidecarSupervisor>("desktop.sidecars");
+  const accountCredentialToken = createIdentifier<AccountCredentials>("desktop.account-credentials");
   const developmentUrl = !app.isPackaged
     ? process.env.ELECTRON_RENDERER_URL
     : undefined;
@@ -159,9 +163,26 @@ async function bootstrap() {
       );
     },
   };
+  const sidecars: ApplicationModule = {
+    id: "desktop.sidecars",
+    dependencies: ["desktop.host"],
+    register(bind) {
+      const target = `${process.platform}-${process.arch}`;
+      bind(sidecarToken).toConstantValue(new SidecarSupervisor({
+        workerPath: join(__dirname, "sidecar-host.js"), appPath: app.getAppPath(),
+        resourceRoot: app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "resources/sidecars", target),
+        privateRoot: join(app.getPath("userData"), "sidecars"),
+      }));
+    },
+    start(ctx) { ctx.disposables.add(() => ctx.get(sidecarToken).stop()); },
+  };
+  const accountCredentials: ApplicationModule = {
+    id: "desktop.account-credentials", dependencies: ["desktop.credentials", "desktop.sidecars"],
+    start(ctx) { ctx.container.bind(accountCredentialToken).toConstantValue(new AccountCredentials(ctx.get(credentialToken), ctx.get(sidecarToken))); },
+  };
   const core: ApplicationModule = {
     id: "desktop.core",
-    dependencies: ["desktop.host", "desktop.credentials"],
+    dependencies: ["desktop.host", "desktop.credentials", "desktop.sidecars"],
     register(bind) {
       bind(coreToken).toConstantValue(
         new CoreSupervisor(
@@ -172,6 +193,8 @@ async function bootstrap() {
     },
     start(ctx) {
       const supervisor = ctx.get(coreToken);
+      // 对象仍按需启动；本地目录流程不会启动 Host 或 Go 组件。
+      supervisor.attachHostBridge(ctx.get(sidecarToken));
       ctx.disposables.add(() => supervisor.stop());
       // 启动受跟踪但不阻挡窗口，失败由状态页提供重试入口。
       void ctx.effects.run(
@@ -353,7 +376,7 @@ async function bootstrap() {
     },
   };
   const desktop = createApplication({
-    modules: [host, credentials, core, bridge, windows],
+    modules: [host, credentials, sidecars, accountCredentials, core, bridge, windows],
   });
   app.on("second-instance", () => {
     void showWindow();

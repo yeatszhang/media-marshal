@@ -13,6 +13,8 @@ import {
 } from "@media-marshal/contracts";
 import { CoreDatabase } from "../infrastructure/database.js";
 import { CoreService, DatabaseToken } from "../application/core-service.js";
+import type { CoreHostGateway } from "@media-marshal/contracts/internal/rpc";
+import { CloudHostToken, unavailableHost } from "../cloud/host-gateway.js";
 
 declare module "@yeatz/app-framework/command" {
   interface Commands {
@@ -38,7 +40,9 @@ declare module "@yeatz/app-framework/command" {
 export function createMediaApplication(
   databasePath: string,
   extraModules: ApplicationModule[] = [],
+  options: { host?: CoreHostGateway } = {},
 ) {
+  const host: ApplicationModule = { id: "media.host", register(bind) { bind(CloudHostToken).toConstantValue(options.host ?? unavailableHost); } };
   const storage: ApplicationModule = {
     id: "media.storage",
     async start(ctx) {
@@ -89,7 +93,7 @@ export function createMediaApplication(
     },
   };
   const app = createApplication({
-    modules: [storage, services, commands, ...extraModules],
+    modules: [host, storage, services, commands, ...extraModules],
   });
   const active = new Set<Promise<unknown>>();
   let accepting = true;

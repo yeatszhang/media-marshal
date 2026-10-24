@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { CoreDatabase, migrations } from "./database";
+import { CoreDatabase, migrations, SCHEMA_VERSION } from "./database";
 const directories: string[] = [];
 async function temporary() {
   const directory = await mkdtemp(join(tmpdir(), "marshal-db-"));
@@ -21,7 +21,7 @@ describe("显式数据库迁移", () => {
   it("新库建立版本和基础表，重新打开保留配置", async () => {
     const path = await temporary();
     let db = await CoreDatabase.open(path);
-    expect(db.schemaVersion).toBe(1);
+    expect(db.schemaVersion).toBe(SCHEMA_VERSION);
     db.connection
       .prepare("INSERT INTO app_setting VALUES('test','saved')")
       .run();
@@ -36,19 +36,13 @@ describe("显式数据库迁移", () => {
   });
   it("桌面旧版升级前备份包含 WAL 中的已提交数据", async () => {
     const path = await temporary();
-    const first = await CoreDatabase.open(path);
+    const first = await CoreDatabase.open(path, migrations.slice(0, 1));
     first.connection
       .prepare("INSERT INTO app_setting VALUES('backup','present')")
       .run();
     first.close();
-    const upgraded = await CoreDatabase.open(path, [
-      ...migrations,
-      {
-        version: 2,
-        sql: "CREATE TABLE upgrade_check(id INTEGER PRIMARY KEY);",
-      },
-    ]);
-    expect(upgraded.schemaVersion).toBe(2);
+    const upgraded = await CoreDatabase.open(path);
+    expect(upgraded.schemaVersion).toBe(SCHEMA_VERSION);
     upgraded.close();
     const backup = new Database(`${path}.before-v2.bak`, { readonly: true });
     expect(backup.pragma("user_version", { simple: true })).toBe(1);
@@ -63,11 +57,11 @@ describe("显式数据库迁移", () => {
     await expect(
       CoreDatabase.open(path, [
         ...migrations,
-        { version: 2, sql: "CREATE TABLE half_done(id INTEGER); INVALID SQL;" },
+        { version: SCHEMA_VERSION + 1, sql: "CREATE TABLE half_done(id INTEGER); INVALID SQL;" },
       ]),
     ).rejects.toThrow();
     const db = new Database(path);
-    expect(db.pragma("user_version", { simple: true })).toBe(1);
+    expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE name='half_done'").get(),
     ).toBeUndefined();

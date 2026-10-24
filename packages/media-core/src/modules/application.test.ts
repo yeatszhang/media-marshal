@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createApplication } from "@yeatz/app-framework/application";
 import { createMediaApplication } from "./application";
+import { SCHEMA_VERSION } from "../infrastructure/database";
 const directories: string[] = [];
 const running: ReturnType<typeof createMediaApplication>[] = [];
 const message = (action: string, payload: unknown = {}) => ({
@@ -46,7 +47,7 @@ describe("框架组装与核心消息", () => {
       first.runtime.dispatch(message("runtime.get")),
     ).rejects.toMatchObject({ code: "INTERRUPTED" });
     expect(await second.runtime.dispatch(message("runtime.get"))).toMatchObject(
-      { schemaVersion: 1 },
+      { schemaVersion: SCHEMA_VERSION },
     );
   });
   it("通过真实目录保存 COPY 来源，重叠与符号链接绕过被阻止", async () => {
@@ -122,7 +123,7 @@ describe("框架组装与核心消息", () => {
     running.push(retried);
     await retried.app.start();
     expect(await retried.dispatch(message("runtime.get"))).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: SCHEMA_VERSION,
     });
   });
   it("缺少依赖与循环依赖不能启动", async () => {

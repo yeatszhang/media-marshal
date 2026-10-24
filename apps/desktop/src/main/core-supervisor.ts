@@ -18,6 +18,7 @@ import {
   type CoreOutput,
   type DesktopRuntime,
 } from "@media-marshal/contracts";
+import type { CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -38,7 +39,12 @@ export class CoreSupervisor {
   constructor(
     private readonly workerPath: string,
     private readonly dataDir: string,
+    private hostBridge?: CoreHostBridge,
   ) {}
+  attachHostBridge(bridge: CoreHostBridge): void {
+    if (this.child || this.starting) throw new DesktopError("CONFLICT", "核心运行期间不能更换宿主通道");
+    this.hostBridge = bridge;
+  }
 
   start(): Promise<void> {
     if (this.starting) return this.starting;
@@ -59,6 +65,9 @@ export class CoreSupervisor {
     this.child = child;
     const { port1, port2 } = new MessageChannelMain();
     this.port = port1;
+    const coreGeneration = randomUUID();
+    const hostGeneration = this.hostBridge?.generation ?? randomUUID();
+    this.hostBridge?.attachCore(coreGeneration, (message) => port1.postMessage(message));
     // 子进程错误不直接输出，避免原始数据库/文件错误泄漏个人路径。
     child.stdout?.on("data", () => {});
     child.stderr?.on("data", () => {});
@@ -83,6 +92,10 @@ export class CoreSupervisor {
         checkMessageSize(message, MAX_RESPONSE_BYTES);
       } catch {
         child.kill();
+        return;
+      }
+      if (message && typeof message === "object" && "kind" in message && message.kind === "host.request") {
+        this.hostBridge?.receiveCore(message);
         return;
       }
       if (
@@ -127,10 +140,6 @@ export class CoreSupervisor {
       child.once("exit", () => {
         fail();
         port1.close();
-        if (this.child === child) {
-          this.child = undefined;
-          this.port = undefined;
-        }
         for (const pending of this.pending.values()) {
           clearTimeout(pending.timer);
           pending.reject(
@@ -146,13 +155,16 @@ export class CoreSupervisor {
         this.detail = this.stopping
           ? null
           : "媒体核心已中断，正在恢复或等待重试";
-        resolve();
-        if (!this.stopping && this.attempts < 3) {
-          this.attempts++;
-          this.retryTimer = setTimeout(() => {
-            void this.start().catch(() => {});
-          }, this.attempts * 1000);
-        }
+        void (async () => {
+          let stopped = true;
+          try { await this.hostBridge?.detachCore(coreGeneration); } catch { stopped = false; this.detail = "旧云端执行尚未确认停止，核心恢复已阻断"; }
+          if (this.child === child) { this.child = undefined; this.port = undefined; }
+          resolve();
+          if (stopped && !this.stopping && this.attempts < 3) {
+            this.attempts++;
+            this.retryTimer = setTimeout(() => { void this.start().catch(() => {}); }, this.attempts * 1000);
+          }
+        })();
       }),
     );
     child.once("spawn", () =>
@@ -161,6 +173,7 @@ export class CoreSupervisor {
           kind: "initialize",
           protocolVersion: PROTOCOL_VERSION,
           databasePath: join(this.dataDir, "desktop.sqlite3"),
+          coreGeneration, hostGeneration,
         },
         [port2],
       ),

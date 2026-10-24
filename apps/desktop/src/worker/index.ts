@@ -6,6 +6,8 @@ import {
   parseCoreRequest,
   publicError,
 } from "@media-marshal/contracts";
+import { z } from "zod";
+import { RestrictedHostClient } from "@media-marshal/contracts/internal/rpc";
 
 process.parentPort.once("message", (event) => {
   const port = event.ports[0];
@@ -15,14 +17,22 @@ process.parentPort.once("message", (event) => {
     input?.kind !== "initialize" ||
     input.protocolVersion !== PROTOCOL_VERSION ||
     typeof input.databasePath !== "string"
+    || !z.uuid().safeParse(input.coreGeneration).success || !z.uuid().safeParse(input.hostGeneration).success
   ) {
     process.exit(1);
     return;
   }
-  const runtime = createMediaApplication(input.databasePath);
+  const coreGeneration = input.coreGeneration as string;
+  let hostGeneration = input.hostGeneration as string;
+  let hostOnline = true;
+  const host = new RestrictedHostClient((message) => port.postMessage(message), (context) => hostOnline && context.coreGeneration === coreGeneration && context.hostGeneration === hostGeneration);
+  const runtime = createMediaApplication(input.databasePath, [], { host: {
+    context(bindingGeneration, attemptId) { return { coreGeneration, hostGeneration, bindingGeneration, attemptId }; },
+    request: (action, payload, context, key) => host.request(action, payload, context, key),
+  } });
   let stopping: Promise<void> | undefined;
   const shutdown = () =>
-    (stopping ??= runtime.stop().then(
+    (stopping ??= (host.invalidate(), runtime.stop()).then(
       () => {
         port.close();
         process.exit(0);
@@ -33,6 +43,11 @@ process.parentPort.once("message", (event) => {
     void shutdown();
   });
   port.on("message", (message) => {
+    if (message.data?.kind === "host.response" || message.data?.kind === "host.event") { host.receive(message.data); return; }
+    if (message.data?.kind === "sidecar.generation" && z.uuid().safeParse(message.data.hostGeneration).success) {
+      host.invalidate(); hostGeneration = message.data.hostGeneration; hostOnline = true; return;
+    }
+    if (message.data?.kind === "sidecar.lost" && message.data.hostGeneration === hostGeneration) { hostOnline = false; host.invalidate(); return; }
     if (message.data?.kind === "shutdown") {
       void shutdown();
       return;

@@ -3,6 +3,8 @@
   "scope": "userData-relative",
   "defaultExportExcluded": [
     "credentials.json",
+    "credentials.json.tmp",
+    "credentials.json.*.tmp",
     "credentials.enc.json",
     "sidecars/openlist/**",
     "runtime/rclone/**",

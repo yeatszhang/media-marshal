@@ -7,6 +7,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal/index.d.ts",
+      "import": "./dist/internal/index.js"
+    },
+    "./internal/rpc": {
+      "types": "./dist/internal/rpc.d.ts",
+      "import": "./dist/internal/rpc.js"
     }
   },
   "scripts": {

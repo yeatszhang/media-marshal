@@ -7,6 +7,8 @@ export default defineConfig({
   plugins: [typescriptDecorators()],
   resolve: {
     alias: {
+      "@media-marshal/contracts/internal/rpc": fileURLToPath(new URL("./packages/contracts/src/internal/rpc.ts", import.meta.url)),
+      "@media-marshal/contracts/internal": fileURLToPath(new URL("./packages/contracts/src/internal/index.ts", import.meta.url)),
       "@media-marshal/contracts": fileURLToPath(
         new URL("./packages/contracts/src/index.ts", import.meta.url),
       ),

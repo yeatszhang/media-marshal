@@ -6,6 +6,8 @@ import tailwind from "@tailwindcss/vite";
 import { typescriptDecorators } from "../../scripts/typescript-decorators.mjs";
 
 const alias = {
+  "@media-marshal/contracts/internal/rpc": resolve("..", "..", "packages/contracts/src/internal/rpc.ts"),
+  "@media-marshal/contracts/internal": resolve("..", "..", "packages/contracts/src/internal/index.ts"),
   "@media-marshal/contracts": resolve(
     "..",
     "..",
@@ -30,6 +32,7 @@ export default defineConfig({
         input: {
           index: resolve("src/main/index.ts"),
           worker: resolve("src/worker/index.ts"),
+          "sidecar-host": resolve("src/sidecar-host/index.ts"),
         },
       },
     },

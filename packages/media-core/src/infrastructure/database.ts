@@ -2,8 +2,9 @@ import Database from "better-sqlite3";
 import { mkdirSync, existsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { DesktopError } from "@media-marshal/contracts";
+import { cloudMigrationSql } from "./cloud-migration.js";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export interface Migration {
   version: number;
   sql: string;
@@ -35,6 +36,7 @@ export const migrations: readonly Migration[] = [
   CREATE UNIQUE INDEX correction_active_task ON correction_item(task_id) WHERE state IN ('PENDING','RUNNING');
 `,
   },
+  { version: 2, sql: cloudMigrationSql },
 ];
 
 export class CoreDatabase {

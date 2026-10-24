@@ -1,0 +1,146 @@
+import { MessageChannelMain, utilityProcess, type UtilityProcess, type MessagePortMain } from "electron";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { CloudError, cloudFailure } from "@media-marshal/contracts";
+import { HOST_PROTOCOL_VERSION } from "@media-marshal/contracts/internal";
+import { RestrictedHostRelay, parseHostRequest, type CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
+import { guardianManifestSchema, hostBindingSchema, credentialInstallSchema, credentialDropSchema } from "../../sidecar-host/protocol";
+import { sidecarTarget } from "../../sidecar-host/binary-resolver";
+import type { HostBinding } from "../../sidecar-host/application";
+
+export class SidecarSupervisor implements CoreHostBridge {
+  generation = randomUUID();
+  private coreGeneration?: string;
+  private toCore?: (value: unknown) => void;
+  private relay?: RestrictedHostRelay;
+  private child?: UtilityProcess;
+  private port?: MessagePortMain;
+  private heartbeat?: ReturnType<typeof setInterval>;
+  private exited?: Promise<void>;
+  private starting?: Promise<void>;
+  private bindings: HostBinding[] = [];
+  private stopping = false;
+  private uncertain = false;
+  private epoch = 0;
+  private cleanStop = false;
+  private credentialRequests = new Map<string, { resolve: () => void; reject: (error: unknown) => void; deadline: ReturnType<typeof setTimeout> }>();
+  constructor(private readonly options: { workerPath: string; appPath: string; resourceRoot: string; privateRoot: string }) {}
+  attachCore(generation: string, send: (value: unknown) => void) {
+    z.uuid().parse(generation);
+    this.coreGeneration = generation; this.toCore = send;
+    this.relay = new RestrictedHostRelay(
+      (message) => { if (!this.port) throw new CloudError("COMPONENT_UNAVAILABLE"); this.port.postMessage(message); },
+      (message) => this.toCore?.(message),
+      (context) => context.coreGeneration === this.coreGeneration && context.hostGeneration === this.generation && this.bindings.some((binding) => binding.generation === context.bindingGeneration),
+    );
+    this.port?.postMessage({ kind: "sidecar.authorize-core", coreGeneration: generation });
+  }
+  receiveCore(value: unknown): boolean {
+    if (!this.port) {
+      try {
+        const request = parseHostRequest(value);
+        if (request.context.coreGeneration !== this.coreGeneration) return false;
+        this.toCore?.({ kind: "host.response", protocolVersion: HOST_PROTOCOL_VERSION, requestId: request.requestId, context: request.context, ok: false, error: cloudFailure(new CloudError("COMPONENT_UNAVAILABLE")) });
+      } catch {}
+      return false;
+    }
+    return this.relay?.receiveCore(value) ?? false;
+  }
+  async start(bindings: readonly HostBinding[]): Promise<void> {
+    if (!bindings.length) return;
+    if (this.uncertain || this.child || this.starting) throw new CloudError("CONFLICT");
+    const valid = z.array(hostBindingSchema).min(1).max(100).parse(bindings);
+    if (!this.coreGeneration) throw new CloudError("COMPONENT_UNAVAILABLE");
+    this.stopping = false;
+    const epoch = ++this.epoch;
+    this.starting = this.spawn(valid, epoch, this.coreGeneration).finally(() => { this.starting = undefined; });
+    return this.starting;
+  }
+  private async spawn(bindings: HostBinding[], epoch: number, coreGeneration: string) {
+    const target = sidecarTarget(process.platform, process.arch);
+    // 开发态取工作区元数据，安装态由 ASAR 内受保护的构建清单提供；不读 userData 的摘要。
+    let guardian;
+    try {
+      guardian = guardianManifestSchema.parse(JSON.parse(await readFile(join(this.options.appPath, "resources/sidecars", target, "guardian.json"), "utf8")));
+      if (guardian.target !== target) throw new Error();
+    } catch { throw new CloudError("COMPONENT_UNAVAILABLE"); }
+    if (epoch !== this.epoch || this.stopping || coreGeneration !== this.coreGeneration) throw new CloudError("INTERRUPTED");
+    this.generation = randomUUID(); this.bindings = bindings; this.stopping = false;
+    this.cleanStop = false;
+    this.toCore?.({ kind: "sidecar.generation", hostGeneration: this.generation });
+    const child = utilityProcess.fork(this.options.workerPath, [], { serviceName: "Media Marshal Sidecar Host", stdio: "pipe" });
+    this.child = child;
+    child.stdout?.on("data", () => {}); child.stderr?.on("data", () => {});
+    const { port1, port2 } = new MessageChannelMain(); this.port = port1;
+    let resolveReady!: () => void, rejectReady!: (reason: unknown) => void;
+    const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+    const deadline = setTimeout(() => { rejectReady(new CloudError("TIMEOUT")); child.kill(); }, 15000);
+    port1.on("message", ({ data }) => {
+      if (data?.kind === "sidecar.ready" && data.protocolVersion === HOST_PROTOCOL_VERSION && data.hostGeneration === this.generation) { clearTimeout(deadline); resolveReady(); return; }
+      if (data?.kind === "sidecar.failed") { rejectReady(new CloudError("COMPONENT_UNAVAILABLE")); return; }
+      if (data?.kind === "sidecar.stopped" && data.hostGeneration === this.generation && data.stopped === true) { this.cleanStop = true; return; }
+      if (data?.kind === "sidecar.credential.result" && data.ok === true) {
+        const pending = this.credentialRequests.get(data.requestId);
+        if (pending) { clearTimeout(pending.deadline); this.credentialRequests.delete(data.requestId); pending.resolve(); } return;
+      }
+      this.relay?.receiveHost(data);
+    });
+    port1.start();
+    this.exited = new Promise<void>((resolve) => child.once("exit", () => {
+      clearTimeout(deadline); clearInterval(this.heartbeat); port1.close();
+      rejectReady(new CloudError("COMPONENT_UNAVAILABLE"));
+      if (this.child === child) { this.child = undefined; this.port = undefined; }
+      this.relay?.invalidate();
+      for (const pending of this.credentialRequests.values()) { clearTimeout(pending.deadline); pending.reject(new CloudError("INTERRUPTED")); }
+      this.credentialRequests.clear();
+      this.uncertain = !this.cleanStop;
+      if (!this.stopping) this.toCore?.({ kind: "sidecar.lost", hostGeneration: this.generation });
+      resolve();
+    }));
+    child.once("spawn", () => {
+      child.postMessage({ kind: "sidecar.initialize", protocolVersion: HOST_PROTOCOL_VERSION, hostGeneration: this.generation, coreGeneration: this.coreGeneration, resourceRoot: this.options.resourceRoot, privateRoot: this.options.privateRoot, guardian, bindings }, [port2]);
+      this.heartbeat = setInterval(() => port1.postMessage({ kind: "sidecar.heartbeat" }), 250);
+    });
+    try { await ready; } catch (error) { await this.stop(); throw error; }
+  }
+  async detachCore(generation: string): Promise<void> {
+    if (generation !== this.coreGeneration) return;
+    this.coreGeneration = undefined; this.toCore = undefined; this.relay?.invalidate();
+    await this.stop();
+  }
+  async installCredential(binding: HostBinding, secret: string): Promise<void> {
+    const payload = credentialInstallSchema.parse({ kind: "sidecar.credential.install", requestId: randomUUID(), binding, secret });
+    if (!this.child) await this.start([payload.binding]);
+    await this.credentialRequest(payload);
+    this.bindings = [...this.bindings.filter((entry) => entry.accountId !== payload.binding.accountId), { ...payload.binding }];
+  }
+  async dropCredential(accountId: string): Promise<void> {
+    if (this.uncertain) throw new CloudError("CONFLICT");
+    if (this.port) await this.credentialRequest(credentialDropSchema.parse({ kind: "sidecar.credential.drop", requestId: randomUUID(), accountId }));
+    this.bindings = this.bindings.filter((binding) => binding.accountId !== accountId);
+  }
+  async quiesceAccount(_: string): Promise<void> {
+    // 传输执行器接入前没有 Go 写入者；未知 Host 状态始终阻止凭据轮换。
+    if (this.uncertain) throw new CloudError("CONFLICT");
+  }
+  private credentialRequest(payload: z.infer<typeof credentialInstallSchema> | z.infer<typeof credentialDropSchema>): Promise<void> {
+    if (!this.port || this.credentialRequests.size >= 32) return Promise.reject(new CloudError("COMPONENT_UNAVAILABLE"));
+    return new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => { this.credentialRequests.delete(payload.requestId); reject(new CloudError("TIMEOUT")); }, 10000);
+      this.credentialRequests.set(payload.requestId, { resolve, reject, deadline });
+      try { this.port!.postMessage(payload); } catch { clearTimeout(deadline); this.credentialRequests.delete(payload.requestId); reject(new CloudError("INTERRUPTED")); }
+    });
+  }
+  async stop(): Promise<void> {
+    this.stopping = true;
+    this.epoch++;
+    this.relay?.invalidate();
+    const child = this.child;
+    if (!child) return;
+    this.port?.postMessage({ kind: "sidecar.shutdown" });
+    const deadline = setTimeout(() => child.kill(), 8000);
+    try { await this.exited; if (this.uncertain) throw new CloudError("COMPONENT_UNAVAILABLE"); } finally { clearTimeout(deadline); }
+  }
+}

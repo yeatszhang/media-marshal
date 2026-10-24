@@ -1,4 +1,4 @@
-name: 内置下载组件 M0 验收
+name: 内置下载组件与宿主验收
 
 on:
   workflow_dispatch:
@@ -7,6 +7,13 @@ on:
     paths:
       - 'tools/desktop-sidecars/**'
       - '.github/workflows/sidecar-validation.yml'
+      - 'apps/desktop/**'
+      - 'packages/contracts/**'
+      - 'packages/media-core/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - 'tsconfig*.json'
+      - 'vitest.config.ts'
 
 permissions:
   contents: read
@@ -45,14 +52,24 @@ jobs:
           cache: false
       - run: npm ci
       - run: python tools/desktop-sidecars/prepare.py --target ${{ matrix.target }}
+      - run: python tools/desktop-sidecars/prepare_guardian.py --target ${{ matrix.target }}
       - run: python -m unittest discover -s tools/desktop-sidecars/tests -v
       - run: python tools/desktop-sidecars/contract_smoke.py
       - run: python tools/desktop-sidecars/rclone_smoke.py
       - run: node tools/desktop-sidecars/process-smoke.mjs
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run check:boundaries
+      - run: npm run desktop:build
+      - run: node tools/desktop-sidecars/host_smoke.mjs
+      - run: npm run desktop:rebuild
+      - run: npm run test:desktop
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sidecar-evidence-${{ matrix.target }}
-          path: test-results/sidecars/
+          path: |
+            test-results/sidecars/
+            test-results/desktop/
           if-no-files-found: warn
           retention-days: 14

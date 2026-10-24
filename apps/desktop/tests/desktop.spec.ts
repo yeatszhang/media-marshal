@@ -73,7 +73,7 @@ test("真实窗口、核心握手与沙盒边界", async () => {
     await window.evaluate(() => Object.keys(window.desktopApi)),
   ).not.toContain("invoke");
   const runtime = await window.evaluate(() => window.desktopApi.getRuntime());
-  expect(runtime.status?.schemaVersion).toBe(1);
+  expect(runtime.status?.schemaVersion).toBe(2);
   expect(
     await window.evaluate(async () => {
       try {

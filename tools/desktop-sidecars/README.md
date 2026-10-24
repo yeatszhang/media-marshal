@@ -2,7 +2,7 @@
 
 OpenList `v4.2.7` lite 与 Rclone `v1.75.2` 是当前待集成组合。`sidecars.lock.json` 固定 release 资产、上游源码 commit、归档和解压后二进制的 SHA-256。摘要来自 GitHub release 元数据并在下载后复核；许可证从固定 commit 源码复制。准备器不查 latest、不搜索系统 PATH、不运行下载的程序。
 
-OpenList lite 不包含管理前端，保留 API、WebDAV 和驱动。当前只验证 macOS arm64 的进程和 HTTP 行为；准备出其他架构文件不代表对应平台运行通过。
+OpenList lite 不包含管理前端，保留 API、WebDAV 和驱动。macOS arm64/x64 与 Windows x64 已通过开发态 M0 运行矩阵，证据见 `fixtures/platform-m0.json`。该矩阵覆盖本地夹具和进程回收，正式安装包与真实夸克账号分别验收。
 
 ## 准备与检查
 
@@ -12,10 +12,13 @@ OpenList lite 不包含管理前端，保留 API、WebDAV 和驱动。当前只�
 python3 tools/desktop-sidecars/prepare.py
 python3 tools/desktop-sidecars/prepare.py --target win32-x64
 python3 tools/desktop-sidecars/prepare.py --all
+python3 tools/desktop-sidecars/prepare_guardian.py
 python3 -m unittest discover -s tools/desktop-sidecars/tests -v
 python3 tools/desktop-sidecars/contract_smoke.py
 python3 tools/desktop-sidecars/rclone_smoke.py
 node tools/desktop-sidecars/process-smoke.mjs
+# 完成 npm run desktop:build 后验证正式 Host 入口：
+node tools/desktop-sidecars/host_smoke.mjs
 ```
 
 第一条准备当前架构，`--all` 只准备三种目标，不运行异构程序。缓存位于 `build-artifacts/desktop-sidecars/downloads/`，产物位于 `apps/desktop/resources/sidecars/<target>/`，均不提交 Git。只有完整核验通过才替换目标目录；损坏的缓存直接报错，应调查后删除对应缓存再重试。产物包含 `bin/`、`licenses/`、`manifest.json`，尚未接入正式安装包。
@@ -52,7 +55,7 @@ API 通常使用 HTTP 200 包装业务错误，必须同时检查 JSON `code`。
 
 ## 当前证据与后续门槛
 
-2026-10-24：六个三目标归档与二进制摘要核验通过；当前 macOS arm64 的版本命令及 22 次本地 HTTP/WebDAV 请求通过，包含匿名拒绝和私有文件权限检查；准备器 5 项完整性/归档边界测试通过。Rclone 的特殊名称、JSON 统计、非零退出部分成功、终止及新 attempt 重跑实测通过，日志保存在 `fixtures/rclone-v1.75.2.local.json`。后续实施记录应区分本地夹具、真实夸克、异构平台运行和正式签名安装包。
+2026-10-24：六个三目标归档与二进制摘要核验通过；三目标各通过 22 次本地 HTTP/WebDAV 请求、准备器 5 项边界测试，以及 Rclone 特殊名称、JSON 统计、非零退出部分成功、终止及新 attempt 重跑。POSIX 私有文件权限检查通过，Windows ACL 仍待正式凭据模块验收。仓库中的本地请求与 Rclone 详细夹具来自 macOS arm64；三目标 CI 产物及摘要另行记录，不能混用为真实夸克或签名安装包证据。
 
 Rclone 本地 smoke 关闭 reflink clone，确保终止用例经过实际传输路径。它也确认 `--files-from-raw` 中不存在的源路径默认不会令命令失败，因此不能依赖该参数验证文件清单完整性；应用必须在传输后逐项核对。暂停后新建 attempt 的测试不证明跨进程字节级续传。凭据落盘、初始化 stdout 和默认导出规则见 [PRIVACY.md](PRIVACY.md)。
 
@@ -66,7 +69,9 @@ Rclone 本地 smoke 关闭 reflink clone，确保终止用例经过实际传输�
 
 进程树 smoke 额外需要 Go 1.26.0（仅构建机依赖）。它先构建应用自有 Guardian，再运行真实 Electron Main → Utility Host → Guardian → OpenList/Rclone，检查正常停止、Main/Host/OpenList/Rclone/Guardian 各自强杀六种情形。进程身份从自有启动消息取得，并以 OS 父子关系、创建时间及唯一配置路径核验，不按进程名或 PID 文件杀进程。
 
-本机初版仅依靠 Utility Host 清理时，Main 强杀留下 Go 孤儿，证实原假设不足。独立 Guardian 通过父 stdin EOF 收敛生命周期；Windows 在任何子进程启动之前先建立自身 Job 归属及 KILL_ON_JOB_CLOSE。该修正后 macOS arm64 六项通过。Intel Mac/Windows x64 的实际结果由 `.github/workflows/sidecar-validation.yml` 的独立矩阵提供，源码交叉编译不计为目标平台验收。正式宿主接线、打包、签名仍待后续任务。
+本机初版仅依靠 Utility Host 清理时，Main 强杀留下 Go 孤儿，证实原假设不足。独立 Guardian 通过父 stdin EOF 收敛生命周期；Windows 在任何子进程启动之前先建立自身 Job 归属及 KILL_ON_JOB_CLOSE。Main 的测试控制使用本地 socket/命名管道，避免依赖 Windows GUI 的控制台输入输出；Host 到 Go Guardian 的父管道仍保持原有生命周期语义。进程查询失败直接判失败，不能当成进程已停止。
+
+修正后三目标在同一提交 `e00566a` 上各通过六项，共 18 项：[CI 运行记录](https://github.com/yeatszhang/media-marshal/actions/runs/40086100943)。`fixtures/platform-m0.json` 固定目标、Runner、作业链接、逐项结果与脱敏产物 SHA-256。CI 中已解决 Windows 许可证 CRLF 转换和中文输出代码页问题。源码交叉编译不计为目标平台验收；正式宿主接线、打包、签名仍待后续任务。
 
 ## 许可与更新
 
