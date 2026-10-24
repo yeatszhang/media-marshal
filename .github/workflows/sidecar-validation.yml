@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+# Windows Runner 的重定向输出默认采用本地代码页；工具及夹具统一使用 UTF-8。
+env:
+  PYTHONUTF8: '1'
+
 jobs:
   sidecars:
     name: ${{ matrix.target }}
