@@ -46,7 +46,7 @@ export function createMediaApplication(
   const storage: ApplicationModule = {
     id: "media.storage",
     async start(ctx) {
-      const db = await CoreDatabase.open(databasePath);
+      const db = await CoreDatabase.open(databasePath, undefined, { exclusiveOwner: true });
       // 取得后立即登记；下游启动失败时仍能关闭连接。
       ctx.disposables.add(() => db.close());
       ctx.container.bind(DatabaseToken).toConstantValue(db);

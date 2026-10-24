@@ -8,6 +8,8 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { resolve, join } from "node:path";
+import { createRequire } from "node:module";
+const { identify, matches, stopVerified } = createRequire(import.meta.url)(resolve("tools/desktop-sidecars/process-identity.cjs"));
 const occupied: Server[] = [];
 test.beforeAll(async () => {
   for (const port of [8000, 8080]) {
@@ -151,19 +153,16 @@ test("主进程异常退出后核心不成为孤儿写入者", async () => {
         ?.pid,
   );
   expect(pid).toBeTruthy();
+  const identity = identify(pid!);
+  expect(identity?.parent).toBe(application.process().pid);
+  // 来自本次 Main 的 AppMetrics，并复核 OS 创建时间和完整命令；不按裸 PID 回收。
+  const marker = identity.command;
   application.process().kill("SIGKILL");
-  const alive = () => {
-    try {
-      process.kill(pid!, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const alive = () => matches(identity, marker);
   try {
     await expect.poll(alive, { timeout: 10000 }).toBe(false);
   } finally {
-    if (alive()) process.kill(pid!, "SIGKILL");
+    if (alive()) stopVerified(identity, marker);
   }
 });
 

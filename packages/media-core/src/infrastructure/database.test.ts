@@ -18,6 +18,16 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("生产连接独占所有权，旧所有者释放后才能重新打开", async () => {
+    const path = await temporary();
+    const first = await CoreDatabase.open(path, migrations, { exclusiveOwner: true });
+    try {
+      first.connection.prepare("INSERT INTO app_setting VALUES('owner','original')").run();
+      await expect(CoreDatabase.open(path, migrations, { exclusiveOwner: true })).rejects.toMatchObject({ code: "SQLITE_BUSY" });
+    } finally { first.close(); }
+    const next = await CoreDatabase.open(path, migrations, { exclusiveOwner: true });
+    expect(next.connection.prepare("SELECT value FROM app_setting WHERE key='owner'").get()).toEqual({ value: "original" }); next.close();
+  });
   it("新库建立版本和基础表，重新打开保留配置", async () => {
     const path = await temporary();
     let db = await CoreDatabase.open(path);

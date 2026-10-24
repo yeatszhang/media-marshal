@@ -68,6 +68,7 @@ export class CoreSupervisor {
     const coreGeneration = randomUUID();
     const hostGeneration = this.hostBridge?.generation ?? randomUUID();
     this.hostBridge?.attachCore(coreGeneration, (message) => port1.postMessage(message));
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     // 子进程错误不直接输出，避免原始数据库/文件错误泄漏个人路径。
     child.stdout?.on("data", () => {});
     child.stderr?.on("data", () => {});
@@ -138,6 +139,7 @@ export class CoreSupervisor {
     port1.start();
     this.exited = new Promise<void>((resolve) =>
       child.once("exit", () => {
+        clearInterval(heartbeat);
         fail();
         port1.close();
         for (const pending of this.pending.values()) {
@@ -167,7 +169,7 @@ export class CoreSupervisor {
         })();
       }),
     );
-    child.once("spawn", () =>
+    child.once("spawn", () => {
       child.postMessage(
         {
           kind: "initialize",
@@ -176,8 +178,9 @@ export class CoreSupervisor {
           coreGeneration, hostGeneration,
         },
         [port2],
-      ),
-    );
+      );
+      heartbeat = setInterval(() => { try { port1.postMessage({ kind: "core.heartbeat", protocolVersion: PROTOCOL_VERSION }); } catch {} }, 500);
+    });
     try {
       await ready;
     } catch (error) {

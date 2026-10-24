@@ -49,12 +49,13 @@ export class CoreDatabase {
   static async open(
     path: string,
     plan: readonly Migration[] = migrations,
+    options: { exclusiveOwner?: boolean } = {},
   ): Promise<CoreDatabase> {
     if (path !== ":memory:")
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const existed =
       path !== ":memory:" && existsSync(path) && statSync(path).size > 0;
-    const connection = new Database(path);
+    const connection = new Database(path, { timeout: 3000 });
     try {
       const version = connection.pragma("user_version", {
         simple: true,
@@ -84,6 +85,11 @@ export class CoreDatabase {
       for (let index = 0; index < plan.length; index++) {
         if (plan[index]?.version !== index + 1)
           throw new DesktopError("STORAGE_ERROR", "数据库迁移顺序无效");
+      }
+      if (options.exclusiveOwner && path !== ":memory:") {
+        // 操作系统锁跨进程生效；旧 Core 未关闭连接时，新 Core 无法开始迁移或业务写入。
+        connection.pragma("locking_mode = EXCLUSIVE");
+        connection.exec("BEGIN EXCLUSIVE; COMMIT;");
       }
       if (existed && version < latest)
         await connection.backup(`${path}.before-v${latest}.bak`);

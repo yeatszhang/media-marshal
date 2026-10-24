@@ -31,18 +31,22 @@ process.parentPort.once("message", (event) => {
     request: (action, payload, context, key) => host.request(action, payload, context, key),
   } });
   let stopping: Promise<void> | undefined;
+  let parentHeartbeat = Date.now();
   const shutdown = () =>
     (stopping ??= (host.invalidate(), runtime.stop()).then(
       () => {
+        clearInterval(parentCheck);
         port.close();
         process.exit(0);
       },
-      () => process.exit(1),
+      () => { clearInterval(parentCheck); process.exit(1); },
     ));
+  const parentCheck = setInterval(() => { if (Date.now() - parentHeartbeat > 5000) void shutdown(); }, 250);
   port.on("close", () => {
     void shutdown();
   });
   port.on("message", (message) => {
+    if (message.data?.kind === "core.heartbeat" && message.data.protocolVersion === PROTOCOL_VERSION) { parentHeartbeat = Date.now(); return; }
     if (message.data?.kind === "host.response" || message.data?.kind === "host.event") { host.receive(message.data); return; }
     if (message.data?.kind === "sidecar.generation" && z.uuid().safeParse(message.data.hostGeneration).success) {
       host.invalidate(); hostGeneration = message.data.hostGeneration; hostOnline = true; return;
