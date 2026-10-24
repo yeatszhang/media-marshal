@@ -7,6 +7,7 @@
     "credentials.json.*.tmp",
     "credentials.enc.json",
     "sidecars/openlist/**",
+    "sidecars/sessions/**",
     "runtime/rclone/**",
     "backups/sidecars/**"
   ],

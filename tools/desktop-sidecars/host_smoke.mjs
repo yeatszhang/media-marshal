@@ -27,7 +27,7 @@ try {
     const { port1, port2 } = new MessageChannelMain();
     let ready = false, denied = false, stopped = false, credentialInjected = false, credentialDropped = false, privateReplies = true;
     return await new Promise((resolve, reject) => {
-      const deadline = setTimeout(() => { child.kill(); reject(new Error("真实 Host 验收超时")); }, 20000);
+      const deadline = setTimeout(() => { child.kill(); reject(new Error("真实 Host 验收超时")); }, 45000);
       const heartbeat = setInterval(() => port1.postMessage({ kind: "sidecar.heartbeat" }), 250);
       port1.on("message", ({ data }) => {
         if (data?.kind === "sidecar.ready") {
@@ -64,7 +64,7 @@ try {
   });
   const output = join(root, "test-results/sidecars/host-smoke.json");
   await mkdir(resolve(output, ".."), { recursive: true });
-  await writeFile(output, JSON.stringify({ target, scope: "真实生产 Utility Host、系统 safeStorage、固定二进制核验、私有凭据注入/解除、受限 RPC 和干净停止；不启动 Go 服务或连接网盘", encryption, result }, null, 2) + "\n");
+  await writeFile(output, JSON.stringify({ target, scope: "真实生产 Utility Host、系统 safeStorage、固定二进制核验、受管 Guardian/OpenList、私有凭据注入/解除、受限 RPC 和干净停止；不连接网盘", encryption, result }, null, 2) + "\n");
   console.log(`${target} 真实 SidecarHost：资源核验、受限 RPC 和正常停止通过`);
 } finally {
   await app?.close().catch(() => {});

@@ -47,6 +47,10 @@ func main() {
 		failure("配置输入")
 		os.Exit(1)
 	}
+	if len(os.Args) == 2 && os.Args[1] == "--runtime-root="+config.Root {
+		runRuntime(config, decoder, send)
+		return
+	}
 	if len(os.Args) != 2 || os.Args[1] != "--fixture-root="+config.Root {
 		failure("执行标识")
 		os.Exit(1)

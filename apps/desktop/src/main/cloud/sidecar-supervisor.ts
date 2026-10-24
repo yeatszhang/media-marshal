@@ -76,7 +76,7 @@ export class SidecarSupervisor implements CoreHostBridge {
     const { port1, port2 } = new MessageChannelMain(); this.port = port1;
     let resolveReady!: () => void, rejectReady!: (reason: unknown) => void;
     const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
-    const deadline = setTimeout(() => { rejectReady(new CloudError("TIMEOUT")); child.kill(); }, 15000);
+    const deadline = setTimeout(() => { rejectReady(new CloudError("TIMEOUT")); child.kill(); }, 30000);
     port1.on("message", ({ data }) => {
       if (data?.kind === "sidecar.ready" && data.protocolVersion === HOST_PROTOCOL_VERSION && data.hostGeneration === this.generation) { clearTimeout(deadline); resolveReady(); return; }
       if (data?.kind === "sidecar.failed") { rejectReady(new CloudError("COMPONENT_UNAVAILABLE")); return; }

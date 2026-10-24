@@ -4,6 +4,7 @@ import { HOST_PROTOCOL_VERSION } from "@media-marshal/contracts/internal";
 import { SidecarBinaryResolver, lockedDefinitions, sidecarTarget } from "./binary-resolver";
 import { sidecarInitializeSchema, credentialInstallSchema, credentialDropSchema } from "./protocol";
 import { createSidecarApplication } from "./application";
+import { openListModule } from "./openlist/module";
 
 process.parentPort.once("message", (initial) => {
   const input = sidecarInitializeSchema.safeParse(initial.data);
@@ -15,6 +16,9 @@ process.parentPort.once("message", (initial) => {
   const runtime = createSidecarApplication({
     hostGeneration: config.hostGeneration, coreGeneration: config.coreGeneration, bindings: config.bindings,
     resolver: new SidecarBinaryResolver(config.resourceRoot, target, lockedDefinitions(target, config.guardian.binary)),
+    modules: [openListModule({ privateRoot: config.privateRoot, hostGeneration: config.hostGeneration, bindings: config.bindings, observe: (event) => {
+      if (event.type === "started" || event.type === "exited" || event.type === "lost") port.postMessage({ kind: "sidecar.native", hostGeneration: config.hostGeneration, ...event });
+    } })],
   });
   let heartbeat = Date.now();
   let stopping: Promise<void> | undefined;

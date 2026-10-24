@@ -3,11 +3,12 @@ import { createIdentifier } from "@yeatz/app-framework/ioc";
 import { CloudError } from "@media-marshal/contracts";
 import type { BindingRef, CloudDriveProvider, HostInput, TransferEngine } from "@media-marshal/contracts/internal";
 import { RestrictedHostServer, type HostHandlers } from "@media-marshal/contracts/internal/rpc";
-import type { SidecarBinaryResolver } from "./binary-resolver";
+import type { SidecarBinaryResolver, BinaryName } from "./binary-resolver";
 import { StaticTransferRegistry } from "./registry";
 
 export interface HostBinding extends BindingRef { implementationId: string }
 export const SidecarRegistryToken = createIdentifier<StaticTransferRegistry>("sidecar.registry");
+export const SidecarBinariesToken = createIdentifier<Readonly<Record<BinaryName, string>>>("sidecar.binaries");
 export function createSidecarApplication(options: {
   hostGeneration: string; coreGeneration: string; bindings: readonly HostBinding[];
   resolver: Pick<SidecarBinaryResolver, "resolve">;
@@ -20,9 +21,9 @@ export function createSidecarApplication(options: {
   const registry = new StaticTransferRegistry(options.providers ?? [], options.engines ?? []);
   const resourceModule: ApplicationModule = {
     id: "sidecar.resources",
-    async start() {
+    async start(ctx) {
       // 未配置账号时连资源准备也不触发，Host 不主动发现或启动外部程序。
-      if (bindings.size) await options.resolver.resolve();
+      if (bindings.size) ctx.container.bind(SidecarBinariesToken).toConstantValue(await options.resolver.resolve());
     },
   };
   const services: ApplicationModule = { id: "sidecar.services", dependencies: ["sidecar.resources"], register(bind) { bind(SidecarRegistryToken).toConstantValue(registry); } };
