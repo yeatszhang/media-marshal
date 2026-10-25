@@ -1,20 +1,19 @@
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useService, useServiceState } from "@yeatz/app-framework/react";
 import { ShieldCheck, ListTodo } from "lucide-react";
 import { TasksViewModel } from "../services";
 import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
+import { taskStatusSchema } from "@media-marshal/contracts";
 
 export function Tasks({ review = false }: { review?: boolean }) {
   const { t } = useTranslation();
   const model = useService(TasksViewModel);
   const navigate = useNavigate();
-  const { data, loading, error, busy } = useServiceState(model, (state) => state);
-  useEffect(() => {
-    void model.refresh(1, review);
-  }, [model, review]);
+  const { data, loading, error, queryError, filter, busy } = useServiceState(model, (state) => state);
+  useEffect(() => model.watch(review ? "AWAITING_CONFIRMATION" : undefined), [model, review]);
   return (
     <>
       <Header
@@ -24,19 +23,20 @@ export function Tasks({ review = false }: { review?: boolean }) {
         <Button
           variant="outline"
           onClick={() => {
-            void model.refresh(data.page, review);
+            void model.refresh();
           }}
         >
           {t("reload")}
         </Button>
       </Header>
       <ErrorNotice
-        message={error}
+        message={error ?? queryError}
         retry={() => {
-          void model.refresh(data.page, review);
+          void model.refresh();
         }}
       />
       <section className="panel">
+        {!review && <label className="task-filter">文件状态<select aria-label="筛选任务状态" value={filter} onChange={(event) => { void model.refresh(1, event.target.value ? taskStatusSchema.parse(event.target.value) : ""); }}><option value="">全部文件状态</option>{taskStatusSchema.options.map((status) => <option key={status} value={status}>{t(status)}</option>)}</select></label>}
         {loading ? (
           <div className="loading" role="status">
             {t("loading")}
@@ -57,6 +57,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
                   <tr key={task.id}>
                     <td className="table-file" title={task.sourcePath}>
                       {task.title || task.sourcePath}
+                      <small><Link to={`/sources?source=${task.sourceId}`}>来源配置</Link></small>
                     </td>
                     <td>{t(task.status)}</td>
                     <td>{t(task.deliveryStatus)}</td>
@@ -72,7 +73,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
                 size="sm"
                 disabled={data.page <= 1}
                 onClick={() => {
-                  void model.refresh(data.page - 1, review);
+                  void model.refresh(data.page - 1);
                 }}
               >
                 {t("previous")}
@@ -82,7 +83,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
                 size="sm"
                 disabled={data.page * data.pageSize >= data.total}
                 onClick={() => {
-                  void model.refresh(data.page + 1, review);
+                  void model.refresh(data.page + 1);
                 }}
               >
                 {t("next")}

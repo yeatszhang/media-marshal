@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "capturedOn": "2026-10-25",
+  "dataSchema": 14,
+  "environment": {
+    "os": "macOS 26.5.2",
+    "arch": "arm64",
+    "temporaryTestFilesystem": "APFS"
+  },
+  "build": {
+    "main/index.js": "2234de102124d00cb4d4ec587c658d0ab166f88101f3f84db325dafdad3fda3c",
+    "main/worker.js": "5ab3c20337405eec6f0d40197e1094c9b6fd0967e5eaaf8df672b6f718a4f8f8",
+    "main/sidecar-host.js": "30d6b7fa2dee4c8dd0a46a8518f75a69246f518cfecd3aec1fc59232caaab419",
+    "preload/index.js": "5488da659356534e46ae971b5939bd585940e2122a64d429a357c9510579614e",
+    "main/chunks/binary-resolver-txKpqQZl.js": "5aa931f5353ff1e9a863dfef89c8a939ddbefbe3c148cc5d2b3d0f02930f5f33",
+    "main/chunks/core-rO9KXOqD.js": "fc712728e57b5f9dadac88aa9de4cdcba69250f3a484c3e9da7b3fe8e248ff35",
+    "main/chunks/files-Cc_dEdgv.js": "d480c618347474637908a3306e8a3db36540efb83eff8f3a2ea04dfa1b2d5e75",
+    "renderer/assets/index-4C2XJgD4.css": "19e785e43e99b69606ea654acef6dd2eea97d93b6acee5dd17fb7f5957f8d84a",
+    "renderer/assets/index-bkVYue7x.js": "6e78102cd98ebf042bb4d0b2ac06f6b56cf19713876c4bcf30a448d120ab2a34"
+  },
+  "checks": {
+    "unit": {
+      "passed": 438,
+      "skipped": 13,
+      "filesPassed": 52,
+      "filesSkipped": 3
+    },
+    "electron": {
+      "passed": 20,
+      "isolatedProfiles": true,
+      "nativeDirectoryDialogs": "受控替身；原生目录授权证据另有独立记录"
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "likeC4": {
+      "version": "1.60.0",
+      "views": 4
+    }
+  },
+  "localDiscovery": {
+    "entryPoints": [
+      "startup",
+      "ten-second-periodic",
+      "bounded-event-merge",
+      "manual-scan"
+    ],
+    "realMacWatch": true,
+    "unavailableWatchFallback": true,
+    "duplicateEventsAndOverlappingScans": true,
+    "zeroBytesAndGrowthReset": true,
+    "officialObservedTemporarySuffix": ".qkdownloading",
+    "renameRestartsStableWindow": true,
+    "knownUnreadableAndMissingCandidatesRetained": true,
+    "defaultEmptyAndCustomIgnoreDistinct": true,
+    "exactSiblingSampleDetection": true,
+    "privateStagingAlwaysExcluded": true,
+    "draftDoesNotChangeActiveRules": true,
+    "v13SnapshotUnchangedAndBackedUp": true,
+    "oldV13CoreRejectsV14": true,
+    "minimumWindow": {
+      "width": 920,
+      "height": 640,
+      "horizontalOverflow": false,
+      "customIgnoreRestoredAfterCoreRestartAndReload": true
+    }
+  },
+  "actualClientAfterUpgrade": {
+    "schema": 14,
+    "embyConnectionVersion": 3,
+    "embyVerified": true,
+    "embyBindings": 2,
+    "sourceVersion": 2,
+    "sourcePaused": true,
+    "downloadJobs": 2,
+    "mediaTasks": 1,
+    "fileState": "DONE",
+    "deliveryState": "COLLECTED",
+    "sourceBytes": 392608240,
+    "targetInodePreserved": true,
+    "targetInode": 804393,
+    "beforeV14BackupPresent": true,
+    "newDownloadOrCopySubmitted": false
+  },
+  "screenshots": [
+    "test-results/desktop/sources-ignore-restored.png",
+    "test-results/desktop/sources.png"
+  ],
+  "limitations": [
+    "官方客户端的暂停、断网、预分配和同名重下仍未验证，未启用普通本地来源自动接入。",
+    "Electron 的受控目录对话框不能替代真实 OS 授权证据。",
+    "未据此声明新的签名安装包、Intel Mac 运行或真实 OS 休眠验证通过。",
+    "既有真实媒体仅复核持久任务计数和文件属性；原完整下载摘要保留在对应历史检查点。"
+  ]
+}

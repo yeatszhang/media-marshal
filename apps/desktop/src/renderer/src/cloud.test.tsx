@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ContainerProvider } from "@yeatz/app-framework/react";
-import type { DesktopApi, RemoteEntry, CloudAccount } from "@media-marshal/contracts";
-import { createRendererApplication, CloudViewModel } from "./services";
+import type { DesktopApi, CloudAccount } from "@media-marshal/contracts";
+import { createRendererApplication } from "./services";
 import { CloudDrives } from "./pages/CloudDrives";
 import { i18nReady } from "./i18n";
 import { MemoryRouter } from "react-router-dom";
@@ -14,7 +14,7 @@ const disposed: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const dispose of disposed.splice(0)) await dispose(); document.body.innerHTML = ""; vi.useRealTimers(); });
 async function mount(overrides: Partial<DesktopApi> = {}) {
   await i18nReady;
-  const api = { listDownloadRoots: vi.fn(async () => []), chooseDownloadRoot: vi.fn(async () => null), listCloudAccounts: vi.fn(async () => []), authorizeCloudAccount: vi.fn(), getCloudAuthorization: vi.fn(async () => null), listRemote: vi.fn(), statRemote: vi.fn(), ...overrides } as unknown as DesktopApi;
+  const api = { listDownloadRoots: vi.fn(async () => []), chooseDownloadRoot: vi.fn(async () => null), listCloudAccounts: vi.fn(async () => []), authorizeCloudAccount: vi.fn(), loginCloudAccount: vi.fn(async () => null), cancelCloudLogin: vi.fn(async () => {}), getCloudAuthorization: vi.fn(async () => null), listRemote: vi.fn(), statRemote: vi.fn(), ...overrides } as unknown as DesktopApi;
   const app = createRendererApplication(api); await app.start();
   const element = document.createElement("div"); document.body.append(element); const root: Root = createRoot(element);
   await act(async () => { root.render(<StrictMode><MemoryRouter><ContainerProvider value={app.container}><CloudDrives /></ContainerProvider></MemoryRouter></StrictMode>); });
@@ -29,58 +29,59 @@ async function fill(selector: string, value: string) {
 describe("云端页面的凭据与浏览状态", () => {
   it("取消清除输入且不提交授权，重新打开不回显 Cookie", async () => {
     const f = await mount(); await click("连接夸克账号");
+    await click("手动 Cookie");
     await fill('input[type="password"]', "fixture-private-cookie"); await click("取消");
     expect(document.querySelector('input[type="password"]')).toBeNull(); expect(f.api.authorizeCloudAccount).not.toHaveBeenCalled();
-    await click("连接夸克账号"); expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("");
+    await click("连接夸克账号"); await click("手动 Cookie"); expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("");
   });
   it("提交后立即清空草稿；未返回的授权不会被 StrictMode 重放", async () => {
     let complete!: (value: unknown) => void;
     const authorize = vi.fn(() => new Promise((resolve) => { complete = resolve; }));
     const f = await mount({ authorizeCloudAccount: authorize as DesktopApi["authorizeCloudAccount"] });
-    await click("连接夸克账号"); await fill('input:not([type="password"])', "内测账号"); await fill('input[type="password"]', "fixture-private-cookie");
+    await click("连接夸克账号"); await click("手动 Cookie"); await fill('input:not([type="password"])', "内测账号"); await fill('input[type="password"]', "fixture-private-cookie");
     await act(async () => { document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe(""); expect(authorize).toHaveBeenCalledTimes(1);
     expect(f.element.textContent).not.toContain("fixture-private-cookie");
     await act(async () => { complete({ id: crypto.randomUUID(), requestKey: authorize.mock.calls[0]![0].requestKey, accountId: crypto.randomUUID(), state: "RUNNING", failure: null, updatedAt: new Date().toISOString() }); });
     expect(document.querySelector('input[type="password"]')).toBeNull();
   });
-  it("未知总量、长名称与弱证据预览明确展示，加载更多失败不丢已有条目", async () => {
-    const account: CloudAccount = { id: crypto.randomUUID(), name: "长目录测试", providerKind: "quark", status: "READY", capabilities: null, rootRef: crypto.randomUUID() };
-    const entry: RemoteEntry = { accountId: account.id, ref: crypto.randomUUID(), parentRef: account.rootRef, name: "中文长文件名_".repeat(40) + ".mp4", type: "file", size: null, modifiedAt: null, version: null };
-    let resolvePage!: (value: unknown) => void;
-    const listRemote = vi.fn().mockImplementationOnce(() => new Promise((resolve) => { resolvePage = resolve; })).mockRejectedValueOnce(new Error("网络暂不可用"));
-    const f = await mount({ listCloudAccounts: vi.fn(async () => [account]), listRemote, statRemote: vi.fn(async () => entry) });
-    await click("长目录测试已连接"); expect(f.element.textContent).toContain("正在读取目录");
-    await act(async () => { resolvePage({ items: [entry], complete: false, total: null, nextCursor: "opaque-cursor" }); });
-    expect(f.element.textContent).toContain("总数未知"); expect(document.querySelector(`[title="${entry.name}"]`)).toBeTruthy();
-    await click("预览"); expect(f.element.querySelector(".cloud-selected-name")?.textContent).toBe(entry.name); expect(f.element.textContent).toContain("没有可靠的远端内容版本");
-    await click("加载更多"); expect(f.element.textContent).toContain("网络暂不可用"); expect(f.element.querySelectorAll("tbody tr")).toHaveLength(1); expect(f.element.textContent).toContain("当前结果不完整");
+  it("默认扫码仅传业务字段，等待期间不能重放；取消保留名称并可重新扫码", async () => {
+    let finish!: (value: null) => void;
+    const login = vi.fn<DesktopApi["loginCloudAccount"]>(() => new Promise<null>((resolve) => { finish = resolve; }));
+    const cancel = vi.fn(async () => { finish(null); });
+    const f = await mount({ loginCloudAccount: login, cancelCloudLogin: cancel });
+    await click("连接夸克账号"); expect(document.querySelector('input[type="password"]')).toBeNull();
+    await fill("input", "扫码账号"); await click("打开扫码登录");
+    expect(login).toHaveBeenCalledOnce(); expect(login.mock.calls[0]![0]).toEqual({ name: "扫码账号", accountId: undefined, requestKey: expect.any(String) });
+    expect(f.element.textContent).toContain("请在夸克登录窗口扫码并确认");
+    await click("打开扫码登录"); expect(login).toHaveBeenCalledOnce();
+    await click("取消扫码"); expect(cancel).toHaveBeenCalledWith(login.mock.calls[0]![0].requestKey);
+    expect(document.querySelector<HTMLInputElement>("input")!.value).toBe("扫码账号");
+    expect(f.api.authorizeCloudAccount).not.toHaveBeenCalled();
+    await click("打开扫码登录"); expect(login).toHaveBeenCalledTimes(2);
+    await act(async () => { finish(null); });
   });
-  it("订阅配置必须先完整预览，过滤变化使旧确认失效", async () => {
-    const account: CloudAccount = { id: crypto.randomUUID(), name: "订阅测试", providerKind: "quark", status: "READY", capabilities: null, rootRef: crypto.randomUUID() };
-    const entry: RemoteEntry = { accountId: account.id, ref: crypto.randomUUID(), parentRef: account.rootRef, name: "影视", type: "directory", size: null, modifiedAt: null, version: null };
-    const rootId = crypto.randomUUID(), configure = vi.fn(async () => ({ id: crypto.randomUUID() }));
-    const previewDownload = vi.fn(async (input) => ({ id: crypto.randomUUID(), accountId: account.id, remoteRef: entry.ref, targetGrantId: rootId, files: 1, bytes: 5, complete: true, weakComparison: true, expiresAt: new Date(Date.now() + 100000).toISOString(), state: "READY", failure: null, reuseFiles: 0, conflicts: 0, forceRedownload: false, destinationPrefix: "completed", selectionPath: "影视", layout: input.layout }));
-    const f = await mount({ listCloudAccounts: async () => [account], listRemote: async () => ({ items: [entry], total: 1, complete: true, nextCursor: null }), statRemote: async () => entry, listDownloadRoots: async () => [{ id: rootId, path: "/下载", state: "AVAILABLE", availableBytes: 1000 }], previewDownload: previewDownload as DesktopApi["previewDownload"], configureCloudSubscription: configure as DesktopApi["configureCloudSubscription"] });
-    await click("订阅测试已连接"); await click("预览");
-    const purpose = document.querySelector<HTMLSelectElement>('[aria-label="下载方式"]')!;
-    await act(async () => { purpose.value = "subscription"; purpose.dispatchEvent(new Event("change", { bubbles: true })); });
-    expect(configure).not.toHaveBeenCalled(); await fill('[aria-label="扩展名过滤"]', "mp4,mkv"); await click("预览下载范围");
-    expect(previewDownload).toHaveBeenLastCalledWith(expect.objectContaining({ layout: "drive", forceRedownload: false, filters: { extensions: ["mp4", "mkv"], names: [] } }));
-    expect(f.element.textContent).toContain("目标：/下载/completed/影视"); expect(f.element.textContent).toContain("同尺寸内容替换可能无法识别");
-    await fill('[aria-label="扩展名过滤"]', "mp4"); expect(f.element.textContent).not.toContain("确认启用订阅"); expect(configure).not.toHaveBeenCalled();
-    await click("预览下载范围"); await click("确认启用订阅"); expect(configure).toHaveBeenCalledTimes(1);
+  it("扫码失败允许显式重试；重新授权携带原账号身份", async () => {
+    const account: CloudAccount = { id: crypto.randomUUID(), name: "原账号", providerKind: "quark", status: "AUTH_REQUIRED", capabilities: null };
+    const login = vi.fn<DesktopApi["loginCloudAccount"]>().mockRejectedValueOnce(new Error("扫码登录已超时"))
+      .mockImplementationOnce(async (input) => ({ id: crypto.randomUUID(), requestKey: input.requestKey, accountId: account.id, state: "RUNNING", failure: null, updatedAt: new Date().toISOString() }));
+    const f = await mount({ listCloudAccounts: async () => [account], loginCloudAccount: login });
+    await click("重新授权"); await click("打开扫码登录");
+    expect(f.element.textContent).toContain("扫码登录已超时"); expect(login).toHaveBeenCalledTimes(1);
+    await click("打开扫码登录"); expect(login).toHaveBeenLastCalledWith(expect.objectContaining({ accountId: account.id, name: account.name }));
+    expect(document.querySelector("form")).toBeNull(); expect(f.element.textContent).toContain("正在验证账号");
   });
-
-  it("失效的订阅根从当前账号重新选择，修改配置携带原版本并重新确认", async () => {
-    const account: CloudAccount = { id: crypto.randomUUID(), name: "重选测试", providerKind: "quark", status: "READY", capabilities: null, rootRef: crypto.randomUUID() }, oldRef = crypto.randomUUID(), rootId = crypto.randomUUID();
-    const entry: RemoteEntry = { accountId: account.id, ref: crypto.randomUUID(), parentRef: account.rootRef, name: "重新定位", type: "directory", size: null, modifiedAt: null, version: null };
-    const configure = vi.fn(async () => ({ id: crypto.randomUUID() })), subId = crypto.randomUUID();
-    const f = await mount({ listCloudAccounts: async () => [account], listRemote: async () => ({ items: [entry], total: 1, complete: true, nextCursor: null }), statRemote: async (_account, ref) => { if (ref === oldRef) throw new Error("范围失效"); return entry; }, listDownloadRoots: async () => [{ id: rootId, path: "/下载", state: "AVAILABLE", availableBytes: 1000 }], previewDownload: async () => ({ id: crypto.randomUUID(), accountId: account.id, remoteRef: entry.ref, targetGrantId: rootId, files: 0, bytes: 0, complete: true, weakComparison: false, expiresAt: new Date(Date.now() + 100000).toISOString(), state: "READY", failure: null, reuseFiles: 0, conflicts: 0, forceRedownload: false, destinationPrefix: "completed", selectionPath: entry.name, layout: "drive" }), configureCloudSubscription: configure as DesktopApi["configureCloudSubscription"] });
-    await act(async () => { await f.app.container.get(CloudViewModel).editSubscription({ id: subId, accountId: account.id, remoteRef: oldRef, targetGrantId: rootId, name: "旧范围", configurationVersion: 3, filters: { extensions: [], names: [] }, intervalSeconds: 900, state: "RESELECT_REQUIRED", enabled: false, failure: null, lastScanAt: null, nextScanAt: null, lastResult: null }); });
-    expect(f.element.textContent).toContain("请在此账号重新选择目录"); expect(configure).not.toHaveBeenCalled();
-    await click("预览"); await click("预览下载范围"); await click("确认更新订阅");
-    expect(configure).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: subId, configurationVersion: 3, intervalSeconds: 900 }));
+  it("扫码提交响应丢失后接续查询到的授权作业，不再次打开窗口", async () => {
+    const login = vi.fn<DesktopApi["loginCloudAccount"]>().mockRejectedValue(new Error("IPC 中断"));
+    const f = await mount({ loginCloudAccount: login, getCloudAuthorization: async (requestKey) => ({ id: crypto.randomUUID(), accountId: crypto.randomUUID(), requestKey, state: "RUNNING", failure: null, updatedAt: new Date().toISOString() }) });
+    await click("连接夸克账号"); await fill("input", "恢复查询"); await click("打开扫码登录");
+    expect(login).toHaveBeenCalledOnce(); expect(document.querySelector("form")).toBeNull();
+    expect(f.element.textContent).toContain("正在验证账号"); expect(f.element.textContent).not.toContain("IPC 中断");
   });
-
+  it("账号页只管理连接，不浏览远端或提供下载和订阅配置", async () => {
+    const account: CloudAccount = { id: crypto.randomUUID(), name: "已连接账号", providerKind: "quark", status: "READY", capabilities: null, rootRef: crypto.randomUUID() };
+    const f = await mount({ listCloudAccounts: async () => [account] });
+    expect(f.api.listRemote).not.toHaveBeenCalled(); expect(f.api.listDownloadRoots).not.toHaveBeenCalled(); expect(f.element.textContent).toContain("连接账号不会创建来源");
+    expect([...document.querySelectorAll("button")].some((button) => ["选择下载目录", "预览下载范围", "确认启用订阅"].includes(button.textContent ?? ""))).toBe(false);
+  });
 });

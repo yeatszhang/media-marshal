@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-25",
+  "platform": "darwin-arm64",
+  "osVersion": "26.5.2",
+  "electronVersion": "44.9.0",
+  "embyVersion": "4.9.3.0",
+  "dataSchemaVersion": 13,
+  "buildKind": "electron-vite production bundles launched from workspace",
+  "packaged": false,
+  "signed": false,
+  "verificationBuildSha256": {
+    "main": "4c62622d7d51bf7e981269f199494aed37cfacba5a7a6def95dddcc22a3f6e07",
+    "core": "767c23eb2ae1acd11d35b55b43ea9d482f861fe97f6304db737376b8fc95c6c4",
+    "host": "12d5195d67505fe425f156b34e9e8e37a0905024de8118b24d07a04d9659bd01",
+    "preload": "e17a79d183f114071e398d2f940822dd95b9d5f72ad6d2e01dcd2b9a5a355875",
+    "renderer": "3f8c74692ab077bf96a0b6996975cb40a1ecd762c510cf12f59ccb9c82ec93a6"
+  },
+  "realClient": {
+    "fullApplicationRestartPassed": true,
+    "controlledResumeEventPassed": true,
+    "physicalSystemSleepClaimed": false,
+    "connectionVersionBeforeAndAfter": 3,
+    "bindingsBeforeAndAfter": 2,
+    "downloadJobsBeforeAndAfter": 2,
+    "mediaTasksBeforeAndAfter": 1,
+    "fileState": "DONE",
+    "deliveryState": "COLLECTED",
+    "sourcePaused": true,
+    "targetInodePreserved": true,
+    "sourceFileRetained": true,
+    "minimumWindow": { "width": 920, "height": 640, "horizontalOverflow": false }
+  },
+  "fileCrashVerification": {
+    "compiledCurrentSource": true,
+    "isolatedCoreClassProcess": true,
+    "exclusiveSqliteOwner": true,
+    "realSigkillCasesPassed": 8,
+    "points": ["planned", "partial-writing", "verified", "linked-before-recording", "file-committed", "recorded", "missing-delivery", "foreign-target"],
+    "verifiedRecoveryDoesNotReadSourceAgain": true,
+    "foreignTargetAndForeignStagingPreserved": true,
+    "mainUtilityProcessFailureClaimedForTheseCases": false
+  },
+  "deliveryVerification": {
+    "persistentBackoffSurvivesRepeatedRestart": true,
+    "runtimeValidationRefreshSharedByDueDeliveries": true,
+    "authenticationFailureStopsRetries": true,
+    "incompleteOrConflictingCollectionEvidenceRejected": true,
+    "lateOpenResponseRejectedAfterConnectionOrDeliveryChange": true,
+    "configuredHttpItemPageOnly": true,
+    "realCoreMainOpenPathVerified": true,
+    "externalBrowserReplacedForVerificationAndRestored": true
+  },
+  "automatedTests": {
+    "unitPassed": 410,
+    "unitConditionallySkipped": 13,
+    "electronPassed": 20,
+    "lifecycleTargetedPassed": 18,
+    "frameworkFilesComparedByteForByte": 74,
+    "additionalCopyTestsPassed": 4,
+    "copyPipelineTargetedPassed": 18
+  },
+  "screenshots": ["test-results/desktop/tasks-filter-restored.png", "test-results/sidecars/real-task-observation.png"],
+  "privateDataIncluded": false,
+  "limitations": ["工作区构建，不代表安装包、签名、公证或 Intel Mac 验收", "受控 resume 事件，不代表真实整机休眠", "真实下载到收录的历史构建另见 mac-unified-source-emby-2026-10-25.json"]
+}

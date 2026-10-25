@@ -1,7 +1,7 @@
 export const ingestionZh = {
   action: "操作", mediaType: "媒体类型", pendingCount: "待接收 {{count}} 项",
   accessories: "附属文件", retryAccessories: "仅重试失败的附属文件", includeAccessories: "复制同名字幕和附属文件", PLANNED: "等待复制", COPYING: "正在复制", VERIFIED: "已校验", FILE_COMMITTED: "文件已提交", RECORDED: "已完成", NEEDS_ATTENTION: "需要处理",
-  title: "候选文件与识别确认", help: "先检查文件完成状态，再核对作品、季集和目标路径。确认前不复制文件。", empty: "尚无候选文件", emptyHelp: "在来源页添加下载目录，或在设置页接入受管下载。文件需持续稳定至少 120 秒。",
+  title: "候选文件与识别确认", help: "先检查文件完成状态，再核对作品、季集和目标路径。确认前不复制文件。", empty: "尚无候选文件", emptyHelp: "在来源页添加本地目录，或为网盘来源启用下载后接入整理。文件需持续稳定至少 120 秒。",
   scan: "扫描候选", recognize: "识别", inspect: "查看识别", waiting: "等待识别结果…", edit: "作品与季集", movie: "电影", tv: "剧集", id: "TMDB ID", season: "季号", episode: "起始集", end: "结束集（可选）", template: "命名模板（可选）", preview: "预览 COPY 计划", confirm: "确认 COPY 整理", completed: "我已在下载器中确认这个文件已完整下载", proof: "文件尺寸稳定不代表下载完整，未经验证的来源需要本人确认。", selected: "选择此作品", source: "来源", target: "目标", bytes: "字节", retry: "重试识别或整理", noMatch: "无候选时可手动输入 TMDB ID，预览仍会验证真实季集。", filename: "文件名证据", parent: "父目录证据", both: "名称与父目录证据", managed: "受管下载", local: "本地目录", OBSERVING: "观察稳定性", READY: "可人工识别", UNAVAILABLE: "来源不可用", SUPERSEDED: "已发现新版本", QUEUED: "已进入识别队列", PROCESSED: "已整理", SKIPPED: "已跳过",
   librarySetup: "媒体目录与 Emby 库", libraryHelp: "电影和剧集分别配置。服务端库路径必须能在这台 Mac 上访问，且包含对应目标目录。", chooseMovie: "选择电影目录", chooseTv: "选择剧集目录", readLibraries: "读取 Emby 媒体库", chooseLibrary: "选择服务端媒体库目录", verify: "验证并保存（触发扫描）", verified: "连接已验证", unverified: "连接尚未验证", savedHint: "先保存上方 Emby 地址和 API Key，再读取媒体库。", managedHelp: "已有受管下载可单独接入此整理流水线，下载完成与媒体收录分别记账。", attach: "接入整理", deliveryRetry: "仅重试 Emby 交付", openEmby: "打开 Emby", fileDone: "文件整理完成", embyStatus: "Emby 收录", unknown: "未配置",
 };

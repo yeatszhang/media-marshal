@@ -4,12 +4,14 @@ import {
   _electron,
   type ElectronApplication,
 } from "@playwright/test";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
+import { execFile } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 const { identify, matches, stopVerified, children } = createRequire(resolve("package.json"))(resolve("tools/desktop-sidecars/process-identity.cjs"));
 const occupied: Server[] = [];
@@ -58,6 +60,102 @@ test.afterEach(async () => {
   if (application) await application.close().catch(() => {});
   if (directory) await rm(directory, { recursive: true, force: true });
 });
+test("统一来源草稿、原生授权确认及 Core 重启保留同一配置版本", async () => {
+  test.skip(process.platform !== "darwin");
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const sourcePath = join(directory, "统一 中文来源"), targetPath = join(directory, "统一 中文目标"); await mkdir(sourcePath); await mkdir(targetPath);
+  const source = await realpath(sourcePath), target = await realpath(targetPath);
+  const unsupportedClient = await window.evaluate(async ({ source, target }) => {
+    try { await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: "未开放标签", client: "baidu", sourcePath: source, organization: { targetPath: target } } }); return null; }
+    catch (error) { return (error as Error).message; }
+  }, { source, target });
+  expect(unsupportedClient).toContain("新建本地来源仅提供夸克客户端或自定义目录");
+  const state = await window.evaluate(async ({ source, target }) => {
+    const draft = await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: "统一来源测试", client: "quark", sourcePath: source, ignoredFilePatterns: [], organization: { targetPath: target } } });
+    const preview = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: draft.version, expectedDraftRevision: draft.draftRevision, requestKey: crypto.randomUUID() });
+    return { draft, preview, requestKey: crypto.randomUUID() };
+  }, { source, target });
+  expect(state.draft).toMatchObject({ version: 0, draftRevision: 1, paused: true, configuration: null });
+  expect(await window.evaluate(() => window.desktopApi.listSources())).toEqual([]);
+  const refused = await window.evaluate(async ({ previewId, requestKey }) => { try { await window.desktopApi.applySourceRule({ previewId, requestKey }); return null; } catch (error) { return (error as Error).message; } }, { previewId: state.preview.id, requestKey: state.requestKey });
+  expect(refused).toContain("系统对话框");
+  await application.evaluate(({ dialog }, paths) => {
+    let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog;
+  }, [source, target]);
+  await window.evaluate(async () => { await window.desktopApi.chooseDirectory("source"); await window.desktopApi.chooseDirectory("target"); });
+  const applied = await window.evaluate(async ({ previewId, requestKey }) => Promise.all([window.desktopApi.applySourceRule({ previewId, requestKey }), window.desktopApi.applySourceRule({ previewId, requestKey })]), { previewId: state.preview.id, requestKey: state.requestKey });
+  expect(applied[0]).toEqual(applied[1]); expect(applied[0]).toMatchObject({ id: state.draft.id, version: 1, localSourceId: state.draft.id });
+  await window.evaluate(async (id) => {
+    await window.desktopApi.controlSourceRule({ id, expectedVersion: 1, operation: "pause", requestKey: crypto.randomUUID() });
+    await window.desktopApi.setOrganizePause({ paused: true, requestKey: crypto.randomUUID() });
+    await window.desktopApi.setCloudDownloadPause({ paused: true, requestKey: crypto.randomUUID() });
+  }, state.draft.id);
+  await window.reload();
+  expect(await window.evaluate((id) => window.desktopApi.getSourceRule(id), state.draft.id)).toMatchObject({ version: 1, configuration: { sourcePath: source, ignoredFilePatterns: [], organization: { targetPath: target } } });
+  await window.evaluate(() => window.desktopApi.restartCore());
+  await expect.poll(() => window.evaluate((id) => window.desktopApi.getSourceRule(id), state.draft.id)).toMatchObject({ id: state.draft.id, version: 1, localSourceId: state.draft.id });
+  await expect.poll(() => window.evaluate(() => window.desktopApi.listSources())).toMatchObject([{ id: state.draft.id, health: "available" }]);
+  expect(await window.evaluate(() => window.desktopApi.listSourceRules())).toHaveLength(1);
+  expect(await window.evaluate((id) => window.desktopApi.getSourceRule(id), state.draft.id)).toMatchObject({ paused: true });
+  expect(await window.evaluate(() => window.desktopApi.getOrganizePause())).toEqual({ paused: true });
+  await window.evaluate((id) => window.desktopApi.controlSourceRule({ id, expectedVersion: 1, operation: "resume", requestKey: crypto.randomUUID() }), state.draft.id);
+  expect(await window.evaluate(() => window.desktopApi.getOrganizePause())).toEqual({ paused: true });
+  expect(await window.evaluate(() => window.desktopApi.getCloudDownloadPause())).toMatchObject({ paused: true });
+  expect(await window.evaluate((id) => window.desktopApi.resolveSourceLegacy({ kind: "local-source", id }), state.draft.id)).toMatchObject({ sourceId: state.draft.id, status: "MAPPED" });
+  expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
+});
+
+test("旧 schema 来源迁入统一页面，订阅旧链接定位原身份且重启不生成下载", async () => {
+  const initialWindow = await application.firstWindow();
+  await expect(initialWindow.getByText("核心已连接", { exact: true })).toBeVisible();
+  await application.close();
+  const profile = join(directory, "legacy-data"), seed = join(directory, "seed-legacy.mjs");
+  await writeFile(seed, `
+import { CoreDatabase, migrations } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/infrastructure/database.js")).href)};
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+const db = await CoreDatabase.open(join(process.argv[2], 'desktop.sqlite3'), migrations.slice(0, 8));
+const sql = db.connection, stamp = '2026-10-20T01:00:00.000Z';
+const localId = randomUUID(), subscriptionId = randomUUID(), account = randomUUID(), remote = randomUUID(), root = randomUUID(), preview = randomUUID();
+sql.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,version,paused,created_at) VALUES(?,'升级前中文来源','baidu',?,?,'MOVIE','COPY',4,1,?)").run(localId, join(process.argv[2], '原输入'), join(process.argv[2], '原电影目标'), stamp);
+const volume = {volumeId:randomUUID(),rootInode:'1',rootBirthtimeNs:'1',observedDevice:'1',fsTypeCode:'1',fsType:'fixture',caseSensitive:true,unicodeEquivalent:true,pathMaxBytes:4096};
+sql.prepare("INSERT INTO managed_download_root VALUES(?,?,?,?,'UNAVAILABLE',?)").run(root,root,join(process.argv[2],'原下载目录'),JSON.stringify(volume),stamp);
+sql.prepare("INSERT INTO cloud_account(id,name,provider_kind,status,created_at,updated_at) VALUES(?,'升级前账号','quark','AUTH_REQUIRED',?,?)").run(account,stamp,stamp);
+sql.prepare("INSERT INTO remote_entry(id,account_id,name,type,observed_at) VALUES(?,?,'旧中文远端目录','directory',?)").run(remote,account,stamp);
+const filters={extensions:['mp4'],names:['已授权单片.mp4']};
+sql.prepare("INSERT INTO cloud_preview(id,account_id,remote_root_ref,target_root_id,request_key,snapshot_json,state,configuration_version,created_at,expires_at) VALUES(?,?,?,?,?,?,'CONFIRMED',5,?,?)").run(preview,account,remote,root,randomUUID(),JSON.stringify({layout:'drive',complete:true,filters,items:[],name:'旧中文远端目录'}),stamp,'2026-10-20T01:15:00.000Z');
+sql.prepare("INSERT INTO cloud_subscription(id,account_id,remote_root_ref,target_root_id,filters_json,interval_seconds,enabled,configuration_version,confirmed_preview_id,created_at,updated_at) VALUES(?,?,?,?,?,900,0,5,?,?,?)").run(subscriptionId,account,remote,root,JSON.stringify(filters),preview,stamp,stamp);
+sql.prepare("INSERT INTO cloud_subscription_runtime(subscription_id,state) VALUES(?,'PAUSED')").run(subscriptionId);
+db.close(); console.log(JSON.stringify({localId,subscriptionId}));
+`);
+  const ids = await new Promise<{ localId: string; subscriptionId: string }>((resolveSeed, reject) => {
+    execFile(createRequire(resolve("package.json"))("electron") as string, [seed, profile], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (error, stdout) => {
+      if (error) reject(error); else { try { resolveSeed(JSON.parse(stdout)); } catch (error) { reject(error); } }
+    });
+  });
+  const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
+    args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${profile}`], env });
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const rules = await window.evaluate(() => window.desktopApi.listSourceRules());
+  expect(rules).toHaveLength(2);
+  expect(rules.find((rule) => rule.id === ids.localId)).toMatchObject({ version: 4, paused: true, reviewRequired: true, localSourceId: ids.localId, configuration: { type: "local", client: "baidu" } });
+  expect(rules.find((rule) => rule.id === ids.subscriptionId)).toMatchObject({ version: 5, paused: true, subscriptionId: ids.subscriptionId,
+    configuration: { filters: { extensions: ["mp4"], names: ["已授权单片.mp4"] }, periodic: { enabled: true, intervalSeconds: 900 }, organization: null } });
+  await window.evaluate((id) => { location.hash = `/subscriptions/${id}`; }, ids.subscriptionId);
+  await expect(window.getByRole("heading", { name: "来源配置", exact: true })).toBeVisible();
+  await expect(window.getByLabel("扩展名过滤", { exact: true })).toHaveValue("mp4");
+  await expect(window.getByLabel("精确文件名过滤", { exact: true })).toHaveValue("已授权单片.mp4");
+  await expect(window.getByRole("checkbox", { name: "定期扫描目录", exact: true })).toBeChecked();
+  await expect(window.getByRole("button", { name: "确认启用并扫描", exact: true })).toHaveCount(0);
+  await window.screenshot({ path: "test-results/desktop/legacy-source-migration.png", fullPage: true });
+  await window.reload(); await window.evaluate(() => window.desktopApi.restartCore());
+  await expect.poll(() => window.evaluate(() => window.desktopApi.listSourceRules())).toHaveLength(2);
+  expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 });
+  expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
+  expect(await window.evaluate((id) => window.desktopApi.resolveSourceLegacy({ kind: "subscription", id }), ids.subscriptionId)).toMatchObject({ sourceId: ids.subscriptionId, status: "MAPPED" });
+  await expect(stat(join(profile, `desktop.sqlite3.before-v${CORE_DATA_SCHEMA_VERSION}.bak`))).resolves.toMatchObject({ size: expect.any(Number) });
+});
 test("服务密钥经系统保险箱注入，窗口重载和核心重启后恢复且查询与命令行不回显", async () => {
   const secret = "fixture-service-private-key", requests: string[] = [];
   const server = createHttpServer((req, res) => {
@@ -84,6 +182,91 @@ test("服务密钥经系统保险箱注入，窗口重载和核心重启后恢�
     expect(requests.length).toBeGreaterThanOrEqual(6); expect(requests.every((value) => value === secret)).toBe(true);
   } finally { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
+test("仅电影目标绑定已有非空媒体库，Core 重启复核结果自动更新到设置页", async () => {
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const folder = join(directory, "中文媒体库"); await mkdir(folder); const target = await realpath(folder);
+  const retained = join(target, "原有媒体.mp4"); await writeFile(retained, "原有媒体不得随绑定移动或改写");
+  let holdInfo = false, refreshes = 0, serviceStatus = 200;
+  const waiting = new Set<import("node:http").ServerResponse>();
+  const info = { Id: "existing-server-fixture", Version: "4.9-fixture" };
+  const server = createHttpServer((req, res) => {
+    if (req.headers["x-emby-token"] !== "existing-server-test-key") { res.writeHead(401).end(); return; }
+    if (serviceStatus !== 200) { res.writeHead(serviceStatus).end("fixture-private-server-error"); return; }
+    const url = new URL(req.url!, "http://localhost"); res.setHeader("Content-Type", "application/json");
+    if (url.pathname === "/System/Info") {
+      if (holdInfo) { waiting.add(res); res.once("close", () => waiting.delete(res)); return; }
+      res.end(JSON.stringify(info));
+    } else if (url.pathname === "/Library/VirtualFolders/Query") res.end(JSON.stringify({ Items: [{ ItemId: "movie-library", Name: "已有电影库", Locations: [target], CollectionType: "movies" }], TotalRecordCount: 1 }));
+    else if (url.pathname === "/Items") res.end(JSON.stringify({ Items: [], TotalRecordCount: 0 }));
+    else if (url.pathname === "/Library/Refresh") { refreshes++; res.writeHead(204).end(); }
+    else res.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+    await window.evaluate(async (address) => { await window.desktopApi.saveSettings({ language: "zh-CN", embyUrl: address, tmdbProxy: "" }); await window.desktopApi.saveCredential("emby", "existing-server-test-key"); }, address);
+    await application.evaluate(({ dialog }, target) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [target] })) as typeof dialog.showOpenDialog; }, target);
+    await window.getByRole("link", { name: "设置", exact: true }).click();
+    await window.getByRole("button", { name: "选择电影目录", exact: true }).click();
+    await expect.poll(() => window.evaluate(() => window.desktopApi.listMediaLibraries())).toMatchObject([{ mediaType: "MOVIE", path: target, available: true }]);
+    await window.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click();
+    await window.getByRole("combobox", { name: `选择服务端媒体库目录 · ${target}`, exact: true }).selectOption(JSON.stringify(["movie-library", target]));
+    await window.getByRole("button", { name: "验证并保存（触发扫描）", exact: true }).click();
+    await expect(window.getByText("连接已验证", { exact: true })).toBeVisible();
+    const configured = await window.evaluate(() => window.desktopApi.getEmbyConfiguration());
+    expect(configured?.libraries).toHaveLength(1);
+    holdInfo = true; await window.evaluate(() => window.desktopApi.restartCore());
+    await expect(window.getByText("连接尚未验证", { exact: true })).toBeVisible();
+    await expect.poll(() => waiting.size).toBe(1);
+    holdInfo = false; for (const response of waiting) response.end(JSON.stringify(info)); waiting.clear();
+    await expect(window.getByText("连接已验证", { exact: true })).toBeVisible();
+    expect(await window.evaluate(() => window.desktopApi.getEmbyConfiguration())).toEqual(configured);
+    expect(await readFile(retained, "utf8")).toBe("原有媒体不得随绑定移动或改写");
+    expect(await window.evaluate(() => window.desktopApi.listMediaLibraries())).toHaveLength(1);
+    expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 });
+    expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
+    expect(refreshes).toBe(2);
+    await window.screenshot({ path: "test-results/desktop/emby-binding-revalidation.png", fullPage: true });
+    serviceStatus = 503;
+    await window.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click();
+    await expect(window.getByText("暂时无法连接 Emby，请检查地址和服务状态后重试", { exact: true })).toBeVisible();
+    expect(await readFile(retained, "utf8")).toBe("原有媒体不得随绑定移动或改写");
+  } finally { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
+test("任务分页筛选和 Core 重启／页面重载恢复持久状态，不提交新作业", async () => {
+  test.skip(!!process.env.MARSHAL_EXECUTABLE, "当前 schema 的数据夹具使用工作区构建");
+  const initial = await application.firstWindow(); await expect(initial.getByText("核心已连接", { exact: true })).toBeVisible(); await application.close();
+  const profile = join(directory, "task-data"), seed = join(directory, "seed-tasks.mjs");
+  await writeFile(seed, `
+import { CoreDatabase } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/infrastructure/database.js")).href)};
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+const db=await CoreDatabase.open(join(process.argv[2],'desktop.sqlite3')), sql=db.connection, source=randomUUID(), stamp='2026-10-25T00:00:00.000Z';
+sql.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'任务观测夹具','custom',?,?,'MOVIE','COPY',?)").run(source,join(process.argv[2],'来源'),join(process.argv[2],'目标'),stamp);
+for(let index=0;index<36;index++) sql.prepare("INSERT INTO media_task(id,source_id,source_path,title,status,delivery_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(randomUUID(),source,join(process.argv[2],'中文长路径'.repeat(20),String(index)+'.mp4'),index===35?'失败作品中文长名称'.repeat(10):'持久任务 '+index,index===35?'FAILED':'DONE',index===35?'NOT_READY':'REFRESH_PENDING',stamp,stamp);
+db.close();
+`);
+  await new Promise<void>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [seed, profile], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (error) => error ? fail(error) : done()));
+  application = await _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${profile}`] });
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  await window.getByRole("link", { name: "任务", exact: true }).click();
+  await expect(window.locator("tbody tr")).toHaveCount(25);
+  await window.getByRole("button", { name: "下一页", exact: true }).click(); await expect(window.locator("tbody tr")).toHaveCount(11);
+  await window.getByRole("combobox", { name: "筛选任务状态", exact: true }).selectOption("FAILED"); await expect(window.locator("tbody tr")).toHaveCount(1);
+  await expect(window.locator("tbody")).toContainText("失败作品中文长名称");
+  await application.evaluate(({ powerMonitor }) => powerMonitor.emit("resume"));
+  await expect(window.locator("tbody tr")).toHaveCount(1);
+  await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  await expect(window.locator("tbody tr")).toHaveCount(1); await expect(window.getByRole("combobox", { name: "筛选任务状态", exact: true })).toHaveValue("FAILED");
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await window.screenshot({ path: "test-results/desktop/tasks-filter-restored.png", fullPage: true });
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(window.locator("tbody tr")).toHaveCount(25);
+  expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 36 });
+  expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 });
+});
+
 test("真实窗口、核心握手与沙盒边界", async () => {
   const window = await application.firstWindow();
   await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
@@ -124,9 +307,10 @@ test("真实窗口、核心握手与沙盒边界", async () => {
 });
 test("云端全局暂停独立于本地来源，重载与 Core 重启保留状态", async () => {
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
-  await window.getByRole("link", { name: "目录订阅", exact: true }).click();
-  await expect(window.getByRole("heading", { name: "还没有目录订阅", exact: true })).toBeVisible();
-  await expect(window.getByText(/暂停本地整理不影响云端下载/)).toBeVisible();
+  await expect(window.getByRole("link", { name: "目录订阅", exact: true })).toHaveCount(0);
+  await window.evaluate(() => { location.hash = "/subscriptions"; });
+  await expect(window.getByRole("heading", { name: "来源配置", exact: true })).toBeVisible();
+  await expect(window.getByText(/目录订阅已并入来源配置/)).toBeVisible();
   await window.getByRole("link", { name: "云端下载", exact: true }).click();
   await window.getByRole("button", { name: "暂停全部云端下载", exact: true }).click();
   await expect(window.getByRole("button", { name: "恢复全部云端下载", exact: true })).toBeVisible();
@@ -169,29 +353,62 @@ test("受管下载目录原生授权、取消与核心重启恢复", async () =>
     let calls = 0;
     dialog.showOpenDialog = (async () => ++calls === 1 ? { canceled: true, filePaths: [] } : { canceled: false, filePaths: [path] }) as typeof dialog.showOpenDialog;
   }, root);
-  await window.getByRole("link", { name: "云端网盘", exact: true }).click();
+  await window.getByRole("link", { name: "来源", exact: true }).click();
+  await window.getByRole("button", { name: "添加来源", exact: true }).click();
   await window.getByRole("button", { name: "选择下载目录", exact: true }).click();
-  await expect(window.getByText("尚未授权下载目录")).toBeVisible();
+  await expect(window.getByLabel("本地下载目录", { exact: true })).toHaveValue("");
   await window.getByRole("button", { name: "选择下载目录", exact: true }).click();
-  await expect(window.getByText(root, { exact: true })).toBeVisible();
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listDownloadRoots())).length).toBe(1);
+  await expect(window.getByLabel("本地下载目录", { exact: true })).toHaveValue((await window.evaluate(() => window.desktopApi.listDownloadRoots()))[0]!.id);
   const before = await window.evaluate(() => window.desktopApi.listDownloadRoots()); expect(before).toHaveLength(1); expect(before[0]?.state).toBe("AVAILABLE");
+  await window.getByRole("button", { name: "选择下载目录", exact: true }).click();
+  await expect.poll(async () => window.evaluate(() => window.desktopApi.listDownloadRoots())).toMatchObject([{ id: before[0]!.id, state: "AVAILABLE" }]);
+  expect(await window.evaluate(() => window.desktopApi.listDownloadRoots())).toHaveLength(1);
   await window.evaluate(() => window.desktopApi.restartCore());
   await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listDownloadRoots()))[0]?.state).toBe("AVAILABLE");
   expect((await window.evaluate(() => window.desktopApi.listDownloadRoots()))[0]?.id).toBe(before[0]?.id);
   await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
-  await window.getByRole("link", { name: "云端网盘", exact: true }).click(); await expect(window.getByText(root, { exact: true })).toBeVisible();
+  await window.getByRole("link", { name: "来源", exact: true }).click();
+  await window.getByRole("button", { name: "添加来源", exact: true }).click(); await window.getByLabel("本地下载目录", { exact: true }).selectOption(before[0]!.id); await expect(window.getByLabel("本地下载目录", { exact: true })).toHaveValue(before[0]!.id);
   await window.screenshot({ path: "test-results/desktop/download-root.png" });
+});
+test("目录授权经实际 IPC 保留具体失败原因，未知管理标记不被认领", async () => {
+  test.skip(process.platform !== "darwin");
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const selected = join(directory, "保留旧标记"), metadata = join(selected, ".media-marshal"); await mkdir(metadata, { recursive: true });
+  const marker = JSON.stringify({ version: 1, grantId: "00000000-0000-4000-8000-000000000001", volumeId: "untrusted-fixture" });
+  const { writeFile } = await import("node:fs/promises"); await writeFile(join(metadata, "owner.json"), marker); await writeFile(join(selected, "保留.mp4"), "preserved");
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, selected);
+  await window.getByRole("link", { name: "来源", exact: true }).click();
+  await window.getByRole("button", { name: "添加来源", exact: true }).click();
+  await window.getByRole("button", { name: "选择下载目录", exact: true }).click();
+  await expect(window.getByRole("alert")).toContainText("目录管理标记无法与当前授权核对");
+  await expect(window.getByRole("alert")).toContainText("不会自动接管或清理已有文件");
+  expect(await window.evaluate(() => window.desktopApi.listDownloadRoots())).toEqual([]);
+  expect(await readFile(join(metadata, "owner.json"), "utf8")).toBe(marker); expect(await readFile(join(selected, "保留.mp4"), "utf8")).toBe("preserved");
+  await window.screenshot({ path: "test-results/desktop/download-root-ownership.png" });
+  await application.evaluate(({ dialog, app }) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [app.getPath("userData")] })) as typeof dialog.showOpenDialog; });
+  await window.getByRole("button", { name: "选择下载目录", exact: true }).click();
+  await expect(window.getByRole("alert")).toContainText("应用安装或私有数据范围");
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, join(directory, "missing"));
+  await window.getByRole("button", { name: "选择下载目录", exact: true }).click();
+  await expect(window.getByRole("alert")).toContainText("所选目录不可访问");
+  await application.evaluate(({ dialog }) => { dialog.showOpenDialog = (async () => ({ canceled: true, filePaths: [] })) as typeof dialog.showOpenDialog; });
+  await window.getByRole("button", { name: "选择下载目录", exact: true }).click();
+  expect(await window.evaluate(() => window.desktopApi.listDownloadRoots())).toEqual([]);
 });
 test("云端账号界面取消、无凭据回显与非法远端参数拒绝", async () => {
   const window = await application.firstWindow();
   await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
-  await window.getByRole("link", { name: "云端网盘", exact: true }).click();
+  await window.getByRole("link", { name: "网盘账号", exact: true }).click();
   await expect(window.getByRole("heading", { name: "还没有云端账号" })).toBeVisible();
   await window.getByRole("button", { name: "连接夸克账号", exact: true }).click();
   await window.getByLabel("账号名称").fill("取消输入测试");
+  await window.getByRole("button", { name: "手动 Cookie", exact: true }).click();
   await window.getByLabel("本人账号 Cookie").fill("fixture-cookie-never-submitted");
   await window.getByRole("button", { name: "取消", exact: true }).click();
   await window.getByRole("button", { name: "连接夸克账号", exact: true }).click();
+  await window.getByRole("button", { name: "手动 Cookie", exact: true }).click();
   await expect(window.getByLabel("本人账号 Cookie")).toHaveValue("");
   expect(await window.evaluate(() => window.desktopApi.listCloudAccounts())).toEqual([]);
   expect(await window.evaluate(async () => {
@@ -205,9 +422,10 @@ test("真实 Mac 授权作业异步返回、失效 Cookie 不启用账号且输�
   test.skip(process.platform !== "darwin", "当前新功能优先验收 Mac");
   const window = await application.firstWindow();
   await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
-  await window.getByRole("link", { name: "云端网盘", exact: true }).click();
+  await window.getByRole("link", { name: "网盘账号", exact: true }).click();
   await window.getByRole("button", { name: "连接夸克账号", exact: true }).click();
   await window.getByLabel("账号名称").fill("失效授权测试");
+  await window.getByRole("button", { name: "手动 Cookie", exact: true }).click();
   await window.getByLabel("本人账号 Cookie").fill("__pus=invalid; __puus=invalid");
   await window.getByRole("button", { name: "验证并连接", exact: true }).click();
   await expect(window.getByLabel("本人账号 Cookie")).toHaveCount(0);
@@ -217,6 +435,7 @@ test("真实 Mac 授权作业异步返回、失效 Cookie 不启用账号且输�
   await expect(window.getByRole("alert")).toBeVisible();
   await expect(window.getByRole("alert")).toContainText("账号需要重新授权");
   await window.getByRole("button", { name: "重新授权", exact: true }).click();
+  await window.getByRole("button", { name: "手动 Cookie", exact: true }).click();
   await expect(window.getByLabel("本人账号 Cookie")).toHaveValue("");
   await window.screenshot({ path: "test-results/desktop/cloud-invalid-authorization.png" });
 });
@@ -240,16 +459,22 @@ test("原生目录桥授权、来源持久化与核心重启", async () => {
   );
   await window.getByRole("link", { name: "来源", exact: true }).click();
   await window.getByRole("button", { name: "添加来源", exact: true }).click();
+  await window.getByLabel("来源类型", { exact: true }).selectOption("local");
   await window.getByLabel("来源名称").fill("内测下载目录");
-  await window
-    .getByRole("button", { name: "选择目录", exact: true })
-    .nth(0)
-    .click();
-  await window
-    .getByRole("button", { name: "选择目录", exact: true })
-    .nth(1)
-    .click();
-  await window.getByRole("button", { name: "保存", exact: true }).click();
+  await window.getByLabel("本地忽略规则", { exact: true }).selectOption("custom");
+  await window.getByLabel("忽略文件名或目录", { exact: true }).fill("cache/\n*.tmp");
+  await window.getByRole("button", { name: "选择本地输入目录", exact: true }).click();
+  await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click();
+  await window.getByRole("link", { name: "网盘账号", exact: true }).click();
+  await window.getByRole("link", { name: "来源", exact: true }).click();
+  await expect(window.getByLabel("来源名称")).toHaveValue("内测下载目录");
+  await expect(window.getByLabel("本地忽略规则", { exact: true })).toHaveValue("custom");
+  await expect(window.getByLabel("忽略文件名或目录", { exact: true })).toHaveValue("cache/\n*.tmp");
+  await window.getByRole("button", { name: "保存草稿", exact: true }).click();
+  expect(await window.evaluate(() => window.desktopApi.listSources())).toEqual([]);
+  await window.getByRole("button", { name: "预览配置", exact: true }).click();
+  await window.getByRole("button", { name: "确认配置生效", exact: true }).click();
+  await window.getByRole("button", { name: "取消编辑", exact: true }).click();
   await expect(
     window.getByRole("heading", { name: /内测下载目录/ }),
   ).toBeVisible();
@@ -269,6 +494,65 @@ test("原生目录桥授权、来源持久化与核心重启", async () => {
   expect(await window.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await expect(window.getByRole('button',{name:'暂停来源',exact:true})).toBeInViewport();
   await window.screenshot({ path: "test-results/desktop/sources.png" });
+  const sourceRule = (await window.evaluate(() => window.desktopApi.listSourceRules()))[0]!;
+  expect(sourceRule.configuration).toMatchObject({ type: "local", ignoredFilePatterns: ["cache/", "*.tmp"] });
+  await window.getByRole("button", { name: "编辑并预览", exact: true }).click();
+  await expect(window.getByLabel("本地忽略规则", { exact: true })).toHaveValue("custom");
+  await expect(window.getByLabel("忽略文件名或目录", { exact: true })).toHaveValue("cache/\n*.tmp");
+  expect(await window.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await window.getByLabel("本地忽略规则", { exact: true }).scrollIntoViewIfNeeded();
+  await window.screenshot({ path: "test-results/desktop/sources-ignore-restored.png" });
+});
+
+test("启动后立即退出与加载窗口期间退出均不残留后启动的子进程", async () => {
+  test.skip(!!process.env.MARSHAL_EXECUTABLE, "当前源码的启动竞态检查使用工作区构建");
+  test.setTimeout(45000);
+  for (const phase of ["立即退出", "窗口已创建"] as const) {
+    const main = await application.evaluate(() => process.pid), owned = new Map<number, ReturnType<typeof identify>>();
+    const observe = () => { for (const child of children(main)) { owned.set(child.pid, child); for (const nested of children(child.pid)) owned.set(nested.pid, nested); } };
+    observe(); const timer = setInterval(observe, 25);
+    try {
+      if (phase === "窗口已创建") await application.firstWindow();
+      await application.close();
+      for (const identity of owned.values()) if (identity) await expect.poll(() => matches(identity, identity.command), { timeout: 5000 }).toBe(false);
+    } finally {
+      clearInterval(timer);
+      for (const identity of owned.values()) if (identity && matches(identity, identity.command)) stopVerified(identity, identity.command);
+    }
+    if (phase === "立即退出") application = await _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "second-start")}`] });
+  }
+});
+
+test("核心异常退出后恢复持久草稿并回收原解析器，不创建执行来源", async () => {
+  const window = await application.firstWindow();
+  await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const source = join(directory, "核心恢复来源"), target = join(directory, "核心恢复目标");
+  await mkdir(source); await mkdir(target);
+  const draft = await window.evaluate(({ source, target }) => window.desktopApi.configureSourceRule({
+    id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(),
+    configuration: { type: "local", name: "崩溃后保留草稿", sourcePath: source, organization: { targetPath: target } },
+  }), { source, target });
+  const before = await application.evaluate(({ app }) => {
+    const path = process.getBuiltinModule("node:path"), fs = process.getBuiltinModule("node:fs");
+    return { main: process.pid, core: app.getAppMetrics().find((row) => row.name === "Media Marshal Core")!.pid,
+      parserRoot: fs.realpathSync(app.isPackaged ? path.join(process.resourcesPath, "parser") : path.join(app.getAppPath(), "resources/parser", `${process.platform}-${process.arch}`, "runtime")) };
+  });
+  const oldCore = identify(before.core); expect(oldCore?.parent).toBe(before.main);
+  const parsers = children(before.core).filter((child: { command: string }) => child.command.includes(before.parserRoot));
+  expect(parsers).toHaveLength(1);
+  stopVerified(oldCore, oldCore.command);
+  await expect.poll(() => matches(oldCore, oldCore.command)).toBe(false);
+  for (const parser of parsers) await expect.poll(() => matches(parser, before.parserRoot), { timeout: 10000 }).toBe(false);
+  await expect.poll(() => application.evaluate(({ app }, oldPid) => {
+    const pid = app.getAppMetrics().find((row) => row.name === "Media Marshal Core")?.pid;
+    return !!pid && pid !== oldPid;
+  }, before.core)).toBe(true);
+  await expect.poll(async () => {
+    try { return (await window.evaluate(() => window.desktopApi.getRuntime())).status?.parser; } catch { return "pending"; }
+  }).toBe("ready");
+  expect(await window.evaluate((id) => window.desktopApi.getSourceRule(id), draft.id)).toMatchObject({ id: draft.id, version: 0, draftRevision: 1, configuration: null });
+  expect(await window.evaluate(() => window.desktopApi.listSourceRules())).toHaveLength(1);
+  expect(await window.evaluate(() => window.desktopApi.listSources())).toEqual([]);
 });
 
 test("主进程异常退出后核心与离线解析器不残留", async () => {

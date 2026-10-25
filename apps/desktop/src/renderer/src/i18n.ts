@@ -24,7 +24,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
         local: "本机媒体助手",
         greeting: "让好内容，回到你的媒体库。",
         subtitle: "下载保留原处，整理井然有序。",
-        sourceCount: "目录来源",
+        sourceCount: "已保存来源",
         taskCount: "整理记录",
         needsReview: "需要确认",
         running: "核心已连接",
@@ -33,12 +33,12 @@ export const i18nReady = i18n.use(initReactI18next).init({
         stopping: "正在安全退出",
         retry: "重试",
         reload: "刷新",
-        getStarted: "从一个目录开始",
+        getStarted: "从一个来源开始",
         startDetail:
-          "在网盘官方客户端完成下载，再添加本机下载目录和 Emby 目标目录。",
+          "连接网盘并选择下载范围，或接入本地目录；按需开启整理，再映射到已有 Emby 媒体库。",
         addSource: "添加来源",
         sourceHelp:
-          "监听夸克、百度、阿里云盘客户端下载目录，也支持任意本机目录。",
+          "统一管理网盘与本地目录来源、下载位置、周期扫描和可选整理。",
         sourceName: "来源名称",
         sourceKind: "来源类型",
         sourcePath: "下载来源",
@@ -64,7 +64,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
         tasksHelp: "文件整理与 Emby 收录分别记录，窗口重开会恢复后台状态。",
         noTasks: "还没有整理任务",
         noTasksDetail:
-          "完成目录配置后，文件接入与识别流程将在后续迁移步骤接通。",
+          "在来源中启用整理后，稳定文件会进入待处理，识别与确认后才执行 COPY。",
         reviewHelp: "识别歧义、文件就绪与冲突都在这里处理。",
         noReview: "当前没有待确认记录",
         noReviewDetail: "这里会保留需要你决定的事项，确认前不会修改媒体库。",
@@ -82,7 +82,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
         language: "界面语言",
         stageTitle: "macOS 内测客户端",
         stageHelp:
-          "已支持受管云端下载与目录订阅。媒体整理及 Emby 收录仍在开发中。",
+          "下载、整理和 Emby 交付分别记录。整理默认需要人工确认，真实服务器收录结果单独核对。",
         coreTitle: "本机核心",
         coreDetail: "业务数据保存在你的电脑上，页面通过受限接口访问。",
         schema: "数据版本",

@@ -8,6 +8,9 @@ import {
   sourceDraftSchema,
   CloudError,
   rpcErrorSchema,
+  cloudFailureSchema,
+  cloudFailure,
+  directoryIssueSchema,
 } from "./index";
 const request = (action = "runtime.get", payload: unknown = {}) => ({
   kind: "request",
@@ -17,6 +20,20 @@ const request = (action = "runtime.get", payload: unknown = {}) => ({
   payload,
 });
 describe("受限进程契约", () => {
+  it("目录失败携带受限原因和可信配置引用，跨私有与公开通道保留分类", () => {
+    const issue = { reason: "SOURCE_OVERLAP" as const, conflict: { kind: "source" as const, id: randomUUID() } };
+    const failure = cloudFailureSchema.parse(JSON.parse(JSON.stringify(cloudFailure(new CloudError("CONFLICT", undefined, issue)))));
+    const recreated = new CloudError(failure.code, failure.retryAfterSeconds, failure.directoryIssue);
+    expect(rpcErrorSchema.parse(publicError(recreated))).toMatchObject({ code: "CONFLICT", directoryIssue: issue, message: expect.stringContaining(issue.conflict.id) });
+    const privateIssue = { reason: "PRIVATE_PATH" as const };
+    expect(publicError(new DesktopError("FORBIDDEN", "请选择独立下载目录", false, undefined, privateIssue))).toMatchObject({ code: "FORBIDDEN", directoryIssue: privateIssue });
+    expect(directoryIssueSchema.safeParse({ ...issue, path: "/private/secret" }).success).toBe(false);
+    expect(directoryIssueSchema.safeParse({ ...issue, conflict: { kind: "source", id: "file:///private/secret" } }).success).toBe(false);
+    expect(cloudFailureSchema.safeParse({ ...failure, message: "fixture-cookie /private/path" }).success).toBe(false);
+    const unknown = publicError(new CloudError("CONFLICT", undefined, { reason: "OWNERSHIP_MISMATCH" }));
+    expect(unknown).not.toHaveProperty("directoryIssue.conflict");
+    expect(unknown.message).toContain("不会自动接管");
+  });
   it("云端错误经过公开核心通道仍保留固定分类和有界退避", () => {
     expect(rpcErrorSchema.parse(publicError(new CloudError("RATE_LIMITED", 30)))).toEqual({ code: "RATE_LIMITED", message: "网盘请求受到限制，请稍后重试", retryable: true, retryAfterSeconds: 30 });
     expect(publicError(new CloudError("AUTH_REQUIRED"))).toMatchObject({ code: "AUTH_REQUIRED", retryable: false });

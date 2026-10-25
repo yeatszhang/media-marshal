@@ -17,16 +17,22 @@ export class CloudRoots {
   private overlap(grant: ManagedRootGrant) {
     const db = this.database.connection;
     const otherRoots = (db.prepare("SELECT * FROM managed_download_root WHERE id!=?").all(grant.id) as RootRow[]);
-    const sources = db.prepare("SELECT s.source_path,s.target_path,i.download_root_id FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id").all() as { source_path: string; target_path: string; download_root_id: string | null }[];
-    const targets = db.prepare("SELECT grant_json FROM media_target_root").all() as { grant_json: string }[];
-    if (targets.some((row) => pathsOverlap(grant.path, JSON.parse(row.grant_json).path, grant.volume))) throw new CloudError("CONFLICT");
-    if (otherRoots.some((other) => pathsOverlap(grant.path, other.canonical_path, grant.volume)) || sources.some((source) => (source.download_root_id === grant.id ? [source.target_path] : [source.source_path, source.target_path]).some((path) => pathsOverlap(grant.path, path, grant.volume)))) throw new CloudError("CONFLICT");
+    const sources = db.prepare("SELECT s.id,s.source_path,s.target_path,i.download_root_id FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id ORDER BY s.created_at,s.id").all() as { id: string; source_path: string; target_path: string; download_root_id: string | null }[];
+    const targets = db.prepare("SELECT id,grant_json FROM media_target_root ORDER BY id").all() as { id: string; grant_json: string }[];
+    const target = targets.find((row) => pathsOverlap(grant.path, JSON.parse(row.grant_json).path, grant.volume));
+    if (target) throw new CloudError("CONFLICT", undefined, { reason: "TARGET_OVERLAP", conflict: { kind: "media-target", id: target.id } });
+    const otherRoot = otherRoots.find((other) => pathsOverlap(grant.path, other.canonical_path, grant.volume));
+    if (otherRoot) throw new CloudError("CONFLICT", undefined, { reason: "DOWNLOAD_ROOT_OVERLAP", conflict: { kind: "download-root", id: otherRoot.id } });
+    for (const source of sources) {
+      if (pathsOverlap(grant.path, source.target_path, grant.volume)) throw new CloudError("CONFLICT", undefined, { reason: "TARGET_OVERLAP", conflict: { kind: "source", id: source.id } });
+      if (source.download_root_id !== grant.id && pathsOverlap(grant.path, source.source_path, grant.volume)) throw new CloudError("CONFLICT", undefined, { reason: "SOURCE_OVERLAP", conflict: { kind: "source", id: source.id } });
+    }
   }
   authorize(value: ManagedRootGrant): Promise<ManagedRootGrant> {
     const work = this.queue.catch(() => {}).then(async () => {
       const input = managedRootGrantSchema.parse(value), db = this.database.connection;
       const previous = db.prepare("SELECT * FROM managed_download_root WHERE canonical_path=? OR id=?").get(input.path, input.id) as RootRow | undefined;
-      if (previous && (previous.canonical_path !== input.path || !sameVolumeRoot(JSON.parse(previous.volume_identity), input.volume))) throw new CloudError("LOCAL_UNAVAILABLE");
+      if (previous && (previous.canonical_path !== input.path || !sameVolumeRoot(JSON.parse(previous.volume_identity), input.volume))) throw new CloudError("LOCAL_UNAVAILABLE", undefined, { reason: "IDENTITY_CHANGED", conflict: { kind: "download-root", id: previous.id } });
       const grant = { ...input, id: previous?.id ?? input.id };
       if (!previous && (db.prepare("SELECT count(*) AS count FROM managed_download_root").get() as { count: number }).count >= 100) throw new CloudError("CONFLICT");
       this.overlap(grant);

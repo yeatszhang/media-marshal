@@ -26,7 +26,7 @@ export default defineConfig({
         items: [
           { text: '产品定位与运营方向', link: '/product/positioning' },
           { text: '商业与付费策略', link: '/product/business-and-operations' },
-          { text: 'Mac 云端下载内测', link: '/product/cloud-downloads' },
+          { text: 'Mac 来源、下载与整理内测', link: '/product/cloud-downloads' },
         ],
       },
       {
@@ -37,6 +37,8 @@ export default defineConfig({
           { text: '桌面整理流水线', link: '/architecture/desktop-ingestion' },
           { text: '桌面迁移基线', link: '/architecture/desktop-migration' },
           { text: '桌面客户端开发', link: '/architecture/desktop-development' },
+          { text: '统一来源配置与版本', link: '/architecture/source-rules' },
+          { text: '统一来源与真实 Emby 验收', link: '/architecture/mac-unified-source-validation' },
           { text: '云端下载内部边界', link: '/architecture/cloud-downloads-internal' },
           { text: '网盘与传输扩展开发', link: '/architecture/cloud-adapter-development' },
           { text: 'Mac 云端下载验收', link: '/architecture/mac-cloud-downloads-validation' },

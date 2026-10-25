@@ -4,9 +4,15 @@
 import modelUrl from "./cloud-downloads.c4?url"
 </script>
 
-![Mac 云端下载进程与权限边界](/architecture/cloud-downloads/index.png)
+![Mac 下载与整理的进程及权限边界](/architecture/cloud-downloads/index.png)
 
 架构事实维护在 <a :href="modelUrl" download>LikeC4 模型与视图</a>，图片由该模型生成。扩展步骤见 [网盘与传输扩展开发](./cloud-adapter-development.md)。
+
+来源配置的草稿、不可变版本、事务及动作边界见[统一来源配置与版本](./source-rules.md)。schema v9～v13 追加来源聚合、旧身份定位、分层暂停、候选策略及独立执行预览，保留原有执行表与版本备份。账号页管理连接，来源页是唯一可编辑的配置入口；旧订阅链接定位对应来源，归属不明则保持待核对。
+
+![统一来源的配置与执行边界](/architecture/cloud-downloads/sources.png)
+
+![下载与本地文件的整理及独立交付](/architecture/cloud-downloads/ingestion.png)
 
 公开 DTO 从 `@media-marshal/contracts` 导入；Provider、Engine 和宿主消息从 `@media-marshal/contracts/internal` 导入，RPC 实现从其 `/rpc` 子入口导入。Renderer 和 Preload 的内部导入、公开契约重导出内部协议均由依赖检查拒绝。
 
@@ -48,6 +54,8 @@ Provider 丢弃原始 `sign/raw_url/hash_info` 等未采用字段，只向 Core 
 
 当前已追加 schema v3 的授权作业表，保留 v2 业务与匹配备份。Main 接收凭据后立即返回 Core 持久化作业；Cookie 不经过 Core，作业查询不含私有凭据引用。未知身份的重新授权保留账号与历史、暂停旧订阅，并要求重选范围；稳定身份不一致的候选不能提交。Main/Core 重启以活动绑定和保险箱引用恢复挂载，注入完成前 Core 阻断浏览，避免将恢复窗口误报为 Cookie 失效。
 
+网页扫码登录由 `QuarkLoginController` 提供。`desktop.cloud.login` 只接受账号名称、可选账号 ID 和幂等请求 ID；Main 打开没有 preload 的夸克 HTTPS 窗口，独立随机内存 Session 禁止持久缓存、权限请求、下载和新窗口。检测目标地址的 `__pus` / `__puus` 后直接调用既有授权控制器，页面只收到授权作业。取消、五分钟超时、主窗口隐藏/重载、崩溃、升级和退出时清理网页会话；未提交前不创建账号。普通 Quark Provider 仍声明 Cookie 授权，不将网页扫码包装为官方 OAuth。固定 HTTPS 响应的 Electron 测试验证窗口、IPC、清理及提交边界，不能替代真实手机扫码验收。
+
 Core 的 RemoteCatalog 为路径/稳定标识持有应用 UUID，并持久化实现映射；公开游标是有期的应用不透明标识，宿主游标和 locator 不进入 UI。每页至多 100 条，跨页去重和游标数量有上限；大小写与 Unicode 不擅自归一化为同一对象，缺页或路径失效不产生删除事实。Renderer 使用 StatefulService 管理账号、目录与条目预览，凭据草稿只保留在表单，提交/取消立即清空。
 
 真实 Mac 有效账号的只读目录/stat 与 Core 重启证据见 `tools/desktop-sidecars/fixtures/quark-desktop-v4.2.7.json`。新增整文件验收见 `fixtures/quark-whole-file-v4.2.7-rclone-v1.75.2.json`：指定 604951500 字节视频通过真实窗口预览与确认，完成校验提交并保留重载/重启后的同一作业。上游仅有弱证据，本地 SHA-256 不宣称端到端验证或检测所有同尺寸替换。
@@ -59,6 +67,10 @@ RcloneCliEngine 已注册到正式宿主，复用受管 Guardian；单文件采�
 schema v4 追加逐项执行计数、退避时间、独立观测、历史 attempt 成员和控制幂等收据，保留 v3 及对应备份。一次性范围异步预览，确认前不执行；预览有 15 分钟有效期，单次最多观察 10000 个对象且私有快照不超过 16 MiB，超限明确失败并保持未确认。Core 当前按单文件隔离 attempt；逻辑作业包含多个 attempt，账号最多一个写入者，应用最多同时四个账号。每项自动尝试最多三次，凭据失效和缺盘不自动循环。
 
 Mac 卷策略使用 diskutil 的卷 UUID、目录 inode/创建时间及运行时设备号，探测真实大小写/Unicode 等价与路径长度。APFS/HFS 以实际卷上的独占创建、硬链接不覆盖和目录同步探测作为启用条件；本轮真实文件验收环境为 APFS，NAS/SMB 和其他文件系统拒绝自动写入，不能由此宣称 HFS 或移动磁盘全量兼容已验收。根与普通来源/目标双向禁止交叉覆盖，所有发现入口使用 `isManagedPrivatePath` 排除内部暂存区；未来整理接收端只接 completed 的幂等候选。
+
+目录授权错误附带公开的 `directoryIssue`：固定原因和可选的配置 UUID，不包含原始组件输出、卷身份或标记内容。冲突引用只能来自 Core 已登记的来源、媒体目标或下载根；未知管理标记不得生成可信配置引用。Core 私有响应、Main 及公开 RPC 保留分类，Preload 的错误消息保留原因和处理指引。Main 在探测已知同目录前复用原授权 ID，Core 仍复核原卷及目录身份；复用 ID 不表示绕过管理标记或卷核验。
+
+2026-10-25 的实际目录冲突来自两份应用配置：原配置有匹配管理标记、卷 UUID、目录 inode/创建时间的下载根记录，当前窗口的配置没有该授权。对实际 HFS+ 卷的自有临时文件探测通过了独占创建、硬链接不覆盖和目录同步，因此不能将本次失败归因于文件系统不支持。用户明确授权后，已先保存原配置的一致性备份及管理标记，再释放旧授权，由当前配置经原生对话框重新授权并验证重载可用；账号、历史及媒体文件未迁移。脱敏证据见 `tools/desktop-sidecars/fixtures/mac-directory-authorization-2026-10-25.json`，不据此宣称 HFS+ 完整下载链路通过。
 
 共享 `ManagedRoot` 负责父目录、符号链接、同卷身份、逐项长度/可用上游摘要与本地 SHA-256、同卷硬链接不覆盖发布；只有 Core 决定文件完成。下载侧先复核远端证据，再保存提交意图，发布后事务写完成记录及唯一 outbox，最后清理自有暂存区。前案媒体 COPY 复用该文件组件，仍自行持有整理计划和提交记账，不直接操作下载表。这里不宣称对同 OS 用户恶意并发改目录提供 fd 相对路径隔离。
 
@@ -73,6 +85,6 @@ schema v5 追加订阅运行状态、版本化扫描计划、控制收据及全�
 
 绑定迁移只在同一可信账号、相同原生对象命名空间下逐项 stat 验证稳定 ID，验证后事务换代；只有路径、命名空间不同、超过有界范围或对象变化时要求重新选择。旧执行 token 不迁移，候选验证失败保留原绑定，回退也使用新代际。当前生产夸克驱动不具备上述稳定 ID 能力。
 
-`IngestionOutbox` 独立于下载调度。接收端按 item/version 持久化去重后确认，确认事务失败重投相同键；接收端未安装时保留 PENDING，不创建假媒体任务。当前前案尚未实现接收、解析、COPY 和 Emby 交付，因此整理链路仍未接通。
+`IngestionOutbox` 独立于下载调度。生产接收端已接入 `IngestionPipeline`，按 item/version 持久化去重后确认，确认事务失败重投相同键。只下载、来源暂停、归属不明或目标未恢复时保持等待，不消耗投递预算。接收端沿下载需求的不可变来源版本选择整理策略，禁止按共享下载根猜测目标；候选识别、人工预览、COPY 和独立 Emby 交付分别记账。真实文件及固定服务器响应验证见[桌面整理流水线](./desktop-ingestion.md)，用户已有 Emby 的真实收录仍由变更 9.4 验收。
 
 升级与恢复由 Main 先关闭账号事务、Core、Host 并再次核对 OS 进程，等待保险箱更新完成后执行。受限备份只包含业务 SQLite/WAL、凭据密文、组件私有状态及版本/摘要元数据，不复制下载根或媒体库。恢复先核对摘要、平台和兼容版本，使用持久化恢复日志；新 Core 启动前回滚未完成的文件组替换。未知旧格式记录为 schema 0（未声明），实际 SQLite 兼容性仍由 Core 拒绝检查。普通诊断不扫描或导出私有备份。当前 APFS 上真实 SIGKILL 与 Electron/安装态备份恢复分别记录，正式签名不因此完成。

@@ -148,7 +148,7 @@ export class SidecarSupervisor implements CoreHostBridge {
             const validation = credentialValidationSchema.safeParse(data.validation);
             if (pending.binding && !validation.success) pending.reject(new CloudError("COMPONENT_UNAVAILABLE"));
             else pending.resolve(validation.success ? validation.data : undefined);
-          } else { const error = cloudFailureSchema.safeParse(data.error); pending.reject(new CloudError(error.success ? error.data.code : "COMPONENT_UNAVAILABLE")); }
+          } else { const error = cloudFailureSchema.safeParse(data.error); pending.reject(error.success ? new CloudError(error.data.code, error.data.retryAfterSeconds, error.data.directoryIssue) : new CloudError("COMPONENT_UNAVAILABLE")); }
         } return;
       }
       this.relay?.receiveHost(data);

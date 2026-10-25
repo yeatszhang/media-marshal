@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, mkdir, rename, rm, symlink, writeFile, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, realpath, mkdir, rename, rm, symlink, writeFile, readFile, readdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -11,6 +11,7 @@ import { createMediaApplication } from "@media-marshal/media-core";
 import { ManagedRoots, assertSpaceBudget, isManagedPrivatePath, pathsOverlap } from "@media-marshal/media-core/files";
 import { probeManagedVolume } from "./volume-probe";
 import { DownloadRootController } from "./roots";
+import { publicError } from "@media-marshal/contracts";
 
 const directories: string[] = [], cleanup: (() => Promise<unknown> | unknown)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true }); });
@@ -20,6 +21,44 @@ async function setup() {
   const roots = new CloudRoots(db); cleanup.push(() => roots.close()); await roots.authorize(grant); return { path, grant, db, roots, root: roots.files.get(grant.id) };
 }
 describe.skipIf(process.platform !== "darwin")("Mac 真实受管目录与卷策略", () => {
+  it("主进程重选已知同目录时在探测前复用授权 ID，文件和管理标记保持原样", async () => {
+    const { path, grant, roots } = await setup(), marker = join(path, ".media-marshal", "owner.json"), before = await readFile(marker, "utf8");
+    await writeFile(join(path, "completed", "原有文件.mp4"), "preserved");
+    const probe = vi.fn(probeManagedVolume), installed = vi.fn(async () => {});
+    const core = {
+      requestPrivate: async (action: string, value: any) => action === "cloud.roots.bootstrap" ? roots.bootstrap() : roots.authorize(value),
+      request: async () => roots.list(),
+    };
+    const controller = new DownloadRootController(core as never, { installRoot: installed }, probe);
+    expect((await controller.choose(path)).id).toBe(grant.id);
+    expect((await controller.choose(path)).id).toBe(grant.id);
+    expect(probe.mock.calls.every(([selected, id]) => selected === path && id === grant.id)).toBe(true);
+    expect(await readFile(marker, "utf8")).toBe(before);
+    expect(await readFile(join(path, "completed", "原有文件.mp4"), "utf8")).toBe("preserved");
+    expect(installed).toHaveBeenCalledTimes(2); expect(await roots.list()).toHaveLength(1);
+  });
+  it("未知旧管理标记不被解释成目录重叠，不从标记猜配置、不认领或清理原有文件", async () => {
+    const path = await directory(), metadata = join(path, ".media-marshal"), id = randomUUID(); await mkdir(metadata);
+    const marker = JSON.stringify({ version: 1, grantId: id, volumeId: "foreign-fixture-volume", secret: "/private/fixture-secret" });
+    await writeFile(join(metadata, "owner.json"), marker); await writeFile(join(path, "原有.mp4"), "preserved");
+    const db = await CoreDatabase.open(":memory:"); cleanup.push(() => db.close()); const roots = new CloudRoots(db); cleanup.push(() => roots.close());
+    const error = await roots.authorize(await probeManagedVolume(path)).catch((error) => error), result = publicError(error);
+    expect(result).toMatchObject({ code: "CONFLICT", directoryIssue: { reason: "OWNERSHIP_MISMATCH" } });
+    expect(result).not.toHaveProperty("directoryIssue.conflict"); expect(JSON.stringify(result)).not.toMatch(/fixture-secret|foreign-fixture-volume/);
+    expect(await readFile(join(metadata, "owner.json"), "utf8")).toBe(marker);
+    expect(await readFile(join(path, "原有.mp4"), "utf8")).toBe("preserved"); expect(await roots.list()).toEqual([]);
+    expect(await readdir(metadata)).toEqual(["owner.json"]);
+  });
+  it("实际权限、私有目录、文件系统能力和缺失目录分别返回可修复原因", async () => {
+    const path = await directory(), core = { requestPrivate: vi.fn(), request: vi.fn() }, controller = new DownloadRootController(core as never, { installRoot: async () => {} }, undefined, [path]);
+    await expect(controller.choose(path)).rejects.toMatchObject({ code: "FORBIDDEN", directoryIssue: { reason: "PRIVATE_PATH" } });
+    await expect(controller.choose(join(path, "missing"))).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE", directoryIssue: { reason: "DIRECTORY_UNAVAILABLE" } });
+    await expect(probeManagedVolume("/dev")).rejects.toMatchObject({ code: "UNSUPPORTED_CAPABILITY", directoryIssue: { reason: "UNSUPPORTED_FILESYSTEM" } });
+    await chmod(path, 0o500);
+    try { await expect(probeManagedVolume(path)).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE", directoryIssue: { reason: "PERMISSION_DENIED" } }); }
+    finally { await chmod(path, 0o700); }
+    expect(core.requestPrivate).not.toHaveBeenCalled();
+  });
   it("原生探测卷身份和命名能力，安装与恢复保持同一授权，探测文件无残留", async () => {
     const { path, grant, db, roots } = await setup();
     expect(grant.volume.fsType).toBe("apfs");
@@ -35,7 +74,7 @@ describe.skipIf(process.platform !== "darwin")("Mac 真实受管目录与卷策�
     const base = await directory(), privateRoot = join(base, "private"), sibling = join(base, "downloads"); await mkdir(privateRoot); await mkdir(sibling);
     const probe = vi.fn(probeManagedVolume), core = { requestPrivate: vi.fn(), request: vi.fn() }, controller = new DownloadRootController(core as never, { installRoot: async () => {} }, probe, [privateRoot]);
     await expect(controller.choose(privateRoot)).rejects.toMatchObject({ code: "FORBIDDEN" }); await expect(controller.choose(base)).rejects.toMatchObject({ code: "FORBIDDEN" }); expect(probe).not.toHaveBeenCalled(); expect(await readdir(privateRoot)).toEqual([]);
-    let grant: any; core.requestPrivate.mockImplementation(async (_action: any, value: any) => { grant = value; return value; }); core.request.mockImplementation(async () => [{ id: grant.id, path: grant.path, state: "AVAILABLE", availableBytes: 0 }] as never);
+    let grant: any; core.requestPrivate.mockImplementation(async (action: any, value: any) => { if (action === "cloud.roots.bootstrap") return []; grant = value; return value; }); core.request.mockImplementation(async () => [{ id: grant.id, path: grant.path, state: "AVAILABLE", availableBytes: 0 }] as never);
     expect((await controller.choose(sibling)).path).toBe(sibling); expect(probe).toHaveBeenCalledTimes(1);
   });
   it("原卷元数据不变但旧目录句柄已失效时，重新授权必须重开句柄", async () => {
@@ -68,7 +107,7 @@ describe.skipIf(process.platform !== "darwin")("Mac 真实受管目录与卷策�
     await rename(path, path + "-detached"); directories.push(path + "-detached");
     await expect(root.check()).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" });
     await mkdir(path);
-    await expect(roots.authorize(await probeManagedVolume(path, grant.id))).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" });
+    await expect(roots.authorize(await probeManagedVolume(path, grant.id))).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE", directoryIssue: { reason: "IDENTITY_CHANGED", conflict: { kind: "download-root", id: grant.id } } });
     expect(await readdir(path)).toEqual([]);
     expect(await roots.list()).toMatchObject([{ state: "UNAVAILABLE" }]);
   });
@@ -84,8 +123,10 @@ describe.skipIf(process.platform !== "darwin")("Mac 真实受管目录与卷策�
     const save = (sourcePath: string, targetPath: string) => core.request("sources.save", { name: "本地来源", kind: "custom", sourcePath, targetPath });
     await expect(save(join(managed, "completed"), target)).rejects.toMatchObject({ code: "UNSAFE_PATH" });
     await expect(save(source, managed)).rejects.toMatchObject({ code: "UNSAFE_PATH" });
-    await save(source, target);
-    await expect(controller.choose(source)).rejects.toMatchObject({ code: "CONFLICT" });
+    const saved = await save(source, target) as { id: string };
+    await expect(controller.choose(source)).rejects.toMatchObject({ code: "CONFLICT", directoryIssue: { reason: "SOURCE_OVERLAP", conflict: { kind: "source", id: saved.id } } });
+    await expect(controller.choose(target)).rejects.toMatchObject({ code: "CONFLICT", directoryIssue: { reason: "TARGET_OVERLAP", conflict: { kind: "source", id: saved.id } } });
+    await expect(controller.choose(join(managed, "completed"))).rejects.toMatchObject({ code: "CONFLICT", directoryIssue: { reason: "DOWNLOAD_ROOT_OVERLAP", conflict: { kind: "download-root", id: root.id } } });
     await expect(controller.choose(path)).rejects.toMatchObject({ code: "CONFLICT" });
     await controller.restore(); expect(installed).toHaveLength(2);
     expect(JSON.stringify(await core.request("cloud.roots.list", {}))).not.toMatch(/volumeId|rootInode|observedDevice/);

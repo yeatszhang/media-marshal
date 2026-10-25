@@ -5,7 +5,6 @@ import {
   checkMessageSize,
   parseCoreRequest,
   publicError,
-  cloudFailure,
 } from "@media-marshal/contracts";
 import { privateCoreRequestSchema } from "@media-marshal/contracts/internal/core";
 import { z } from "zod";
@@ -33,7 +32,7 @@ process.parentPort.once("message", (event) => {
     context(bindingGeneration, attemptId) { return { coreGeneration, hostGeneration, bindingGeneration, attemptId }; },
     request: (action, payload, context, key) => host.request(action, payload, context, key),
     observe: (handle, context, listener) => host.observe(handle, context, listener),
-  }, ...(input.parser ? { parser: parserLaunchSchema.parse(input.parser) } : {}) });
+  }, cancelHostRequests: () => { hostOnline = false; host.invalidate(); }, ...(input.parser ? { parser: parserLaunchSchema.parse(input.parser) } : {}) });
   let stopping: Promise<void> | undefined;
   let parentHeartbeat = Date.now();
   const shutdown = () =>
@@ -65,7 +64,7 @@ process.parentPort.once("message", (event) => {
       if (!parsed.success || stopping) return;
       void runtime.dispatchPrivate(parsed.data).then(
         (result) => port.postMessage({ kind: "core.private.response", requestId: parsed.data.requestId, ok: true, result }),
-        (error) => port.postMessage({ kind: "core.private.response", requestId: parsed.data.requestId, ok: false, error: cloudFailure(error) }),
+        (error) => port.postMessage({ kind: "core.private.response", requestId: parsed.data.requestId, ok: false, error: publicError(error) }),
       ); return;
     }
     void (async () => {

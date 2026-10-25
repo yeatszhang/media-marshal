@@ -20,7 +20,7 @@ import {
 } from "@media-marshal/contracts";
 import type { CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
 import { privateCoreActions, privateCoreResponseSchema, type PrivateCoreAction, type PrivateCoreInput, type PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
-import { CloudError } from "@media-marshal/contracts";
+import { CloudError, cloudErrorCodeSchema } from "@media-marshal/contracts";
 import type { ParserLaunch } from "@media-marshal/contracts/internal";
 
 interface Pending {
@@ -135,7 +135,11 @@ export class CoreSupervisor {
         if (!pending) return;
         clearTimeout(pending.timer); this.pending.delete(response.requestId);
         if (response.ok) pending.resolve(response.result);
-        else pending.reject(new CloudError(response.error.code, response.error.retryAfterSeconds));
+        else {
+          const code = cloudErrorCodeSchema.safeParse(response.error.code);
+          const cloud = code.success ? new CloudError(code.data, response.error.retryAfterSeconds, response.error.directoryIssue) : null;
+          pending.reject(cloud?.message === response.error.message ? cloud : new DesktopError(response.error.code, response.error.message, response.error.retryable, response.error.retryAfterSeconds, response.error.directoryIssue));
+        }
         return;
       }
       const parsed = responseSchema.safeParse(message);
@@ -153,6 +157,7 @@ export class CoreSupervisor {
             response.error.message,
             response.error.retryable,
             response.error.retryAfterSeconds,
+            response.error.directoryIssue,
           ),
         );
     });

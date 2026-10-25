@@ -39,6 +39,7 @@ import { SidecarSupervisor } from "./cloud/sidecar-supervisor";
 import { AccountCredentials } from "./cloud/account-credentials";
 import { defaultDiagnostic } from "./cloud/diagnostics";
 import { CloudAccountController } from "./cloud/accounts";
+import { QuarkLoginController } from "./cloud/quark-login";
 import { DownloadRootController } from "./cloud/roots";
 import { cloudCredentialDraftSchema } from "@media-marshal/contracts";
 import { parserLaunchSchema } from "@media-marshal/contracts/internal";
@@ -66,6 +67,7 @@ async function bootstrap() {
   const sidecarToken = createIdentifier<SidecarSupervisor>("desktop.sidecars");
   const accountCredentialToken = createIdentifier<AccountCredentials>("desktop.account-credentials");
   const cloudAccountsToken = createIdentifier<CloudAccountController>("desktop.cloud-accounts");
+  const quarkLoginToken = createIdentifier<QuarkLoginController>("desktop.quark-login");
   const downloadRootsToken = createIdentifier<DownloadRootController>("desktop.download-roots");
   const developmentUrl = !app.isPackaged
     ? process.env.ELECTRON_RENDERER_URL
@@ -94,7 +96,8 @@ async function bootstrap() {
   };
   let closing = false;
   let didExplainClose = false;
-  const grants = new Map<string, "source" | "target">();
+  const grants = new Map<string, Set<"source" | "target">>();
+  const rememberGrant = (path: string, purpose: "source" | "target") => { const purposes = grants.get(path) ?? new Set<"source" | "target">(); purposes.add(purpose); grants.set(path, purposes); };
   const show = () => {
     if (window && !window.isDestroyed()) {
       window.show();
@@ -102,6 +105,7 @@ async function bootstrap() {
     }
   };
   const showWindow = async () => {
+    if (exiting) return;
     if (window && !window.isDestroyed()) {
       show();
       return;
@@ -161,7 +165,7 @@ async function bootstrap() {
       window = undefined;
       grants.clear();
     });
-    window.webContents.on("did-start-navigation", () => grants.clear());
+    window.webContents.on("did-start-navigation", (event) => { if (event.isMainFrame && !event.isSameDocument) grants.clear(); });
     window.once("ready-to-show", show);
     if (developmentUrl) await window.loadURL(developmentUrl);
     else await window.loadURL(`${APP_ORIGIN}/index.html`);
@@ -235,11 +239,17 @@ async function bootstrap() {
       const protectedPaths = [installation, join(privateData, "sidecars"), join(privateData, "private-backups"), ...["desktop.sqlite3", "credentials.json", "runtime-version.json"].map((name) => join(privateData, name))];
       const roots = new DownloadRootController(supervisor, ctx.get(sidecarToken), undefined, protectedPaths);
       ctx.container.bind(cloudAccountsToken).toConstantValue(accounts);
+      const quarkLogin = new QuarkLoginController((input) => accounts.authorize(input), (requestKey) => supervisor.request("cloud.authorizations.get", { requestKey }));
+      ctx.container.bind(quarkLoginToken).toConstantValue(quarkLogin);
       ctx.container.bind(downloadRootsToken).toConstantValue(roots);
       let recovering: Promise<void> | undefined;
       const recover = () => recovering ??= (async () => {
         if (exiting || supervisor.state !== "ready") return;
         await roots.restore();
+        for (const previous of await supervisor.requestPrivate("media.targets.bootstrap", {})) {
+          try { const target = await probeManagedVolume(await roots.validateDirectory(previous.path), previous.id); await supervisor.requestPrivate("media.targets.authorize", target); }
+          catch { /* 每个媒体目标独立恢复；单个目标缺盘不阻断同下载根的其他策略。 */ }
+        }
         for (const previous of await supervisor.requestPrivate("media.library.bootstrap", {})) {
           try { const target = await probeManagedVolume(await roots.validateDirectory(previous.target.path), previous.target.id); await supervisor.requestPrivate("media.library.authorize", { mediaType: previous.mediaType, target }); }
           catch { /* 缺盘保持目标不可用，不能给同名替代卷重新授权。 */ }
@@ -247,6 +257,7 @@ async function bootstrap() {
         for (const previous of await supervisor.requestPrivate("media.sources.bootstrap", {})) {
           try {
             const source = await probeReadOnlyVolume(await roots.validateDirectory(previous.source.path), previous.source.id);
+            if (previous.mode === "managed") { await supervisor.requestPrivate("media.sources.authorize-managed", { sourceId: previous.sourceId, sourceVersion: previous.sourceVersion, source }); continue; }
             const target = await probeManagedVolume(await roots.validateDirectory(previous.target.path), previous.target.id);
             await supervisor.requestPrivate("media.sources.authorize", { ...previous, source, target });
           } catch { /* 原卷或授权未恢复时保持未验证，不重新绑定相同路径的新硬盘。 */ }
@@ -272,23 +283,32 @@ async function bootstrap() {
         })().catch(() => { if (!exiting && !maintenance) { supervisor.state = "failed"; supervisor.detail = "组件维护未完成，请重启核心后继续。"; } }).finally(() => { capacityMaintenance = undefined; });
       };
       ctx.disposables.add(() => { host.onCapacity = undefined; });
-      const resume = () => { void recover().catch(() => {}); };
+      const resume = () => {
+        if (exiting || supervisor.state !== "ready") return;
+        void ctx.effects.run(async () => {
+          await supervisor.requestPrivate("media.observations.reset", {});
+          if (!exiting && !ctx.signal.aborted) await recover();
+        }, "唤醒后恢复媒体观察").catch(() => {});
+      };
       powerMonitor.on("resume", resume);
       ctx.disposables.add(() => { powerMonitor.removeListener("resume", resume); });
       ctx.disposables.add(() => accounts.stop());
+      ctx.disposables.add(() => quarkLogin.stop());
       ctx.disposables.add(() => supervisor.stop());
       // 启动受跟踪但不阻挡窗口，失败由状态页提供重试入口。
       void ctx.effects.run(
         async () => {
           try {
             await backups.recover();
+            if (exiting || ctx.signal.aborted) return;
             const version = await runtimeVersion(), previous = await backups.previousVersion();
             if ((previous && JSON.stringify(previous) !== JSON.stringify(version)) || (!previous && await backups.hasDatabase())) {
               const host = ctx.get(sidecarToken); host.retainForBackup(); await host.prepareOfflineBackup(); await ctx.get(credentialToken).drain();
               await backups.capture(previous ?? { ...version, appVersion: "legacy", schemaVersion: 0, components: {} }); await host.releaseBackupState();
             }
+            if (exiting || ctx.signal.aborted) return;
             await supervisor.start();
-          } catch { supervisor.state = "failed"; supervisor.detail = "启动或升级检查失败。请使用应用菜单恢复匹配备份，或检查安装包。"; }
+          } catch { if (!exiting && !ctx.signal.aborted) { supervisor.state = "failed"; supervisor.detail = "启动或升级检查失败。请使用应用菜单恢复匹配备份，或检查安装包。"; } }
         },
         "启动媒体核心",
       );
@@ -336,6 +356,8 @@ async function bootstrap() {
             if (!parsed.success)
               throw new DesktopError("INVALID_REQUEST", "参数无效");
             if (action === "desktop.cloud.authorize") return { ok: true, result: await ctx.get(cloudAccountsToken).authorize(cloudCredentialDraftSchema.parse(parsed.data)) };
+            if (action === "desktop.cloud.login") return { ok: true, result: await ctx.get(quarkLoginToken).login(nativeActions["desktop.cloud.login"].parse(parsed.data), window!) };
+            if (action === "desktop.cloud.cancel-login") { ctx.get(quarkLoginToken).cancel(nativeActions["desktop.cloud.cancel-login"].parse(parsed.data).requestKey); return { ok: true, result: null }; }
             if (action === "desktop.cloud.choose-root") {
               const chosen = await dialog.showOpenDialog(window!, { title: "选择受管下载根目录", properties: ["openDirectory", "createDirectory"] });
               const path = chosen.canceled ? null : chosen.filePaths[0];
@@ -381,7 +403,7 @@ async function bootstrap() {
                 : (chosen.filePaths[0] ?? null);
               if (path) {
                 const canonical = await realpath(path);
-                grants.set(canonical, purpose);
+                rememberGrant(canonical, purpose);
                 return { ok: true, result: canonical };
               }
               return { ok: true, result: null };
@@ -396,17 +418,7 @@ async function bootstrap() {
               await supervisor.requestPrivate("media.credentials.install", { tmdb, emby });
               return { ok: true, result: null };
             }
-            if (action === "desktop.ingestion.configure") {
-              const input = nativeActions["desktop.ingestion.configure"].parse(parsed.data), path = await realpath(input.targetPath);
-              const sources = await supervisor.requestPrivate("media.sources.bootstrap", {}), existing = sources.find((row) => row.downloadRootId === input.downloadRootId);
-              const configured = (await supervisor.requestPrivate("media.library.bootstrap", {})).find((row) => row.target.path === path);
-              if (grants.get(path) !== "target" && existing?.target.path !== path && !configured) throw new DesktopError("FORBIDDEN", "请通过系统对话框选择媒体目标目录");
-              const source = (await supervisor.requestPrivate("cloud.roots.bootstrap", {})).find((row) => row.id === input.downloadRootId);
-              if (!source) throw new DesktopError("CONFLICT", "请先选择受管下载目录");
-              const target = await probeManagedVolume(await ctx.get(downloadRootsToken).validateDirectory(path), existing?.target.path === path ? existing.target.id : configured?.target.id);
-              const sourceId = await supervisor.requestPrivate("media.sources.configure-managed", { ...input, source, target });
-              return { ok: true, result: (await supervisor.request("sources.list", {})).find((row) => row.id === sourceId) };
-            }
+            if (action === "desktop.ingestion.configure") throw new DesktopError("CONFLICT", "整理绑定已并入来源配置，请重新预览确认");
             if (action === "desktop.media.choose-target") {
               const { mediaType } = nativeActions["desktop.media.choose-target"].parse(parsed.data);
               const selected = await dialog.showOpenDialog(window!, { title: mediaType === "MOVIE" ? "选择电影媒体库目录" : "选择剧集媒体库目录", properties: ["openDirectory"] });
@@ -414,7 +426,7 @@ async function bootstrap() {
                 const path = await ctx.get(downloadRootsToken).validateDirectory(selected.filePaths[0]);
                 const known = (await supervisor.requestPrivate("media.sources.bootstrap", {})).map((row) => row.target).concat((await supervisor.requestPrivate("media.library.bootstrap", {})).map((row) => row.target));
                 const target = await probeManagedVolume(path, known.find((row) => row.path === path)?.id);
-                await supervisor.requestPrivate("media.library.authorize", { mediaType, target }); grants.set(path, "target");
+                await supervisor.requestPrivate("media.library.authorize", { mediaType, target }); rememberGrant(path, "target");
               }
               return { ok: true, result: await supervisor.request("media.libraries", {}) };
             }
@@ -448,39 +460,33 @@ async function bootstrap() {
             }
           }
           const request = parseCoreRequest({ ...value, kind: "request" });
-          if (request.action === "sources.save") {
-            const draft = coreActions["sources.save"].input.parse(
-              request.payload,
-            );
-            const existing = draft.id
-              ? (await supervisor.request("sources.list", {})).find(
-                  (source) => source.id === draft.id,
-                )
-              : undefined;
-            const paths = await Promise.all([
-              realpath(draft.sourcePath),
-              realpath(draft.targetPath),
-            ]);
-            if (
-              (grants.get(paths[0]!) !== "source" &&
-                existing?.sourcePath !== paths[0]) ||
-              (grants.get(paths[1]!) !== "target" &&
-                existing?.targetPath !== paths[1])
-            )
-              throw new DesktopError(
-                "FORBIDDEN",
-                "请通过系统对话框选择来源与目标目录",
-              );
+          if (["sources.save", "sources.pause", "cloud.subscriptions.configure", "cloud.subscriptions.control", "cloud.downloads.preview", "cloud.downloads.confirm"].includes(request.action)) throw new DesktopError("CONFLICT", "该配置入口已并入来源配置，请重新预览确认或使用来源控制");
+          if (request.action === "source-rules.apply") {
+            const input = coreActions["source-rules.apply"].input.parse(request.payload);
+            const preview = await supervisor.request("source-rules.get-preview", { id: input.previewId });
+            if (!preview) throw new DesktopError("CONFLICT", "来源预览已不存在，请重新预览");
+            if (preview.state === "APPLIED") return { ok: true, result: await supervisor.requestPrivate("source-rules.apply", input) };
+            const rule = await supervisor.request("source-rules.get", { id: preview.sourceId });
+            if (!rule) throw new DesktopError("CONFLICT", "来源配置已不存在");
+            const configuration = preview.configuration;
+            if (!configuration.organization) return { ok: true, result: await supervisor.requestPrivate("source-rules.apply", input) };
+            const authorizations = await supervisor.requestPrivate("media.sources.bootstrap", {});
+            const previous = authorizations.find((row) => row.sourceId === (rule.localSourceId ?? rule.ingestionSourceId));
+            const targetPath = await realpath(configuration.organization.targetPath);
+            const knownTarget = await supervisor.requestPrivate("media.targets.find", { path: targetPath });
+            if (!grants.get(targetPath)?.has("target") && !knownTarget) throw new DesktopError("FORBIDDEN", "请通过系统对话框选择媒体目标目录");
             const policy = ctx.get(downloadRootsToken);
-            await Promise.all(paths.map((path) => policy.validateDirectory(path)));
-            const authorizations = await supervisor.requestPrivate("media.sources.bootstrap", {}), previous = authorizations.find((row) => row.sourceId === draft.id);
-            if (previous?.mode === "managed") throw new DesktopError("INVALID_REQUEST", "受管来源请通过下载目录配置修改");
-            const saved = await supervisor.request("sources.save", draft);
-            const source = await probeReadOnlyVolume(paths[0]!, previous?.source.path === paths[0] ? previous.source.id : undefined);
-            const configuredTargets = await supervisor.requestPrivate("media.library.bootstrap", {});
-            const target = await probeManagedVolume(paths[1]!, previous?.target.path === paths[1] ? previous.target.id : configuredTargets.find((row) => row.target.path === paths[1])?.target.id);
-            await supervisor.requestPrivate("media.sources.authorize", { sourceId: saved.id, sourceVersion: saved.version, mode: "local", downloadRootId: null, source, target });
-            return { ok: true, result: (await supervisor.request("sources.list", {})).find((row) => row.id === saved.id) };
+            const target = await probeManagedVolume(await policy.validateDirectory(targetPath), knownTarget?.id);
+            let source;
+            if (configuration.type === "local") {
+              const sourcePath = await realpath(configuration.sourcePath);
+              if (!grants.get(sourcePath)?.has("source") && previous?.source.path !== sourcePath) throw new DesktopError("FORBIDDEN", "请通过系统对话框选择本地来源目录");
+              source = await probeReadOnlyVolume(await policy.validateDirectory(sourcePath), previous?.source.path === sourcePath ? previous.source.id : undefined);
+            } else {
+              source = (await supervisor.requestPrivate("cloud.roots.bootstrap", {})).find((row) => row.id === configuration.downloadRootId);
+              if (!source) throw new DesktopError("CONFLICT", "请先授权本地下载目录");
+            }
+            return { ok: true, result: await supervisor.requestPrivate("source-rules.apply", { ...input, grants: { source, target } }) };
           }
           return {
             ok: true,
@@ -505,6 +511,7 @@ async function bootstrap() {
         if (window && !window.isDestroyed()) window.destroy();
       });
       await showWindow();
+      if (exiting || ctx.signal.aborted) return;
       tray = new Tray(trayIcon());
       tray.setToolTip("Media Marshal");
       tray.setContextMenu(
@@ -546,6 +553,7 @@ async function bootstrap() {
     }
     maintenance = true;
     try {
+      await desktop.container.get(quarkLoginToken).stop();
       const host = desktop.container.get(sidecarToken); host.retainForBackup();
       await desktop.container.get(cloudAccountsToken).stop(); await desktop.container.get(coreToken).stop(); await host.stop(); await host.prepareOfflineBackup(); await desktop.container.get(credentialToken).drain();
       const version = await runtimeVersion(); await backups.capture(version);
@@ -570,7 +578,12 @@ async function bootstrap() {
     // 在框架 drain 前显式停止核心，避免已跟踪启动/任务阻止资源清理。
     void (async () => {
       try {
-        await desktop.container.get(coreToken).stop();
+        // 扫码／账号作业可能正在等 Core；并发停接入与 Core，避免互相等待。
+        await Promise.allSettled([
+          Promise.resolve().then(() => desktop.container.isBound(quarkLoginToken) ? desktop.container.get(quarkLoginToken).stop() : undefined),
+          Promise.resolve().then(() => desktop.container.isBound(cloudAccountsToken) ? desktop.container.get(cloudAccountsToken).stop() : undefined),
+          Promise.resolve().then(() => desktop.container.isBound(coreToken) ? desktop.container.get(coreToken).stop() : undefined),
+        ]);
       } finally {
         await desktop.stop().catch(() => {});
         app.quit();
@@ -579,6 +592,7 @@ async function bootstrap() {
   });
   await desktop.start().catch(async () => {
     await desktop.stop().catch(() => {});
+    if (exiting) return;
     dialog.showErrorBox(
       "客户端启动失败",
       "无法初始化客户端，请重新启动或检查安装包。",

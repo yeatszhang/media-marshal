@@ -1,10 +1,14 @@
 import { z } from "zod";
-import { cloudActions, cloudCredentialDraftSchema, cloudDiagnosticCountsSchema, CloudError, cloudFailure, type CloudAccount, type CloudAuthorization, type CloudCredentialDraft, type RemotePage, type RemoteEntry, type ManagedDownloadRoot, type CloudInput, type DownloadPreview, type CloudOutput, type CloudSubscription } from "./cloud/index.js";
+import { directoryIssueSchema, type DirectoryIssue } from "./directory-issues.js";
+export * from "./directory-issues.js";
+import { cloudActions, cloudCredentialDraftSchema, cloudLoginDraftSchema, cloudDiagnosticCountsSchema, CloudError, cloudFailure, type CloudAccount, type CloudAuthorization, type CloudCredentialDraft, type CloudLoginDraft, type RemotePage, type RemoteEntry, type ManagedDownloadRoot, type CloudInput, type DownloadPreview, type CloudOutput, type CloudSubscription } from "./cloud/index.js";
 export * from "./cloud/index.js";
 import { ingestionActions, ingestionConfigureSchema } from "./ingestion.js";
 export * from "./ingestion.js";
 import { embyActions } from "./emby.js";
 export * from "./emby.js";
+import { sourceRuleActions } from "./source-rules.js";
+export * from "./source-rules.js";
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_MESSAGE_BYTES = 64 * 1024;
@@ -29,6 +33,7 @@ export const rpcErrorSchema = z.strictObject({
   message: z.string().max(500),
   retryable: z.boolean(),
   retryAfterSeconds: z.number().int().min(1).max(3600).optional(),
+  directoryIssue: directoryIssueSchema.optional(),
 });
 export type RpcError = z.infer<typeof rpcErrorSchema>;
 export class DesktopError extends Error {
@@ -37,6 +42,7 @@ export class DesktopError extends Error {
     message: string,
     readonly retryable = false,
     readonly retryAfterSeconds?: number,
+    readonly directoryIssue?: DirectoryIssue,
   ) {
     super(message);
     this.name = "DesktopError";
@@ -144,6 +150,7 @@ export type DesktopRuntime = z.infer<typeof runtimeSchema>;
 
 const empty = z.strictObject({});
 export const coreActions = {
+  ...sourceRuleActions,
   ...ingestionActions,
   ...embyActions,
   "cloud.downloads.pause-status": cloudActions["cloud.downloads.pause-status"],
@@ -222,6 +229,8 @@ export const nativeActions = {
   "desktop.cloud.choose-root": empty,
   "desktop.cloud.open-completed": z.strictObject({ jobId: z.uuid() }),
   "desktop.cloud.authorize": cloudCredentialDraftSchema,
+  "desktop.cloud.login": cloudLoginDraftSchema,
+  "desktop.cloud.cancel-login": z.strictObject({ requestKey: z.uuid() }),
   "desktop.cloud.disconnect": z.strictObject({ accountId: z.uuid() }),
   "desktop.cloud.restore": empty,
   "desktop.runtime": empty,
@@ -236,6 +245,22 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  previewSourceExecution(input: CoreInput<"source-rules.preview-execution">): Promise<CoreOutput<"source-rules.preview-execution">>;
+  getSourceExecutionPreview(id: string): Promise<CoreOutput<"source-rules.get-execution-preview">>;
+  executeSourcePreview(input: CoreInput<"source-rules.execute">): Promise<CoreOutput<"source-rules.execute">>;
+  controlSourceRule(input: CoreInput<"source-rules.control">): Promise<CoreOutput<"source-rules.control">>;
+  runSourceOnce(input: CoreInput<"source-rules.run-once">): Promise<CoreOutput<"source-rules.run-once">>;
+  listSourceRuns(input: CoreInput<"source-rules.runs">): Promise<CoreOutput<"source-rules.runs">>;
+  getOrganizePause(): Promise<CoreOutput<"ingestion.pause-status">>;
+  setOrganizePause(input: CoreInput<"ingestion.set-paused">): Promise<CoreOutput<"ingestion.set-paused">>;
+  resolveSourceLegacy(input: CoreInput<"source-rules.resolve-legacy">): Promise<CoreOutput<"source-rules.resolve-legacy">>;
+  listSourceLegacy(input: CoreInput<"source-rules.legacy">): Promise<CoreOutput<"source-rules.legacy">>;
+  configureSourceRule(input: CoreInput<"source-rules.configure">): Promise<CoreOutput<"source-rules.configure">>;
+  listSourceRules(): Promise<CoreOutput<"source-rules.list">>;
+  getSourceRule(id: string): Promise<CoreOutput<"source-rules.get">>;
+  previewSourceRule(input: CoreInput<"source-rules.preview">): Promise<CoreOutput<"source-rules.preview">>;
+  getSourceRulePreview(id: string): Promise<CoreOutput<"source-rules.get-preview">>;
+  applySourceRule(input: CoreInput<"source-rules.apply">): Promise<CoreOutput<"source-rules.apply">>;
   listMediaLibraries(): Promise<CoreOutput<"media.libraries">>;
   chooseMediaTarget(mediaType: "MOVIE" | "TV_SHOW"): Promise<CoreOutput<"media.libraries">>;
   getEmbyConfiguration(): Promise<CoreOutput<"emby.configuration">>;
@@ -266,6 +291,8 @@ export interface DesktopApi {
   openDownloadDirectory(jobId: string): Promise<void>;
   listCloudAccounts(): Promise<CloudAccount[]>;
   authorizeCloudAccount(input: CloudCredentialDraft): Promise<CloudAuthorization>;
+  loginCloudAccount(input: CloudLoginDraft): Promise<CloudAuthorization | null>;
+  cancelCloudLogin(requestKey: string): Promise<void>;
   getCloudAuthorization(requestKey: string): Promise<CloudAuthorization | null>;
   disconnectCloudAccount(accountId: string): Promise<void>;
   restoreCloudAccounts(): Promise<void>;
@@ -326,6 +353,7 @@ export function publicError(error: unknown): RpcError {
       code: error.code,
       message: error.message,
       retryable: error.retryable,
+      ...(error.directoryIssue ? { directoryIssue: directoryIssueSchema.parse(error.directoryIssue) } : {}),
       ...(error.code === "RATE_LIMITED" && error.retryAfterSeconds && error.retryAfterSeconds <= 3600 ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
     };
   // 文件系统、数据库和网络原始错误可能包含个人路径或凭据。

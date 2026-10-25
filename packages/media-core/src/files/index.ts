@@ -84,9 +84,9 @@ export class ManagedRoot {
     const contents = JSON.stringify({ version: 1, grantId: this.grant.id, volumeId: this.grant.volume.volumeId });
     try { await writeFile(owner, contents, { flag: "wx", mode: 0o600 }); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new CloudError("LOCAL_UNAVAILABLE");
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new CloudError("LOCAL_UNAVAILABLE", undefined, { reason: ["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "") ? "PERMISSION_DENIED" : "DIRECTORY_UNAVAILABLE" });
       const info = await lstat(owner);
-      if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 || await readFile(owner, "utf8") !== contents) throw new CloudError("CONFLICT");
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 || await readFile(owner, "utf8") !== contents) throw new CloudError("CONFLICT", undefined, { reason: "OWNERSHIP_MISMATCH" });
     }
     await this.directory([".media-marshal", "staging"], true); await this.directory([".media-marshal", "attempts"], true); if (this.layout === "completed") await this.directory(["completed"], true);
   }
@@ -100,7 +100,10 @@ export class ManagedRoot {
       if (a.dev !== b.dev || a.ino !== b.ino || a.nlink !== 2n) throw new Error();
       try { await link(source, target); throw new Error(); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
       await this.syncDirectory(directory);
-    } catch { throw new CloudError("UNSUPPORTED_CAPABILITY"); }
+    } catch (error) {
+      const denied = ["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "");
+      throw new CloudError(denied ? "LOCAL_UNAVAILABLE" : "UNSUPPORTED_CAPABILITY", undefined, { reason: denied ? "PERMISSION_DENIED" : "COMMIT_UNSUPPORTED" });
+    }
     finally { if (linked) await rm(target); if (created) await rm(source); }
   }
   private async syncDirectory(path: string) {
@@ -202,8 +205,14 @@ export class ManagedRoots {
       try { await previous.check(); return previous; }
       catch { /* 原卷重新挂载可能复用设备号，但旧目录句柄已失效；新授权仍须完整重验。 */ }
     }
-    const root = await ManagedRoot.open(grant, this.layout);
-    try { await root.initialize(); await root.verifyCommitSupport(); } catch (error) { await root.close(); throw error; }
+    let root: ManagedRoot | undefined;
+    try { root = await ManagedRoot.open(grant, this.layout); await root.initialize(); await root.verifyCommitSupport(); }
+    catch (error) {
+      await root?.close();
+      if (error instanceof CloudError && error.directoryIssue) throw error;
+      if (error instanceof CloudError && error.code !== "LOCAL_UNAVAILABLE") throw error;
+      throw new CloudError("LOCAL_UNAVAILABLE", undefined, { reason: ["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "") ? "PERMISSION_DENIED" : "DIRECTORY_UNAVAILABLE" });
+    }
     await previous?.close(); this.roots.set(grant.id, root); return root;
   }
   get(id: string): ManagedRoot { const root = this.roots.get(id); if (!root) throw new CloudError("LOCAL_UNAVAILABLE"); return root; }

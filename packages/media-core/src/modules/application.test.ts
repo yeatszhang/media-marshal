@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, realpath, rm, symlink, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createApplication } from "@yeatz/app-framework/application";
 import { createMediaApplication } from "./application";
-import { SCHEMA_VERSION } from "../infrastructure/database";
+import { CoreDatabase, SCHEMA_VERSION } from "../infrastructure/database";
+import { DatabaseToken } from "../application/core-service";
+import { RestrictedHostClient } from "@media-marshal/contracts/internal/rpc";
 const directories: string[] = [];
 const running: ReturnType<typeof createMediaApplication>[] = [];
 const message = (action: string, payload: unknown = {}) => ({
@@ -25,6 +27,7 @@ async function create() {
   return { runtime, directory };
 }
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.allSettled(running.splice(0).map((app) => app.stop()));
   await Promise.all(
     directories
@@ -33,6 +36,76 @@ afterEach(async () => {
   );
 });
 describe("框架组装与核心消息", () => {
+  it("唤醒观察重置只在私有通道开放，待确认候选重新观察而已处理记录保持", async () => {
+    const { runtime } = await create(), db = runtime.app.container.get(DatabaseToken).connection;
+    const source = randomUUID(), stamp = new Date().toISOString();
+    db.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'唤醒测试','custom','/fixture/source','/fixture/target','MOVIE','COPY',?)").run(source, stamp);
+    for (const state of ["READY", "UNAVAILABLE", "PROCESSED"])
+      db.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,snapshot_json,state,created_at,updated_at) VALUES(?,?,'[\"sample.mp4\"]',?,'{}',?,?,?)").run(randomUUID(), source, randomUUID(), state, stamp, stamp);
+    await runtime.dispatchPrivate({ kind: "core.private.request", requestId: randomUUID(), action: "media.observations.reset", payload: {} });
+    expect(db.prepare("SELECT state FROM ingestion_candidate ORDER BY state").all()).toEqual([{ state: "OBSERVING" }, { state: "OBSERVING" }, { state: "PROCESSED" }]);
+    await expect(runtime.dispatch(message("media.observations.reset"))).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    expect(db.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
+  it("启动部分失败先取消受跟踪的宿主等待，框架回滚不被 drain 阻塞", async () => {
+    let online = true, sent = 0;
+    const context = { coreGeneration: randomUUID(), hostGeneration: randomUUID(), bindingGeneration: randomUUID(), attemptId: randomUUID() };
+    const client = new RestrictedHostClient(() => { sent++; }, () => online, 60000);
+    let database!: CoreDatabase;
+    const runtime = createMediaApplication(":memory:", [{
+      id: "startup-wait-fixture", dependencies: ["media.commands"],
+      async start(ctx) {
+        database = ctx.get(DatabaseToken);
+        void ctx.effects.run(() => client.request("transfer.status", { attemptId: context.attemptId }, context, randomUUID()), "启动等待夹具").catch(() => {});
+        await expect.poll(() => sent).toBe(1);
+        throw new Error("注入部分启动失败");
+      },
+    }], { cancelHostRequests: () => { online = false; client.invalidate(); } });
+    running.push(runtime); await expect(runtime.app.start()).rejects.toThrow("注入部分启动失败");
+    expect(online).toBe(false); expect(database.connection.open).toBe(false); expect(sent).toBe(1);
+    await runtime.stop();
+  });
+  it("数据库尚在取得时停止，迟到资源立即归属清理且不启动后续服务", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "marshal-start-stop-")); directories.push(directory);
+    let release!: () => void; const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const open = CoreDatabase.open.bind(CoreDatabase), opening = vi.spyOn(CoreDatabase, "open").mockImplementationOnce(async (...args) => { await waiting; return open(...args); });
+    const runtime = createMediaApplication(join(directory, "core.sqlite3")); running.push(runtime);
+    const started = expect(runtime.app.start()).rejects.toMatchObject({ code: "INTERRUPTED" });
+    await expect.poll(() => opening.mock.calls.length).toBe(1);
+    const stopped = runtime.stop(); expect(runtime.stop()).toBe(stopped); release(); await started; await stopped;
+    expect(runtime.app.state).toBe("stopped");
+    const recovered = await CoreDatabase.open(join(directory, "core.sqlite3"), undefined, { exclusiveOwner: true });
+    expect(recovered.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 }); recovered.close();
+  });
+  it("停止先取消真实宿主 RPC 等待，再排空命令与关闭数据库，不等待请求超时", async () => {
+    let online = true, sent = 0;
+    const coreGeneration = randomUUID(), hostGeneration = randomUUID();
+    const client = new RestrictedHostClient(() => { sent++; }, () => online, 60000);
+    const runtime = createMediaApplication(":memory:", [], {
+      host: { context: (bindingGeneration, attemptId) => ({ coreGeneration, hostGeneration, bindingGeneration, attemptId }), request: (...args) => client.request(...args) },
+      cancelHostRequests: () => { online = false; client.invalidate(); },
+    }); running.push(runtime); await runtime.app.start();
+    const privateMessage = (action: string, payload: unknown) => ({ kind: "core.private.request", requestId: randomUUID(), action, payload });
+    const prepared = await runtime.dispatchPrivate(privateMessage("cloud.authorization.begin", { name: "停止测试", requestKey: randomUUID(), implementationId: "test.lifecycle" })) as { job: { id: string; accountId: string } };
+    await runtime.dispatchPrivate(privateMessage("cloud.authorization.finish", { jobId: prepared.job.id, failure: null, capabilities: { authorizationMethods: ["cookie"], accountIdentity: "unavailable", objectIdentity: "path", reliableRevision: false, hashAlgorithms: [], rangeRead: "unknown", sourceKinds: ["webdav"] }, identityKey: null }));
+    const db = runtime.app.container.get(DatabaseToken), root = db.connection.prepare("SELECT id FROM remote_entry WHERE parent_ref IS NULL").get() as { id: string };
+    const response = expect(runtime.dispatch(message("cloud.remote.list", { accountId: prepared.job.accountId, parentRef: root.id }))).rejects.toMatchObject({ code: "INTERRUPTED" });
+    await expect.poll(() => sent).toBe(1);
+    const stopping = runtime.stop(); expect(runtime.stop()).toBe(stopping);
+    await expect(runtime.dispatch(message("settings.get"))).rejects.toMatchObject({ code: "INTERRUPTED" });
+    await response; await stopping; expect(sent).toBe(1); expect(db.connection.open).toBe(false);
+  });
+  it.each(["取消等待", "资源清理"])("%s失败仍释放其他资源，数据库在使用者之后关闭且失败可观察", async (failure) => {
+    const directory = await mkdtemp(join(tmpdir(), "marshal-stop-failure-")); directories.push(directory);
+    let database!: CoreDatabase, cleanupSawOpen = false;
+    const runtime = createMediaApplication(join(directory, "core.sqlite3"), [{
+      id: "cleanup-fixture", dependencies: ["media.commands"],
+      start(ctx) { database = ctx.get(DatabaseToken); ctx.disposables.add(() => { cleanupSawOpen = database.connection.open; if (failure === "资源清理") throw new Error("清理失败夹具"); }); },
+    }], { cancelHostRequests: () => { if (failure === "取消等待") throw new Error("取消失败夹具"); } });
+    running.push(runtime); await runtime.app.start(); await expect(runtime.stop()).rejects.toBeInstanceOf(AggregateError);
+    expect(cleanupSawOpen).toBe(true); expect(database.connection.open).toBe(false);
+    const recovered = await CoreDatabase.open(join(directory, "core.sqlite3"), undefined, { exclusiveOwner: true }); recovered.close();
+  });
   it.skipIf(!existsSync(resolve(`apps/desktop/resources/parser/${process.platform}-${process.arch}/manifest.json`)))("Core 启动并持有冻结解析器，资源异常时保留云端查询且不伪报解析就绪", async () => {
     const root = resolve(`apps/desktop/resources/parser/${process.platform}-${process.arch}`), manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
     const healthy = createMediaApplication(":memory:", [], { parser: { root: join(root, "runtime"), manifest } }); running.push(healthy); await healthy.app.start();

@@ -32,7 +32,7 @@ import i18n from "./i18n";
 function Shell() {
   const { t } = useTranslation();
   const model = useService(RuntimeViewModel);
-  const { runtime, error } = useServiceState(model, (state) => state);
+  const { runtime, error, restarting } = useServiceState(model, (state) => state);
   useEffect(() => model.watch(), [model]);
   const ready = runtime?.core === "ready";
   const client = useService(DesktopClient);
@@ -56,7 +56,6 @@ function Shell() {
     { to: "/sources", name: "sources", Icon: Folder },
     { to: "/cloud", name: "cloud.title", Icon: Cloud },
     { to: "/downloads", name: "cloud.downloads", Icon: Download },
-    { to: "/subscriptions", name: "cloud.subscriptions", Icon: ListTodo },
     { to: "/settings", name: "settings", Icon: Settings },
   ];
   return (
@@ -119,6 +118,7 @@ function Shell() {
               <Route path="/cloud" element={<CloudDrives />} />
               <Route path="/downloads" element={<Downloads />} />
               <Route path="/subscriptions" element={<Subscriptions />} />
+              <Route path="/subscriptions/:id" element={<Subscriptions />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/review" element={<Ingestion />} />
               <Route path="/settings" element={<SettingsPage />} />
@@ -138,6 +138,7 @@ function Shell() {
               >
                 <Button
                   variant="outline"
+                  disabled={restarting}
                   onClick={() => {
                     void model.restart();
                   }}

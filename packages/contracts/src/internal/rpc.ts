@@ -78,7 +78,7 @@ export function parseHostRequest(value: unknown): HostRequest {
 function failureResponse(request: HostRequest, error: unknown): HostResponse {
   return { kind: "host.response", protocolVersion: HOST_PROTOCOL_VERSION, requestId: request.requestId, context: request.context, ok: false, error: cloudFailure(error) };
 }
-function errorFromFailure(failure: CloudFailure) { return new CloudError(failure.code, failure.retryAfterSeconds); }
+function errorFromFailure(failure: CloudFailure) { return new CloudError(failure.code, failure.retryAfterSeconds, failure.directoryIssue); }
 
 // 幂等收据在当前受权代际内保留；满额时拒绝新执行，绝不淘汰收据后重放写入。
 export class RestrictedHostServer {

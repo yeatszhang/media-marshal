@@ -6,10 +6,18 @@ import {
   remotePageSchema, versionEvidenceSchema,
 } from "./index";
 import { transferSourceLeaseSchema } from "../internal/index";
+import { nativeActions } from "../index";
 // @ts-expect-error 跨工具共享的本地 ESM 检查器。
 import { dependencyViolation } from "../../../../scripts/desktop-boundary-rules.mjs";
 
 describe("云端公开边界", () => {
+  it("扫码 IPC 只接受业务字段，不允许指定 URL、Cookie、浏览器会话或窗口选项", () => {
+    const input = { name: "扫码账号", requestKey: randomUUID() };
+    expect(nativeActions["desktop.cloud.login"].parse(input)).toEqual(input);
+    for (const extra of [{ url: "https://evil.test" }, { cookie: "secret" }, { partition: "persist:default" }, { webPreferences: { nodeIntegration: true } }])
+      expect(nativeActions["desktop.cloud.login"].safeParse({ ...input, ...extra }).success).toBe(false);
+    expect(nativeActions["desktop.cloud.cancel-login"].safeParse({ requestKey: "invalid" }).success).toBe(false);
+  });
   it("业务请求只接受应用引用，拒绝 URL、参数、私有定位及未知动作", () => {
     const payload = { accountId: randomUUID(), remoteRef: randomUUID(), targetGrantId: randomUUID(), requestKey: randomUUID() };
     expect(parseCloudRequest({ action: "cloud.downloads.preview", payload }).payload).toEqual({ ...payload, filters: { extensions: [], names: [] }, forceRedownload: false, layout: "selection" });

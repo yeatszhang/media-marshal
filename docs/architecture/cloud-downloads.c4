@@ -13,16 +13,34 @@ specification {
 model {
   user = person '用户'
   quark = system '夸克网盘'
+  tmdb = system 'TMDB'
+  emby = system '已有 Emby 服务器'
   desktop = system 'Media Marshal · macOS' {
     renderer = process 'Renderer' {
-      description 'React / StatefulService；账号、范围预览、订阅和下载状态'
+      description 'React / StatefulService；账号连接、统一来源草稿与预览、任务及交付状态'
     }
     main = process 'Electron Main' {
       description '系统保险箱、原生授权、进程身份及升级备份'
     }
     core = process 'Media Core' {
-      description '唯一业务库写入者；订阅、计划、领取、校验、提交和 outbox'
+      description '唯一业务库写入者；来源版本、调度、识别、COPY 和独立交付'
+      sources = component 'SourceRules' {
+        description '唯一配置入口；草稿、不可变有效版本、旧身份定位和执行预览'
+      }
+      subscriptions = component 'CloudSubscriptions' {
+        description '按有效来源版本周期补扫；共享需求和分层暂停'
+      }
+      downloads = component 'CloudDownloads' {
+        description '范围预览、领取、原卷校验、不覆盖提交和持久化 outbox'
+      }
+      ingestion = component 'IngestionPipeline' {
+        description '统一候选；稳定观察、识别确认及沿策略快照 COPY'
+      }
+      delivery = component 'EmbyDelivery' {
+        description '连接与库类型复核；独立交付意图、合并刷新、重试及收录核对'
+      }
     }
+    parser = process '冻结 stdio parser'
     host = process 'Sidecar Host' {
       provider = component 'CloudDriveProvider'
       engine = component 'TransferEngine'
@@ -30,17 +48,20 @@ model {
     guardian = process 'Guardian'
     openlist = process 'OpenList · v4.2.7'
     rclone = process 'Rclone CLI · v1.75.2'
-    database = storage '业务 SQLite · v6'
+    database = storage '业务 SQLite · v14'
     vault = storage '系统保护的凭据密文'
     backups = storage '受限升级备份'
     managed = storage '已授权原卷' {
       staging = storage '自有 attempt 暂存区'
       completed = storage 'completed 成果'
     }
+    local = storage '普通本地来源目录'
+    target = storage '已授权媒体目标'
   }
   user -> desktop.renderer '配置、预览并确认'
   desktop.renderer -> desktop.main '受限公开桥；不持有内部协议'
   desktop.main -> desktop.core '公开命令 / 私有账号及根授权'
+  desktop.main -> desktop.core.sources '来源命令（私有 Core 桥）；复核原生授权'
   desktop.core -> desktop.main '反向宿主 RPC；代际、attempt、幂等键'
   desktop.main -> desktop.host '私有端口；凭据与受管根'
   desktop.main -> desktop.vault '异步 safeStorage'
@@ -56,15 +77,36 @@ model {
   desktop.openlist -> quark '本人账号授权；只读获取'
   desktop.rclone -> desktop.managed.staging '仅写当前 attempt'
   desktop.core -> desktop.managed.completed '同卷独占发布后记账'
+  desktop.core.sources -> desktop.core.subscriptions '同事务更新执行配置；禁止独立编辑'
+  desktop.core.sources -> desktop.core.downloads '确认版本；一次性意图与执行预览'
+  desktop.core.sources -> desktop.core.ingestion '本地配置／按需启用整理；安全点协调'
+  desktop.core.sources -> desktop.database '草稿、版本、迁移映射和幂等收据'
+  desktop.core.subscriptions -> desktop.core.downloads '完整扫描后建立版本化需求'
+  desktop.core.downloads -> desktop.core.ingestion 'outbox／补扫；按需求及版本核对策略'
+  desktop.local -> desktop.core.ingestion '普通文件观察；不创建云端下载进度'
+  desktop.managed.completed -> desktop.core.ingestion '仅接收已记账完成项；相同 item/version 去重'
+  desktop.core.ingestion -> desktop.parser '只传名称文本；有界 JSON Lines'
+  desktop.core.ingestion -> tmdb '候选查询及季集核对'
+  desktop.core.ingestion -> desktop.target '人工确认后 COPY；保留来源且不覆盖'
+  desktop.core.ingestion -> desktop.core.delivery '文件提交后独立记录交付意图'
+  desktop.core.delivery -> emby '明确路径映射；刷新和收录核对'
 }
 
 views {
   view index {
-    title 'Mac 云端下载的进程与权限边界'
-    include user, quark, desktop.*
+    title 'Mac 下载与整理的进程及权限边界'
+    include user, quark, tmdb, emby, desktop.*
   }
   view adapters of desktop.host {
     title '接入与传输的可替换边界'
     include desktop.host.*, desktop.openlist, desktop.rclone, desktop.managed.staging, quark
+  }
+  view sources {
+    title '统一来源的配置与执行边界'
+    include desktop.renderer, desktop.main, desktop.core.sources, desktop.core.subscriptions, desktop.core.downloads, desktop.core.ingestion, desktop.database
+  }
+  view ingestion {
+    title '下载与本地文件的整理及独立交付'
+    include desktop.core.downloads, desktop.managed.completed, desktop.local, desktop.core.ingestion, desktop.parser, tmdb, desktop.target, desktop.core.delivery, emby
   }
 }

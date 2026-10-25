@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { CoreDatabase, migrations, SCHEMA_VERSION } from "./database";
+import { sourceConfigurationSchema } from "@media-marshal/contracts";
+import { randomUUID } from "node:crypto";
 const directories: string[] = [];
 async function temporary() {
   const directory = await mkdtemp(join(tmpdir(), "marshal-db-"));
@@ -18,6 +20,25 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v13 来源快照原文升级后保持，默认忽略兼容；旧核心拒绝 v14", async () => {
+    const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 13)), id = randomUUID(), stamp = new Date().toISOString();
+    const configuration = JSON.stringify({ type: "local", name: "既有来源", client: "baidu", sourcePath: "/既有输入", organization: { targetPath: "/既有目标" } });
+    first.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,paused,created_at) VALUES(?,'既有来源','baidu','/既有输入','/既有目标','AUTO','COPY',1,?)").run(id, stamp);
+    first.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,paused,local_source_id,created_at,updated_at) VALUES(?,'local',1,1,?,1,?,?,?)").run(id, configuration, id, stamp, stamp);
+    first.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,created_at) VALUES(?,1,?,?,?)").run(id, configuration, id, stamp); first.close();
+    const upgraded = await CoreDatabase.open(path);
+    try {
+      expect(upgraded.schemaVersion).toBe(14);
+      expect(upgraded.connection.prepare("SELECT draft_json,paused,local_source_id FROM source_rule").get()).toEqual({ draft_json: configuration, paused: 1, local_source_id: id });
+      expect(upgraded.connection.prepare("SELECT configuration_json FROM source_rule_version").get()).toEqual({ configuration_json: configuration });
+      expect(sourceConfigurationSchema.parse(JSON.parse(configuration))).not.toHaveProperty("ignoredFilePatterns");
+      expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
+    } finally { upgraded.close(); }
+    const backup = new Database(`${path}.before-v14.bak`, { readonly: true });
+    try { expect(backup.pragma("user_version", { simple: true })).toBe(13); expect(backup.prepare("SELECT draft_json FROM source_rule").get()).toEqual({ draft_json: configuration }); }
+    finally { backup.close(); }
+    await expect(CoreDatabase.open(path, migrations.slice(0, 13))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
   it("生产连接独占所有权，旧所有者释放后才能重新打开", async () => {
     const path = await temporary();
     const first = await CoreDatabase.open(path, migrations, { exclusiveOwner: true });

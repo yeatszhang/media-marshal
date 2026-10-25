@@ -1,7 +1,26 @@
 @import "tailwindcss";
 
+.source-rule-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; padding: 0; margin: 18px 0 0; border: 0; }
+.source-rule-fields label { display: grid; gap: 8px; min-width: 0; }
+.source-rule-fields .cloud-checkbox { display: flex; align-items: center; gap: 10px; }
+.source-rule-fields textarea { width: 100%; min-width: 0; resize: vertical; border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: white; }
+.source-rule-fields .notice { flex-wrap: wrap; line-height: 1.6; }
+.source-rule-card { min-width: 0; padding: 20px; }
+.source-rule-card h3 { overflow-wrap: anywhere; min-width: 0; }
+.source-rule-card .cloud-browser-toolbar { align-items: flex-start; }
+.source-rule-card .cloud-root-path { overflow-wrap: anywhere; white-space: pre-wrap; }
+.source-card-status { font-size: 12px; color: var(--muted); margin: 10px 0; }
+.task-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px; margin: 0; font-size: 13px; color: var(--muted); }
+.task-filter select { width: auto; margin: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); }
+.source-inline-link { font-size: 12px; color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
+.source-remote-picker { margin-bottom: 24px; scroll-margin-top: 16px; }
+.source-remote-picker .cloud-files th:first-child { width: 50%; }
+.source-remote-picker .cloud-files th:nth-child(2) { width: 16%; }
+.source-rule-editor .cloud-preview .form-actions { flex-wrap: wrap; }
+
 .cloud-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); align-items: start; gap: 20px; }
 .cloud-credential-form label + label { margin-top: 18px; }
+.cloud-login-methods { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
 .cloud-accounts { padding: 12px; }
 .cloud-account { border-radius: 8px; border: 1px solid transparent; margin-bottom: 10px; padding: 8px; }
 .cloud-account.selected { border-color: var(--ring); background: #f2f8f5; }

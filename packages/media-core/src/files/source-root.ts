@@ -1,5 +1,5 @@
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open, readdir, realpath, type FileHandle } from "node:fs/promises";
+import { access, lstat, open, readdir, realpath, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -33,7 +33,7 @@ export class SourceRoot {
     }
     await this.check(); return path;
   }
-  async inspect(segments: readonly string[]): Promise<SourceSnapshot> { return this.snapshot(await lstat(await this.path(segments), { bigint: true })); }
+  async inspect(segments: readonly string[]): Promise<SourceSnapshot> { const path = await this.path(segments); await access(path, constants.R_OK); return this.snapshot(await lstat(path, { bigint: true })); }
   async read(segments: readonly string[], expected: SourceSnapshot, consume: (handle: FileHandle, path: string) => Promise<void>) {
     const path = await this.path(segments), handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
@@ -52,7 +52,7 @@ export class SourceRoot {
     }
     if (position !== expectedSize) throw changed(); return hash.digest("hex");
   }
-  async discover(prefix: readonly string[] = [], limit = 10000): Promise<string[][]> {
+  async discover(prefix: readonly string[] = [], limit = 10000, ignored: (parts: readonly string[]) => boolean = () => false): Promise<string[][]> {
     await this.check(); const files: string[][] = [], directories = [[...prefix]]; let count = 0;
     while (directories.length) {
       const parts = directories.shift()!; if (parts.length >= 64) throw new DesktopError("CONFLICT", "来源目录层级过深，请缩小扫描范围");
@@ -61,7 +61,7 @@ export class SourceRoot {
       for (const entry of entries) {
         if (++count > limit) throw new DesktopError("CONFLICT", "本次扫描超过一万项，请选择更小的来源目录");
         const relative = [...parts, entry.name];
-        if (entry.isSymbolicLink() || isManagedPrivatePath(relative)) continue;
+        if (entry.isSymbolicLink() || isManagedPrivatePath(relative) || ignored(relative)) continue;
         if (entry.isDirectory()) directories.push(relative); else if (entry.isFile()) files.push(relative);
       }
     }

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { CloudError, cloudFailure, cloudFiltersSchema, type CloudFailure, type CloudInput, type CloudSubscription } from "@media-marshal/contracts";
+import { CloudError, cloudFailure, cloudFiltersSchema, type CloudFailure, type CloudInput, type CloudSubscription, type SourceConfiguration } from "@media-marshal/contracts";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { RemoteCatalog } from "./catalog.js";
 import type { CloudRoots } from "./roots.js";
@@ -49,10 +49,16 @@ export class CloudSubscriptions {
     const row = this.database.connection.prepare("SELECT subscription_id,signature FROM cloud_subscription_command WHERE request_key=?").get(requestKey) as { subscription_id: string; signature: string } | undefined;
     if (row && row.signature !== hash) throw new CloudError("CONFLICT"); return row?.subscription_id;
   }
+  private sourceEnabled(id: string) {
+    const owner = this.database.connection.prepare("SELECT s.paused,s.review_required,json_extract(v.configuration_json,'$.periodic.enabled') AS periodic FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.subscription_id=?").get(id) as { paused: number; review_required: number; periodic: number } | undefined;
+    return !owner || (!owner.paused && !owner.review_required && !!owner.periodic);
+  }
   configure(input: CloudInput<"cloud.subscriptions.configure">): CloudSubscription {
     if (this.closed) throw new CloudError("INTERRUPTED");
     const db = this.database.connection, interval = input.intervalSeconds ?? 900, hash = signature({ operation: "configure", subscriptionId: input.subscriptionId ?? null, configurationVersion: input.configurationVersion ?? null, previewId: input.previewId, interval });
     const repeated = this.previous(input.requestKey, hash); if (repeated) return this.dto(this.row(repeated));
+    if (input.subscriptionId && db.prepare("SELECT 1 FROM source_rule_version WHERE subscription_id=? LIMIT 1").get(input.subscriptionId)) throw new CloudError("CONFLICT");
+    if (db.prepare("SELECT 1 FROM source_rule_preview WHERE download_preview_id=?").get(input.previewId)) throw new CloudError("CONFLICT");
     const preview = this.downloads.previews.row(input.previewId);
     if (!preview) throw new CloudError("REMOTE_NOT_FOUND");
     const snapshot: PreviewSnapshot = JSON.parse(preview.snapshot_json), old = input.subscriptionId ? this.row(input.subscriptionId) : null;
@@ -74,6 +80,50 @@ export class CloudSubscriptions {
     for (const preview of abandoned) this.downloads.previews.cancel(preview);
     this.cancelStaleJobs(); return this.dto(this.row(id));
   }
+  /** 仅由来源聚合协调；commit 不触发内存取消，外层事务成功后才 activate。 */
+  prepareSourceConfiguration(input: { configuration: Extract<SourceConfiguration, { type: "cloud" }>; previewId: string; previousSubscriptionId: string | null; version: number }) {
+    if (this.closed) throw new CloudError("INTERRUPTED");
+    const { configuration } = input, db = this.database.connection, preview = this.downloads.previews.row(input.previewId);
+    if (!preview) throw new CloudError("REMOTE_NOT_FOUND");
+    const snapshot: PreviewSnapshot = JSON.parse(preview.snapshot_json);
+    if (preview.state !== "READY" || !snapshot.complete || snapshot.failure || snapshot.items.some((item) => item.issue) || snapshot.variant || snapshot.layout !== "drive" || preview.expires_at <= new Date(this.now()).toISOString()
+      || preview.account_id !== configuration.accountId || preview.remote_root_ref !== configuration.remoteRef || preview.target_root_id !== configuration.downloadRootId
+      || JSON.stringify(cloudFiltersSchema.parse(snapshot.filters)) !== JSON.stringify(configuration.filters)
+      || (configuration.periodic.enabled && snapshot.rootType !== "directory")) throw new CloudError("CONFLICT");
+    if (this.catalog.source(preview.account_id, preview.remote_root_ref).binding.generation !== snapshot.binding.generation) throw new CloudError("REMOTE_CHANGED");
+    const old = input.previousSubscriptionId ? this.row(input.previousSubscriptionId) : null;
+    // 重新授权也会推进订阅执行栅栏，不能用较小的来源版本令它倒退。
+    const executionVersion = Math.max(input.version, (old?.configuration_version ?? 0) + 1);
+    const reusable = old && old.account_id === configuration.accountId && old.state !== "CANCELLED" && snapshot.rootType === "directory" ? old : null;
+    const id = configuration.periodic.enabled || reusable ? reusable?.id ?? randomUUID() : null;
+    if (id && !reusable && (db.prepare("SELECT count(*) AS n FROM cloud_subscription").get() as { n: number }).n >= 100) throw new CloudError("CONFLICT");
+    let abandoned: string[] = [];
+    return {
+      commit: () => {
+        if (!db.inTransaction) throw new Error("周期配置必须与来源在同一事务提交");
+        if (this.closed || preview.expires_at <= new Date(this.now()).toISOString()) throw new CloudError("INTERRUPTED");
+        const now = new Date(this.now()).toISOString();
+        if (old) {
+          if (this.row(old.id).configuration_version !== old.configuration_version) throw new CloudError("CONFLICT");
+          abandoned = this.abandon(old.id, undefined, false);
+          db.prepare("UPDATE cloud_subscription SET enabled=0,next_scan_at=NULL,configuration_version=configuration_version+1,updated_at=? WHERE id=?").run(now, old.id);
+          db.prepare("UPDATE cloud_subscription_runtime SET state='PAUSED',retry_after=NULL WHERE subscription_id=?").run(old.id);
+        }
+        if (id) {
+          db.prepare("INSERT INTO cloud_subscription(id,account_id,remote_root_ref,target_root_id,filters_json,interval_seconds,enabled,configuration_version,confirmed_preview_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET remote_root_ref=excluded.remote_root_ref,target_root_id=excluded.target_root_id,filters_json=excluded.filters_json,interval_seconds=excluded.interval_seconds,enabled=excluded.enabled,configuration_version=excluded.configuration_version,confirmed_preview_id=excluded.confirmed_preview_id,next_scan_at=NULL,updated_at=excluded.updated_at")
+            .run(id, configuration.accountId, configuration.remoteRef, configuration.downloadRootId, JSON.stringify(configuration.filters), configuration.periodic.intervalSeconds, Number(configuration.periodic.enabled), executionVersion, preview.id, now, now);
+          db.prepare("INSERT INTO cloud_subscription_runtime(subscription_id,state) VALUES(?,?) ON CONFLICT(subscription_id) DO UPDATE SET state=excluded.state,failure_json=NULL,retry_count=0,retry_after=NULL")
+            .run(id, configuration.periodic.enabled ? "SCANNING" : "PAUSED");
+          if (configuration.periodic.enabled) {
+            db.prepare("UPDATE cloud_preview SET state='CONFIRMED' WHERE id=?").run(preview.id);
+            this.createScan(id, configuration.accountId, configuration.remoteRef, executionVersion, preview.id);
+          }
+        }
+        return id;
+      },
+      activate: () => { for (const preview of abandoned) this.downloads.previews.cancel(preview); this.cancelStaleJobs(); },
+    };
+  }
   private createScan(subscriptionId: string, accountId: string, remoteRef: string, version: number, previewId?: string) {
     const id = randomUUID(), generation = randomUUID();
     this.database.connection.prepare("INSERT INTO cloud_scan(id,subscription_id,account_id,remote_root_ref,generation,configuration_version,state,started_at) VALUES(?,?,?,?,?,?,'SCANNING',?)").run(id, subscriptionId, accountId, remoteRef, generation, version, new Date(this.now()).toISOString());
@@ -85,10 +135,12 @@ export class CloudSubscriptions {
     if (cancel) for (const preview of ids) this.downloads.previews.cancel(preview);
     this.database.connection.prepare("UPDATE cloud_scan SET state='ABANDONED',cursor=NULL WHERE subscription_id=? AND state='SCANNING' AND (? IS NULL OR id=?)").run(id, scanId ?? null, scanId ?? null); return ids;
   }
-  control(input: CloudInput<"cloud.subscriptions.control">): CloudSubscription {
+  control(input: CloudInput<"cloud.subscriptions.control">, fromSource = false): CloudSubscription {
     if (this.closed) throw new CloudError("INTERRUPTED");
     const db = this.database.connection, hash = signature({ id: input.subscriptionId, operation: input.operation }), repeated = this.previous(input.requestKey, hash);
     if (repeated) return this.dto(this.row(repeated)); const row = this.row(input.subscriptionId);
+    if (!fromSource && db.prepare("SELECT 1 FROM source_rule WHERE subscription_id=?").get(row.id)) throw new CloudError("CONFLICT");
+    if (["resume", "scan"].includes(input.operation) && !this.sourceEnabled(row.id)) throw new CloudError("CONFLICT");
     if (row.state === "CANCELLED") throw new CloudError("CONFLICT");
     if (["resume", "scan"].includes(input.operation) && !row.confirmed_preview_id) throw new CloudError("CONFLICT");
     if (input.operation === "scan" && !row.enabled) throw new CloudError("CONFLICT");
@@ -109,9 +161,9 @@ export class CloudSubscriptions {
     if (input.operation === "pause" || input.operation === "cancel") {
       const excluded = input.operation === "cancel" ? "'COMPLETED','CANCELLED','CANCELLING'" : "'COMPLETED','CANCELLED','CANCELLING','PAUSING','PAUSED'";
       const jobs = db.prepare(`SELECT id,state FROM download_job WHERE subscription_id=? AND state NOT IN (${excluded})`).all(row.id) as { id: string; state: string }[];
-      for (const job of jobs) this.downloads.control({ jobId: job.id, operation: input.operation, requestKey: randomUUID() });
+      if (!fromSource) for (const job of jobs) this.downloads.control({ jobId: job.id, operation: input.operation, requestKey: randomUUID() });
     }
-    if (input.operation === "resume" && !this.downloads.pauseStatus().paused) {
+    if (!fromSource && input.operation === "resume" && !this.downloads.pauseStatus().paused) {
       const jobs = db.prepare("SELECT id FROM download_job WHERE subscription_id=? AND configuration_version=? AND state='PAUSED'").all(row.id, row.configuration_version) as { id: string }[];
       for (const job of jobs) this.downloads.control({ jobId: job.id, operation: "resume", requestKey: randomUUID() });
     }
@@ -139,7 +191,7 @@ export class CloudSubscriptions {
   }
   private async process(scan: ScanRow) {
     const db = this.database.connection, row = this.row(scan.subscription_id);
-    if (!row.enabled || row.configuration_version !== scan.configuration_version) { this.abandon(row.id, scan.id); return; }
+    if (!row.enabled || !this.sourceEnabled(row.id) || row.configuration_version !== scan.configuration_version) { this.abandon(row.id, scan.id); return; }
     if (!scan.preview_id) {
       try {
         const preview = this.downloads.previews.start({ accountId: row.account_id, remoteRef: row.remote_root_ref, targetGrantId: row.target_root_id, requestKey: scan.generation, filters: cloudFiltersSchema.parse(JSON.parse(row.filters_json)), layout: "drive" });
@@ -190,17 +242,17 @@ export class CloudSubscriptions {
       for (const scan of scans) { if (this.closed) break; await this.process(scan); }
       const ready = new Set(this.catalog.accounts().filter((account) => ["READY", "RESELECT_REQUIRED"].includes(account.status)).map((account) => account.id)), now = new Date(this.now()).toISOString();
       const due = db.prepare(joined + " WHERE s.enabled=1 AND s.next_scan_at<=? AND r.state IN ('IDLE','RETRY_WAIT') AND NOT EXISTS(SELECT 1 FROM cloud_scan c WHERE c.subscription_id=s.id AND c.state='SCANNING') AND NOT EXISTS(SELECT 1 FROM cloud_account_backoff b WHERE b.account_id=s.account_id AND b.until_at>?) ORDER BY s.next_scan_at,s.id LIMIT 4").all(now, now) as SubscriptionRow[];
-      for (const row of due) if (!this.closed && ready.has(row.account_id)) db.transaction(() => {
+      for (const row of due) if (!this.closed && this.sourceEnabled(row.id) && ready.has(row.account_id)) db.transaction(() => {
         this.createScan(row.id, row.account_id, row.remote_root_ref, row.configuration_version);
         db.prepare("UPDATE cloud_subscription_runtime SET state='SCANNING' WHERE subscription_id=?").run(row.id);
       })();
-      db.prepare("DELETE FROM cloud_preview WHERE expires_at<=? AND NOT EXISTS(SELECT 1 FROM download_job j WHERE j.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_subscription s WHERE s.confirmed_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_scan_plan p JOIN cloud_scan c ON c.id=p.scan_id WHERE c.state='SCANNING' AND (p.preview_id=cloud_preview.id OR p.execution_preview_id=cloud_preview.id))").run(now);
+      db.prepare("DELETE FROM cloud_preview WHERE expires_at<=? AND NOT EXISTS(SELECT 1 FROM source_rule_execution_preview e WHERE e.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_run r WHERE r.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_preview r WHERE r.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM download_job j WHERE j.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_subscription s WHERE s.confirmed_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_scan_plan p JOIN cloud_scan c ON c.id=p.scan_id WHERE c.state='SCANNING' AND (p.preview_id=cloud_preview.id OR p.execution_preview_id=cloud_preview.id))").run(now);
     } finally { this.ticking = false; }
   }
   async wake(hostGeneration: string) {
     const ready = new Set(this.catalog.accounts().filter((account) => account.status === "READY").map((account) => account.id));
     const db = this.database.connection, rows = db.prepare(joined + " WHERE s.enabled=1 AND r.state IN ('IDLE','AUTH_REQUIRED','BLOCKED_LOCAL')").all() as SubscriptionRow[];
-    for (const row of rows) if (ready.has(row.account_id)) {
+    for (const row of rows) if (this.sourceEnabled(row.id) && ready.has(row.account_id)) {
       try { this.catalog.source(row.account_id, row.remote_root_ref); await this.roots.files.get(row.target_root_id).check(); }
       catch { continue; }
       if (this.closed) return;

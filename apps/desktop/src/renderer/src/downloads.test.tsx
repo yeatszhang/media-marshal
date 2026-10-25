@@ -7,6 +7,7 @@ import type { DesktopApi, DownloadJob } from "@media-marshal/contracts";
 import { createRendererApplication, DownloadsViewModel } from "./services";
 import { Downloads } from "./pages/Downloads";
 import { i18nReady } from "./i18n";
+import { MemoryRouter } from "react-router-dom";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); document.body.innerHTML = ""; });
@@ -15,7 +16,7 @@ async function mount(initial: DownloadJob[]) {
   await i18nReady; let items = initial;
   const api = { getCloudDownloadPause: vi.fn(async () => ({ paused: false, pausing: false })), listDownloads: vi.fn(async () => ({ items, total: items.length })), controlDownload: vi.fn(async ({ jobId, operation }: { jobId: string; operation: string }) => { items = items.map((item) => item.id === jobId ? { ...item, state: operation === "pause" ? "PAUSED" : "RUNNING" } : item); return { jobId }; }), openDownloadDirectory: vi.fn(async () => {}), previewDownload: vi.fn(), confirmDownload: vi.fn() } as unknown as DesktopApi;
   const app = createRendererApplication(api); await app.start(); const element = document.createElement("div"); document.body.append(element); const root = createRoot(element);
-  await act(async () => root.render(<StrictMode><ContainerProvider value={app.container}><Downloads /></ContainerProvider></StrictMode>));
+  await act(async () => root.render(<StrictMode><MemoryRouter><ContainerProvider value={app.container}><Downloads /></ContainerProvider></MemoryRouter></StrictMode>));
   cleanup.push(async () => { await act(async () => root.unmount()); await app.stop(); });
   return { app, api, model: app.container.get(DownloadsViewModel), element };
 }
@@ -39,5 +40,11 @@ describe("下载队列交互与观测边界", () => {
     const f = await mount([job("RECONCILING")]);
     expect(f.element.textContent).toContain("等待旧执行停止或核对文件"); expect([...f.element.querySelectorAll("button")].some((button) => button.textContent === "恢复下载")).toBe(false);
     await act(async () => { await f.model.refresh(2); }); expect(f.api.listDownloads).toHaveBeenLastCalledWith({ page: 2, pageSize: 25 });
+  });
+  it("只下载与归属待核对分别说明，不把未启用的整理显示为待入库", async () => {
+    const completed = job("COMPLETED"), progress = { ...completed.progress, completedItems: 1, totalItems: 1 }, counts = { pending: 0, candidates: 0, organized: 0, collected: 0, needsAttention: 0 };
+    const f = await mount([{ ...completed, progress, ingestion: { ...counts, organization: "NOT_ENABLED" } }, { ...completed, id: crypto.randomUUID(), progress, ingestion: { ...counts, pending: 1, organization: "REVIEW_REQUIRED" } }]);
+    expect(f.element.textContent).toContain("未启用整理"); expect(f.element.textContent).toContain("整理归属待核对"); expect(f.element.textContent).not.toContain("当前待接入");
+    expect(f.api.confirmDownload).not.toHaveBeenCalled(); expect(f.api.previewDownload).not.toHaveBeenCalled();
   });
 });

@@ -12,7 +12,7 @@ import { acceptExecutionEvent } from "./planning.js";
 interface Item { id: string; account_id: string; remote_ref: string; version_json: string; target_root_id: string; target_path_key: string; target_segments_json: string; expected_size: number; state: DownloadState; attempt_count: number }
 interface Attempt { id: string; host_generation: string; core_generation: string; binding_generation: string; execution_id: string | null; state: string; plan_json: string }
 interface Running { item: Item; context?: ExecutionContext; handle?: ExecutionHandle; stop: boolean; sequence: number; confirmedExit?: { exitCode: number; stopped: boolean }; failure?: CloudFailure; done?: Promise<void> }
-export interface DownloadOwner { subscriptionId: string; configurationVersion: number; scanId: string }
+export type DownloadOwner = { subscriptionId: string; configurationVersion: number; scanId: string } | { sourceId: string; sourceVersion: number; runId: string };
 const activeStates = "'QUEUED','RUNNING','VERIFYING','COMMITTING','RETRY_WAIT','AUTH_REQUIRED','BLOCKED_LOCAL','RECONCILING'";
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const versionKey = (version: unknown) => createHash("sha256").update(JSON.stringify(version)).digest("hex");
@@ -108,25 +108,46 @@ export class CloudDownloads {
         }
       } else {
         const jobs = db.prepare("SELECT j.id FROM cloud_global_pause_job p JOIN download_job j ON j.id=p.job_id WHERE j.state='PAUSED'").all() as { id: string }[];
-        for (const job of jobs) this.control({ jobId: job.id, operation: "resume", requestKey: randomUUID() }, true);
+        for (const job of jobs) if (this.sourceEligible(job.id)) this.control({ jobId: job.id, operation: "resume", requestKey: randomUUID() }, true);
         db.prepare("DELETE FROM cloud_global_pause_job").run();
       }
       db.prepare("INSERT INTO app_setting(key,value) VALUES(?,?)").run(key, String(input.paused));
     })(); return this.pauseStatus();
   }
   private demands(itemId: string, excludeJob?: string): number {
-    return (this.database.connection.prepare(`SELECT count(*) AS n FROM download_job_item d JOIN download_job j ON j.id=d.job_id WHERE d.item_id=? AND d.demand_state='ACTIVE' AND j.state IN (${activeStates}) AND (? IS NULL OR j.id!=?)`).get(itemId, excludeJob ?? null, excludeJob ?? null) as { n: number }).n;
+    return (this.database.connection.prepare(`SELECT count(*) AS n FROM download_job_item d JOIN download_job j ON j.id=d.job_id LEFT JOIN download_source_demand o ON o.job_id=j.id LEFT JOIN source_rule s ON s.id=o.source_id WHERE d.item_id=? AND d.demand_state='ACTIVE' AND j.state IN (${activeStates}) AND (o.job_id IS NULL OR (s.version=o.source_version AND s.paused=0 AND s.review_required=0)) AND (? IS NULL OR j.id!=?)`).get(itemId, excludeJob ?? null, excludeJob ?? null) as { n: number }).n;
+  }
+  sourceEligible(jobId: string) {
+    return !this.database.connection.prepare("SELECT 1 FROM download_source_demand d JOIN source_rule s ON s.id=d.source_id WHERE d.job_id=? AND (s.version!=d.source_version OR s.paused=1 OR s.review_required=1)").get(jobId);
+  }
+  sourceRuntimeReady(accountId: string, rootId: string) {
+    if (!this.catalog.accounts().some((account) => account.id === accountId && ["READY", "RESELECT_REQUIRED"].includes(account.status))) return false;
+    try { this.roots.files.get(rootId); return true; } catch { return false; }
   }
   private retainedDemand(itemId: string) { return !!this.database.connection.prepare("SELECT 1 FROM download_job_item d JOIN download_job j ON j.id=d.job_id WHERE d.item_id=? AND d.demand_state='ACTIVE' AND j.state NOT IN ('CANCELLED','CANCELLING') LIMIT 1").get(itemId); }
+  private sourceSnapshot(previewId: string, owner?: DownloadOwner) {
+    const db = this.database.connection;
+    if (owner && "sourceId" in owner) return { source_id: owner.sourceId, source_version: owner.sourceVersion };
+    if (owner) return db.prepare("SELECT id AS source_id,version AS source_version FROM source_rule WHERE subscription_id=?").get(owner.subscriptionId) as { source_id: string; source_version: number } | undefined;
+    const preview = db.prepare("SELECT source_id,version+1 AS source_version,state FROM source_rule_preview WHERE download_preview_id=?").get(previewId) as { source_id: string; source_version: number; state: string } | undefined;
+    if (preview && preview.state !== "APPLIED") throw new CloudError("CONFLICT");
+    return preview;
+  }
+  private assertSourceSnapshot(snapshot: { source_id: string; source_version: number } | undefined) {
+    if (snapshot && !this.database.connection.prepare("SELECT 1 FROM source_rule WHERE id=? AND version=? AND paused=0 AND review_required=0").get(snapshot.source_id, snapshot.source_version)) throw new CloudError("CONFLICT");
+  }
   async confirm(input: CloudInput<"cloud.downloads.confirm">, owner?: DownloadOwner) {
     if (this.closed) throw new CloudError("INTERRUPTED");
+    const subscriptionOwner = owner && "subscriptionId" in owner ? owner : undefined;
     const db = this.database.connection, prior = db.prepare("SELECT id,preview_id FROM download_job WHERE request_key=?").get(input.requestKey) as { id: string; preview_id: string } | undefined;
     if (prior) { if (prior.preview_id !== input.previewId) throw new CloudError("CONFLICT"); return { jobId: prior.id }; }
     const preview = this.previews.row(input.previewId);
     if (!preview) throw new CloudError("REMOTE_NOT_FOUND");
+    if (!owner && db.prepare("SELECT 1 FROM source_rule_execution_preview WHERE download_preview_id=?").get(preview.id)) throw new CloudError("CONFLICT");
     const existing = db.prepare("SELECT id FROM download_job WHERE preview_id=?").get(preview.id) as { id: string } | undefined;
     if (existing) return { jobId: existing.id };
     const snapshot: PreviewSnapshot = JSON.parse(preview.snapshot_json);
+    const source = this.sourceSnapshot(preview.id, owner); this.assertSourceSnapshot(source);
     if (!(preview.state === "READY" || (owner && preview.state === "CONFIRMED")) || !snapshot.complete || snapshot.failure || preview.expires_at <= new Date(this.now()).toISOString()) throw new CloudError("CONFLICT");
     if (!owner && db.prepare("SELECT 1 FROM cloud_subscription WHERE confirmed_preview_id=?").get(preview.id)) throw new CloudError("CONFLICT");
     if (this.catalog.source(preview.account_id, preview.remote_root_ref).binding.generation !== snapshot.binding.generation) throw new CloudError("REMOTE_CHANGED");
@@ -137,8 +158,11 @@ export class CloudDownloads {
       const repeated = db.prepare("SELECT id,preview_id FROM download_job WHERE request_key=? OR preview_id=?").get(input.requestKey, preview.id) as { id: string; preview_id: string } | undefined;
       if (repeated) { if (repeated.preview_id !== preview.id) throw new CloudError("CONFLICT"); return repeated.id; }
       if (this.closed || preview.expires_at <= new Date(this.now()).toISOString()) throw new CloudError("CONFLICT");
-      if (owner && !db.prepare("SELECT 1 FROM cloud_subscription s JOIN cloud_scan c ON c.subscription_id=s.id JOIN cloud_scan_plan p ON p.scan_id=c.id WHERE s.id=? AND s.enabled=1 AND s.configuration_version=? AND c.id=? AND c.configuration_version=s.configuration_version AND c.state='SCANNING' AND p.execution_preview_id=?").get(owner.subscriptionId, owner.configurationVersion, owner.scanId, preview.id)) throw new CloudError("INTERRUPTED");
-      db.prepare("INSERT INTO download_job(id,account_id,subscription_id,preview_id,request_key,state,configuration_version,created_at,updated_at) VALUES(?,?,?,?,?,'QUEUED',?,?,?)").run(id, preview.account_id, owner?.subscriptionId ?? null, preview.id, input.requestKey, owner?.configurationVersion ?? 1, now, now);
+      this.assertSourceSnapshot(source);
+      if (owner && "subscriptionId" in owner && !db.prepare("SELECT 1 FROM cloud_subscription s JOIN cloud_scan c ON c.subscription_id=s.id JOIN cloud_scan_plan p ON p.scan_id=c.id WHERE s.id=? AND s.enabled=1 AND s.configuration_version=? AND c.id=? AND c.configuration_version=s.configuration_version AND c.state='SCANNING' AND p.execution_preview_id=?").get(owner.subscriptionId, owner.configurationVersion, owner.scanId, preview.id)) throw new CloudError("INTERRUPTED");
+      if (owner && "runId" in owner && !db.prepare("SELECT 1 FROM source_rule_run WHERE id=? AND source_id=? AND source_version=? AND state='SCANNING' AND preview_id=?").get(owner.runId, owner.sourceId, owner.sourceVersion, preview.id)) throw new CloudError("INTERRUPTED");
+      db.prepare("INSERT INTO download_job(id,account_id,subscription_id,preview_id,request_key,state,configuration_version,created_at,updated_at) VALUES(?,?,?,?,?,'QUEUED',?,?,?)").run(id, preview.account_id, subscriptionOwner?.subscriptionId ?? null, preview.id, input.requestKey, subscriptionOwner?.configurationVersion ?? source?.source_version ?? 1, now, now);
+      if (source) db.prepare("INSERT INTO download_source_demand(job_id,source_id,source_version) VALUES(?,?,?)").run(id, source.source_id, source.source_version);
       for (const item of snapshot.items) {
         const previous = db.prepare("SELECT id,state FROM download_item WHERE account_id=? AND remote_ref=? AND version_key=? AND request_variant=? AND target_root_id=? AND target_path_key=?").get(preview.account_id, item.source.remoteRef, item.versionKey, snapshot.variant ?? "", preview.target_root_id, item.targetPathKey) as { id: string; state: DownloadState } | undefined;
         const itemId = previous?.id ?? item.itemId;
@@ -166,7 +190,9 @@ export class CloudDownloads {
       const previous = db.prepare("SELECT job_id,operation FROM download_control WHERE request_key=?").get(input.requestKey) as { job_id: string; operation: string } | undefined;
       if (previous) { if (previous.job_id !== input.jobId || previous.operation !== input.operation) throw new CloudError("CONFLICT"); return; }
       if (!global && ["resume", "retry"].includes(input.operation) && this.pauseStatus().paused) throw new CloudError("CONFLICT");
+      if (["resume", "retry"].includes(input.operation) && !this.sourceEligible(input.jobId)) throw new CloudError("CONFLICT");
       if (!global && ["pause", "cancel"].includes(input.operation)) db.prepare("DELETE FROM cloud_global_pause_job WHERE job_id=?").run(input.jobId);
+      if (!global && ["pause", "cancel"].includes(input.operation)) db.prepare("DELETE FROM source_rule_pause_job WHERE job_id=?").run(input.jobId);
       const job = db.prepare("SELECT state FROM download_job WHERE id=?").get(input.jobId) as { state: DownloadState } | undefined;
       if (!job) throw new CloudError("REMOTE_NOT_FOUND");
       if (["PAUSING", "CANCELLING"].includes(job.state) && ["resume", "retry"].includes(input.operation)) throw new CloudError("CONFLICT");
@@ -233,8 +259,11 @@ export class CloudDownloads {
       const total = values.reduce((sum, item) => sum + item.expected_size, 0), bytes = values.reduce((sum, item) => sum + (item.state === "COMPLETED" ? item.expected_size : ["RUNNING", "VERIFYING", "COMMITTING"].includes(item.state) ? item.bytes : 0), 0), failed = values.find((item) => item.failure_code);
       const totalUnknown = bytes > total || values.some((item) => item.state === "RUNNING" && item.total_bytes === null);
       const stages = db.prepare("SELECT o.state AS outbox_state,c.state AS candidate_state,t.status,t.delivery_status FROM download_job_item d JOIN download_item i ON i.id=d.item_id LEFT JOIN ingestion_outbox o ON o.item_id=i.id AND o.version_key=i.version_key LEFT JOIN ingestion_candidate c ON c.managed_item_id=i.id AND c.managed_version_key=i.version_key LEFT JOIN media_task t ON t.id=c.task_id WHERE d.job_id=? AND i.state='COMPLETED'").all(job.id) as { outbox_state: string | null; candidate_state: string | null; status: string | null; delivery_status: string | null }[];
-      const ingestion = { pending: stages.filter((row) => row.outbox_state !== "ACKNOWLEDGED").length, candidates: stages.filter((row) => row.candidate_state !== null).length, organized: stages.filter((row) => row.status === "DONE").length, collected: stages.filter((row) => row.delivery_status === "COLLECTED").length, needsAttention: stages.filter((row) => row.status === "FAILED" || row.delivery_status === "NEEDS_ATTENTION").length };
-      return { id: job.id, accountId: job.account_id, name: (JSON.parse(job.snapshot_json) as PreviewSnapshot).name, state: job.state, updatedAt: job.updated_at, failure: failed ? cloudFailure(new CloudError(failed.failure_code!)) : null, ingestion, progress: { bytes, totalBytes: totalUnknown ? null : total, bytesPerSecond: values.reduce((sum, item) => sum + (item.state === "RUNNING" ? item.speed : 0), 0), completedItems: values.filter((item) => item.state === "COMPLETED").length, totalItems: values.length } };
+      const owner = db.prepare("SELECT d.source_id,d.source_version,d.review_required,s.review_required AS source_review,json_extract(v.configuration_json,'$.organization') AS organization FROM download_source_demand d JOIN source_rule_version v ON v.source_id=d.source_id AND v.version=d.source_version JOIN source_rule s ON s.id=d.source_id WHERE d.job_id=?").get(job.id) as { source_id: string; source_version: number; review_required: number; source_review: number; organization: string | null } | undefined;
+      const organization = !owner ? "UNASSIGNED" : owner.review_required || owner.source_review ? "REVIEW_REQUIRED" : owner.organization ? "ENABLED" : "NOT_ENABLED";
+      const visible = organization === "NOT_ENABLED" ? [] : stages;
+      const ingestion = { organization, pending: visible.filter((row) => row.outbox_state !== "ACKNOWLEDGED").length, candidates: visible.filter((row) => row.candidate_state !== null).length, organized: visible.filter((row) => row.status === "DONE").length, collected: visible.filter((row) => row.delivery_status === "COLLECTED").length, needsAttention: visible.filter((row) => row.status === "FAILED" || row.delivery_status === "NEEDS_ATTENTION").length } as NonNullable<DownloadJob["ingestion"]>;
+      return { id: job.id, accountId: job.account_id, sourceId: owner?.source_id ?? null, sourceVersion: owner?.source_version ?? null, name: (JSON.parse(job.snapshot_json) as PreviewSnapshot).name, state: job.state, updatedAt: job.updated_at, failure: failed ? cloudFailure(new CloudError(failed.failure_code!)) : null, ingestion, progress: { bytes, totalBytes: totalUnknown ? null : total, bytesPerSecond: values.reduce((sum, item) => sum + (item.state === "RUNNING" ? item.speed : 0), 0), completedItems: values.filter((item) => item.state === "COMPLETED").length, totalItems: values.length } };
     });
     return { items, total: (db.prepare("SELECT count(*) AS n FROM download_job").get() as { n: number }).n };
   }

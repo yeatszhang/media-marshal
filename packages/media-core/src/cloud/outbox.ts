@@ -6,6 +6,7 @@ import type { CloudRoots } from "./roots.js";
 
 /** 接收端以 itemId/versionKey 做持久化唯一去重，提交候选事务之后才能返回确认。 */
 export interface ManagedIngestionSink {
+  canAccept?(input: { itemId: string; versionKey: string }): boolean;
   accept(candidate: { itemId: string; versionKey: string; rootId: string; completedSegments: string[]; sha256: string; size: number }, signal: AbortSignal): Promise<{ candidateId: string }>;
 }
 interface Delivery { id: string; item_id: string; version_key: string; target_root_id: string; target_segments_json: string; file_evidence_json: string; delivery_attempts: number }
@@ -26,6 +27,7 @@ export class IngestionOutbox {
     const rows = db.prepare("SELECT o.*,i.target_root_id,i.target_segments_json,c.file_evidence_json FROM ingestion_outbox o JOIN download_item i ON i.id=o.item_id AND i.version_key=o.version_key JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE o.state='PENDING' AND o.delivery_attempts<3 AND (o.next_attempt_at IS NULL OR o.next_attempt_at<=?) AND i.state='COMPLETED' ORDER BY o.created_at,o.id LIMIT 10").all(new Date(this.now()).toISOString()) as Delivery[];
     for (const row of rows) {
       if (this.closed) break;
+      if (this.sink!.canAccept && !this.sink!.canAccept({ itemId: row.item_id, versionKey: row.version_key })) continue;
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         db.prepare("UPDATE ingestion_outbox SET state='DELIVERING',delivery_attempts=delivery_attempts+1,updated_at=? WHERE id=? AND state='PENDING'").run(new Date(this.now()).toISOString(), row.id);

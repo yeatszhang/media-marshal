@@ -85,7 +85,7 @@ export class CoreService {
     if (targets.some((row) => { const grant = JSON.parse(row.grant_json) as ManagedRootGrant; return pathsOverlap(paths[0]!, grant.path, grant.volume) || (paths[1] !== grant.path && pathsOverlap(paths[1]!, grant.path, grant.volume)); })) throw new DesktopError("UNSAFE_PATH", "目录与媒体目标或历史操作目录重叠");
   }
   getRuntime(): CoreStatus {
-    const count = (table: "desktop_source" | "media_task") =>
+    const count = (table: "source_rule" | "media_task") =>
       (
         this.database.connection
           .prepare(`SELECT count(*) AS count FROM ${table}`)
@@ -93,7 +93,7 @@ export class CoreService {
       ).count;
     return {
       schemaVersion: this.database.schemaVersion,
-      sourceCount: count("desktop_source"),
+      sourceCount: count("source_rule"),
       taskCount: count("media_task"),
       mode: "manual-only",
       parser: this.components.parserReady() ? "ready" : "unavailable",
@@ -110,6 +110,7 @@ export class CoreService {
   }
   async saveSource(input: SourceDraft): Promise<DesktopSource> {
     this.writable();
+    if (input.id && this.database.connection.prepare("SELECT 1 FROM source_rule_version WHERE local_source_id=? OR ingestion_source_id=? LIMIT 1").get(input.id, input.id)) throw new DesktopError("CONFLICT", "请通过统一来源配置修改此规则");
     if (
       !isAbsolute(input.sourcePath) ||
       !isAbsolute(input.targetPath) ||
@@ -218,6 +219,7 @@ export class CoreService {
   }
   pauseSource(id: string, paused: boolean): DesktopSource {
     this.writable();
+    if (this.database.connection.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? OR ingestion_source_id=? LIMIT 1").get(id, id)) throw new DesktopError("CONFLICT", "请通过统一来源控制暂停状态");
     if (
       !this.database.connection
         .prepare("UPDATE desktop_source SET paused=? WHERE id=?")

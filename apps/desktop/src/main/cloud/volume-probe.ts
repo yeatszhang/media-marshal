@@ -18,15 +18,15 @@ export async function probeReadOnlyVolume(selectedPath: string, id: string = ran
   return probeVolume(selectedPath, id, false);
 }
 async function probeVolume(selectedPath: string, id: string, writable: boolean): Promise<ManagedRootGrant> {
-  if (process.platform !== "darwin") throw new CloudError("UNSUPPORTED_CAPABILITY");
+  if (process.platform !== "darwin") throw new CloudError("UNSUPPORTED_CAPABILITY", undefined, { reason: "UNSUPPORTED_FILESYSTEM" });
   try {
     const path = await realpath(selectedPath), initial = await lstat(path, { bigint: true });
     if (!initial.isDirectory() || initial.isSymbolicLink()) throw new Error();
     const device = (await command("/bin/df", ["-P", path])).trim().split("\n").at(-1)?.trim().split(/\s+/)[0];
-    if (!device || !/^\/dev\/disk\d+(?:s\d+)*$/.test(device)) throw new CloudError("UNSUPPORTED_CAPABILITY");
+    if (!device || !/^\/dev\/disk\d+(?:s\d+)*$/.test(device)) throw new CloudError("UNSUPPORTED_CAPABILITY", undefined, { reason: "UNSUPPORTED_FILESYSTEM" });
     const info = await command("/usr/sbin/diskutil", ["info", "-plist", device]);
     const fsType = plistValue(info, "FilesystemType"), volumeId = plistValue(info, "VolumeUUID")?.toLowerCase();
-    if (!fsType || !volumeId || (writable && !["apfs", "hfs"].includes(fsType))) throw new CloudError("UNSUPPORTED_CAPABILITY");
+    if (!fsType || !volumeId || (writable && !["apfs", "hfs"].includes(fsType))) throw new CloudError("UNSUPPORTED_CAPABILITY", undefined, { reason: "UNSUPPORTED_FILESYSTEM" });
     const pathMaxBytes = Number((await command("/usr/bin/getconf", ["PATH_MAX", path])).trim());
     const nonce = `.media-marshal-probe-${randomUUID()}`, casePath = join(path, nonce + "-A"), unicodePath = join(path, nonce + "-é");
     const owned: string[] = [];
@@ -46,5 +46,5 @@ async function probeVolume(selectedPath: string, id: string, writable: boolean):
     const current = await lstat(path, { bigint: true }), volume = await statfs(path, { bigint: true });
     if (initial.dev !== current.dev || initial.ino !== current.ino || initial.birthtimeNs !== current.birthtimeNs || await realpath(path) !== path) throw new Error();
     return managedRootGrantSchema.parse({ id, path, volume: { volumeId, rootInode: String(current.ino), rootBirthtimeNs: String(current.birthtimeNs), observedDevice: String(current.dev), fsTypeCode: String(volume.type), fsType, caseSensitive, unicodeEquivalent, pathMaxBytes } });
-  } catch (error) { if (error instanceof CloudError) throw error; throw new CloudError("LOCAL_UNAVAILABLE"); }
+  } catch (error) { if (error instanceof CloudError) throw error; throw new CloudError("LOCAL_UNAVAILABLE", undefined, { reason: ["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "") ? "PERMISSION_DENIED" : "DIRECTORY_UNAVAILABLE" }); }
 }

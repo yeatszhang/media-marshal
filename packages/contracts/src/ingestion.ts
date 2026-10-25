@@ -11,6 +11,8 @@ export type Recognition = z.infer<typeof recognitionSchema>;
 export const organizePreviewSchema = z.strictObject({ id, taskId: id, title: z.string().max(500), mediaType: z.enum(["MOVIE", "TV_SHOW"]), targetPath: z.string().max(16384), sourcePath: z.string().max(16384), size: z.number().int().positive(), season: z.number().int().nullable(), episode: z.number().int().nullable(), episodeEnd: z.number().int().nullable(), expiresAt: z.number().int(), operationId: id.nullable(), accessories: z.array(z.strictObject({ sourcePath: z.string().max(16384), targetPath: z.string().max(16384), size: z.number().int().positive() })).max(100).optional() });
 export type OrganizePreview = z.infer<typeof organizePreviewSchema>;
 export const ingestionActions = {
+  "ingestion.pause-status": { input: empty, output: z.strictObject({ paused: z.boolean() }) },
+  "ingestion.set-paused": { input: z.strictObject({ paused: z.boolean(), requestKey: id }), output: z.strictObject({ paused: z.boolean() }) },
   "ingestion.candidates": { input: z.strictObject({ sourceId: id.optional(), page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(candidateSchema).max(100), total: z.number().int().nonnegative() }) },
   "ingestion.scan": { input: z.strictObject({ sourceId: id }), output: z.strictObject({ discovered: z.number().int().nonnegative() }) },
   "ingestion.recognize": { input: z.strictObject({ candidateId: id, requestKey: id }), output: z.strictObject({ taskId: id }) },

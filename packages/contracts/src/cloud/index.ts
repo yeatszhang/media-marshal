@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { directoryIssueSchema, directoryIssueMessage, type DirectoryIssue } from "../directory-issues.js";
 
 const id = z.uuid();
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -32,11 +33,12 @@ export const cloudFailureSchema = z.strictObject({
   message: z.string().max(200),
   retryable: z.boolean(),
   retryAfterSeconds: z.number().int().min(1).max(3600).optional(),
-}).refine((failure) => failure.message === messages[failure.code], "错误消息必须经过归一化");
+  directoryIssue: directoryIssueSchema.optional(),
+}).refine((failure) => failure.message === (failure.directoryIssue ? directoryIssueMessage(failure.directoryIssue) : messages[failure.code]), "错误消息必须经过归一化");
 export type CloudFailure = z.infer<typeof cloudFailureSchema>;
 export class CloudError extends Error {
-  constructor(readonly code: CloudErrorCode, readonly retryAfterSeconds?: number) {
-    super(messages[code]);
+  constructor(readonly code: CloudErrorCode, readonly retryAfterSeconds?: number, readonly directoryIssue?: DirectoryIssue) {
+    super(directoryIssue ? directoryIssueMessage(directoryIssueSchema.parse(directoryIssue)) : messages[code]);
     this.name = "CloudError";
   }
 }
@@ -45,7 +47,8 @@ export function cloudFailure(error: unknown): CloudFailure {
   const retryable = ["RATE_LIMITED", "NETWORK_UNAVAILABLE", "COMPONENT_UNAVAILABLE", "TIMEOUT"].includes(code);
   const delay = error instanceof CloudError ? error.retryAfterSeconds : undefined;
   return {
-    code, message: messages[code], retryable,
+    code, message: error instanceof CloudError && error.directoryIssue ? directoryIssueMessage(error.directoryIssue) : messages[code], retryable,
+    ...(error instanceof CloudError && error.directoryIssue ? { directoryIssue: error.directoryIssue } : {}),
     ...(code === "RATE_LIMITED" && Number.isInteger(delay) && delay! > 0 && delay! <= 3600 ? { retryAfterSeconds: delay } : {}),
   };
 }
@@ -89,6 +92,8 @@ export const cloudCredentialDraftSchema = z.strictObject({
   cookie: z.string().trim().min(1).max(32768).refine((value) => !/[\r\n\0]/.test(value)),
 });
 export type CloudCredentialDraft = z.infer<typeof cloudCredentialDraftSchema>;
+export const cloudLoginDraftSchema = cloudCredentialDraftSchema.omit({ cookie: true });
+export type CloudLoginDraft = z.infer<typeof cloudLoginDraftSchema>;
 export const managedDownloadRootSchema = z.strictObject({ id, path: z.string().max(4096), state: z.enum(["AVAILABLE", "UNAVAILABLE", "REVIEW_REQUIRED"]), availableBytes: count.nullable() });
 export type ManagedDownloadRoot = z.infer<typeof managedDownloadRootSchema>;
 export const remoteEntrySchema = z.strictObject({
@@ -119,7 +124,8 @@ export const cloudDiagnosticCountsSchema = z.strictObject({
 export type CloudDiagnosticCounts = z.infer<typeof cloudDiagnosticCountsSchema>;
 export const downloadJobSchema = z.strictObject({
   id, accountId: id, name: z.string().max(1024), state: downloadStateSchema, progress: downloadProgressSchema,
-  ingestion: z.strictObject({ pending: count, candidates: count, organized: count, collected: count, needsAttention: count }).optional(),
+  sourceId: id.nullable().optional(), sourceVersion: count.nullable().optional(),
+  ingestion: z.strictObject({ pending: count, candidates: count, organized: count, collected: count, needsAttention: count, organization: z.enum(["ENABLED", "NOT_ENABLED", "REVIEW_REQUIRED", "UNASSIGNED"]).optional() }).optional(),
   failure: cloudFailureSchema.nullable(), updatedAt: timestamp,
 });
 export type DownloadJob = z.infer<typeof downloadJobSchema>;

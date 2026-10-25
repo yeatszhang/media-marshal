@@ -1,18 +1,25 @@
 import Database from "better-sqlite3";
 import { mkdirSync, existsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { DesktopError } from "@media-marshal/contracts";
 import { cloudMigrationSql } from "./cloud-migration.js";
 import { cloudAuthorizationMigrationSql } from "./cloud-authorization-migration.js";
 import { cloudDownloadMigrationSql } from "./cloud-download-migration.js";
 import { cloudSubscriptionMigrationSql } from "./cloud-subscription-migration.js";
 import { ingestionMigrationSql, ingestionAccessoryMigrationSql } from "./ingestion-migration.js";
+import { sourceRuleMigrationSql } from "./source-rule-migration.js";
+import { sourceRuleLegacyMigrationSql, migrateLegacySourceRules } from "./source-rule-legacy-migration.js";
+import { sourceExecutionMigrationSql } from "./source-execution-migration.js";
+import { sourceOrganizationMigrationSql } from "./source-organization-migration.js";
+import { sourceExecutionPreviewMigrationSql } from "./source-execution-preview-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
 export interface Migration {
   version: number;
   sql: string;
+  apply?: (connection: Database.Database) => void;
 }
 export const migrations: readonly Migration[] = [
   {
@@ -48,6 +55,13 @@ export const migrations: readonly Migration[] = [
   { version: 6, sql: "ALTER TABLE provider_binding ADD COLUMN object_namespace TEXT;" },
   { version: 7, sql: ingestionMigrationSql },
   { version: 8, sql: ingestionAccessoryMigrationSql },
+  { version: 9, sql: sourceRuleMigrationSql },
+  { version: 10, sql: sourceRuleLegacyMigrationSql, apply: migrateLegacySourceRules },
+  { version: 11, sql: sourceExecutionMigrationSql },
+  { version: 12, sql: sourceOrganizationMigrationSql },
+  { version: 13, sql: sourceExecutionPreviewMigrationSql },
+  // 来源 JSON 增加可配置忽略语义；保留旧快照原文，阻止旧核心误读新配置。
+  { version: 14, sql: "SELECT 1;" },
 ];
 
 export class CoreDatabase {
@@ -102,8 +116,11 @@ export class CoreDatabase {
         connection.pragma("locking_mode = EXCLUSIVE");
         connection.exec("BEGIN EXCLUSIVE; COMMIT;");
       }
-      if (existed && version < latest)
-        await connection.backup(`${path}.before-v${latest}.bak`);
+      if (existed && version < latest) {
+        const original = `${path}.before-v${latest}.bak`;
+        // 部分升级失败后的重试不覆盖最初版本的恢复证据。
+        await connection.backup(existsSync(original) ? `${path}.from-v${version}.before-v${latest}.${randomUUID()}.bak` : original);
+      }
       connection.pragma("foreign_keys = ON");
       connection.pragma("busy_timeout = 3000");
       connection.pragma("journal_mode = WAL");
@@ -111,6 +128,7 @@ export class CoreDatabase {
         if (migration.version <= version) continue;
         connection.transaction(() => {
           connection.exec(migration.sql);
+          migration.apply?.(connection);
           connection.pragma(`user_version = ${migration.version}`);
         })();
       }

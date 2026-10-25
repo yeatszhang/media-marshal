@@ -1,11 +1,19 @@
 import { z } from "zod";
 import { cloudAuthorizationSchema, cloudFailureSchema, driveCapabilitiesSchema } from "../cloud/index.js";
 import { bindingRefSchema, implementationIdSchema, managedRootGrantSchema, remoteLocatorSchema } from "./index.js";
+import { sourceRuleApplySchema, sourceRuleSchema } from "../source-rules.js";
+import { rpcErrorSchema } from "../index.js";
 
-export const CORE_DATA_SCHEMA_VERSION = 8;
+export const CORE_DATA_SCHEMA_VERSION = 14;
 const id = z.uuid(), empty = z.strictObject({});
 const configuredBinding = z.strictObject({ binding: bindingRefSchema.extend({ implementationId: implementationIdSchema }), credentialRef: id });
 export const privateCoreActions = {
+  "media.observations.reset": { input: empty, output: empty },
+  "source-rules.apply": { input: sourceRuleApplySchema.extend({ grants: z.strictObject({ source: managedRootGrantSchema, target: managedRootGrantSchema }).optional() }), output: sourceRuleSchema },
+  "media.targets.find": { input: z.strictObject({ path: z.string().min(1).max(4096) }), output: managedRootGrantSchema.nullable() },
+  "media.targets.bootstrap": { input: empty, output: z.array(managedRootGrantSchema).max(10000) },
+  "media.targets.authorize": { input: managedRootGrantSchema, output: empty },
+  "media.sources.authorize-managed": { input: z.strictObject({ sourceId: id, sourceVersion: z.number().int().positive(), source: managedRootGrantSchema }), output: empty },
   "media.credentials.install": { input: z.strictObject({ tmdb: z.string().max(1024).regex(/^[^\r\n\0]*$/).nullable(), emby: z.string().max(1024).regex(/^[^\r\n\0]*$/).nullable() }), output: empty },
   "media.sources.bootstrap": { input: empty, output: z.array(z.strictObject({ sourceId: id, sourceVersion: z.number().int().positive(), mode: z.enum(["local", "managed"]), downloadRootId: id.nullable(), source: managedRootGrantSchema, target: managedRootGrantSchema })).max(1000) },
   "media.sources.authorize": { input: z.strictObject({ sourceId: id, sourceVersion: z.number().int().positive(), mode: z.enum(["local", "managed"]), downloadRootId: id.nullable(), source: managedRootGrantSchema, target: managedRootGrantSchema }), output: empty },
@@ -44,5 +52,5 @@ export const privateCoreRequestSchema = z.strictObject({
 });
 export const privateCoreResponseSchema = z.discriminatedUnion("ok", [
   z.strictObject({ kind: z.literal("core.private.response"), requestId: id, ok: z.literal(true), result: z.unknown() }),
-  z.strictObject({ kind: z.literal("core.private.response"), requestId: id, ok: z.literal(false), error: cloudFailureSchema }),
+  z.strictObject({ kind: z.literal("core.private.response"), requestId: id, ok: z.literal(false), error: rpcErrorSchema }),
 ]);
