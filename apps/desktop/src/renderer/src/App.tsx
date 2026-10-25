@@ -22,6 +22,7 @@ import { ErrorNotice, Empty } from "./components/shared";
 import { Overview } from "./pages/Overview";
 import { Sources } from "./pages/Sources";
 import { Tasks } from "./pages/Tasks";
+import { CorrectionBatchDraftPage, CorrectionBatchPage, CorrectionBatchJobsPage } from "./pages/CorrectionBatches";
 import { CorrectionPage, CorrectionJobsPage } from "./pages/Corrections";
 import { Ingestion } from "./pages/Ingestion";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -122,6 +123,9 @@ function Shell() {
               <Route path="/subscriptions/:id" element={<Subscriptions />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/tasks/:taskId/correction" element={<CorrectionPage />} />
+              <Route path="/tasks/:taskId/correction/batch" element={<CorrectionBatchDraftPage />} />
+              <Route path="/corrections/batches" element={<CorrectionBatchJobsPage />} />
+              <Route path="/corrections/batches/:batchId" element={<CorrectionBatchPage />} />
               <Route path="/corrections" element={<CorrectionJobsPage />} />
               <Route path="/review" element={<Ingestion />} />
               <Route path="/settings" element={<SettingsPage />} />

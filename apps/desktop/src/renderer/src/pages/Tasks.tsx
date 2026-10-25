@@ -58,6 +58,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
                   <tr key={task.id}>
                     <td className="table-file" title={task.sourcePath}>
                       {task.title || task.sourcePath}
+                      <small className="task-source-filename">{task.sourcePath.split(/[\\/]/).at(-1)}</small>
                       <small><Link to={`/sources?source=${task.sourceId}`}>来源配置</Link></small>
                     </td>
                     <td>{t(task.status)}</td>

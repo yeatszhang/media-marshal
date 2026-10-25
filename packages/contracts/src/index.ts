@@ -252,6 +252,7 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  getCorrectionScope(input: CoreInput<"corrections.scope">): Promise<CoreOutput<"corrections.scope">>;
   previewCorrectionBatch(input: CoreInput<"corrections.preview-batch">): Promise<CoreOutput<"corrections.preview-batch">>;
   confirmCorrectionBatch(input: CoreInput<"corrections.confirm-batch">): Promise<CoreOutput<"corrections.confirm-batch">>;
   cancelCorrectionBatch(input: CoreInput<"corrections.cancel-batch">): Promise<CoreOutput<"corrections.cancel-batch">>;

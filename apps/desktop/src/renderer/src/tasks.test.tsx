@@ -25,7 +25,7 @@ async function mount() {
 }
 describe("任务分页、过滤与交付观测", () => {
   it("原 COPY 保留整理详情，修正任务和已修正历史不再进入旧候选详情", async () => {
-    const f = await mount(); expect(f.element.textContent).toContain("整理详情"); expect([...f.element.querySelectorAll("button")].some((button) => button.textContent === "修正")).toBe(true);
+    const f = await mount(); expect(f.element.textContent).toContain("中文视频.mp4"); expect(f.element.textContent).toContain("整理详情"); expect([...f.element.querySelectorAll("button")].some((button) => button.textContent === "修正")).toBe(true);
     f.api.listTasks.mockResolvedValue({ items: [{ ...f.task, correctedFromId: crypto.randomUUID(), activeCorrectionId: crypto.randomUUID() }], total: 1, page: 1, pageSize: 25 }); await act(async () => f.model.refresh()); expect(f.element.textContent).toContain("查看修正进度"); expect(f.element.textContent).not.toContain("整理详情");
     f.api.listTasks.mockResolvedValue({ items: [{ ...f.task, status: "CORRECTED", correctedToId: crypto.randomUUID() }], total: 1, page: 1, pageSize: 25 }); await act(async () => f.model.refresh()); expect(f.element.textContent).toContain("查看修正历史"); expect(f.element.textContent).not.toContain("整理详情"); expect(f.api.retryEmby).not.toHaveBeenCalled();
   });

@@ -17,7 +17,7 @@ async function mount(options: { restored?: boolean; unavailable?: boolean; jobs?
   const taskId = crypto.randomUUID(), targetId = crypto.randomUUID(), previewId = crypto.randomUUID(), operationId = crypto.randomUUID(), newTaskId = crypto.randomUUID(), stamp = new Date().toISOString();
   const files: CorrectionPreview["files"] = [{ id: crypto.randomUUID(), kind: "MAIN", fromPath: "/媒体库/旧作品/旧片.mkv", toPath: "/媒体库/新作品/新片.mkv", recoveryPath: null, stagingPath: null, size: 3000, action: "MOVE", phase: null, reason: null }, { id: crypto.randomUUID(), kind: "ACCESSORY", fromPath: "/媒体库/旧作品/旧片.zh.srt", toPath: "/媒体库/新作品/新片.zh.srt", recoveryPath: null, stagingPath: null, size: 300, action: "MOVE", phase: null, reason: null }];
   const preview: CorrectionPreview = { id: previewId, taskId, title: "新作品", selection: { tmdbId: 2, mediaType: "MOVIE", season: null, episode: null, episodeEnd: null }, targetId, targetPath: files[0]!.toPath, template: "{title}/{title}.{ext}", includeAccessories: false, expiresAt: Date.now() + 600000, state: "READY", operationId: null, files, warnings: ["通用封面留在原目录"] };
-  const operation: CorrectionOperation = { id: operationId, jobId: crypto.randomUUID(), originalTaskId: taskId, newTaskId, state: "PLANNED", title: "新作品", total: 2, done: 0, failed: 0, failure: null, waitingReason: null, cleanupPending: true, createdAt: stamp, updatedAt: stamp };
+  const operation: CorrectionOperation = { id: operationId, jobId: crypto.randomUUID(), originalTaskId: taskId, newTaskId, state: "PLANNED", title: "新作品", total: 2, done: 0, failed: 0, failure: null, waitingReason: null, cleanupPending: true, verificationPending: false, createdAt: stamp, updatedAt: stamp };
   const preparation: CorrectionPreparation = { id: crypto.randomUUID(), taskId, kind: "PREVIEW", state: "READY", previewId, operationId: null, currentPath: files[0]!.fromPath, readBytes: 3000, totalBytes: 3000, failure: null, createdAt: stamp, updatedAt: stamp };
   const task: CoreOutput<"corrections.task"> = { taskId, status: "DONE", targetPath: files[0]!.fromPath, selection: { tmdbId: 1, mediaType: "MOVIE", season: null, episode: null, episodeEnd: null }, previousTaskId: null, nextTaskId: null, active: null, latestOperation: null, preparation: options.restored ? preparation : null, targets: [{ id: targetId, path: "/媒体库", available: true }], available: !options.unavailable };
   const detail: CoreOutput<"corrections.get"> = { operation, files: structuredClone(files), warnings: [] };
@@ -60,6 +60,10 @@ describe("单条修正参数、确认、恢复与失败处理", () => {
   it("已记账作业的现存文件核对失败，不显示本次媒体已经成功的提示", async () => {
     const f = await mount(); f.task.status = "CORRECTED"; f.task.nextTaskId = f.operation.newTaskId; f.task.latestOperation = f.operation; Object.assign(f.operation, { state: "RECORDED", done: 2, failure: "恢复备份后媒体目标证据不符，请保留现存文件并核对" }); await tick();
     expect(f.element.textContent).toContain("历史已记账，仍需核对"); expect(f.element.textContent).toContain("下方完成状态来自原步骤记录"); expect(f.element.textContent).not.toContain("媒体文件与历史已完成；Emby"); expect(button("核对并重试原修正")).toBeTruthy();
+  });
+  it("历史已记账但恢复核验仍在等待时，保留历史阶段并隐藏当前成功提示", async () => {
+    const f = await mount(); f.task.status = "CORRECTED"; f.task.nextTaskId = f.operation.newTaskId; f.task.latestOperation = f.operation; Object.assign(f.operation, { state: "RECORDED", done: 2, verificationPending: true, waitingReason: "恢复备份后正在核对媒体目标" }); await tick();
+    expect(f.element.textContent).toContain("历史已记账，正在核对目标"); expect(f.element.textContent).toContain("请等待原卷授权与核验"); expect(f.element.textContent).not.toContain("媒体文件与历史已完成；Emby"); expect(button("核对并重试原修正")).toBeUndefined();
   });
   it("过期、组件缺失和查询失败提供具体下一步，轮询不能覆盖操作失败", async () => {
     const f = await mount({ restored: true }); f.preview.state = "EXPIRED"; await tick(); expect(f.element.textContent).toContain("预览已过期或核心已重启"); expect(button("确认并开始修正")).toBeUndefined();

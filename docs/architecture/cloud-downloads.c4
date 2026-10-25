@@ -17,13 +17,13 @@ model {
   emby = system '已有 Emby 服务器'
   desktop = system 'Media Marshal · macOS' {
     renderer = process 'Renderer' {
-      description 'React / StatefulService；账号连接、统一来源草稿与预览、任务及交付状态'
+      description 'React / StatefulService；账号连接、统一来源草稿与预览、单条／批量修正、任务及交付状态'
     }
     main = process 'Electron Main' {
       description '系统保险箱、原生授权、进程身份及升级备份'
     }
     core = process 'Media Core' {
-      description '唯一业务库写入者；来源版本、调度、识别、COPY 和独立交付'
+      description '唯一业务库写入者；来源版本、调度、识别、COPY、修正与独立交付'
       sources = component 'SourceRules' {
         description '唯一配置入口；草稿、不可变有效版本、旧身份定位、执行预览及可恢复删除'
       }
@@ -37,7 +37,7 @@ model {
         description '统一候选与资产版本；只读内容复核、目录摘要、持久批量识别与逐文件预览确认、稳定观察及沿策略快照 COPY'
       }
       corrections = component 'Corrections / CorrectionBatches' {
-        description '已整理目标强收据；单条／完整同季同剧范围预览；原子登记执行意图，逐文件恢复与独立重试；批量页面待接通'
+        description '已整理目标强收据；单条／完整同季同剧范围预览；原子登记执行意图，逐成员完整清单确认、逐文件恢复与独立重试'
       }
       delivery = component 'EmbyDelivery' {
         description '连接与库类型复核；独立交付意图、合并刷新、重试及收录核对'

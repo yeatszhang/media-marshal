@@ -194,6 +194,18 @@ describe.skipIf(process.platform !== "darwin")("单条修正的预览、文件�
     expect(() => f.corrections.batches.create({ taskId: f.taskId, requestKey: randomUUID(), scope: "SAME_SEASON", tmdbId: 2, excludedTaskIds: [randomUUID()] })).toThrow("不属于");
     expect(await readFile(f.original)).toEqual(f.bytes); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_file_relocation").get()).toEqual({ n: 0 });
   }, 30000);
+  it("只读范围不创建预览，范围变化拒绝旧选择，批次查询恢复完整参数", async () => {
+    const f = await batchFixture(), scope = f.corrections.batches.scope({ taskId: f.taskId, scope: "SAME_SEASON" }); expect(scope).toMatchObject({ total: 2, page: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_batch").get()).toEqual({ n: 0 });
+    f.db.connection.prepare("UPDATE media_task SET updated_at=? WHERE id=?").run("2099-03-01T00:00:00.000Z", f.second.taskId);
+    expect(() => f.corrections.batches.create({ ...f.input, expectedFingerprint: scope.fingerprint })).toThrow("所选范围在预览前已变化");
+    const current = f.corrections.batches.scope({ taskId: f.taskId, scope: "SAME_SEASON" }), batch = await f.ready({ expectedFingerprint: current.fingerprint, includeAccessories: false, template: "{title}/S{season:02d}E{episode:02d}.{ext}", excludedTaskIds: [f.second.taskId] });
+    expect(f.corrections.batches.details({ id: batch.id }).batch.configuration).toEqual({ tmdbId: 2, targetId: f.targetGrant.id, includeAccessories: false, template: "{title}/S{season:02d}E{episode:02d}.{ext}", excludedTaskIds: [f.second.taskId] }); expect(await readFile(f.original)).toEqual(f.bytes);
+  });
+  it("恢复备份后的批量目标尚待核验时不计完成，核验通过才恢复完成数量", async () => {
+    const f = await batchFixture(), batch = await f.ready(); f.corrections.batches.confirm({ id: batch.id, requestKey: randomUUID(), fingerprint: batch.fingerprint, filesComplete: true }); await f.corrections.batches.tick(); await f.corrections.tick(); expect(f.corrections.batches.get(batch.id).done).toBe(2);
+    f.corrections.reconcileRestored(); expect(f.corrections.batches.get(batch.id)).toMatchObject({ state: "SUBMITTED", done: 0, verificationPending: 2 }); expect(f.corrections.batches.details({ id: batch.id }).items.every((item) => item.operation?.verificationPending)).toBe(true);
+    const moves = vi.spyOn(native, "renameBeneath"); await f.corrections.tick(); expect(f.corrections.batches.get(batch.id)).toMatchObject({ state: "DONE", done: 2, verificationPending: 0 }); expect(moves).not.toHaveBeenCalled(); expect(await readFile(f.original)).toEqual(f.bytes);
+  });
   it("批次预览和确认请求幂等，完整文件复核后一次性领取所有成员，不能绕过批次单独确认", async () => {
     const f = await batchFixture(), batch = f.corrections.batches.create(f.input); expect(f.corrections.batches.create(f.input).id).toBe(batch.id); expect(() => f.corrections.batches.create({ ...f.input, tmdbId: 3 })).toThrow("不同内容");
     await f.corrections.batches.tick(); const ready = f.corrections.batches.get(batch.id), members = f.corrections.batches.details({ id: batch.id }).items; expect(ready).toMatchObject({ state: "READY", previewed: 2 });
@@ -218,7 +230,7 @@ describe.skipIf(process.platform !== "darwin")("单条修正的预览、文件�
     expect(() => f.corrections.batches.confirm({ id: batch.id, requestKey: randomUUID(), fingerprint: batch.fingerprint, filesComplete: true })).toThrow("成员、版本");
     const fresh = await f.ready(); f.corrections.batches.confirm({ id: fresh.id, requestKey: randomUUID(), fingerprint: fresh.fingerprint, filesComplete: true });
     await writeFile(join(dirname(f.second.oldPath), basename(f.second.oldPath, ".mkv") + ".ass"), "预览后新增字幕"); await f.corrections.batches.tick();
-    expect(f.corrections.batches.get(fresh.id)).toMatchObject({ state: "BLOCKED", submitted: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_operation").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_file_relocation").get()).toEqual({ n: 0 }); expect(await readFile(f.oldPath)).toEqual(f.bytes);
+    expect(f.corrections.batches.get(fresh.id)).toMatchObject({ state: "BLOCKED", submitted: 0 }); expect(f.corrections.batches.details({ id: fresh.id }).items.find((item) => item.taskId === f.second.taskId)?.failure).toContain("复核失败"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_operation").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_file_relocation").get()).toEqual({ n: 0 }); expect(await readFile(f.oldPath)).toEqual(f.bytes);
   });
   it("重复批次争领成员时只有一组获得活动占用；第二成员入库失败回滚整批执行意图", async () => {
     const f = await batchFixture(), a = await f.ready(), b = await f.ready();

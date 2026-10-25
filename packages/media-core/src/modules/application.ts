@@ -40,6 +40,7 @@ declare module "@yeatz/app-framework/command" {
   interface Commands {
     "media.corrections.preparation": (input: CoreInput<"corrections.preparation">) => CoreOutput<"corrections.preparation">;
     "media.corrections.cancel-preparation": (input: CoreInput<"corrections.cancel-preparation">) => CoreOutput<"corrections.cancel-preparation">;
+    "media.corrections.scope": (input: CoreInput<"corrections.scope">) => CoreOutput<"corrections.scope">;
     "media.corrections.preview-batch": (input: CoreInput<"corrections.preview-batch">) => CoreOutput<"corrections.preview-batch">;
     "media.corrections.confirm-batch": (input: CoreInput<"corrections.confirm-batch">) => CoreOutput<"corrections.confirm-batch">;
     "media.corrections.cancel-batch": (input: CoreInput<"corrections.cancel-batch">) => CoreOutput<"corrections.cancel-batch">;
@@ -204,6 +205,7 @@ export function createMediaApplication(
       const add = (dispose: () => void) => ctx.disposables.add(dispose);
       add(registry.register("media.corrections.preparation", (_, input) => corrections.preparations.get(input.id)));
       add(registry.register("media.corrections.cancel-preparation", (_, input) => corrections.preparations.cancel(input.id)));
+      add(registry.register("media.corrections.scope", (_, input) => corrections.batches.scope(input)));
       add(registry.register("media.corrections.preview-batch", (_, input) => corrections.batches.create(input)));
       add(registry.register("media.corrections.confirm-batch", (_, input) => corrections.batches.confirm(input)));
       add(registry.register("media.corrections.cancel-batch", (_, input) => corrections.batches.cancel(input.id)));

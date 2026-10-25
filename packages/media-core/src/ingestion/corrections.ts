@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { extname, join } from "node:path";
-import { DesktopError, correctionActions, selectionSchema, type CoreInput, type CoreOutput, type CorrectionOperation } from "@media-marshal/contracts";
+import { DesktopError, publicError, correctionActions, selectionSchema, type CoreInput, type CoreOutput, type CorrectionOperation } from "@media-marshal/contracts";
 import { localFileEvidenceSchema, managedRootGrantSchema } from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { MediaConnections } from "../application/media-connections.js";
@@ -81,8 +81,8 @@ export class Corrections {
   }
   private dto(row: OperationRow): CorrectionOperation {
     const files = this.storedFiles(row.id);
-    const plan = JSON.parse(row.plan_json) as CorrectionPlan;
-    return { id: row.id, jobId: row.job_id, originalTaskId: row.original_task_id, newTaskId: row.new_task_id, state: row.phase, title: plan.metadata.title, total: files.length, done: files.filter((file) => file.phase === "DONE").length, failed: files.filter((file) => file.phase === "NEEDS_ATTENTION").length, waitingReason: !this.files && row.phase !== "RECORDED" ? "安全修正文件组件不可用，请使用匹配当前架构且组件完整的客户端恢复原作业" : this.ingestion.pauseStatus().paused && row.phase !== "RECORDED" ? "全局整理已暂停，恢复后继续原修正计划" : files.find((file) => file.waiting_reason)?.waiting_reason ?? null, failure: row.failure, cleanupPending: !!row.cleanup_pending, createdAt: row.created_at, updatedAt: row.updated_at };
+    const plan = JSON.parse(row.plan_json) as CorrectionPlan, verificationPending = !!this.database.connection.prepare("SELECT 1 FROM app_setting WHERE key=?").get("correction.restore.audit." + row.id);
+    return { id: row.id, jobId: row.job_id, originalTaskId: row.original_task_id, newTaskId: row.new_task_id, state: row.phase, title: plan.metadata.title, total: files.length, done: files.filter((file) => file.phase === "DONE").length, failed: files.filter((file) => file.phase === "NEEDS_ATTENTION").length, waitingReason: verificationPending ? "恢复备份后正在核对媒体目标，请等待原卷授权和文件核验；不会重做已记账文件" : !this.files && row.phase !== "RECORDED" ? "安全修正文件组件不可用，请使用匹配当前架构且组件完整的客户端恢复原作业" : this.ingestion.pauseStatus().paused && row.phase !== "RECORDED" ? "全局整理已暂停，恢复后继续原修正计划" : files.find((file) => file.waiting_reason)?.waiting_reason ?? null, failure: row.failure, cleanupPending: !!row.cleanup_pending, verificationPending, createdAt: row.created_at, updatedAt: row.updated_at };
   }
   list(input: CoreInput<"corrections.list">): CoreOutput<"corrections.list"> { const total = (this.database.connection.prepare("SELECT count(*) AS n FROM media_correction_operation").get() as { n: number }).n, rows = this.database.connection.prepare(operationQuery + " ORDER BY o.created_at DESC,o.id LIMIT 25 OFFSET ?").all(((input.page ?? 1) - 1) * 25) as OperationRow[]; return { total, items: rows.map((row) => this.dto(row)) }; }
   private assetDto(asset: CorrectionAsset, state?: RelocationRow) { return { id: asset.id, kind: asset.kind, fromPath: join(asset.from.grant.path, ...asset.from.segments), toPath: join(asset.to.grant.path, ...asset.to.segments), recoveryPath: state && asset.action !== "NONE" && asset.action !== "KEEP" ? join(asset.from.grant.path, ".media-marshal", "relocations", asset.id, "source") : null, stagingPath: state?.attempt_id && asset.action === "COPY" ? join(asset.to.grant.path, ".media-marshal", "staging", state.attempt_id, ...asset.to.segments) : null, size: asset.expected?.size ?? 0, action: asset.action, phase: state?.phase ?? null, reason: state?.failure ?? state?.waiting_reason ?? asset.reason }; }
@@ -184,7 +184,15 @@ export class Corrections {
     const combined = AbortSignal.any([this.lifetime.signal, signal]);
     await this.ingestion.withCorrectionLeases(members.map((member) => member.taskId), async () => {
       const values: Awaited<ReturnType<Corrections["validateConfirmation"]>>[] = [];
-      for (const member of members) { guard(); const receipt = this.previewRow(member.previewId, id); if (receipt.task_id !== member.taskId) throw correctionConflict("批次预览与成员不符，请重新预览完整范围"); values.push(await this.validateConfirmation(receipt, acceptedAt, combined, (value) => progress(member.taskId, value))); }
+      for (const member of members) {
+        guard(); const receipt = this.previewRow(member.previewId, id); if (receipt.task_id !== member.taskId) throw correctionConflict("批次预览与成员不符，请重新预览完整范围");
+        try { values.push(await this.validateConfirmation(receipt, acceptedAt, combined, (value) => progress(member.taskId, value))); }
+        catch (error) {
+          if (combined.aborted || this.closed) throw error;
+          const failure = publicError(previewFailure(error)), plan = JSON.parse(receipt.plan_json) as CorrectionPlan, message = `成员「${plan.files[0]!.from.segments.join("/").slice(-120)}」复核失败：${failure.message.slice(0, 340)}`, result = new DesktopError(failure.code, message, failure.retryable);
+          this.database.connection.prepare("UPDATE media_correction_batch_member SET failure_json=? WHERE batch_id=? AND task_id=? AND EXISTS(SELECT 1 FROM media_correction_batch WHERE id=? AND state='CONFIRMING')").run(JSON.stringify({ code: failure.code, message, retryable: failure.retryable }), id, member.taskId, id); throw result;
+        }
+      }
       const roots = this.checkBatchMappings(members.map((member) => member.previewId));
       for (const { root, copyBytes } of roots.values()) {
         const reserved = (this.database.connection.prepare("SELECT plan_json FROM media_file_relocation WHERE to_root_id=? AND recorded=0 AND phase IN ('PENDING','COPYING')").all(root.grant.id) as { plan_json: string }[]).reduce((sum, row) => { const plan = JSON.parse(row.plan_json); return sum + (plan.mode === "COPY" ? plan.expected.size : 0); }, 0);

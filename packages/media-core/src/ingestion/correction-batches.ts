@@ -37,6 +37,10 @@ export class CorrectionBatches {
   private row(id: string) { const row = this.database.connection.prepare("SELECT * FROM media_correction_batch WHERE id=?").get(id) as BatchRow | undefined; if (!row) throw correctionConflict("批量修正不存在，请刷新作业列表"); return row; }
   private members(id: string) { return this.database.connection.prepare("SELECT * FROM media_correction_batch_member WHERE batch_id=? ORDER BY ordinal").all(id) as MemberRow[]; }
   private scopeUnchanged(row: BatchRow) { if (captureCorrectionScope(this.database, row.anchor_task_id, row.scope).fingerprint !== row.fingerprint) throw correctionConflict("批量修正的成员、版本或来源策略已经变化，请重新预览完整范围"); }
+  scope(input: CoreInput<"corrections.scope">): CoreOutput<"corrections.scope"> {
+    const resolved = captureCorrectionScope(this.database, input.taskId, input.scope), page = input.page ?? 1;
+    return { fingerprint: resolved.fingerprint, total: resolved.members.length, page, items: resolved.members.slice((page - 1) * 25, page * 25).map((member) => ({ taskId: member.id, targetPath: member.targetPath, selection: { tmdbId: member.tmdbId!, mediaType: "TV_SHOW", season: member.season, episode: member.episode, episodeEnd: member.episodeEnd }, blockers: resolved.blockers.find((item) => item.taskId === member.id)?.reasons ?? [] })) };
+  }
   create(raw: CoreInput<"corrections.preview-batch">): CorrectionBatch {
     this.writable(); const input = correctionActions["corrections.preview-batch"].input.parse(raw), hash = correctionHash(input), db = this.database.connection;
     const old = db.prepare("SELECT id,input_hash FROM media_correction_batch WHERE request_key=?").get(input.requestKey) as { id: string; input_hash: string } | undefined;
@@ -44,6 +48,7 @@ export class CorrectionBatches {
     this.ports.available();
     if ((db.prepare(`SELECT count(*) AS n FROM media_correction_batch WHERE ${active}`).get() as { n: number }).n >= 16) throw correctionConflict("批量修正核验队列已有 16 项，请等待或取消原批次后重试");
     const resolved = captureCorrectionScope(this.database, input.taskId, input.scope), excluded = new Set(input.excludedTaskIds);
+    if (input.expectedFingerprint && input.expectedFingerprint !== resolved.fingerprint) throw correctionConflict("所选范围在预览前已变化，请重新读取范围并核对成员");
     if (excluded.size !== input.excludedTaskIds.length || [...excluded].some((id) => !resolved.members.some((member) => member.id === id))) throw correctionConflict("排除项重复或不属于完整修正范围，请重新选择");
     if (resolved.members.every((member) => excluded.has(member.id))) throw correctionConflict("至少保留一个成员用于批量修正");
     const id = randomUUID(), time = this.stamp();
@@ -56,9 +61,9 @@ export class CorrectionBatches {
     })(); this.kick(); return this.get(id);
   }
   get(id: string): CorrectionBatch {
-    const row = this.row(id), selected = this.members(id).filter((item) => item.selected), operations = selected.filter((item) => item.operation_id).map((item) => this.ports.operation(item.operation_id!)), done = operations.filter((op) => op.state === "RECORDED" && !op.failure).length, failed = operations.filter((op) => op.state === "NEEDS_ATTENTION" || op.failure).length;
+    const row = this.row(id), input = JSON.parse(row.input_json) as CoreInput<"corrections.preview-batch">, selected = this.members(id).filter((item) => item.selected), operations = selected.filter((item) => item.operation_id).map((item) => this.ports.operation(item.operation_id!)), done = operations.filter((op) => op.state === "RECORDED" && !op.failure && !op.verificationPending).length, failed = operations.filter((op) => op.state === "NEEDS_ATTENTION" || op.failure).length;
     const state = row.state === "SUBMITTED" ? failed ? "PARTIAL_FAILED" : done === selected.length ? "DONE" : "SUBMITTED" : row.state === "READY" && (row.expires_at! <= this.now() || row.generation !== this.generation) ? "EXPIRED" : row.state;
-    return { id, anchorTaskId: row.anchor_task_id, scope: row.scope, state, fingerprint: row.fingerprint, total: this.members(id).length, selected: selected.length, previewed: selected.filter((item) => item.preview_id).length, submitted: operations.length, done, failed: failed + selected.filter((item) => item.failure_json).length, expiresAt: row.expires_at, failure: failureText(row.failure_json), currentTaskId: row.current_task_id, currentPath: row.current_path, readBytes: row.read_bytes, totalBytes: row.total_bytes, createdAt: row.created_at, updatedAt: row.updated_at };
+    return { id, anchorTaskId: row.anchor_task_id, configuration: { tmdbId: input.tmdbId, targetId: input.targetId ?? null, template: input.template ?? null, includeAccessories: input.includeAccessories ?? true, excludedTaskIds: input.excludedTaskIds ?? [] }, verificationPending: operations.filter((op) => op.verificationPending).length, scope: row.scope, state, fingerprint: row.fingerprint, total: this.members(id).length, selected: selected.length, previewed: selected.filter((item) => item.preview_id).length, submitted: operations.length, done, failed: failed + selected.filter((item) => item.failure_json).length, expiresAt: row.expires_at, failure: failureText(row.failure_json), currentTaskId: row.current_task_id, currentPath: row.current_path, readBytes: row.read_bytes, totalBytes: row.total_bytes, createdAt: row.created_at, updatedAt: row.updated_at };
   }
   list(input: CoreInput<"corrections.batches">): CoreOutput<"corrections.batches"> { const db = this.database.connection; return { items: (db.prepare("SELECT id FROM media_correction_batch ORDER BY created_at DESC,id LIMIT 25 OFFSET ?").all(((input.page ?? 1) - 1) * 25) as { id: string }[]).map((row) => this.get(row.id)), total: (db.prepare("SELECT count(*) AS n FROM media_correction_batch").get() as { n: number }).n }; }
   details(input: CoreInput<"corrections.batch">): CoreOutput<"corrections.batch"> {

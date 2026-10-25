@@ -31,6 +31,7 @@ describe("受限进程契约", () => {
     const taskId = randomUUID(), requestKey = randomUUID(), input = { taskId, requestKey, scope: "SAME_SEASON", tmdbId: 2 };
     expect(parseCoreRequest(request("corrections.preview-batch", input))).toMatchObject({ payload: { excludedTaskIds: [], includeAccessories: true } });
     for (const extra of [{ taskIds: [taskId] }, { scope: "ALL" }, { targetPath: "/伪造目标" }, { expected: {} }, { tmdbId: 1.1 }]) expect(() => parseCoreRequest(request("corrections.preview-batch", { ...input, ...extra }))).toThrow();
+    expect(parseCoreRequest(request("corrections.scope", { taskId, scope: "SAME_SERIES", page: 2 }))).toMatchObject({ payload: { page: 2 } }); expect(() => parseCoreRequest(request("corrections.scope", { taskId, scope: "SAME_SERIES", path: "/任意目录" }))).toThrow();
     const confirmation = { id: taskId, requestKey, fingerprint: "a".repeat(64), filesComplete: true };
     expect(parseCoreRequest(request("corrections.confirm-batch", confirmation))).toMatchObject({ payload: confirmation });
     for (const extra of [{ fingerprint: "x".repeat(64) }, { filesComplete: false }, { overwrite: true }]) expect(() => parseCoreRequest(request("corrections.confirm-batch", { ...confirmation, ...extra }))).toThrow();
