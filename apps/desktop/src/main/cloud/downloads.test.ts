@@ -393,13 +393,13 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     const server = createServer((request, response) => { response.setHeader("Content-Type", "application/json"); const movie = { id: 1, title: "测试电影", original_title: "Test Movie", release_date: "2026-01-01" }; response.end(JSON.stringify(request.url!.startsWith("/search/") ? { results: [movie] } : movie)); });
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); cleanup.push(() => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }));
     const connections = new MediaConnections(f.db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" }), { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` }); cleanup.push(() => connections.close()); connections.install({ tmdb: "fixture", emby: null });
-    let monotonic = 0; const parser = { ready: true, parse: async (name: string) => normalizeParse({ title: "测试电影", year: 2026, type: "movie" }, name) };
-    // 此用例验证策略归属与取消，稳定窗口由下方逐次扫描推进；真实监听会合并扫描，不能与模拟时钟混用。
+    let wall = Date.now(), monotonic = 0; const parser = { ready: true, parse: async (name: string) => normalizeParse({ title: "测试电影", year: 2026, type: "movie" }, name) };
+    // 此用例验证策略归属与取消，两个稳定观察时钟均逐次推进；真实监听和墙上时钟不能与模拟单调时钟混用。
     const controlledWatch = (() => Object.assign(new EventEmitter(), { close() {} })) as unknown as typeof watch;
-    const pipeline = new IngestionPipeline(f.db, () => parser, connections, Date.now, () => monotonic, controlledWatch); cleanup.push(() => pipeline.close());
+    const pipeline = new IngestionPipeline(f.db, () => parser, connections, () => wall, () => monotonic, controlledWatch); cleanup.push(() => pipeline.close());
     const rules = new SourceRules(f.db, f.downloads, f.subscriptions, pipeline); cleanup.push(() => rules.close());
     await pipeline.authorizeTarget(gx); await pipeline.authorizeTarget(gy); await pipeline.authorizeManagedSource({ sourceId: bootstrap.sourceId, sourceVersion: bootstrap.sourceVersion, source: bootstrap.source });
-    await pipeline.scan(bootstrap.sourceId); for (let i = 0; i < 12; i++) { monotonic += 10000; await pipeline.scan(bootstrap.sourceId); }
+    await pipeline.scan(bootstrap.sourceId); for (let i = 0; i < 12; i++) { wall += 10000; monotonic += 10000; await pipeline.scan(bootstrap.sourceId); }
     const candidate = pipeline.list({}).items.find((row) => row.relativePath.endsWith("乙.mp4"))!, task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick();
     if (scope === "相同目标的其他来源") rules.control({ id: first.source.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() });
     const preview = await pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" } }); expect(preview.accessories).toHaveLength(1);
@@ -412,7 +412,7 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     if (scope === "本策略") {
       expect(pipeline.task(task.taskId).accessories![0]).toMatchObject({ state: "COPYING", failure: null });
       const scans = vi.spyOn(pipeline, "scan"); rules.control({ id: source.id, expectedVersion: 1, operation: "resume", requestKey: randomUUID() }); expect(scans).toHaveBeenCalledWith(bootstrap.sourceId); await pipeline.tick(); expect(pipeline.task(task.taskId).accessories![0]!.state).toBe("COPYING");
-      for (let i = 0; i < 12; i++) { monotonic += 10000; await pipeline.scan(bootstrap.sourceId); } await pipeline.tick();
+      for (let i = 0; i < 12; i++) { wall += 10000; monotonic += 10000; await pipeline.scan(bootstrap.sourceId); } await pipeline.tick();
     }
     expect(pipeline.task(task.taskId).accessories![0]!.state).toBe("RECORDED"); expect(await readFile(preview.accessories![0]!.targetPath)).toEqual(subtitle); expect((await lstat(preview.targetPath)).ino).toBe(inode); expect(await readFile(join(f.rootPath, "completed", "目录", "乙.zh.ass"))).toEqual(subtitle);
   });
