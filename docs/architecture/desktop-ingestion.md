@@ -74,4 +74,6 @@ schema v16 将本地候选的属性键 `attribute_key` 与资产版本 `version_
 
 原语复制并独占持有目录 FD，放到工作线程执行，限制 64 项等待；不提供任意路径、命令、删除或自动回滚。Core 仍须校验授权、原卷、实际文件与摘要，调用前持久化计划，改名后核对并补记。进程中断或返回需核对状态不能直接重放或删除文件。
 
+根内版本逐层进入目录 FD，拒绝父级符号链接及跨设备子挂载；来源身份失效或根跨卷时不创建目标目录。跨卷复制另用 `linkBeneath` 发布目标卷暂存文件，保留原暂存锚点供日志恢复；它不是改名不受支持时的降级路径。资源加载核对 manifest／二进制摘要与 Mach-O 架构。`ManagedRoot` 已提供私有隔离、完整摘要、发布恢复与仅按原证据回收私有文件的接口；同内容的外部文件不能代替原 inode。2026-10-26 的 16 项 Electron Node 文件测试及 APFS／HFS+／exFAT 自有映像结果见原语目录，exFAT 两项均返回不支持，未执行回退操作。
+
 当前仅有隔离原生测试与文件系统证据，尚未由修正服务调用或进入安装包。任务 5.6／5.7 继续保持未完成；旧目标回收、附属文件、历史链、强杀恢复、x64 运行和签名安装均须后续验收。构建入口为 `npm run desktop:prepare-native-files`，原生测试为 `npm test -- packages/media-core/src/files/rename-exclusive.test.ts`；完整开发契约和脱敏结果位于 `tools/desktop-files/README.md` 与该目录 `fixtures/`。

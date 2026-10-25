@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 const run = promisify(execFile), cleanup: (() => unknown | Promise<unknown>)[] = [];
 interface RenameResult { state: "RENAMED" | "NOT_RENAMED" | "UNCERTAIN"; code: string; moved: boolean; osError: number }
-interface Native { renameExclusive(fromFd: number, fromName: string, toFd: number, toName: string, expected: ReturnType<typeof identity>): Promise<RenameResult> }
+interface Native { linkBeneath(fromFd: number, fromParts: string[], toFd: number, toParts: string[], expected: ReturnType<typeof identity>): Promise<{ state: string; code: string; published: boolean; osError: number }>; renameBeneath(fromFd: number, fromParts: string[], toFd: number, toParts: string[], expected: ReturnType<typeof identity>): Promise<RenameResult>; renameExclusive(fromFd: number, fromName: string, toFd: number, toName: string, expected: ReturnType<typeof identity>): Promise<RenameResult> }
 const identity = (info: BigIntStats) => ({ dev: info.dev, ino: info.ino, size: info.size, birthtimeNs: info.birthtimeNs, mtimeNs: info.mtimeNs, ctimeNs: info.ctimeNs });
 let work: string, binary: string, native: Native;
 describe.skipIf(process.platform !== "darwin")("macOS 独占改名原语（隔离真实文件）", () => {
@@ -70,6 +70,27 @@ const a=fs.openSync(path.join(root,'原目标 中文'),fs.constants.O_RDONLY|fs.
 crypto.pbkdf2('fixture','fixture',1000000,32,'sha256',()=>{});let busy=0;const pending=[];for(let n=0;n<65;n++){try{pending.push(native.renameExclusive(a,'原视频.mkv',b,'target-'+n+'.mkv',expected));}catch(error){if(error.code!=='BUSY')throw error;busy++;}}
 Promise.all(pending).then(async rows=>{const index=rows.findIndex(row=>row.moved),name='target-'+index+'.mkv',info=fs.statSync(path.join(root,'新目标 中文',name),{bigint:true}),fresh=Object.fromEntries(keys.map(k=>[k,info[k]]));const restored=await native.renameExclusive(b,name,a,'原视频.mkv',fresh);fs.closeSync(a);fs.closeSync(b);process.stdout.write(JSON.stringify({busy,count:rows.length,moved:rows.filter(row=>row.moved).length,restored}));});`);
     const result = await run(process.execPath, [script, binary, f.root], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", UV_THREADPOOL_SIZE: "1" }, timeout: 10000 }); expect(JSON.parse(result.stdout)).toMatchObject({ busy: 1, count: 64, moved: 1, restored: { state: "RENAMED" } }); expect(await readFile(join(f.source, "原视频.mkv"), "utf8")).toBe("保留完整媒体内容");
+  });
+
+  it("从根 FD 逐层进入嵌套目录并创建新目标父目录，不跟随源或目标父级符号链接", async () => {
+    const f = await fixture(); await mkdir(join(f.source, "已整理子目录")); await writeFile(join(f.source, "已整理子目录/剧集.mkv"), "嵌套媒体"); const snapshot = identity(await lstat(join(f.source, "已整理子目录/剧集.mkv"), { bigint: true }));
+    expect(await native.renameBeneath(f.from.fd, ["已整理子目录", "剧集.mkv"], f.to.fd, ["修正作品", "Season 01", "剧集.mkv"], snapshot)).toMatchObject({ state: "RENAMED" }); expect(await readFile(join(f.target, "修正作品/Season 01/剧集.mkv"), "utf8")).toBe("嵌套媒体");
+    const foreign = join(f.root, "未授权外部"); await mkdir(foreign); await symlink(foreign, join(f.target, "跳转")); expect(await native.renameBeneath(f.from.fd, ["原视频.mkv"], f.to.fd, ["跳转", "不得创建", "视频.mkv"], f.snapshot)).toMatchObject({ state: "NOT_RENAMED", code: "UNSAFE_PATH" }); await expect(lstat(join(foreign, "不得创建"))).rejects.toMatchObject({ code: "ENOENT" });
+    await symlink(f.source, join(f.source, "源跳转")); expect(await native.renameBeneath(f.from.fd, ["源跳转", "原视频.mkv"], f.to.fd, ["不得创建.mkv"], f.snapshot)).toMatchObject({ state: "NOT_RENAMED", code: "UNSAFE_PATH" });
+  });
+  it("根内改名同样拒绝穿越与无界层级，来源失效不创建目标目录", async () => {
+    const f = await fixture(); for (const parts of [[], ["..", "视频.mkv"], ["/tmp", "视频.mkv"], Array.from({ length: 257 }, () => "层级")]) expect(() => native.renameBeneath(f.from.fd, parts, f.to.fd, ["合法.mkv"], f.snapshot)).toThrow(expect.objectContaining({ code: "INVALID_INPUT" }));
+    await writeFile(join(f.source, "原视频.mkv"), "改变原文件"); expect(await native.renameBeneath(f.from.fd, ["原视频.mkv"], f.to.fd, ["不应创建", "新视频.mkv"], f.snapshot)).toMatchObject({ state: "NOT_RENAMED", code: "SOURCE_CHANGED" }); await expect(lstat(join(f.target, "不应创建"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("根内发布保留暂存锚点，同名占用或父级符号链接不覆盖且不越界", async () => {
+    const f = await fixture(), publish = (parts: string[], snapshot = f.snapshot) => native.linkBeneath(f.from.fd, ["原视频.mkv"], f.to.fd, parts, snapshot);
+    expect(await publish(["新目录", "发布.mkv"])).toEqual({ state: "PUBLISHED", code: "OK", published: true, osError: 0 });
+    const original = await lstat(join(f.source, "原视频.mkv"), { bigint: true }), published = await lstat(join(f.target, "新目录/发布.mkv"), { bigint: true }); expect(published.ino).toBe(original.ino); expect(original.nlink).toBe(2n);
+    const current = identity(original); await writeFile(join(f.target, "占用.mkv"), "第三方保留"); expect(await publish(["占用.mkv"], current)).toMatchObject({ state: "NOT_PUBLISHED", code: "TARGET_EXISTS", published: false }); expect(await readFile(join(f.target, "占用.mkv"), "utf8")).toBe("第三方保留");
+    const foreign = join(f.root, "外部发布目录"); await mkdir(foreign); await symlink(foreign, join(f.target, "跳转")); expect(await publish(["跳转", "不得创建", "发布.mkv"], current)).toMatchObject({ state: "NOT_PUBLISHED", code: "UNSAFE_PATH", published: false }); await expect(lstat(join(foreign, "不得创建"))).rejects.toMatchObject({ code: "ENOENT" }); expect(await readFile(join(f.source, "原视频.mkv"), "utf8")).toBe("保留完整媒体内容");
+    // link 更新 ctime；复用发布前快照不能领取另一个位置。
+    expect(await publish(["过期快照.mkv"])).toMatchObject({ state: "NOT_PUBLISHED", code: "SOURCE_CHANGED" });
   });
 
 });

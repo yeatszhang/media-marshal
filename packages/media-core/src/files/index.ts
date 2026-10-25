@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { open, lstat, realpath, mkdir, readFile, writeFile, rm, link, statfs, type FileHandle } from "node:fs/promises";
+import type { NativeFileSnapshot, NativeRenameApi } from "./native-rename.js";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { CloudError, type VersionEvidence } from "@media-marshal/contracts";
 import { managedRootGrantSchema, localFileEvidenceSchema, type ManagedRootGrant, type LocalFileEvidence } from "@media-marshal/contracts/internal";
@@ -131,20 +132,62 @@ export class ManagedRoot {
     if (!info.isFile() || String(info.dev) !== this.grant.volume.observedDevice || info.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new CloudError("LOCAL_UNAVAILABLE");
     return localFileEvidenceSchema.parse({ volumeId: this.grant.volume.volumeId, inode: String(info.ino), birthtimeNs: String(info.birthtimeNs), modifiedNs: String(info.mtimeNs), size: Number(info.size), sha256 });
   }
-  private async hash(path: string, remoteHash?: Extract<VersionEvidence, { kind: "hash" }>): Promise<LocalFileEvidence> {
+  private async hashWithSnapshot(path: string, remoteHash?: Extract<VersionEvidence, { kind: "hash" }>, signal?: AbortSignal): Promise<{ evidence: LocalFileEvidence; snapshot: NativeFileSnapshot }> {
     await this.check(); const handle = await open(path, constants.O_RDONLY | noFollow);
     try {
       const before = await handle.stat({ bigint: true }); this.evidence(before, "0".repeat(64));
       const digest = createHash("sha256"), upstream = remoteHash ? createHash(remoteHash.algorithm) : null, buffer = Buffer.allocUnsafe(1024 * 1024); let position = 0;
-      for (;;) { const { bytesRead } = await handle.read(buffer, 0, buffer.length, position); if (!bytesRead) break; digest.update(buffer.subarray(0, bytesRead)); upstream?.update(buffer.subarray(0, bytesRead)); position += bytesRead; }
+      for (;;) { if (signal?.aborted) throw new CloudError("INTERRUPTED"); const { bytesRead } = await handle.read(buffer, 0, buffer.length, position); if (!bytesRead) break; digest.update(buffer.subarray(0, bytesRead)); upstream?.update(buffer.subarray(0, bytesRead)); position += bytesRead; }
       const after = await handle.stat({ bigint: true });
       if (before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(position) !== after.size) throw new CloudError("CONFLICT");
       if (remoteHash && upstream!.digest("hex") !== remoteHash.value) throw new CloudError("REMOTE_CHANGED");
       const current = await lstat(path, { bigint: true });
       if (!current.isFile() || current.isSymbolicLink() || current.dev !== after.dev || current.ino !== after.ino || current.birthtimeNs !== after.birthtimeNs || current.size !== after.size || current.mtimeNs !== after.mtimeNs || current.ctimeNs !== after.ctimeNs || await realpath(path) !== path) throw new CloudError("CONFLICT");
       await handle.sync();
-      await this.check(); return this.evidence(after, digest.digest("hex"));
+      await this.check(); return { evidence: this.evidence(after, digest.digest("hex")), snapshot: { dev: after.dev, ino: after.ino, size: after.size, birthtimeNs: after.birthtimeNs, mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs } };
     } finally { await handle.close(); }
+  }
+  private async hash(path: string, remoteHash?: Extract<VersionEvidence, { kind: "hash" }>) { return (await this.hashWithSnapshot(path, remoteHash)).evidence; }
+  /** 私有隔离位置只由持久文件步骤的 UUID 生成，不接受任意私有路径。 */
+  relocationSegments(id: string) { return [".media-marshal", "relocations", this.attempt(id), "source"]; }
+  private validateRelocationPath(parts: readonly string[]) {
+    if (parts[0] !== ".media-marshal") return this.segments(parts);
+    if (parts.length !== 4 || parts[1] !== "relocations" || parts[3] !== "source" || !uuid.test(parts[2]!)) throw new CloudError("INVALID_REQUEST");
+    if (Buffer.byteLength(join(this.grant.path, ...parts)) >= this.grant.volume.pathMaxBytes) throw new CloudError("UNSUPPORTED_CAPABILITY"); return [...parts];
+  }
+  private async relocationPath(parts: readonly string[]) {
+    const names = this.validateRelocationPath(parts); await this.check();
+    return join(await this.directory(names.slice(0, -1), false), names.at(-1)!);
+  }
+  async inspectForRelocation(parts: readonly string[], signal?: AbortSignal) { return this.hashWithSnapshot(await this.relocationPath(parts), undefined, signal); }
+  /** 恢复已发生的命名空间变更时，重新同步父目录并核对内容，不能仅凭文件存在补记。 */
+  async confirmRelocation(parts: readonly string[], expected: LocalFileEvidence, signal?: AbortSignal) {
+    const path = await this.relocationPath(parts); await this.syncDirectory(join(path, ".."));
+    const current = await this.hashWithSnapshot(path, undefined, signal); if (!fingerprint(current.evidence, expected)) throw new CloudError("CONFLICT"); return current.evidence;
+  }
+  async renameForRelocation(from: readonly string[], target: ManagedRoot, to: readonly string[], expected: NativeFileSnapshot, native: NativeRenameApi) {
+    const sourceNames = this.validateRelocationPath(from), targetNames = target.validateRelocationPath(to); await this.check(); await target.check();
+    const result = await native.renameBeneath(this.handle.fd, sourceNames, target.handle.fd, targetNames, expected);
+    // 已改名后授权或父目录变化仍不能当成未执行；交给日志恢复核对。
+    try { await this.check(); await target.check(); } catch (error) { if (result.moved) return { state: "UNCERTAIN" as const, code: "UNAVAILABLE" as const, moved: true, osError: 0 }; throw error; }
+    return result;
+  }
+  async publishRelocationStage(attemptId: string, parts: readonly string[], expected: LocalFileEvidence, native: NativeRenameApi, signal?: AbortSignal) {
+    const names = this.segments(parts); await this.marker(attemptId);
+    const stage = await this.hashWithSnapshot(await this.filePath("staging", names, attemptId), undefined, signal);
+    if (!fingerprint(stage.evidence, expected)) throw new CloudError("CONFLICT");
+    try { const existing = await this.inspectForRelocation(names, signal); if (!fingerprint(existing.evidence, expected)) throw new CloudError("CONFLICT"); await this.syncDirectory(join(await this.filePath("staging", names, attemptId), "..")); return this.confirmRelocation(names, expected, signal); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (signal?.aborted) throw new CloudError("INTERRUPTED");
+    const result = await native.linkBeneath(this.handle.fd, [".media-marshal", "staging", this.attempt(attemptId), ...names], this.handle.fd, names, stage.snapshot);
+    if (result.state !== "PUBLISHED") throw new CloudError(result.code === "UNAVAILABLE" || result.code === "SYNC_FAILED" ? "LOCAL_UNAVAILABLE" : "CONFLICT");
+    return this.confirmRelocation(names, expected, signal);
+  }
+  async removeRelocation(id: string, expected: LocalFileEvidence) {
+    const parts = this.relocationSegments(id), path = await this.relocationPath(parts), current = await this.hash(path);
+    if (!fingerprint(current, expected)) throw new CloudError("CONFLICT");
+    // 只回收本步骤独占的私有隔离文件；共享媒体位置只能先用独占改名隔离。
+    await this.check(); await rm(path); await this.syncDirectory(join(path, ".."));
   }
   async verifyStage(attemptId: string, segments: readonly string[], expectedSize: number, remoteHash?: Extract<VersionEvidence, { kind: "hash" }>) {
     const result = await this.hash(await this.filePath("staging", segments, attemptId), remoteHash);

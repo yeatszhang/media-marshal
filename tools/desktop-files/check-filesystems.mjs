@@ -31,7 +31,17 @@ try {
       else { assert.equal(label, "exFAT"); assert.equal(renamed.code, "UNSUPPORTED"); assert.equal(renamed.moved, false); }
       await writeFile(join(work, "跨卷.mkv"), "跨卷来源保留"); const crossExpected = identity(await lstat(join(work, "跨卷.mkv"), { bigint: true })), cross = await native.renameExclusive(host.fd, "跨卷.mkv", to.fd, "跨卷.mkv", crossExpected);
       assert.equal(cross.state, "NOT_RENAMED"); assert(["CROSS_VOLUME", "UNSUPPORTED"].includes(cross.code)); assert.equal(await readFile(join(work, "跨卷.mkv"), "utf8"), "跨卷来源保留");
-      report.results.push({ filesystem: label, occupied, renamed, crossVolume: cross });
+      await writeFile(join(fromPath, "根内改名.mkv"), "根内改名内容"); const beneathExpected = identity(await lstat(join(fromPath, "根内改名.mkv"), { bigint: true })), beneath = await native.renameBeneath(from.fd, ["根内改名.mkv"], to.fd, ["嵌套目录", "修正后.mkv"], beneathExpected);
+      if (beneath.state === "RENAMED") { assert.equal((await lstat(join(toPath, "嵌套目录/修正后.mkv"), { bigint: true })).ino, beneathExpected.ino); assert.equal(await readFile(join(toPath, "嵌套目录/修正后.mkv"), "utf8"), "根内改名内容"); }
+      else { assert.equal(label, "exFAT"); assert.equal(beneath.moved, false); assert.equal(await readFile(join(fromPath, "根内改名.mkv"), "utf8"), "根内改名内容"); }
+      await writeFile(join(fromPath, "暂存锚点.mkv"), "发布内容"); const staged = identity(await lstat(join(fromPath, "暂存锚点.mkv"), { bigint: true })), published = await native.linkBeneath(from.fd, ["暂存锚点.mkv"], to.fd, ["发布目录", "发布.mkv"], staged);
+      if (published.state === "PUBLISHED") {
+        const fresh = identity(await lstat(join(fromPath, "暂存锚点.mkv"), { bigint: true })); assert.equal((await lstat(join(toPath, "发布目录/发布.mkv"), { bigint: true })).ino, fresh.ino); assert.equal(await readFile(join(toPath, "发布目录/发布.mkv"), "utf8"), "发布内容");
+        assert.equal((await native.linkBeneath(from.fd, ["暂存锚点.mkv"], to.fd, ["占用.mkv"], fresh)).code, "TARGET_EXISTS");
+      } else { assert.equal(label, "exFAT"); assert.equal(published.published, false); }
+      assert.equal(await readFile(join(fromPath, "暂存锚点.mkv"), "utf8"), "发布内容"); assert.equal(await readFile(join(toPath, "占用.mkv"), "utf8"), "第三方占用保留");
+      const crossBeneath = await native.renameBeneath(host.fd, ["跨卷.mkv"], to.fd, ["跨卷不创建", "不得移动.mkv"], crossExpected); assert.equal(crossBeneath.code, "CROSS_VOLUME"); assert.equal(crossBeneath.moved, false); await assert.rejects(lstat(join(toPath, "跨卷不创建")), { code: "ENOENT" });
+      report.results.push({ filesystem: label, occupied, renamed, crossVolume: cross, renameBeneath: beneath, publishBeneath: published, crossBeneath });
     } finally { await Promise.all([from.close(), to.close(), host.close()]); }
   }
 } catch (error) { failure = error; }

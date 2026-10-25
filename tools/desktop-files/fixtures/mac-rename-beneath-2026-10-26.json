@@ -1,0 +1,155 @@
+{
+  "capturedAt": "2026-10-25T16:23:47.430Z",
+  "os": {
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Tue Jun  9 22:26:46 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T8103"
+  },
+  "build": {
+    "format": 1,
+    "target": "darwin-arm64",
+    "napi": 8,
+    "sdk": "26.2",
+    "electronHeaders": "44.9.0",
+    "source": {
+      "path": "tools/desktop-files/rename-exclusive.c",
+      "sha256": "ddeeea2effb8f18b259320238d0bc458dec35d52c2c83349653fd5f78f466a12"
+    },
+    "headers": {
+      "node_api.h": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a",
+      "node_api_types.h": "a25356630d3058f0a0c8937d9f297e9471e037fda58c2696d8a505c2bd99cb00",
+      "js_native_api.h": "239e46a0e9f74ded674fab6cd693e231a04b79732cdc044831f0b8b5307c569f",
+      "js_native_api_types.h": "4f19cb90d240765cc0961d92a1ee20f65fdc50db7de1ab0a5cb6bc227224e1a0"
+    },
+    "binary": {
+      "name": "rename-exclusive.node",
+      "size": 53544,
+      "sha256": "3750a9d894fab0f9eb0d0329dc25c52cebadd5cbbf64381310e72e3e997634f3"
+    },
+    "compiler": "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+    "releaseStatus": "unintegrated-development"
+  },
+  "platform": "darwin",
+  "arch": "arm64",
+  "napi": "10",
+  "binarySha256": "3750a9d894fab0f9eb0d0329dc25c52cebadd5cbbf64381310e72e3e997634f3",
+  "results": [
+    {
+      "filesystem": "APFS",
+      "occupied": {
+        "state": "NOT_RENAMED",
+        "code": "TARGET_EXISTS",
+        "moved": false,
+        "osError": 17
+      },
+      "renamed": {
+        "state": "RENAMED",
+        "code": "OK",
+        "moved": true,
+        "osError": 0
+      },
+      "crossVolume": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      },
+      "renameBeneath": {
+        "state": "RENAMED",
+        "code": "OK",
+        "moved": true,
+        "osError": 0
+      },
+      "publishBeneath": {
+        "state": "PUBLISHED",
+        "code": "OK",
+        "published": true,
+        "osError": 0
+      },
+      "crossBeneath": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      }
+    },
+    {
+      "filesystem": "HFS+",
+      "occupied": {
+        "state": "NOT_RENAMED",
+        "code": "TARGET_EXISTS",
+        "moved": false,
+        "osError": 17
+      },
+      "renamed": {
+        "state": "RENAMED",
+        "code": "OK",
+        "moved": true,
+        "osError": 0
+      },
+      "crossVolume": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      },
+      "renameBeneath": {
+        "state": "RENAMED",
+        "code": "OK",
+        "moved": true,
+        "osError": 0
+      },
+      "publishBeneath": {
+        "state": "PUBLISHED",
+        "code": "OK",
+        "published": true,
+        "osError": 0
+      },
+      "crossBeneath": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      }
+    },
+    {
+      "filesystem": "exFAT",
+      "occupied": {
+        "state": "NOT_RENAMED",
+        "code": "TARGET_EXISTS",
+        "moved": false,
+        "osError": 17
+      },
+      "renamed": {
+        "state": "NOT_RENAMED",
+        "code": "UNSUPPORTED",
+        "moved": false,
+        "osError": 45
+      },
+      "crossVolume": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      },
+      "renameBeneath": {
+        "state": "NOT_RENAMED",
+        "code": "UNSUPPORTED",
+        "moved": false,
+        "osError": 45
+      },
+      "publishBeneath": {
+        "state": "NOT_PUBLISHED",
+        "code": "UNSUPPORTED",
+        "published": false,
+        "osError": 45
+      },
+      "crossBeneath": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      }
+    }
+  ],
+  "cleanup": true
+}
