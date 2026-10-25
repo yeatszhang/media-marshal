@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   DesktopError,
+  nativeActions,
   PROTOCOL_VERSION,
   parseCoreRequest,
   publicError,
@@ -75,6 +76,21 @@ describe("受限进程契约", () => {
     expect(rpcErrorSchema.parse(publicError(new CloudError("RATE_LIMITED", 30)))).toEqual({ code: "RATE_LIMITED", message: "网盘请求受到限制，请稍后重试", retryable: true, retryAfterSeconds: 30 });
     expect(publicError(new CloudError("AUTH_REQUIRED"))).toMatchObject({ code: "AUTH_REQUIRED", retryable: false });
     expect(publicError(new Error("fixture-cookie /private/path"))).not.toHaveProperty("message", "fixture-cookie /private/path");
+  });
+  it("服务配置和代理沿用核心协议限制，Emby 可带基路径，非法地址不进入核心写入", () => {
+    expect(parseCoreRequest(request("settings.save", { embyUrl: "https://media.example/emby", tmdbProxy: "http://127.0.0.1:7890" }))).toMatchObject({ payload: { language: "zh-CN" } });
+    for (const value of ["file:///private", "socks5://127.0.0.1:1080", "http://user:secret@localhost", "http://localhost/?key=secret", "http://localhost/#secret"]) {
+      expect(() => parseCoreRequest(request("settings.save", { embyUrl: value }))).toThrow(); expect(() => parseCoreRequest(request("settings.save", { tmdbProxy: value }))).toThrow();
+    }
+    expect(() => parseCoreRequest(request("settings.save", { tmdbProxy: "https://proxy.example/subpath" }))).toThrow();
+  });
+  it("宿主运行偏好只接收两个明确布尔值，许可查询拒绝路径和未知材料", () => {
+    const draft = { openAtLogin: false, remindOnClose: true };
+    expect(nativeActions["desktop.host-preferences.save"].safeParse(draft).success).toBe(true);
+    for (const value of [{ ...draft, path: "/私有目录" }, { ...draft, command: "注册其他程序" }, { ...draft, openAtLogin: "true" }]) expect(nativeActions["desktop.host-preferences.save"].safeParse(value).success).toBe(false);
+    expect(nativeActions["desktop.about"].safeParse({ path: "/其他应用" }).success).toBe(false);
+    expect(nativeActions["desktop.license"].safeParse({ id: "application" }).success).toBe(true);
+    for (const value of [{ id: "../../credentials.json" }, { id: "application", path: "/外部许可" }]) expect(nativeActions["desktop.license"].safeParse(value).success).toBe(false);
   });
   it("拒绝任意命令、SQL、URL 代理和多余参数", () => {
     for (const action of ["shell.exec", "sql.query", "http.fetch", "__proto__"])

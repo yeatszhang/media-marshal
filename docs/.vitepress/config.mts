@@ -36,6 +36,7 @@ export default defineConfig({
           { text: '桌面识别规则', link: '/architecture/desktop-recognition' },
           { text: '桌面整理流水线', link: '/architecture/desktop-ingestion' },
           { text: '修正已整理媒体', link: '/product/desktop-corrections' },
+          { text: '客户端设置与运行方式', link: '/product/desktop-settings' },
           { text: '桌面迁移基线', link: '/architecture/desktop-migration' },
           { text: '桌面客户端开发', link: '/architecture/desktop-development' },
           { text: '统一来源配置与版本', link: '/architecture/source-rules' },

@@ -12,6 +12,7 @@ import { SettingsViewModel } from "../services";
 import { Header, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 import i18n from "../i18n";
+import { HostSettingsPanel } from "../components/HostSettingsPanel";
 import { LibrarySetup } from "./LibrarySetup";
 import "./settings.css";
 
@@ -79,7 +80,7 @@ export function SettingsPage() {
                   type="url"
                   placeholder="http://localhost:8096"
                   value={embyUrl}
-                  onChange={(e) => setEmbyUrl(e.target.value)}
+                  onChange={(e) => { setEmbyUrl(e.target.value); setNotice(null); }}
                 />
               </div>
               <div className="settings-row">
@@ -89,8 +90,9 @@ export function SettingsPage() {
                   type="url"
                   placeholder="http://127.0.0.1:7890"
                   value={tmdbProxy}
-                  onChange={(e) => setProxy(e.target.value)}
+                  onChange={(e) => { setProxy(e.target.value); setNotice(null); }}
                 />
+                <small className="settings-description settings-proxy-help">仅用于 TMDB 查询，支持 HTTP(S) 代理。留空表示直连；地址不包含账号、密码或子路径。</small>
               </div>
               <div className="settings-row">
                 <label htmlFor="settings-language">{t("language")}</label>
@@ -177,6 +179,7 @@ export function SettingsPage() {
             </div>
           </section>
           <LibrarySetup />
+          <HostSettingsPanel />
           <section
             className="panel settings-card"
             aria-labelledby="settings-diagnostics-title"
@@ -235,7 +238,8 @@ export function SettingsPage() {
             variant="outline"
             disabled={busy}
             onClick={() => {
-              void model.restoreUpgrade();
+              setBusy(true);
+              void model.restoreUpgrade().finally(() => setBusy(false));
             }}
           >
             恢复升级备份…

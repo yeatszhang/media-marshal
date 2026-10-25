@@ -25,6 +25,10 @@ async function invoke(action: string, payload: unknown): Promise<any> {
 }
 // 此对象仅暴露具体动作，不暴露 invoke、通道名或 Electron 对象。
 const api: DesktopApi = {
+  getHostPreferences: () => invoke("desktop.host-preferences.get", {}),
+  saveHostPreferences: (input) => invoke("desktop.host-preferences.save", input),
+  getDesktopAbout: () => invoke("desktop.about", {}),
+  getLicenseText: (id) => invoke("desktop.license", { id }),
   getCorrectionScope: (input) => invoke("corrections.scope", input),
   previewCorrectionBatch: (input) => invoke("corrections.preview-batch", input),
   confirmCorrectionBatch: (input) => invoke("corrections.confirm-batch", input),

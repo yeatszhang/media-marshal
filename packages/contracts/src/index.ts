@@ -1,3 +1,5 @@
+import { hostPreferencesDraftSchema, licenseIdSchema, type HostPreferencesDraft, type HostPreferences, type DesktopAbout, type LicenseId, type LicenseText } from "./desktop-host.js";
+export * from "./desktop-host.js";
 import { z } from "zod";
 import { directoryIssueSchema, type DirectoryIssue } from "./directory-issues.js";
 export * from "./directory-issues.js";
@@ -74,10 +76,14 @@ export const sourceSchema = sourceDraftSchema.extend({
 });
 export type DesktopSource = z.infer<typeof sourceSchema>;
 
+const serviceAddressSchema = (proxy: boolean) => z.string().max(2048, "服务地址不能超过 2048 字符").refine((value) => {
+  if (!value) return true;
+  try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash && (!proxy || url.pathname === "/"); } catch { return false; }
+}, proxy ? "TMDB 代理只支持不含凭据、路径、查询或片段的 HTTP(S) 地址；留空表示直连" : "Emby 地址只支持不含凭据、查询或片段的 HTTP(S) 地址；密钥请单独保存").default("");
 export const settingsDraftSchema = z.strictObject({
   language: z.enum(["zh-CN", "en"]).default("zh-CN"),
-  embyUrl: z.union([z.literal(""), z.url().max(2048)]).default(""),
-  tmdbProxy: z.union([z.literal(""), z.url().max(2048)]).default(""),
+  embyUrl: serviceAddressSchema(false),
+  tmdbProxy: serviceAddressSchema(true),
 });
 export type SettingsDraft = z.infer<typeof settingsDraftSchema>;
 export const settingsSchema = settingsDraftSchema.extend({
@@ -228,6 +234,10 @@ export const credentialSchema = z.strictObject({
   value: z.string().trim().max(1024),
 });
 export const nativeActions = {
+  "desktop.host-preferences.get": empty,
+  "desktop.host-preferences.save": hostPreferencesDraftSchema,
+  "desktop.about": empty,
+  "desktop.license": z.strictObject({ id: licenseIdSchema }),
   "desktop.ingestion.configure": ingestionConfigureSchema,
   "desktop.media.choose-target": z.strictObject({ mediaType: z.enum(["MOVIE", "TV_SHOW"]) }),
   "desktop.emby.open": z.strictObject({ taskId: z.uuid() }),
@@ -252,6 +262,10 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  getHostPreferences(): Promise<HostPreferences>;
+  saveHostPreferences(input: HostPreferencesDraft): Promise<HostPreferences>;
+  getDesktopAbout(): Promise<DesktopAbout>;
+  getLicenseText(id: LicenseId): Promise<LicenseText>;
   getCorrectionScope(input: CoreInput<"corrections.scope">): Promise<CoreOutput<"corrections.scope">>;
   previewCorrectionBatch(input: CoreInput<"corrections.preview-batch">): Promise<CoreOutput<"corrections.preview-batch">>;
   confirmCorrectionBatch(input: CoreInput<"corrections.confirm-batch">): Promise<CoreOutput<"corrections.confirm-batch">>;

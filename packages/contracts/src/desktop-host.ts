@@ -1,0 +1,11 @@
+import { z } from "zod";
+export const hostPreferencesDraftSchema = z.strictObject({ openAtLogin: z.boolean(), remindOnClose: z.boolean() });
+export type HostPreferencesDraft = z.infer<typeof hostPreferencesDraftSchema>;
+export const hostPreferencesSchema = hostPreferencesDraftSchema.extend({ loginSupported: z.boolean(), loginStatus: z.enum(["unsupported", "not-registered", "enabled", "requires-approval", "not-found"]), trayAvailable: z.boolean() });
+export type HostPreferences = z.infer<typeof hostPreferencesSchema>;
+export const licenseIdSchema = z.enum(["application", "framework", "openlist", "rclone", "guardian", "parser"]);
+export type LicenseId = z.infer<typeof licenseIdSchema>;
+export const desktopAboutSchema = z.strictObject({ appVersion: z.string().max(100), electronVersion: z.string().max(100), target: z.string().max(100), packaged: z.boolean(), components: z.array(z.strictObject({ name: z.string().max(100), version: z.string().max(100), license: z.string().max(100), licenseId: licenseIdSchema })).max(20) });
+export type DesktopAbout = z.infer<typeof desktopAboutSchema>;
+export const licenseTextSchema = z.strictObject({ title: z.string().max(100), text: z.string().max(200000) });
+export type LicenseText = z.infer<typeof licenseTextSchema>;

@@ -20,7 +20,7 @@ model {
       description 'React / StatefulService；账号连接、统一来源草稿与预览、单条／批量修正、任务及交付状态'
     }
     main = process 'Electron Main' {
-      description '系统保险箱、原生授权、进程身份及升级备份'
+      description '系统保险箱、原生授权、运行偏好及随包许可、进程身份及确认后的升级备份'
     }
     core = process 'Media Core' {
       description '唯一业务库写入者；来源版本、调度、识别、COPY、修正与独立交付'

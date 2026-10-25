@@ -18,7 +18,9 @@ import type {
 } from "@media-marshal/contracts";
 
 import { DesktopClient } from "./desktop-client";
+import { settingsDraftSchema } from "@media-marshal/contracts";
 export { DesktopClient } from "./desktop-client";
+import { HostSettingsViewModel } from "./host-settings-model";
 import { SourceRulesViewModel } from "./source-rules-model";
 import { OrganizeBatchesViewModel } from "./organize-batches-model";
 import { SeasonsViewModel } from "./seasons-model";
@@ -204,7 +206,9 @@ export class SettingsViewModel extends StatefulService<{
   }
   async save(input: SettingsDraft) {
     try {
-      await this.client.saveSettings(input);
+      const parsed = settingsDraftSchema.safeParse(input);
+      if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("；"));
+      await this.client.saveSettings(parsed.data);
       await this.refresh();
     } catch (error) {
       this.setState({ error: message(error) });
@@ -345,6 +349,7 @@ export function createRendererApplication(client: DesktopApi) {
       dependencies: [connection.id],
       register(bind) {
         bind(SettingsViewModel).toSelf().inSingletonScope();
+        bind(HostSettingsViewModel).toSelf().inSingletonScope();
       },
     },
   ];

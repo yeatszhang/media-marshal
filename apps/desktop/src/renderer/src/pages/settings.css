@@ -186,6 +186,8 @@
   margin-top: 20px;
 }
 
+.settings-proxy-help { grid-column: 2; margin-top: -10px; }
+
 .settings-page > .notice-success {
   width: fit-content;
   max-width: 100%;
@@ -204,9 +206,22 @@
     gap: 10px;
   }
 
+  .settings-proxy-help { grid-column: 1; margin-top: 0; }
+
   .settings-field-caption {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
   }
 }
+
+.settings-runtime-option { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.settings-body .settings-runtime-option > input { flex: 0 0 18px; width: 18px; min-width: 18px; height: 18px; margin: 2px 0 0; padding: 0; accent-color: var(--primary); }
+.settings-runtime-option > span { min-width: 0; }
+.settings-runtime-option strong { display: block; font-size: 14px; line-height: 22px; }
+.settings-runtime-option small, .settings-components small { display: block; color: var(--muted-foreground); font-size: 12px; font-weight: 400; line-height: 1.8; margin-top: 5px; }
+.settings-components { list-style: none; padding: 0; margin-top: 16px; }
+.settings-components li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0; border-top: 1px solid var(--border); }
+.settings-components li > div { min-width: 0; overflow-wrap: anywhere; }
+.settings-license { border-top: 1px solid var(--border); padding-top: 20px; margin-top: 20px; }
+.settings-license pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow-y: auto; font-size: 12px; line-height: 1.8; padding: 14px; background: #f7f8fa; border: 1px solid var(--border); border-radius: 8px; }

@@ -69,7 +69,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
         noReview: "当前没有待确认记录",
         noReviewDetail: "这里会保留需要你决定的事项，确认前不会修改媒体库。",
         setupTitle: "准备好本机连接",
-        setupHelp: "配置可保存为草稿，连接验证通过后才能启用自动入库。",
+        setupHelp: "配置已有 Emby、识别服务和本机运行方式。来源与整理规则在「来源」设置。",
         embyUrl: "Emby 服务地址",
         tmdbProxy: "TMDB 代理地址（可选）",
         tmdbKey: "TMDB API Key",
@@ -182,7 +182,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
           "Items needing your decision stay here. Files are unchanged until confirmation.",
         setupTitle: "Connect your local services",
         setupHelp:
-          "Save a draft now. Automatic ingestion requires a verified connection.",
+          "Configure existing Emby, recognition services and local runtime preferences. Manage source and organization rules in Sources.",
         embyUrl: "Emby server URL",
         tmdbProxy: "TMDB proxy URL (optional)",
         tmdbKey: "TMDB API key",

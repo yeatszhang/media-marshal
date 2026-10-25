@@ -617,7 +617,7 @@ test("升级备份失败阻断接入和核心重试，修复私有目录后才�
 });
 test("整包升级停写备份和原生恢复保留现存文件，重开核对数据", async () => {
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
-  await application.evaluate(({ app, dialog }) => { const quit = app.quit.bind(app); app.quit = () => { app.quit = quit; }; dialog.showMessageBox = (async () => ({ response: 0, checkboxChecked: false })) as typeof dialog.showMessageBox; });
+  await application.evaluate(({ app, dialog }) => { const quit = app.quit.bind(app); app.quit = () => { app.quit = quit; }; dialog.showMessageBox = (async (options: any) => ({ response: options.title === "确认备份并退出" ? 1 : 0, checkboxChecked: false })) as typeof dialog.showMessageBox; });
   const media = join(directory, "升级保留文件"); await mkdir(media); await (await import("node:fs/promises")).writeFile(join(media, "保留.txt"), "现存文件不随数据库回退");
   await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, media);
   await window.evaluate(() => window.desktopApi.chooseDownloadRoot());
@@ -969,4 +969,56 @@ db.close();
   const details = await window.evaluate((id) => window.desktopApi.getOrganizeBatch({ id }), ready.id), operations = details.items.map((item) => item.operationId); expect(new Set(operations).size).toBe(2);
   for (const item of details.items) { expect(item.preview!.targetPath).toContain("季集验收"); const original = await readFile(item.sourcePath); expect(original.toString()).toBe(`批量整理原内容 ${item.preview!.episode}`); expect(await readFile(item.preview!.targetPath)).toEqual(original); } await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
   expect((await window.evaluate((id) => window.desktopApi.getOrganizeBatch({ id }), ready.id)).items.map((item) => item.operationId)).toEqual(operations); expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(2);
+});
+
+test("运行设置固定桥、关闭提醒与随包许可在最小窗口和重载后保持，登录注册不由读取重放", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(70000);
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const nativeRead = await window.evaluate(() => window.desktopApi.getHostPreferences()); expect(nativeRead.loginSupported).toBe(!!process.env.MARSHAL_EXECUTABLE);
+  // 隔离测试只替换系统登录项端口；不修改本机真实登录项或宣称已经验证注销重登。
+  await application.evaluate(({ app, dialog }) => {
+    const probe = { enabled: false, pending: false, calls: [] as boolean[], prompts: 0 }; (globalThis as any).__hostSettingsProbe = probe;
+    app.getLoginItemSettings = (() => ({ openAtLogin: probe.enabled, status: probe.pending ? "requires-approval" : probe.enabled ? "enabled" : "not-registered" })) as typeof app.getLoginItemSettings;
+    app.setLoginItemSettings = ((settings: { openAtLogin?: boolean }) => { probe.enabled = !!settings.openAtLogin; probe.pending = probe.enabled; probe.calls.push(probe.enabled); }) as typeof app.setLoginItemSettings;
+    dialog.showMessageBox = (async () => { probe.prompts++; return { response: 0, checkboxChecked: false }; }) as typeof dialog.showMessageBox;
+  });
+  const preferencesPath = join(directory, "data/host-preferences.json"); await expect(stat(preferencesPath)).rejects.toMatchObject({ code: "ENOENT" });
+  await window.getByRole("link", { name: "设置", exact: true }).click(); const runtime = window.getByRole("region", { name: "运行方式", exact: true }); await expect(runtime).toContainText("托盘状态：已就绪");
+  const login = runtime.getByRole("checkbox", { name: "登录后自动启动", exact: true }), reminder = runtime.getByRole("checkbox", { name: "首次关闭时提醒后台运行", exact: true }); await expect(reminder).toBeChecked(); await expect(login).not.toBeChecked();
+  if (process.env.MARSHAL_EXECUTABLE) { await login.check(); } else { await expect(login).toBeDisabled(); }
+  await reminder.uncheck(); expect(await application.evaluate(() => (globalThis as any).__hostSettingsProbe.calls)).toEqual([]); await runtime.getByRole("button", { name: "保存运行设置", exact: true }).click(); await expect(runtime).toContainText(process.env.MARSHAL_EXECUTABLE ? "仍等待系统批准" : "已保存运行设置");
+  const registered = process.env.MARSHAL_EXECUTABLE ? [true] : []; expect(await application.evaluate(() => (globalThis as any).__hostSettingsProbe.calls)).toEqual(registered);
+  expect(JSON.parse(await readFile(preferencesPath, "utf8"))).toEqual({ version: 1, remindOnClose: false }); expect((await stat(preferencesPath)).mode & 0o777).toBe(0o600);
+  await window.reload(); await expect(runtime).toContainText("托盘状态：已就绪"); await expect(reminder).not.toBeChecked(); expect(await application.evaluate(() => (globalThis as any).__hostSettingsProbe.calls)).toEqual(registered);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close()); await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false); expect(await application.evaluate(() => (globalThis as any).__hostSettingsProbe.prompts)).toBe(0); expect((await window.evaluate(() => window.desktopApi.getRuntime())).core).toBe("ready");
+  await application.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.show(); BrowserWindow.getAllWindows()[0]!.setSize(920, 640); });
+  await reminder.check(); await runtime.getByRole("button", { name: "保存运行设置", exact: true }).click(); await expect.poll(async () => JSON.parse(await readFile(preferencesPath, "utf8")).remindOnClose).toBe(true);
+  for (const checkbox of [login, reminder]) expect(await checkbox.evaluate((input) => { const box = input.getBoundingClientRect(), text = input.parentElement!.querySelector("span")!.getBoundingClientRect(); return box.width >= 16 && box.width <= 20 && text.left - box.right >= 8 && text.left - box.right <= 16; })).toBe(true);
+  expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await runtime.screenshot({ path: "test-results/desktop/host-settings-runtime-minimum.png" });
+  const about = window.getByRole("region", { name: "关于与开源许可", exact: true }); const actual = await application.evaluate(({ app }) => app.getVersion()); await expect(about).toContainText(`Media Marshal ${actual}`);
+  await about.getByRole("button", { name: "查看 Media Marshal 与自有文件组件 许可", exact: true }).click(); await expect(about.getByLabel("许可与来源说明", { exact: true })).toContainText("GNU GENERAL PUBLIC LICENSE"); await about.screenshot({ path: "test-results/desktop/host-settings-about-minimum.png" }); await about.getByRole("button", { name: "关闭许可原文", exact: true }).click();
+  for (const id of ["framework", "parser", "openlist", "rclone", "guardian"] as const) expect((await window.evaluate((id) => window.desktopApi.getLicenseText(id), id)).text.length).toBeGreaterThan(100);
+  await expect(window.evaluate(() => window.desktopApi.getLicenseText("../../credentials.json" as never))).rejects.toThrow();
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close()); await expect.poll(() => application.evaluate(() => (globalThis as any).__hostSettingsProbe.prompts)).toBe(1); expect(await application.evaluate(() => (globalThis as any).__hostSettingsProbe.calls)).toEqual(registered); await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
+  if (process.env.MARSHAL_EXECUTABLE) {
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.show()); await login.uncheck(); await runtime.getByRole("button", { name: "保存运行设置", exact: true }).click(); await expect(runtime).toContainText("未注册登录启动"); await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close()); await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false); expect(await application.evaluate(() => (globalThis as any).__hostSettingsProbe.prompts)).toBe(1); expect(await application.evaluate(() => (globalThis as any).__hostSettingsProbe.calls)).toEqual([true, false]);
+  }
+});
+
+test("升级前的原生确认默认取消，取消不停止核心、不创建备份且不触碰媒体", async () => {
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); const media = join(directory, "原媒体保持.txt"); await writeFile(media, "不修改现存媒体");
+  await application.evaluate(({ dialog }) => { (globalThis as any).__upgradeQuestions = []; dialog.showMessageBox = (async (options: any) => { (globalThis as any).__upgradeQuestions.push(options); return { response: 0, checkboxChecked: false }; }) as typeof dialog.showMessageBox; });
+  const backupRoot = join(directory, "data/private-backups"), before = (await readdir(backupRoot)).sort();
+  await window.getByRole("link", { name: "设置", exact: true }).click(); await window.getByRole("button", { name: "准备升级并退出", exact: true }).click();
+  await expect.poll(() => application.evaluate(() => (globalThis as any).__upgradeQuestions.length)).toBe(1); await expect(window.getByRole("button", { name: "准备升级并退出", exact: true })).toBeEnabled();
+  expect(await application.evaluate(() => (globalThis as any).__upgradeQuestions[0])).toMatchObject({ title: "确认备份并退出", defaultId: 0, cancelId: 0, buttons: ["取消", "备份并退出"] });
+  expect((await readdir(backupRoot)).sort()).toEqual(before); expect((await window.evaluate(() => window.desktopApi.getRuntime())).core).toBe("ready"); expect(await window.evaluate(() => window.desktopApi.listSources())).toEqual([]); expect(await readFile(media, "utf8")).toBe("不修改现存媒体");
+});
+
+test("服务地址和代理在页面提交前校验，非法配置不替换原值，合法代理可跨 Core 重启", async () => {
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); const original = await window.evaluate(() => window.desktopApi.getSettings());
+  await window.getByRole("link", { name: "设置", exact: true }).click(); const proxy = window.locator("#settings-tmdb-proxy"), emby = window.locator("#settings-emby-url"), save = window.getByRole("button", { name: "保存", exact: true });
+  await proxy.fill("file:///invalid-proxy"); await save.click(); await expect(window.getByRole("alert").filter({ hasText: "TMDB 代理只支持" })).toBeVisible(); expect((await window.evaluate(() => window.desktopApi.getSettings())).tmdbProxy).toBe(original.tmdbProxy);
+  await proxy.fill(""); await emby.fill("http://private-fixture-secret@localhost:8096"); await save.click(); const error = window.getByRole("alert").filter({ hasText: "Emby 地址只支持" }); await expect(error).toBeVisible(); await expect(error).not.toContainText("private-fixture-secret"); expect((await window.evaluate(() => window.desktopApi.getSettings())).embyUrl).toBe(original.embyUrl);
+  await emby.fill(original.embyUrl); await proxy.fill("http://127.0.0.1:7890"); await save.click(); await expect(window.getByText("配置已保存", { exact: true })).toBeVisible(); await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); expect((await window.evaluate(() => window.desktopApi.getSettings())).tmdbProxy).toBe("http://127.0.0.1:7890");
 });

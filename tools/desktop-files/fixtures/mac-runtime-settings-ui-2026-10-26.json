@@ -1,0 +1,108 @@
+{
+  "capturedAt": "2026-10-25T20:41:55.185776+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "schema": 24,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "5cd1a65f920b6c02a6b1f3e17e9555e67c838df96c57a58186354dabcbee3cf1",
+  "nativeManifestSha256": "b658dc98b9a0547214b2633e03f0995a8f84d9474a33ced3ddd89f8d9f61c46c",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/main/host-preferences.ts": "9e4acdaa7678766d0316bf22e6b2899db37ccf5fdfb9373d6e363c25499eea9d",
+    "apps/desktop/src/main/host-preferences.test.ts": "35441dac6f207c329e79d85c2d4b5b917ab1f67b3205edd26e0bc945a8fedb57",
+    "apps/desktop/src/main/desktop-about.ts": "82cc8efa14d164b0e4f5c4d30d020cf9b06dccf168dda1d0a32428d158526c01",
+    "apps/desktop/src/main/desktop-about.test.ts": "d3927c5ecbb41dd9873665c095b6d6675d129e45842c5cbd23d695c2fab8664b",
+    "apps/desktop/src/main/index.ts": "4f22b3a5abfc2b7524c0027e66a68728c78ae2d47c779108a7c4f83ce456f232",
+    "apps/desktop/src/preload/index.ts": "745a61d46c47e2abbf1015b7df56992957497bf8087c04e2e1456b36e9abcf3e",
+    "apps/desktop/src/renderer/src/components/HostSettingsPanel.tsx": "f0b865092db562d5276b221fd5f533565e481f4b48297a39de08c3c84ec92404",
+    "apps/desktop/src/renderer/src/host-settings-model.ts": "aea37d188f30ea4c1fdc6df67fe3434166cacf03c2a0fc847f88d56bdfad206a",
+    "apps/desktop/src/renderer/src/host-settings.test.tsx": "da08ab37ad2f01966a69ec4f9cf49cd44286a2c6bd4cab19251436291fa233dc",
+    "apps/desktop/src/renderer/src/services.ts": "443f2bb583a079d47149abe3e80419e75052694025e805c01a10112d8f7b46bb",
+    "apps/desktop/src/renderer/src/pages/SettingsPage.tsx": "dc6d7d333522c6bef2ac9f83bd954853b5d5b12828669ed62609a3cebbc952f1",
+    "apps/desktop/src/renderer/src/pages/settings.css": "0d6eb71009f8a07d5a0a133c090e599ca782acac63779c501c4a375db4801646",
+    "apps/desktop/src/renderer/src/i18n.ts": "a11b3e48d4ff6a7fedb1f25461f027eba759ff451031bd7d5af9da7c9714f0fb",
+    "packages/contracts/src/desktop-host.ts": "ef8c0053ecfdfd666b789db0c3aa8a4283f9d015b56ca10108a2b27328373706",
+    "packages/contracts/src/index.ts": "59422a05a3dd72519fc6d759e00d74384771aa2fdb09189e47d1a3bd23add17e",
+    "packages/contracts/src/contracts.test.ts": "9f6b953af9cd9387de4f1060559c4563631d81128f98df55560c18b51b41124f",
+    "apps/desktop/tests/desktop.spec.ts": "f904c14bcaeb0e08675a125c55bc03800e65f75f1fd5bb8b2ffb8d3dd77d8fec",
+    "apps/desktop/src/main/cloud/downloads.test.ts": "b4d46e9c4d088eca5ab1cf4d0a9237382c100d0aebd41e8e40d61ccf1965e2d5"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 761,
+      "skipped": 13
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "artifactWhitelist": true,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "likec4Export": {
+      "version": "1.60.0",
+      "views": 4
+    },
+    "finalPackagedUiWindows": 5,
+    "openSpecProgress": {
+      "total": 109,
+      "complete": 92,
+      "remaining": 17
+    }
+  },
+  "assertions": {
+    "realLoginItemReadOnlyQuery": true,
+    "readsAndReloadDoNotRegisterLoginItem": true,
+    "explicitRegistrationAndWithdrawalThroughSystemPortFixture": true,
+    "approvalIsDistinctFromEnabled": true,
+    "refreshClearsStaleApprovalNotice": true,
+    "hostFileContainsReminderOnlyAndMode0600": true,
+    "hostReminderRestoredAcrossRendererReload": true,
+    "disabledReminderClosesToBackgroundWithoutDialog": true,
+    "unrelatedLoginChangeDoesNotRepeatCloseExplanation": true,
+    "coreRemainsReadyWithWindowHidden": true,
+    "atomicFileFailureVerifiesSystemRollback": true,
+    "stoppingRejectsQueuedLoginChanges": true,
+    "fixedLicenseIdsRejectArbitraryPath": true,
+    "packagedLicensesRead": [
+      "application",
+      "framework",
+      "parser",
+      "openlist",
+      "rclone",
+      "guardian"
+    ],
+    "invalidProxyAndEmbyAddressRejectedBeforeSave": true,
+    "proxyRetainedAcrossCoreRestart": true,
+    "existingRealHttpConnectProxyTestIncluded": true,
+    "upgradeConfirmationDefaultsToCancel": true,
+    "cancelDoesNotStopCoreOrCreateBackup": true,
+    "backupAndRestorePreserveExistingMedia": true,
+    "diagnosticCancelDoesNotWrite": true,
+    "diagnosticContainsNoPrivatePathsOrCredentials": true,
+    "minimumWindowHorizontalOverflow": false,
+    "checkboxWidthBetween16And20": true,
+    "checkboxTextGapBetween8And16": true
+  },
+  "fixtureBoundaries": {
+    "directories": "独立临时应用数据及媒体文件，未操作个人媒体和凭据",
+    "login": "先查询当前应用的真实系统登录项；注册、撤回和待批准使用系统 API 替身，未修改本机真实登录项",
+    "nativeDialogs": "保存、升级确认、备份恢复和首次关闭说明使用对话框替身；不作为 OS 对话框或真实注销登录验收",
+    "network": "设置窗口仅核对地址校验与保存，HTTP CONNECT 实际路由由现有 TmdbClient 本地代理测试覆盖",
+    "notCovered": [
+      "真实注销登录后的自动启动",
+      "原生托盘菜单操作",
+      "Mac Intel 运行",
+      "完整安装与卸载矩阵",
+      "Developer ID 签名与公证",
+      "全部 test:packaged 矩阵"
+    ]
+  },
+  "regressionNote": "末轮一次既有 outbox 计数断言未满足，单项复验通过。夹具改为等待下载调度收尾，并在重投前核对接收次数、确认故障分类和尝试次数；三项相关测试及最终全量通过。生产传输、稳定窗口和重试规则未改。",
+  "screenshots": {
+    "docs/public/desktop/host-settings-runtime.png": "b906e92eec13ba4f25b125073f7578bb175d4802dc8383b8252d491c6ba1afdd",
+    "docs/public/desktop/host-settings-about.png": "8cbe3f90700898aed62a515a7ed2a53020f04302a258b30e8284240257b48531"
+  }
+}

@@ -36,6 +36,8 @@ import { nativeFilesLaunch } from "./native-files";
 import { Credentials } from "./credentials";
 import { APP_ORIGIN, assetPath, requireEmbyItemUrl, requireTrustedRequest } from "./security";
 import { trayIcon } from "./tray-icon";
+import { HostPreferencesController } from "./host-preferences";
+import { DesktopAboutController } from "./desktop-about";
 import { SidecarSupervisor } from "./cloud/sidecar-supervisor";
 import { AccountCredentials } from "./cloud/account-credentials";
 import { defaultDiagnostic } from "./cloud/diagnostics";
@@ -84,6 +86,13 @@ async function bootstrap() {
   let exiting = false;
   let maintenance = false;
   const backups = new ManagedUpgradeBackups(app.getPath("userData"));
+  const hostPreferences = new HostPreferencesController(join(app.getPath("userData"), "host-preferences.json"), {
+    supported: process.platform === "darwin" && app.isPackaged,
+    get: () => { const value = app.getLoginItemSettings(); return { openAtLogin: value.openAtLogin, status: value.status }; },
+    set: (openAtLogin) => app.setLoginItemSettings({ openAtLogin }), trayAvailable: () => !!tray && !tray.isDestroyed(),
+  });
+  await hostPreferences.get().catch(() => {});
+  const about = new DesktopAboutController({ appRoot: app.getAppPath(), resourcesRoot: process.resourcesPath, packaged: app.isPackaged, target: `${process.platform}-${process.arch}`, appVersion: app.getVersion(), electronVersion: process.versions.electron });
   const parserLaunch = async () => {
     const target = `${process.platform}-${process.arch}`, directory = app.isPackaged ? join(app.getAppPath(), "resources/parser") : join(app.getAppPath(), "resources/parser", target);
     try { const data = await readFile(join(directory, "manifest.json")); if (data.length > 1024 * 1024) return undefined; return parserLaunchSchema.parse({ root: app.isPackaged ? join(process.resourcesPath, "parser") : join(directory, "runtime"), manifest: JSON.parse(data.toString("utf8")) }); }
@@ -149,7 +158,7 @@ async function bootstrap() {
       if (exiting) return;
       event.preventDefault();
       if (closing) return;
-      if (!didExplainClose) {
+      if (!didExplainClose && hostPreferences.remindOnClose) {
         closing = true;
         void dialog
           .showMessageBox(window!, {
@@ -449,6 +458,10 @@ async function bootstrap() {
               const saved = await supervisor.request("settings.get", {}), url = requireEmbyItemUrl(address, saved.embyUrl);
               await shell.openExternal(url.href); return { ok: true, result: null };
             }
+            if (action === "desktop.host-preferences.get") return { ok: true, result: await hostPreferences.get() };
+            if (action === "desktop.host-preferences.save") { if (maintenance || exiting) throw new DesktopError("INTERRUPTED", "客户端正在停止，运行设置未应用"); const previousReminder = hostPreferences.remindOnClose, result = await hostPreferences.save(nativeActions["desktop.host-preferences.save"].parse(parsed.data)); if (result.remindOnClose !== previousReminder) didExplainClose = false; return { ok: true, result }; }
+            if (action === "desktop.about") return { ok: true, result: await about.get() };
+            if (action === "desktop.license") return { ok: true, result: await about.license(nativeActions["desktop.license"].parse(parsed.data).id) };
             if (action === "desktop.settings")
               return {
                 ok: true,
@@ -565,8 +578,13 @@ async function bootstrap() {
       chosen = choices[pick.response]?.id; if (!chosen) return;
       const confirm = await dialog.showMessageBox({ type: "question", title: "确认恢复并退出", message: "将先停写并备份当前数据，再恢复所选业务库、凭据密文与组件状态。", detail: "应用随后退出。安装匹配版本后再打开；恢复后会核对现存下载文件，不删除或覆盖媒体文件。", buttons: ["取消", "恢复并退出"], defaultId: 0, cancelId: 0 }); if (confirm.response !== 1) return;
     }
+    if (!restore) {
+      const confirm = await dialog.showMessageBox({ type: "question", title: "确认备份并退出", message: "将停止新接入，等待文件处理到达安全点，保存升级备份后退出应用。", detail: "下载文件和媒体库会保留；取消不会停止核心或创建备份。", buttons: ["取消", "备份并退出"], defaultId: 0, cancelId: 0 }); if (confirm.response !== 1) return;
+    }
+    if (maintenance || exiting) throw new DesktopError("CONFLICT", "客户端正在停止");
     maintenance = true;
     try {
+      await hostPreferences.stop();
       await desktop.container.get(quarkLoginToken).stop();
       const host = desktop.container.get(sidecarToken); host.retainForBackup();
       await desktop.container.get(cloudAccountsToken).stop(); await desktop.container.get(coreToken).stop(); await host.stop(); await host.prepareOfflineBackup(); await desktop.container.get(credentialToken).drain();
@@ -594,6 +612,7 @@ async function bootstrap() {
       try {
         // 扫码／账号作业可能正在等 Core；并发停接入与 Core，避免互相等待。
         await Promise.allSettled([
+          hostPreferences.stop(),
           Promise.resolve().then(() => desktop.container.isBound(quarkLoginToken) ? desktop.container.get(quarkLoginToken).stop() : undefined),
           Promise.resolve().then(() => desktop.container.isBound(cloudAccountsToken) ? desktop.container.get(cloudAccountsToken).stop() : undefined),
           Promise.resolve().then(() => desktop.container.isBound(coreToken) ? desktop.container.get(coreToken).stop() : undefined),
