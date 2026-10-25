@@ -839,12 +839,17 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const candidate = this.candidate(candidateId), current = JSON.parse(candidate.relative_json) as string[];
     assertMediaCoordinates(this.database, selection, candidate.task_id ?? "", current.at(-1)!);
   }
-  async withCorrectionLease<T>(taskId: string, work: () => Promise<T>): Promise<T> {
-    if (this.closed || this.correctionLeases.has(taskId)) throw conflict("此任务正在核对修正，请等待当前请求完成");
-    if (this.database.connection.prepare("SELECT 1 FROM app_setting s JOIN ingestion_operation o ON s.key='ingestion.restore.audit.'||o.id WHERE o.task_id=?").get(taskId)) throw conflict("恢复备份后的原目标尚待核对，请等待原卷恢复后再预览修正");
-    const candidate = this.database.connection.prepare("SELECT id FROM ingestion_candidate WHERE task_id=?").get(taskId) as { id: string } | undefined;
-    if (candidate && [...this.activeWork.values()].some((active) => active.candidateId === candidate.id)) throw conflict("此任务的附属文件仍在处理，请等待当前步骤到达安全点后重新预览修正");
-    this.correctionLeases.add(taskId); try { return await work(); } finally { this.correctionLeases.delete(taskId); }
+  withCorrectionLease<T>(taskId: string, work: () => Promise<T>): Promise<T> { return this.withCorrectionLeases([taskId], work); }
+  async withCorrectionLeases<T>(taskIds: readonly string[], work: () => Promise<T>): Promise<T> {
+    const ids = [...new Set(taskIds)];
+    for (const taskId of ids) {
+      if (this.closed || this.correctionLeases.has(taskId)) throw conflict("此任务正在核对修正，请等待当前请求完成");
+      if (this.database.connection.prepare("SELECT 1 FROM app_setting s JOIN ingestion_operation o ON s.key='ingestion.restore.audit.'||o.id WHERE o.task_id=?").get(taskId)) throw conflict("恢复备份后的原目标尚待核对，请等待原卷恢复后再预览修正");
+      const candidate = this.database.connection.prepare("SELECT id FROM ingestion_candidate WHERE task_id=?").get(taskId) as { id: string } | undefined;
+      if (candidate && [...this.activeWork.values()].some((active) => active.candidateId === candidate.id)) throw conflict("此任务的附属文件仍在处理，请等待当前步骤到达安全点后重新预览修正");
+    }
+    for (const id of ids) this.correctionLeases.add(id);
+    try { return await work(); } finally { for (const id of ids) this.correctionLeases.delete(id); }
   }
   async confirm(input: CoreInput<"ingestion.confirm">, ownerBatchId?: string) {
     const owner = this.database.connection.prepare("SELECT i.batch_id FROM ingestion_organize_batch_item i JOIN ingestion_preview p ON p.request_key=i.request_key WHERE p.id=?").get(input.previewId) as { batch_id: string } | undefined;

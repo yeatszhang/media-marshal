@@ -19,6 +19,7 @@ import { recognitionBatchMigrationSql } from "./recognition-batch-migration.js";
 import { organizeBatchMigrationSql } from "./organize-batch-migration.js";
 import { fileRelocationMigrationSql } from "./file-relocation-migration.js";
 import { correctionMigrationSql } from "./correction-migration.js";
+import { correctionBatchMigrationSql } from "./correction-batch-migration.js";
 import { correctionPreparationMigrationSql } from "./correction-preparation-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
@@ -80,6 +81,7 @@ export const migrations: readonly Migration[] = [
   { version: 21, sql: fileRelocationMigrationSql },
   { version: 22, sql: correctionMigrationSql },
   { version: 23, sql: correctionPreparationMigrationSql },
+  { version: 24, sql: correctionBatchMigrationSql },
 ];
 
 export class CoreDatabase {

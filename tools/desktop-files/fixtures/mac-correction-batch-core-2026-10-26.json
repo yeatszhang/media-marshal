@@ -1,0 +1,76 @@
+{
+  "capturedAt": "2026-10-25T19:20:59.127737+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "schema": 24,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "e682711f871e93ce0aaae1ad60563cbbfffd6b6a931fab7e17c2d5702a089ecb",
+  "nativeManifestSha256": "74ef8dd2255902398d4609b838d506ec081efe6dc133fe251f1221738ec93950",
+  "source": {
+    "packages/media-core/src/ingestion/correction-batches.ts": "4ea77ac420290b01f8420951e111b6087b95e0bc1f937cabb049575b40ad2387",
+    "packages/media-core/src/ingestion/correction-batch-scope.ts": "4e26a711ee9e1244b6db5b8f60d188175e80f02ec82dd66fb681ebee4b2a4770",
+    "packages/media-core/src/ingestion/corrections.ts": "b2882e765dfa19156bd75ee1b48e111226e9874b5e74608c16bfc820e38949d5",
+    "packages/media-core/src/ingestion/pipeline.ts": "60eef162487690653e3ccc62892dc7ac051732d9d523f8305dee38d677f49e7f",
+    "packages/media-core/src/infrastructure/correction-batch-migration.ts": "60c79f342d601aa869335e73448010e4383d02b609afc6eb44a93a8baaf2ae1c",
+    "packages/contracts/src/corrections.ts": "bb3d01fa5d196e4743da72b425b232ae3579ea11ca3201d72842f627a94cea2d",
+    "apps/desktop/src/preload/index.ts": "be7221379d10f32fea9b29a87440e9b8b56252d8462e0dcfa22e520c1f04a1f8",
+    "packages/media-core/src/modules/application.ts": "df898405e6a001c93fbf4ebe88aab7ab691279b20ad1aa7f1c36f990d1d9f73f"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 724,
+      "skipped": 13
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "packagedWindows": 3,
+    "artifactWhitelist": true,
+    "likec4Export": {
+      "version": "1.60.0",
+      "views": 4
+    }
+  },
+  "assertions": {
+    "scopeFromCompleteDatabase": true,
+    "scopeMembersAcrossPages": 28,
+    "policyIsolationAndHistoryLineage": true,
+    "excludedMembersStillInFingerprint": true,
+    "mappedCoordinatesCannotOverlap": true,
+    "fullManifestRevalidatedBeforeAcceptance": true,
+    "secondMemberSqlFailureRollsBackAllIntents": true,
+    "batchPreviewCannotBeConfirmedIndividually": true,
+    "slowPreviewDoesNotBlockConfirmedFileExecution": true,
+    "cancelStopsReadingWithoutFileChanges": true,
+    "restartInterruptsUnacceptedConfirmation": true,
+    "retryRetainsOperationAndNewTaskIds": true,
+    "foreignSubtitlePreserved": true,
+    "downloadOriginalPreserved": true,
+    "packagedFixedPreloadCompletesTwoMembersAndCoreRestart": true
+  },
+  "sigkill": {
+    "checkpoints": [
+      "after-first-history",
+      "before-second-history"
+    ],
+    "sourceOffline": true,
+    "sameBatchOperationAndTaskIds": true,
+    "completedInodeUnchanged": true,
+    "uniqueEmbyIntentPerMember": true
+  },
+  "fixtureLimits": [
+    "Electron 目录选择对话框使用受控替身，授权与卷探测为实际 Main 实现",
+    "原始 COPY 使用隔离就绪时钟及离线元数据响应；不是官方客户端下载行为验收",
+    "Emby 意图唯一不等于真实服务器收录；本阶段不操作个人凭据或真实媒体"
+  ],
+  "notVerified": [
+    "批量页面与交互窗口",
+    "Mac Intel 运行",
+    "完整安装故障矩阵",
+    "Developer ID 与公证"
+  ]
+}

@@ -27,6 +27,15 @@ describe("受限进程契约", () => {
     for (const extra of [{}, { filesComplete: false }, { filesComplete: true, overwrite: true }]) expect(() => parseCoreRequest(request("corrections.confirm", { previewId, requestKey, ...extra }))).toThrow(); expect(parseCoreRequest(request("corrections.confirm", { previewId, requestKey, filesComplete: true }))).toMatchObject({ payload: { filesComplete: true } });
     expect(() => parseCoreRequest(request("corrections.list", { page: 1000001 }))).toThrow(); expect(() => parseCoreRequest(request("corrections.retry", { id: "../其他任务" }))).toThrow();
   });
+  it("批量修正范围由 Core 计算，不接收任意成员、文件证据或目标路径，确认绑定范围指纹", () => {
+    const taskId = randomUUID(), requestKey = randomUUID(), input = { taskId, requestKey, scope: "SAME_SEASON", tmdbId: 2 };
+    expect(parseCoreRequest(request("corrections.preview-batch", input))).toMatchObject({ payload: { excludedTaskIds: [], includeAccessories: true } });
+    for (const extra of [{ taskIds: [taskId] }, { scope: "ALL" }, { targetPath: "/伪造目标" }, { expected: {} }, { tmdbId: 1.1 }]) expect(() => parseCoreRequest(request("corrections.preview-batch", { ...input, ...extra }))).toThrow();
+    const confirmation = { id: taskId, requestKey, fingerprint: "a".repeat(64), filesComplete: true };
+    expect(parseCoreRequest(request("corrections.confirm-batch", confirmation))).toMatchObject({ payload: confirmation });
+    for (const extra of [{ fingerprint: "x".repeat(64) }, { filesComplete: false }, { overwrite: true }]) expect(() => parseCoreRequest(request("corrections.confirm-batch", { ...confirmation, ...extra }))).toThrow();
+    expect(() => parseCoreRequest(request("corrections.batch", { id: taskId, page: 1000001 }))).toThrow();
+  });
   it("批量整理只接收已有任务、版本与作品选择，明确文件完整才能确认，分页和数量有界", () => {
     const id = randomUUID(), requestKey = randomUUID(), item = { taskId: randomUUID(), expectedRevision: 0, selection: { tmdbId: 7, mediaType: "TV_SHOW", season: 1, episode: 2 } };
     expect(parseCoreRequest(request("ingestion.preview-organize-batch", { requestKey, items: [item] }))).toMatchObject({ payload: { includeAccessories: true } });

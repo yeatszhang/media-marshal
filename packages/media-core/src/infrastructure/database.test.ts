@@ -20,11 +20,19 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v24 升级保留修正配置与 v23 备份，批次迁移失败整体回滚且旧核心拒绝新库", async () => {
+    const path = await temporary(), previous = await CoreDatabase.open(path, migrations.slice(0, 23)); previous.connection.prepare("INSERT INTO app_setting VALUES('批量配置','保留原状态')").run(); previous.close();
+    await expect(CoreDatabase.open(path, [...migrations.slice(0, 23), { ...migrations[23]!, sql: migrations[23]!.sql + "SELECT missing_batch_migration();" }])).rejects.toThrow();
+    const unchanged = new Database(path); try { expect(unchanged.pragma("user_version", { simple: true })).toBe(23); expect(unchanged.prepare("SELECT name FROM sqlite_master WHERE name='media_correction_batch'").get()).toBeUndefined(); } finally { unchanged.close(); }
+    const upgraded = await CoreDatabase.open(path); try { expect(upgraded.schemaVersion).toBe(24); expect(upgraded.connection.prepare("SELECT value FROM app_setting WHERE key='批量配置'").get()).toEqual({ value: "保留原状态" }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_correction_batch_member").get()).toEqual({ n: 0 }); expect(upgraded.connection.pragma("foreign_key_check")).toEqual([]); } finally { upgraded.close(); }
+    const backup = new Database(`${path}.before-v24.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(23); } finally { backup.close(); }
+    await expect(CoreDatabase.open(path, migrations.slice(0, 23))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
   it("v23 保留 v22 修正与备份，新增长核验请求；失败时整体回滚后可重试", async () => {
     const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 22)); first.connection.prepare("INSERT INTO app_setting VALUES('修正配置','原配置保留')").run(); first.close();
     await expect(CoreDatabase.open(path, [...migrations.slice(0, 22), { ...migrations[22]!, sql: migrations[22]!.sql + "SELECT missing_preparation_migration();" }])).rejects.toThrow();
     const unchanged = new Database(path); try { expect(unchanged.pragma("user_version", { simple: true })).toBe(22); expect(unchanged.prepare("SELECT name FROM sqlite_master WHERE name='media_correction_preparation'").get()).toBeUndefined(); } finally { unchanged.close(); }
-    const upgraded = await CoreDatabase.open(path); try { expect(upgraded.schemaVersion).toBe(23); expect(upgraded.connection.prepare("SELECT value FROM app_setting WHERE key='修正配置'").get()).toEqual({ value: "原配置保留" }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_correction_preparation").get()).toEqual({ n: 0 }); expect(upgraded.connection.pragma("foreign_key_check")).toEqual([]); } finally { upgraded.close(); }
+    const upgraded = await CoreDatabase.open(path, migrations.slice(0, 23)); try { expect(upgraded.schemaVersion).toBe(23); expect(upgraded.connection.prepare("SELECT value FROM app_setting WHERE key='修正配置'").get()).toEqual({ value: "原配置保留" }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_correction_preparation").get()).toEqual({ n: 0 }); expect(upgraded.connection.pragma("foreign_key_check")).toEqual([]); } finally { upgraded.close(); }
     const backup = new Database(`${path}.before-v23.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(22); } finally { backup.close(); } await expect(CoreDatabase.open(path, migrations.slice(0, 22))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
   });
   it("v22 保留旧交付收据及备份，新增修正交付只允许一种来源，旧核心拒绝新库", async () => {

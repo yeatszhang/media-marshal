@@ -36,6 +36,9 @@ model {
       ingestion = component 'IngestionPipeline' {
         description '统一候选与资产版本；只读内容复核、目录摘要、持久批量识别与逐文件预览确认、稳定观察及沿策略快照 COPY'
       }
+      corrections = component 'Corrections / CorrectionBatches' {
+        description '已整理目标强收据；单条／完整同季同剧范围预览；原子登记执行意图，逐文件恢复与独立重试；批量页面待接通'
+      }
       delivery = component 'EmbyDelivery' {
         description '连接与库类型复核；独立交付意图、合并刷新、重试及收录核对'
       }
@@ -48,7 +51,7 @@ model {
     guardian = process 'Guardian'
     openlist = process 'OpenList · v4.2.7'
     rclone = process 'Rclone CLI · v1.75.2'
-    database = storage '业务 SQLite · v20'
+    database = storage '业务 SQLite · v24'
     vault = storage '系统保护的凭据密文'
     backups = storage '受限升级备份'
     managed = storage '已授权原卷' {
@@ -89,6 +92,11 @@ model {
   desktop.core.ingestion -> tmdb '候选查询及季集核对'
   desktop.core.ingestion -> desktop.target '人工确认后 COPY；保留来源且不覆盖'
   desktop.core.ingestion -> desktop.core.delivery '文件提交后独立记录交付意图'
+  desktop.core.ingestion -> desktop.core.corrections '已记账 COPY 收据；协调临时租约与旧附属步骤'
+  desktop.core.corrections -> desktop.database '范围／成员快照、确认收据、逐文件日志和历史'
+  desktop.core.corrections -> tmdb '同一真实分集与跨成员坐标核验'
+  desktop.core.corrections -> desktop.target '显式确认后安全改名／跨卷复制；下载原件不动'
+  desktop.core.corrections -> desktop.core.delivery '文件与历史完成后新建独立交付意图'
   desktop.core.delivery -> emby '明确路径映射；刷新和收录核对'
 }
 
@@ -107,6 +115,6 @@ views {
   }
   view ingestion {
     title '下载与本地文件的整理及独立交付'
-    include desktop.core.downloads, desktop.managed.completed, desktop.local, desktop.core.ingestion, desktop.parser, tmdb, desktop.target, desktop.core.delivery, emby
+    include desktop.core.downloads, desktop.managed.completed, desktop.local, desktop.core.ingestion, desktop.core.corrections, desktop.database, desktop.parser, tmdb, desktop.target, desktop.core.delivery, emby
   }
 }

@@ -40,6 +40,11 @@ declare module "@yeatz/app-framework/command" {
   interface Commands {
     "media.corrections.preparation": (input: CoreInput<"corrections.preparation">) => CoreOutput<"corrections.preparation">;
     "media.corrections.cancel-preparation": (input: CoreInput<"corrections.cancel-preparation">) => CoreOutput<"corrections.cancel-preparation">;
+    "media.corrections.preview-batch": (input: CoreInput<"corrections.preview-batch">) => CoreOutput<"corrections.preview-batch">;
+    "media.corrections.confirm-batch": (input: CoreInput<"corrections.confirm-batch">) => CoreOutput<"corrections.confirm-batch">;
+    "media.corrections.cancel-batch": (input: CoreInput<"corrections.cancel-batch">) => CoreOutput<"corrections.cancel-batch">;
+    "media.corrections.batches": (input: CoreInput<"corrections.batches">) => CoreOutput<"corrections.batches">;
+    "media.corrections.batch": (input: CoreInput<"corrections.batch">) => CoreOutput<"corrections.batch">;
     "media.corrections.task": (input: CoreInput<"corrections.task">) => CoreOutput<"corrections.task">;
     "media.corrections.preview": (input: CoreInput<"corrections.preview">) => CoreOutput<"corrections.preview">;
     "media.corrections.get-preview": (input: CoreInput<"corrections.get-preview">) => CoreOutput<"corrections.get-preview">;
@@ -199,6 +204,11 @@ export function createMediaApplication(
       const add = (dispose: () => void) => ctx.disposables.add(dispose);
       add(registry.register("media.corrections.preparation", (_, input) => corrections.preparations.get(input.id)));
       add(registry.register("media.corrections.cancel-preparation", (_, input) => corrections.preparations.cancel(input.id)));
+      add(registry.register("media.corrections.preview-batch", (_, input) => corrections.batches.create(input)));
+      add(registry.register("media.corrections.confirm-batch", (_, input) => corrections.batches.confirm(input)));
+      add(registry.register("media.corrections.cancel-batch", (_, input) => corrections.batches.cancel(input.id)));
+      add(registry.register("media.corrections.batches", (_, input) => corrections.batches.list(input)));
+      add(registry.register("media.corrections.batch", (_, input) => corrections.batches.details(input)));
       add(registry.register("media.corrections.task", (_, input) => corrections.describe(input)));
       add(registry.register("media.corrections.preview", (_, input) => corrections.preparePreview(input)));
       add(registry.register("media.corrections.get-preview", (_, input) => corrections.getPreview(input.id)));

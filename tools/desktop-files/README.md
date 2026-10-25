@@ -87,3 +87,8 @@ npm run test:desktop -- --grep '修正原生组件经 Main|真实窗口、核心
 `check-packaged-native.mjs` 复制自有目录包，在中文／空格路径与最小 PATH 下启动；先核对正常组件，再同时改写副本的外部模块和清单，验证 ASAR 可信摘要仍阻止加载，普通核心和 parser 保持可用，不产生修正作业。原目录包不改写，退出后移除副本。脱敏摘要见 `fixtures/mac-native-host-2026-10-26.json`。x64 当前仅交叉编译和 Mach-O 检查，未声明 Intel 运行；同季／同剧批量修正、完整故障矩阵和正式发行仍未完成。
 
 单条页面验证：`npm run test:desktop -- --grep '单条修正页面'`。当前 arm64 开发构建和目录包完成预览恢复／过期重做、显式完整确认、历史导航，以及字幕目标冲突后的同作业重试。下载原件和已完成主文件 inode 保留；构建及截图摘要见 `fixtures/mac-correction-ui-2026-10-26.json`，操作步骤见 `docs/product/desktop-corrections.md`。
+
+
+schema v24 的批量修正服务已接通完整范围快照、后台预览／复核、原子登记全部成员意图及逐项执行查询。测试仍使用上方 `corrections.test.ts` 入口，覆盖跨分页范围、成员变化、目标冲突和局部失败后服务重建；`correction-batch-crash-child.mjs` 在第一成员记账后、第二成员记账前两个检查点实际 SIGKILL，验证原批次续作及历史唯一；开发构建经固定 Preload API 完成两成员和 Core 重启查询。批量页面尚未完成，不能据服务测试勾选 5.7，细节见 `docs/architecture/desktop-ingestion.md` 的 Core 批量修正章节。旧 v23 目录包证据仅证明对应当时构建，不作 v24 新批次的安装态证据。
+
+批量固定桥验收：`npm run test:desktop -- --grep '同季批量修正经固定'`。最终 arm64 未签名目录包完成该 API 链路及两项单条回归，资源白名单通过；脱敏构建与断言见 `fixtures/mac-correction-batch-core-2026-10-26.json`。LikeC4 模型及四张图使用本机已安装的 1.60.0 导出，命令为 `likec4 export png docs/architecture --flat -o docs/public/architecture/cloud-downloads`。

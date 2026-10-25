@@ -4,7 +4,7 @@ import { DesktopError, correctionActions, selectionSchema, type CoreInput, type 
 import { localFileEvidenceSchema, managedRootGrantSchema } from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { MediaConnections } from "../application/media-connections.js";
-import { reconcileEpisodes } from "../domain/media.js";
+import { reconcileEpisodes, assertUniqueEpisodes } from "../domain/media.js";
 import { templatePath } from "../domain/template.js";
 import { titleInitial } from "../domain/title-initial.js";
 import { ManagedRoot, assertSpaceBudget, sameVolumeRoot } from "../files/index.js";
@@ -13,6 +13,7 @@ import type { NativeRenameApi } from "../files/native-rename.js";
 import type { IngestionPipeline } from "./pipeline.js";
 import { assertMediaCoordinates } from "./coordinates.js";
 import { previewFailure } from "./preview-errors.js";
+import { CorrectionBatches, type BatchConfirmationMember } from "./correction-batches.js";
 import { CorrectionPreparations, type PreparationProgress } from "./correction-preparations.js";
 import { correctionConflict, correctionHash, correctionManifest, correctionReceipt, correctionTask, collectCorrectionAssets, assertCorrectionTarget, type CorrectionPlan, type CorrectionAsset } from "./correction-assets.js";
 
@@ -24,6 +25,7 @@ const timestamp = (now: () => number) => new Date(now()).toISOString();
 export class Corrections {
   readonly files: FileRelocations | undefined;
   readonly preparations: CorrectionPreparations;
+  readonly batches: CorrectionBatches;
   private readonly previewGeneration = randomUUID();
   private readonly lifetime = new AbortController();
   private readonly previews = new Map<string, { hash: string; flight: Promise<CoreOutput<"corrections.get-preview">> }>();
@@ -50,6 +52,13 @@ export class Corrections {
         const parsed = correctionActions["corrections.confirm"].input.parse(input), row = database.connection.prepare("SELECT operation_id FROM media_correction_confirmation WHERE request_key=? AND preview_id=?").get(parsed.requestKey, parsed.previewId) as { operation_id: string } | undefined;
         return row ? { operationId: row.operation_id } : null;
       },
+    }, now);
+    this.batches = new CorrectionBatches(database, {
+      available: () => { this.executor(); },
+      preview: (input, signal, progress) => this.preview(input, signal, progress),
+      previewMappings: (ids) => this.checkBatchMappings(ids),
+      confirm: (...args) => this.acceptBatch(...args),
+      operation: (id) => this.dto(this.row(id)),
     }, now);
   }
   preparePreview(input: CoreInput<"corrections.preview">) { this.writable(); return this.preparations.enqueue("PREVIEW", correctionActions["corrections.preview"].input.parse(input)); }
@@ -113,25 +122,77 @@ export class Corrections {
     const reserved = (this.database.connection.prepare("SELECT plan_json FROM media_file_relocation WHERE to_root_id=? AND recorded=0 AND phase IN ('PENDING','COPYING')").all(target.grant.id) as { plan_json: string }[]).reduce((total, row) => { const plan = JSON.parse(row.plan_json); return total + (plan.mode === "COPY" ? plan.expected.size : 0); }, 0); assertSpaceBudget(await target.check(), bytes, reserved);
   }
   private bindConfirmation(requestKey: string, previewId: string, operationId: string) { this.database.connection.prepare("INSERT INTO media_correction_confirmation VALUES(?,?,?)").run(requestKey, previewId, operationId); return this.dto(this.row(operationId)); }
+  private previewRow(id: string, ownerBatchId?: string) {
+    const db = this.database.connection, receipt = db.prepare("SELECT * FROM media_correction_preview WHERE id=?").get(id) as PreviewRow | undefined;
+    if (!receipt) throw correctionConflict("修正预览不存在，请重新预览");
+    const owner = db.prepare("SELECT batch_id FROM media_correction_batch_member WHERE preview_key=?").get(receipt.request_key) as { batch_id: string } | undefined;
+    if (owner && owner.batch_id !== ownerBatchId) throw correctionConflict("此预览属于批量修正，请从原批次确认完整范围"); return receipt;
+  }
+  private async validateConfirmation(receipt: PreviewRow, acceptedAt: number, signal: AbortSignal, progress?: (value: PreparationProgress) => void) {
+    const plan = JSON.parse(receipt.plan_json) as CorrectionPlan;
+    if (receipt.operation_id || receipt.expires_at <= acceptedAt || this.active(plan.taskId)) throw correctionConflict("预览已过期或此文件已有活动修正，请查看原作业或重新预览"); this.checkContext(plan);
+    const source = correctionReceipt(this.database, this.ingestion.targets, plan.taskId), target = this.target(plan.target.id, plan.target), current = await collectCorrectionAssets(source, target, plan.targetSegments, plan.includeAccessories, signal, progress);
+    if (correctionManifest(current.files) !== correctionManifest(plan.files)) throw correctionConflict("主视频或附属文件范围、内容已经变化，请重新预览并确认完整文件清单"); await this.checkFiles(plan, target); signal.throwIfAborted();
+    return { receipt, plan, source, target };
+  }
+  private commitConfirmation(value: Awaited<ReturnType<Corrections["validateConfirmation"]>>, requestKey: string, acceptedAt: number) {
+    const { receipt, plan, source, target } = value, executor = this.executor(), db = this.database.connection;
+    this.checkContext(plan); if (receipt.expires_at <= acceptedAt || this.active(plan.taskId)) throw correctionConflict("修正预览已过期或任务已有计划，请重新读取"); for (const file of plan.files) if (file.action !== "KEEP") assertCorrectionTarget(this.database, target, file.to.segments, plan.taskId);
+    const id = randomUUID(), jobId = randomUUID(), newTask = randomUUID(), time = timestamp(this.now);
+    db.prepare("INSERT INTO desktop_job VALUES(?,'correction','PLANNED',?,?)").run(jobId, receipt.plan_json, time); db.prepare("INSERT INTO correction_item VALUES(?,?,?,'PENDING',?)").run(id, jobId, plan.taskId, receipt.plan_json);
+    db.prepare("INSERT INTO media_task(id,source_id,source_path,title,status,parsed_json,metadata_json,confirmed_json,corrected_from_id,created_at,updated_at) VALUES(?,?,?,?,'PROCESSING',?,?,?,?,?,?)").run(newTask, source.task.source_id, source.task.source_path, plan.metadata.title, JSON.stringify(plan.parsed), JSON.stringify(plan.metadata), JSON.stringify(plan.selection), plan.taskId, time, time);
+    db.prepare("INSERT INTO media_correction_operation(id,preview_id,request_key,original_task_id,new_task_id,target_root_id,target_slot,plan_json,phase,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'PLANNED',?,?)").run(id, receipt.id, requestKey, plan.taskId, newTask, plan.target.id, "pending:" + id, receipt.plan_json, time, time);
+    for (const [ordinal, file] of plan.files.entries()) if (file.action !== "KEEP") executor.plan({ id: file.id, itemId: id, ordinal, from: file.from, to: file.to, expected: file.expected! });
+    db.prepare("UPDATE media_correction_preview SET operation_id=? WHERE id=?").run(id, receipt.id); return this.bindConfirmation(requestKey, receipt.id, id);
+  }
   async confirm(input: CoreInput<"corrections.confirm">, signal?: AbortSignal, progress?: (value: PreparationProgress) => void, acceptedAt = this.now()): Promise<CorrectionOperation> {
-    signal = AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]); signal.throwIfAborted();
-    input = correctionActions["corrections.confirm"].input.parse(input);
-    const executor = this.executor(), db = this.database.connection, prior = db.prepare("SELECT preview_id,operation_id FROM media_correction_confirmation WHERE request_key=?").get(input.requestKey) as { preview_id: string; operation_id: string } | undefined;
+    const combined = AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]); combined.throwIfAborted(); input = correctionActions["corrections.confirm"].input.parse(input); this.executor();
+    const db = this.database.connection, receipt = this.previewRow(input.previewId), prior = db.prepare("SELECT preview_id,operation_id FROM media_correction_confirmation WHERE request_key=?").get(input.requestKey) as { preview_id: string; operation_id: string } | undefined;
     if (prior) { if (prior.preview_id !== input.previewId) throw correctionConflict("确认请求键已用于另一个预览"); return this.dto(this.row(prior.operation_id)); }
-    const receipt = db.prepare("SELECT * FROM media_correction_preview WHERE id=?").get(input.previewId) as PreviewRow | undefined; if (!receipt) throw correctionConflict("修正预览不存在，请重新预览"); if (receipt.operation_id) return this.bindConfirmation(input.requestKey, receipt.id, receipt.operation_id);
+    if (receipt.operation_id) return this.bindConfirmation(input.requestKey, receipt.id, receipt.operation_id);
     return this.ingestion.withCorrectionLease(receipt.task_id, async () => {
-      const plan = JSON.parse(receipt.plan_json) as CorrectionPlan; if (receipt.expires_at <= acceptedAt || this.active(plan.taskId)) throw correctionConflict("预览已过期或此文件已有活动修正，请查看原作业或重新预览"); this.checkContext(plan);
-      const source = correctionReceipt(this.database, this.ingestion.targets, plan.taskId), target = this.target(plan.target.id, plan.target), current = await collectCorrectionAssets(source, target, plan.targetSegments, plan.includeAccessories, signal, progress);
-      if (correctionManifest(current.files) !== correctionManifest(plan.files)) throw correctionConflict("主视频或附属文件范围、内容已经变化，请重新预览并确认完整文件清单"); await this.checkFiles(plan, target); signal!.throwIfAborted();
-      const id = randomUUID(), jobId = randomUUID(), newTask = randomUUID(), time = timestamp(this.now);
-      const result = db.transaction(() => {
-        this.checkContext(plan); if (receipt.expires_at <= acceptedAt || this.active(plan.taskId)) throw correctionConflict("修正预览已过期或任务已有计划，请重新读取"); for (const file of plan.files) if (file.action !== "KEEP") assertCorrectionTarget(this.database, target, file.to.segments, plan.taskId);
-        db.prepare("INSERT INTO desktop_job VALUES(?,'correction','PLANNED',?,?)").run(jobId, receipt.plan_json, time); db.prepare("INSERT INTO correction_item VALUES(?,?,?,'PENDING',?)").run(id, jobId, plan.taskId, receipt.plan_json);
-        db.prepare("INSERT INTO media_task(id,source_id,source_path,title,status,parsed_json,metadata_json,confirmed_json,corrected_from_id,created_at,updated_at) VALUES(?,?,?,?,'PROCESSING',?,?,?,?,?,?)").run(newTask, source.task.source_id, source.task.source_path, plan.metadata.title, JSON.stringify(plan.parsed), JSON.stringify(plan.metadata), JSON.stringify(plan.selection), plan.taskId, time, time);
-        db.prepare("INSERT INTO media_correction_operation(id,preview_id,request_key,original_task_id,new_task_id,target_root_id,target_slot,plan_json,phase,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'PLANNED',?,?)").run(id, receipt.id, input.requestKey, plan.taskId, newTask, plan.target.id, "pending:" + id, receipt.plan_json, time, time);
-        for (const [ordinal, file] of plan.files.entries()) if (file.action !== "KEEP") executor.plan({ id: file.id, itemId: id, ordinal, from: file.from, to: file.to, expected: file.expected! });
-        db.prepare("UPDATE media_correction_preview SET operation_id=? WHERE id=?").run(id, receipt.id); return this.bindConfirmation(input.requestKey, receipt.id, id);
-      })(); if (this.timer) void this.tick().catch(() => {}); return result;
+      const value = await this.validateConfirmation(receipt, acceptedAt, combined, progress), result = db.transaction(() => this.commitConfirmation(value, input.requestKey, acceptedAt))();
+      if (this.timer) void this.tick().catch(() => {}); return result;
+    });
+  }
+  private checkBatchMappings(previewIds: string[]) {
+    const roots = new Map<string, { root: ManagedRoot; paths: string[][]; copyBytes: number }>(), plans: CorrectionPlan[] = [];
+    for (const id of previewIds) {
+      const row = this.database.connection.prepare("SELECT plan_json FROM media_correction_preview WHERE id=?").get(id) as { plan_json: string } | undefined; if (!row) throw correctionConflict("批量成员缺少预览，请重新核验完整范围");
+      const plan = JSON.parse(row.plan_json) as CorrectionPlan, value = roots.get(plan.target.id) ?? { root: this.target(plan.target.id, plan.target), paths: [], copyBytes: 0 };
+      plans.push(plan); for (const file of plan.files) if (file.action !== "KEEP") { value.paths.push(file.to.segments); if (file.action === "COPY") value.copyBytes += file.expected!.size; } roots.set(plan.target.id, value);
+    }
+    // 不同旧季在真实分集映射后可能落到同一坐标，即使扩展名不同也必须在预览时阻断。
+    const episodes = plans.filter((plan) => plan.selection.mediaType === "TV_SHOW").sort((a, b) => a.selection.tmdbId - b.selection.tmdbId || a.selection.season! - b.selection.season! || a.selection.episode! - b.selection.episode!);
+    for (let index = 1; index < episodes.length; index++) {
+      const a = episodes[index - 1]!, b = episodes[index]!;
+      try { assertUniqueEpisodes([a, b].map(({ selection }) => ({ tmdbId: selection.tmdbId, season: selection.season!, episode: selection.episode!, episodeEnd: selection.episodeEnd }))); }
+      catch { throw correctionConflict(`批量成员「${a.files[0]!.from.segments.join("/").slice(-120)}」与「${b.files[0]!.from.segments.join("/").slice(-120)}」修正后存在重复或重叠季集：TMDB ${b.selection.tmdbId} S${b.selection.season} E${b.selection.episode}；请核对季集或排除冲突成员后重新预览`); }
+    }
+    for (const { root, paths } of roots.values()) try { root.assertMappings(paths); } catch {
+      // 只在冲突分支定位首对对象，避免把整个批次路径塞入错误或日志。
+      let pair = paths.slice(0, 2);
+      outer: for (let a = 0; a < paths.length; a++) for (let b = a + 1; b < paths.length; b++) {
+        const x = root.mappingIdentity(paths[a]!), y = root.mappingIdentity(paths[b]!), depth = Math.min(x.length, y.length);
+        for (let index = 0; index < depth && x[index] === y[index]; index++) if (index === depth - 1 || paths[a]![index] !== paths[b]![index]) { pair = [paths[a]!, paths[b]!]; break outer; }
+      }
+      throw correctionConflict(`批量成员的目标路径重复、大小写冲突或互相包含：${pair.map((path) => `「${join(root.grant.path, ...path).slice(-140)}」`).join("与")}；请修改模板或排除对应成员后重新预览`);
+    }
+    return roots;
+  }
+  private async acceptBatch(id: string, members: BatchConfirmationMember[], acceptedAt: number, signal: AbortSignal, progress: (taskId: string, value: PreparationProgress) => void, guard: () => void, record: (operations: CorrectionOperation[]) => void) {
+    const combined = AbortSignal.any([this.lifetime.signal, signal]);
+    await this.ingestion.withCorrectionLeases(members.map((member) => member.taskId), async () => {
+      const values: Awaited<ReturnType<Corrections["validateConfirmation"]>>[] = [];
+      for (const member of members) { guard(); const receipt = this.previewRow(member.previewId, id); if (receipt.task_id !== member.taskId) throw correctionConflict("批次预览与成员不符，请重新预览完整范围"); values.push(await this.validateConfirmation(receipt, acceptedAt, combined, (value) => progress(member.taskId, value))); }
+      const roots = this.checkBatchMappings(members.map((member) => member.previewId));
+      for (const { root, copyBytes } of roots.values()) {
+        const reserved = (this.database.connection.prepare("SELECT plan_json FROM media_file_relocation WHERE to_root_id=? AND recorded=0 AND phase IN ('PENDING','COPYING')").all(root.grant.id) as { plan_json: string }[]).reduce((sum, row) => { const plan = JSON.parse(row.plan_json); return sum + (plan.mode === "COPY" ? plan.expected.size : 0); }, 0);
+        assertSpaceBudget(await root.check(), copyBytes, reserved);
+      }
+      guard(); combined.throwIfAborted();
+      // 这里只原子登记全部执行意图；文件系统仍由逐项日志恢复，不是整批事务。
+      this.database.connection.transaction(() => { guard(); const operations = values.map((value, index) => this.commitConfirmation(value, members[index]!.confirmKey, acceptedAt)); record(operations); })();
     });
   }
   retry(input: CoreInput<"corrections.retry">) { this.writable(); const row = this.row(input.id), db = this.database.connection; if (row.phase === "RECORDED") { db.prepare("UPDATE app_setting SET value='0' WHERE key=?").run("correction.restore.audit." + row.id); db.prepare("UPDATE media_correction_operation SET cleanup_due=0 WHERE id=?").run(row.id); if (this.timer) void this.tick().catch(() => {}); return this.dto(row); } const executor = this.executor(); for (const file of executor.list(row.id)) executor.retry(file.id); db.transaction(() => { db.prepare("UPDATE media_correction_operation SET phase='RUNNING',failure=NULL,updated_at=? WHERE id=?").run(timestamp(this.now), row.id); db.prepare("UPDATE correction_item SET state='RUNNING' WHERE id=?").run(row.id); db.prepare("UPDATE media_task SET status='PROCESSING',updated_at=? WHERE id=?").run(timestamp(this.now), row.new_task_id); db.prepare("UPDATE desktop_job SET state='RUNNING',updated_at=? WHERE id=?").run(timestamp(this.now), row.job_id); })(); if (this.timer) void this.tick().catch(() => {}); return this.dto(this.row(row.id)); }
@@ -157,7 +218,7 @@ export class Corrections {
   }
   private async run() {
     const db = this.database.connection;
-    await this.auditRestored(); if (!this.files || this.closed) return;
+    void this.batches.tick().catch(() => {}); await this.auditRestored(); if (!this.files || this.closed) return;
     if (!this.ingestion.pauseStatus().paused) for (const row of db.prepare(operationQuery + " WHERE o.phase IN ('PLANNED','RUNNING') ORDER BY o.created_at,o.id LIMIT 4").all() as OperationRow[]) {
       if (this.closed) break; try {
         db.prepare("UPDATE desktop_job SET state='RUNNING',updated_at=? WHERE id=?").run(timestamp(this.now), row.job_id); db.prepare("UPDATE correction_item SET state='RUNNING' WHERE id=?").run(row.id); db.prepare("UPDATE media_correction_operation SET phase='RUNNING',updated_at=? WHERE id=?").run(timestamp(this.now), row.id);
@@ -186,5 +247,5 @@ export class Corrections {
       db.prepare("INSERT INTO emby_delivery(task_id,correction_id,connection_id,connection_version,state,next_attempt_at,updated_at) VALUES(?,?,?,?,'REFRESH_PENDING',?,?)").run(row.new_task_id, row.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, time);
     })();
   }
-  async close() { this.closed = true; this.lifetime.abort(); clearInterval(this.timer); this.interrupt(); await this.preparations.close(); await Promise.allSettled([...this.previews.values()].map((value) => value.flight)); await this.flight?.catch(() => {}); await this.files?.close(); }
+  async close() { this.closed = true; this.lifetime.abort(); clearInterval(this.timer); this.interrupt(); await this.batches.close(); await this.preparations.close(); await Promise.allSettled([...this.previews.values()].map((value) => value.flight)); await this.flight?.catch(() => {}); await this.files?.close(); }
 }
