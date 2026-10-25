@@ -26,6 +26,7 @@ import { OrganizeBatchesViewModel } from "./organize-batches-model";
 import { SeasonsViewModel } from "./seasons-model";
 import { DirectoriesViewModel } from "./directories-model";
 import { RecognitionEditsViewModel } from "./recognition-edits-model";
+import { SourceScansViewModel } from "./source-scans-model";
 import { ContentReviewsViewModel } from "./content-reviews-model";
 import { CloudAccountsViewModel } from "./cloud-accounts-model";
 import { CorrectionBatchDraftModel, CorrectionBatchViewModel, CorrectionBatchJobsModel } from "./correction-batches-model";
@@ -296,7 +297,6 @@ export class IngestionViewModel extends StatefulService<{ items: IngestionCandid
     catch (error) { if (!this.stopped && request === this.request) this.setState({ error: message(error) }); }
   }
   private async action(work: () => Promise<void>) { if (this.state.busy || this.stopped) return; this.setState({ busy: true, error: null }); try { await work(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } finally { if (!this.stopped) this.setState({ busy: false }); } }
-  scan(sourceId: string) { return this.action(async () => { await this.client.scanIngestion(sourceId); await this.refresh(); }); }
   recognize(candidateId: string) { return this.action(async () => { const result = await this.client.recognizeIngestion({ candidateId, requestKey: crypto.randomUUID() }); await this.select(result.taskId); await this.refresh(); }); }
   async select(taskId: string) { if (this.stopped) return; const selection = ++this.selection; this.setState({ preview: null }); try { const task = await this.client.getIngestionTask(taskId); if (!this.stopped && selection === this.selection) this.setState({ task }); } catch (error) { if (!this.stopped && selection === this.selection) this.setState({ error: message(error) }); } }
   clearPreview() { this.selection++; this.setState({ preview: null }); }
@@ -339,7 +339,7 @@ export function createRendererApplication(client: DesktopApi) {
     },
   };
   const modules: ApplicationModule[] = [
-    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); bind(DirectoriesViewModel).toSelf().inSingletonScope(); bind(SeasonsViewModel).toSelf().inSingletonScope(); bind(OrganizeBatchesViewModel).toSelf().inSingletonScope(); } },
+    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(SourceScansViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); bind(DirectoriesViewModel).toSelf().inSingletonScope(); bind(SeasonsViewModel).toSelf().inSingletonScope(); bind(OrganizeBatchesViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.corrections", dependencies: [connection.id], register(bind) { bind(CorrectionViewModel).toSelf().inSingletonScope(); bind(CorrectionJobsViewModel).toSelf().inSingletonScope(); bind(CorrectionBatchDraftModel).toSelf().inSingletonScope(); bind(CorrectionBatchViewModel).toSelf().inSingletonScope(); bind(CorrectionBatchJobsModel).toSelf().inSingletonScope(); } },
     { id: "renderer.downloads", dependencies: [connection.id], register(bind) { bind(DownloadsViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.cloud", dependencies: [connection.id], register(bind) { bind(CloudAccountsViewModel).toSelf().inSingletonScope(); } },

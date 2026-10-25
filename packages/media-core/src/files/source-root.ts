@@ -52,20 +52,23 @@ export class SourceRoot {
     }
     if (position !== expectedSize) throw changed(); return hash.digest("hex");
   }
-  async discover(prefix: readonly string[] = [], limit = 10000, ignored: (parts: readonly string[]) => boolean = () => false): Promise<string[][]> {
+  async discover(prefix: readonly string[] = [], limit = 10000, ignored: (parts: readonly string[]) => boolean = () => false, signal?: AbortSignal): Promise<string[][]> {
     await this.check(); const files: string[][] = [], directories = [[...prefix]]; let count = 0;
+    const check = () => { if (signal?.aborted) throw new DesktopError("INTERRUPTED", "目录扫描已中断，已发现候选保留", true); }; check();
     while (directories.length) {
+      check();
       const parts = directories.shift()!; if (parts.length >= 64) throw new DesktopError("CONFLICT", "来源目录层级过深，请缩小扫描范围");
       const path = parts.length ? await this.path(parts) : this.grant.path;
       const entries = await readdir(path, { withFileTypes: true });
       for (const entry of entries) {
+        check();
         if (++count > limit) throw new DesktopError("CONFLICT", "本次扫描超过一万项，请选择更小的来源目录");
         const relative = [...parts, entry.name];
         if (entry.isSymbolicLink() || isManagedPrivatePath(relative) || ignored(relative)) continue;
         if (entry.isDirectory()) directories.push(relative); else if (entry.isFile()) files.push(relative);
       }
     }
-    await this.check(); return files;
+    check(); await this.check(); check(); return files;
   }
   async filesIn(parts: readonly string[]) {
     await this.check(); const path = parts.length ? await this.path(parts) : this.grant.path, entries = await readdir(path, { withFileTypes: true });

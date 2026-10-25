@@ -20,6 +20,23 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v26 扫描迁移保留原来源、健康诊断与任务，旧核心拒绝新库且升级不产生扫描", async () => {
+    const path = await temporary(), old = await CoreDatabase.open(path, migrations.slice(0, 25)), id = randomUUID(), task = randomUUID(), stamp = new Date().toISOString(), config = JSON.stringify({ type: "local", name: "迁移保留", client: "baidu", sourcePath: "/原输入", organization: { targetPath: "/原目标" } }), health = JSON.stringify({ sourceId: id, version: 2, lifecycleRevision: 0, checkedAt: stamp, input: { state: "UNAVAILABLE", reason: "PERMISSION_DENIED" }, target: { state: "AVAILABLE" } });
+    old.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,paused,created_at) VALUES(?,'迁移保留','baidu','/原输入','/原目标','AUTO','COPY',1,?)").run(id, stamp);
+    old.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,local_source_id,paused,created_at,updated_at) VALUES(?,'local',2,2,?,?,1,?,?)").run(id, config, id, stamp, stamp);
+    old.connection.prepare("INSERT INTO source_rule_local_health VALUES(?,2,0,?,?)").run(id, stamp, health);
+    old.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'DONE',?,?)").run(task, id, "/原输入/保留.mp4", stamp, stamp); old.close();
+    const db = await CoreDatabase.open(path); try { expect(db.schemaVersion).toBe(26); expect(db.connection.prepare("SELECT draft_json,version,paused FROM source_rule").get()).toEqual({ draft_json: config, version: 2, paused: 1 }); expect(db.connection.prepare("SELECT snapshot_json FROM source_rule_local_health").get()).toEqual({ snapshot_json: health }); expect(db.connection.prepare("SELECT id,status FROM media_task").get()).toEqual({ id: task, status: "DONE" }); for (const table of ["ingestion_source_scan", "ingestion_source_scan_request", "ingestion_source_scan_issue"]) expect(db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 }); expect(db.connection.pragma("foreign_key_check")).toEqual([]); } finally { db.close(); }
+    const backup = new Database(`${path}.before-v26.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(25); expect(backup.prepare("SELECT snapshot_json FROM source_rule_local_health").get()).toEqual({ snapshot_json: health }); } finally { backup.close(); }
+    await expect(CoreDatabase.open(path, migrations.slice(0, 25))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
+  it("v26 迁移失败回滚全部扫描表，重试保留原 v25 备份与配置", async () => {
+    const path = await temporary(), old = await CoreDatabase.open(path, migrations.slice(0, 25)); old.connection.prepare("INSERT INTO app_setting VALUES('原设置','保留')").run(); old.close();
+    await expect(CoreDatabase.open(path, [...migrations.slice(0, 25), { ...migrations[25]!, sql: migrations[25]!.sql + "SELECT missing_scan_migration();" }])).rejects.toThrow();
+    const original = await CoreDatabase.open(path, migrations.slice(0, 25)); expect(original.connection.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'ingestion_source_scan%'").all()).toEqual([]); original.close();
+    const db = await CoreDatabase.open(path); expect(db.connection.prepare("SELECT value FROM app_setting WHERE key='原设置'").get()).toEqual({ value: "保留" }); db.close();
+    const backup = new Database(`${path}.before-v26.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(25); expect(backup.prepare("SELECT value FROM app_setting WHERE key='原设置'").get()).toEqual({ value: "保留" }); } finally { backup.close(); }
+  });
   it("v25 健康快照迁移保留本地来源、历史标签和任务，不扫描或启动文件操作，旧核心拒绝新库", async () => {
     const path = await temporary(), previous = await CoreDatabase.open(path, migrations.slice(0, 24)), id = randomUUID(), task = randomUUID(), stamp = new Date().toISOString();
     const configuration = JSON.stringify({ type: "local", name: "历史标签来源", client: "baidu", sourcePath: "/原输入", organization: { targetPath: "/原目标" } });
@@ -27,7 +44,7 @@ describe("显式数据库迁移", () => {
     previous.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,local_source_id,paused,created_at,updated_at) VALUES(?,'local',3,2,?,?,1,?,?)").run(id, configuration, id, stamp, stamp);
     previous.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,created_at) VALUES(?,3,?,?,?)").run(id, configuration, id, stamp);
     previous.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'AWAITING_CONFIRMATION',?,?)").run(task, id, "/原输入/保留.mp4", stamp, stamp); previous.close();
-    const upgraded = await CoreDatabase.open(path);
+    const upgraded = await CoreDatabase.open(path, migrations.slice(0, 25));
     try { expect(upgraded.schemaVersion).toBe(25); expect(upgraded.connection.prepare("SELECT kind,paused,health FROM desktop_source WHERE id=?").get(id)).toEqual({ kind: "baidu", paused: 1, health: "unavailable" }); expect(upgraded.connection.prepare("SELECT version,draft_revision,draft_json FROM source_rule WHERE id=?").get(id)).toEqual({ version: 3, draft_revision: 2, draft_json: configuration }); expect(upgraded.connection.prepare("SELECT id,status FROM media_task").get()).toEqual({ id: task, status: "AWAITING_CONFIRMATION" }); for (const table of ["source_rule_local_health", "ingestion_operation", "download_job"]) expect(upgraded.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 }); expect(upgraded.connection.pragma("foreign_key_check")).toEqual([]); } finally { upgraded.close(); }
     const backup = new Database(`${path}.before-v25.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(24); expect(backup.prepare("SELECT kind,paused FROM desktop_source WHERE id=?").get(id)).toEqual({ kind: "baidu", paused: 1 }); } finally { backup.close(); }
     await expect(CoreDatabase.open(path, migrations.slice(0, 24))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
@@ -36,7 +53,7 @@ describe("显式数据库迁移", () => {
     const path = await temporary(), previous = await CoreDatabase.open(path, migrations.slice(0, 24)); previous.connection.prepare("INSERT INTO app_setting VALUES('原配置','保留')").run(); previous.close();
     await expect(CoreDatabase.open(path, [...migrations.slice(0, 24), { ...migrations[24]!, sql: migrations[24]!.sql + "SELECT missing_health_migration();" }])).rejects.toThrow();
     const original = await CoreDatabase.open(path, migrations.slice(0, 24)); try { expect(original.schemaVersion).toBe(24); expect(original.connection.prepare("SELECT name FROM sqlite_master WHERE name='source_rule_local_health'").get()).toBeUndefined(); } finally { original.close(); }
-    const retry = await CoreDatabase.open(path); try { expect(retry.schemaVersion).toBe(25); expect(retry.connection.prepare("SELECT value FROM app_setting WHERE key='原配置'").get()).toEqual({ value: "保留" }); } finally { retry.close(); }
+    const retry = await CoreDatabase.open(path, migrations.slice(0, 25)); try { expect(retry.schemaVersion).toBe(25); expect(retry.connection.prepare("SELECT value FROM app_setting WHERE key='原配置'").get()).toEqual({ value: "保留" }); } finally { retry.close(); }
     const backup = new Database(`${path}.before-v25.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(24); expect(backup.prepare("SELECT value FROM app_setting WHERE key='原配置'").get()).toEqual({ value: "保留" }); } finally { backup.close(); }
   });
   it("v24 升级保留修正配置与 v23 备份，批次迁移失败整体回滚且旧核心拒绝新库", async () => {

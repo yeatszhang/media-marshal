@@ -79,7 +79,9 @@ declare module "@yeatz/app-framework/command" {
     "media.emby.connect": (input: CoreInput<"emby.connect">) => Promise<CoreOutput<"emby.connect">>;
     "media.emby.retry": (input: CoreInput<"emby.retry">) => CoreOutput<"emby.retry">;
     "media.ingestion.candidates": (input: CoreInput<"ingestion.candidates">) => CoreOutput<"ingestion.candidates">;
-    "media.ingestion.scan": (input: CoreInput<"ingestion.scan">) => Promise<CoreOutput<"ingestion.scan">>;
+    "media.ingestion.scan": (input: CoreInput<"ingestion.scan">) => CoreOutput<"ingestion.scan">;
+    "media.ingestion.scans": (input: CoreInput<"ingestion.scans">) => CoreOutput<"ingestion.scans">;
+    "media.ingestion.scan-job": (input: CoreInput<"ingestion.scan-job">) => CoreOutput<"ingestion.scan-job">;
     "media.ingestion.review-content": (input: CoreInput<"ingestion.review-content">) => CoreOutput<"ingestion.review-content">;
     "media.ingestion.content-reviews": (input: CoreInput<"ingestion.content-reviews">) => CoreOutput<"ingestion.content-reviews">;
     "media.ingestion.content-review-files": (input: CoreInput<"ingestion.content-review-files">) => CoreOutput<"ingestion.content-review-files">;
@@ -256,13 +258,9 @@ export function createMediaApplication(
       add(registry.register("media.ingestion.content-reviews", (_, input) => ingestion.contentReviews.list(input)));
       add(registry.register("media.ingestion.content-review-files", (_, input) => ingestion.contentReviews.items(input)));
       add(registry.register("media.ingestion.cancel-content-review", (_, input) => ingestion.contentReviews.cancel(input.id)));
-      add(registry.register("media.ingestion.scan", (_, input) => {
-        const source = sourceRules.get(input.sourceId);
-        if (!source) return ingestion.scan(input.sourceId);
-        const physicalId = source.localSourceId ?? source.ingestionSourceId;
-        if (!physicalId || source.paused || source.reviewRequired || !source.configuration?.organization) throw new DesktopError("CONFLICT", "来源未启用整理、已经暂停或需要核对，请检查来源配置");
-        return ingestion.scan(physicalId);
-      }));
+      add(registry.register("media.ingestion.scan", (_, input) => sourceRules.scans.enqueue(input)));
+      add(registry.register("media.ingestion.scans", (_, input) => sourceRules.scans.list(input)));
+      add(registry.register("media.ingestion.scan-job", (_, input) => sourceRules.scans.get(input)));
       add(registry.register("media.ingestion.preview-organize-batch", (_, input) => ingestion.organizeBatches.create(input)));
       add(registry.register("media.ingestion.organize-batches", (_, input) => ingestion.organizeBatches.list(input)));
       add(registry.register("media.ingestion.organize-batch", (_, input) => ingestion.organizeBatches.details(input)));

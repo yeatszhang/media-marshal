@@ -11,6 +11,7 @@ import type { IngestionPipeline } from "../ingestion/pipeline.js";
 import { SourceRuns } from "./runs.js";
 import { organizationConflicts } from "./organization.js";
 import { SourceExecutionPreviews } from "./executions.js";
+import { SourceScans } from "./scans.js";
 import { LocalSourceHealthChecks } from "./local-health.js";
 
 interface Row {
@@ -30,11 +31,25 @@ export class SourceRules {
   readonly runs: SourceRuns;
   readonly executions: SourceExecutionPreviews;
   readonly localHealth: LocalSourceHealthChecks;
-  constructor(private readonly database: CoreDatabase, private readonly downloads: CloudDownloads, private readonly subscriptions: CloudSubscriptions, private readonly ingestion: IngestionPipeline, private readonly now = Date.now) { this.runs = new SourceRuns(database, downloads, now); this.executions = new SourceExecutionPreviews(database, downloads, this.runs, now); this.localHealth = new LocalSourceHealthChecks(database, (id) => this.get(id), (id) => ingestion.localDirectoryHealth(id), now); }
-  start() { this.synchronize(); this.runs.start(); }
+  readonly scans: SourceScans;
+  constructor(private readonly database: CoreDatabase, private readonly downloads: CloudDownloads, private readonly subscriptions: CloudSubscriptions, private readonly ingestion: IngestionPipeline, private readonly now = Date.now) { this.runs = new SourceRuns(database, downloads, now); this.executions = new SourceExecutionPreviews(database, downloads, this.runs, now); this.localHealth = new LocalSourceHealthChecks(database, (id) => this.get(id), (id) => ingestion.localDirectoryHealth(id), now); this.scans = new SourceScans(database, (id) => this.scanScope(id), (id, requestedId) => this.scanForRule(requestedId, id), now); }
+  start() { this.synchronize(); this.runs.start(); this.scans.start(); }
   synchronize() { for (const source of this.list(true)) { try { this.reconcile(source.id); } catch { /* 主机授权恢复后再次协调，不因离线阻止 Core 启动。 */ } } }
-  quiesce() { this.accepting = false; this.runs.quiesce(); this.executions.quiesce(); this.localHealth.quiesce(); }
+  quiesce() { this.accepting = false; this.runs.quiesce(); this.executions.quiesce(); this.localHealth.quiesce(); this.scans.quiesce(); }
   private writable() { if (!this.accepting) throw new DesktopError("INTERRUPTED", "来源配置正在停止", true); }
+  private async scanForRule(sourceId: string, physicalId: string) {
+    const source = this.get(sourceId), result = await this.ingestion.scan(physicalId);
+    if (source?.configuration?.type !== "cloud") return result;
+    const rows = this.database.connection.prepare("SELECT DISTINCT i.target_segments_json FROM download_source_demand d JOIN download_job j ON j.id=d.job_id JOIN download_job_item ji ON ji.job_id=j.id JOIN download_item i ON i.id=ji.item_id WHERE d.source_id=? AND d.source_version=? AND d.review_required=0 AND ji.demand_state='ACTIVE' AND j.state NOT IN ('CANCELLED','CANCELLING') AND i.target_root_id=? AND i.state='COMPLETED' LIMIT 10001").all(sourceId, source.version, source.configuration.downloadRootId) as { target_segments_json: string }[];
+    const allowed = new Set(rows.map((row) => ["completed", ...JSON.parse(row.target_segments_json)].join("/"))), checkedPaths = result.checkedPaths.filter((path) => allowed.has(path));
+    return { discovered: checkedPaths.length, checkedPaths, issues: result.issues.filter((issue) => allowed.has(issue.relativePath)) };
+  }
+  private scanScope(id: string) {
+    const rule = this.get(id), physicalId = rule ? rule.localSourceId ?? rule.ingestionSourceId : id;
+    if (rule && (rule.deletedAt || rule.reviewRequired || !rule.configuration?.organization || !physicalId)) throw conflict(`来源「${rule.configuration?.name ?? rule.draft.name}」已删除、未启用整理或需要核对，请在来源页重新预览确认`);
+    const physical = this.ingestion.scanScope(physicalId!);
+    return { physicalId: physicalId!, name: rule?.configuration?.name ?? physical.name, context: JSON.stringify([id, rule?.version ?? null, rule?.lifecycleRevision ?? null, physicalId, physical.version]), waiting: rule?.paused || physical.paused || this.ingestion.pauseStatus().paused ? "来源或全部整理已暂停；恢复后继续补扫，不解除其他暂停" : !physical.available ? "等待原磁盘与目录授权恢复；不接管同名替代目录" : null };
+  }
   private row(id: string) { return this.database.connection.prepare("SELECT * FROM source_rule WHERE id=?").get(id) as Row | undefined; }
   get(id: string): SourceRule | null {
     const row = this.row(id); if (!row) return null;
@@ -270,5 +285,5 @@ export class SourceRules {
       return this.get(row.id)!;
     } finally { if (!committed) await prepared?.discard(); }
   }
-  async close() { this.quiesce(); await this.queue.catch(() => {}); await this.localHealth.close(); await this.runs.close(); }
+  async close() { this.quiesce(); await this.queue.catch(() => {}); await this.localHealth.close(); await this.scans.close(); await this.runs.close(); }
 }

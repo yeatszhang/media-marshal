@@ -1,3 +1,4 @@
+import type { ScanResult } from "../sources/scans.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access, open } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -83,7 +84,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private readonly activeWork = new Map<AbortController, { sourceId: string; candidateId: string }>();
   private timer?: ReturnType<typeof setInterval>; private flight?: Promise<void>; private closed = false; private controller?: AbortController;
   private configurationQueue: Promise<unknown> = Promise.resolve();
-  private readonly scans = new Map<string, Promise<{ discovered: number }>>();
+  private readonly scans = new Map<string, Promise<ScanResult>>();
+  private readonly scanControllers = new Map<string, AbortController>();
   private readonly watches = new Map<string, { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout> }>();
   constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly watchFiles: typeof watch = watch) {
     const db = database.connection;
@@ -237,7 +239,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("INSERT INTO app_setting VALUES(?,?)").run(key, String(input.paused));
       if (!input.paused) db.prepare("UPDATE ingestion_outbox SET delivery_attempts=0,next_attempt_at=NULL WHERE state='PENDING'").run();
     })();
-    if (input.paused) { this.controller?.abort(); this.contentReviews.interrupt(); } this.resetObservations(); for (const id of this.sources.keys()) this.syncSourceWatcher(id); return this.pauseStatus();
+    if (input.paused) { this.controller?.abort(); this.contentReviews.interrupt(); for (const controller of this.scanControllers.values()) controller.abort(); } this.resetObservations(); for (const id of this.sources.keys()) this.syncSourceWatcher(id); return this.pauseStatus();
   }
   resetObservations() {
     this.observations.clear();
@@ -252,6 +254,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     observations.set(key, current); return { now, current };
   }
   sourceChanged(id: string) {
+    this.scanControllers.get(id)?.abort();
     for (const [controller, work] of this.activeWork) if (work.sourceId === id) controller.abort();
     this.contentReviews.interrupt(id);
     for (const row of this.database.connection.prepare("SELECT id FROM ingestion_candidate WHERE source_id=?").all(id) as { id: string }[]) this.observations.delete(row.id);
@@ -446,7 +449,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       },
       activate: async () => {
         if (!committed) throw new Error("来源配置尚未提交");
-        const previous = this.sources.get(input.id); this.sources.set(input.id, source);
+        const previous = this.sources.get(input.id); this.sources.set(input.id, source); this.scanControllers.get(input.id)?.abort();
         if (preserveManaged) this.sourceRuleChanged(input.id); else this.sourceChanged(input.id);
         this.watchSource(input.id, input.source.path);
         await previous?.close();
@@ -605,7 +608,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const ignored = discoveryIgnore(configuration?.type === "local" ? configuration.ignoredFilePatterns : null);
     this.ignorePolicies.set(source.source_id, { version: source.version, ignored }); return ignored;
   }
-  private async observe(row: CandidateRow) {
+  private async observe(row: CandidateRow, check?: () => void) {
+    check?.();
     if (!row.managed_item_id && !this.candidate(row.id).is_current) return false;
     const configuration = this.candidateSource(row), relative: string[] = JSON.parse(row.relative_json), source = this.sources.get(row.source_id)!;
     if (this.ignored(configuration)(relative)) {
@@ -614,8 +618,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       return false;
     }
     let snapshot: SourceSnapshot;
-    try { snapshot = await source.inspect(JSON.parse(row.relative_json)); }
-    catch { this.observations.delete(row.id); this.database.connection.prepare("UPDATE ingestion_candidate SET state='UNAVAILABLE',reason='文件不可访问，未将其当作删除',updated_at=? WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(timestamp(this.now), row.id); throw new DesktopError("LOCAL_UNAVAILABLE", "来源文件不可访问，等待原卷或文件恢复", true); }
+    try { snapshot = await source.inspect(JSON.parse(row.relative_json)); check?.(); }
+    catch { check?.(); this.observations.delete(row.id); this.database.connection.prepare("UPDATE ingestion_candidate SET state='UNAVAILABLE',reason='文件不可访问，未将其当作删除',updated_at=? WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(timestamp(this.now), row.id); throw new DesktopError("LOCAL_UNAVAILABLE", "来源文件不可访问，等待原卷或文件恢复", true); }
     if (!sameSnapshot(snapshot, sourceSnapshotSchema.parse(JSON.parse(row.snapshot_json)))) {
       this.observations.delete(row.id); this.database.connection.prepare("UPDATE ingestion_candidate SET state='SUPERSEDED',reason='来源版本已变化',updated_at=? WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED')").run(timestamp(this.now), row.id); throw conflict();
     }
@@ -626,11 +630,14 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!["QUEUED", "PROCESSED", "SKIPPED", "SUPERSEDED"].includes(latest.state)) this.database.connection.prepare("UPDATE ingestion_candidate SET state=?,reason=?,updated_at=? WHERE id=?").run(ready ? "READY" : "OBSERVING", reason, timestamp(this.now), row.id);
     return ready;
   }
-  private async receive(sourceId: string, relative: string[], managed?: { itemId: string; versionKey: string; sha256: string; size: number; policy?: ManagedOrganization }, skipReason?: string) {
+  private async receive(sourceId: string, relative: string[], managed?: { itemId: string; versionKey: string; sha256: string; size: number; policy?: ManagedOrganization }, skipReason?: string, check?: () => void) {
+    check?.();
     const source = this.source(sourceId), snapshot = await this.sources.get(sourceId)!.inspect(relative), version = sourceVersion(snapshot), db = this.database.connection;
+    check?.();
     if (managed && snapshot.size !== managed.size) throw conflict();
     if (managed?.policy) { const current = resolveManagedOrganization(this.database, managed.itemId, managed.versionKey); if (current.state !== "ENABLED" || current.policy.key !== managed.policy.key) throw conflict("整理需求已暂停或变化，请核对来源"); }
     if (associated.test(relative.at(-1)!)) await this.observeAccessory(sourceId, relative, undefined, managed?.policy?.key);
+    check?.();
     let previous = managed ? db.prepare("SELECT * FROM ingestion_candidate WHERE managed_item_id=? AND managed_version_key=?").get(managed.itemId, managed.versionKey) as CandidateRow | undefined : undefined;
     if (previous && previous.version_key !== version) throw conflict("受管下载文件已被修改，请核验下载成果");
     if (previous && managed?.policy && this.candidatePolicy(previous)?.policy_key !== managed.policy.key) throw conflict("既有候选的整理策略不同或证据不足，请核对原操作");
@@ -654,7 +661,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         if (managed?.policy) db.prepare("INSERT INTO ingestion_candidate_policy VALUES(?,?,?,?)").run(id, managed.policy.key, JSON.stringify(managed.policy.configuration), managed.policy.targetRootId);
       })(); previous = this.candidate(id);
     }
-    if (!["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(previous.state)) await this.observe(previous);
+    if (!["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(previous.state)) await this.observe(previous, check);
     return { candidateId: previous.id };
   }
   async accept(input: Parameters<ManagedIngestionSink["accept"]>[0], signal: AbortSignal) {
@@ -668,8 +675,12 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (previous) {
       if (previous.expected_sha256 !== input.sha256 || sourceSnapshotSchema.parse(JSON.parse(previous.snapshot_json)).size !== input.size) throw conflict();
       let available = false; try { this.source(previous.source_id); available = true; } catch { /* 已接收候选的重复确认不创建新工作，可在暂停或缺盘时补记。 */ }
-      if (available && this.managedCandidateEnabled(previous) && associated.test((JSON.parse(previous.relative_json) as string[]).at(-1)!)) await this.observeAccessory(previous.source_id, JSON.parse(previous.relative_json), undefined, this.candidatePolicy(previous)?.policy_key);
-      if (available && this.managedCandidateEnabled(previous) && !["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(previous.state)) await this.observe(previous);
+      if (available && this.managedCandidateEnabled(previous)) {
+        const version = this.scanScope(previous.source_id).version;
+        const checkExisting = () => { if (signal.aborted || this.closed) throw new DesktopError("INTERRUPTED", "候选观察已中断，原记录保留", true); if (this.source(previous.source_id).version !== version || !this.managedCandidateEnabled(previous)) throw conflict("整理来源或需求已变化，请重新补扫"); };
+        if (associated.test((JSON.parse(previous.relative_json) as string[]).at(-1)!)) await this.observeAccessory(previous.source_id, JSON.parse(previous.relative_json), undefined, this.candidatePolicy(previous)?.policy_key, checkExisting);
+        if (!["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(previous.state)) await this.observe(previous, checkExisting);
+      }
       return { candidateId: previous.id };
     }
     const resolved = resolveManagedOrganization(this.database, input.itemId, input.versionKey);
@@ -680,13 +691,20 @@ export class IngestionPipeline implements ManagedIngestionSink {
     this.source(row.source_id);
     const current = await this.sources.get(row.source_id)!.inspect(["completed", ...input.completedSegments]);
     if (current.inode !== evidence.inode || current.birthtimeNs !== evidence.birthtimeNs || current.modifiedNs !== evidence.modifiedNs || current.size !== evidence.size) throw conflict("受管下载成果的文件身份已变化");
-    const result = await this.receive(row.source_id, ["completed", ...input.completedSegments], { ...input, policy: resolved.state === "ENABLED" ? resolved.policy : undefined });
+    const check = () => { if (signal.aborted || this.closed) throw new DesktopError("INTERRUPTED", "候选确认已中断，请查询原任务", true); if (this.source(row.source_id).version !== row.version) throw conflict("整理来源配置已变化，请重新补扫"); };
+    const result = await this.receive(row.source_id, ["completed", ...input.completedSegments], { ...input, policy: resolved.state === "ENABLED" ? resolved.policy : undefined }, undefined, check);
     if (signal.aborted) throw new DesktopError("INTERRUPTED", "候选确认已中断，重试会复用原候选", true); return result;
   }
-  scan(sourceId: string): Promise<{ discovered: number }> {
+  scanScope(sourceId: string) {
+    const row = this.database.connection.prepare("SELECT d.name,d.version,d.paused,i.available,i.source_version FROM desktop_source d JOIN ingestion_source i ON i.source_id=d.id WHERE d.id=?").get(sourceId) as { name: string; version: number; paused: number; available: number; source_version: number } | undefined;
+    if (!row) throw conflict("整理来源不存在，请在来源页重新确认目录配置");
+    return { name: row.name, version: row.version, paused: !!row.paused, available: !!row.available && row.source_version === row.version && this.sources.has(sourceId) };
+  }
+  scan(sourceId: string): Promise<ScanResult> {
     if (this.closed) return Promise.reject(new DesktopError("INTERRUPTED", "整理服务正在停止", true));
     const previous = this.scans.get(sourceId); if (previous) return previous;
-    const pending = this.scanSource(sourceId).finally(() => { if (this.scans.get(sourceId) === pending) this.scans.delete(sourceId); }); this.scans.set(sourceId, pending); return pending;
+    const controller = new AbortController(); this.scanControllers.set(sourceId, controller);
+    const pending = this.scanSource(sourceId, controller.signal).finally(() => { if (this.scans.get(sourceId) === pending) { this.scans.delete(sourceId); this.scanControllers.delete(sourceId); } }); this.scans.set(sourceId, pending); return pending;
   }
   private unavailableSource(sourceId: string) {
     const db = this.database.connection;
@@ -694,36 +712,40 @@ export class IngestionPipeline implements ManagedIngestionSink {
     for (const key of this.accessoryObservations.keys()) if (key.startsWith(sourceId + ":")) this.accessoryObservations.delete(key);
     db.prepare("UPDATE ingestion_candidate SET state='UNAVAILABLE',reason='来源目录不可访问，请连接原磁盘并检查权限；文件记录仍保留',updated_at=? WHERE source_id=? AND state IN ('OBSERVING','READY','UNAVAILABLE','QUEUED')").run(timestamp(this.now), sourceId);
   }
-  private async scanSource(sourceId: string) {
-    const row = this.source(sourceId); let discovered = 0;
+  private async scanSource(sourceId: string, signal: AbortSignal): Promise<ScanResult> {
+    const row = this.source(sourceId), root = this.sources.get(sourceId), issues = new Map<string, string>(), checkedPaths: string[] = []; let discovered = 0;
+    const check = () => { if (this.closed || signal.aborted) throw new DesktopError("INTERRUPTED", "扫描已中断，已发现候选保留；恢复后重新补扫", true); const latest = this.source(sourceId); if (latest.version !== row.version || this.sources.get(sourceId) !== root) throw conflict("来源配置或授权已变化，请按当前配置重新扫描"); };
+    const checkRoot = async () => { check(); await root!.check(); await access(root!.grant.path, constants.R_OK | constants.X_OK); check(); };
+    const failed = async (relative: string[], error: unknown) => { await checkRoot(); const reason = error instanceof DesktopError ? error.message.slice(0, 500) : "文件暂不可读，请检查原文件、磁盘和读取权限后重新扫描"; issues.set(relative.join("/"), reason); };
     try {
       if (row.mode === "managed") {
         const files = this.database.connection.prepare("SELECT i.id,i.version_key,i.target_segments_json,c.file_evidence_json FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.target_root_id=? AND i.state='COMPLETED' ORDER BY i.id LIMIT 10001").all(row.download_root_id) as { id: string; version_key: string; target_segments_json: string; file_evidence_json: string }[];
         if (files.length > 10000) throw conflict("已完成下载超过一万项，请按来源拆分目录");
-        for (const file of files) { if (this.closed) break; if (!this.canAccept({ itemId: file.id, versionKey: file.version_key })) continue; const evidence = localFileEvidenceSchema.parse(JSON.parse(file.file_evidence_json)); try { await this.accept({ itemId: file.id, versionKey: file.version_key, rootId: row.download_root_id!, completedSegments: JSON.parse(file.target_segments_json), size: evidence.size, sha256: evidence.sha256 }, new AbortController().signal); discovered++; } catch { /* 单项归属或文件证据待核对，不阻断共享根的其他来源。 */ } }
+        for (const file of files) { check(); if (!this.canAccept({ itemId: file.id, versionKey: file.version_key })) continue; const evidence = localFileEvidenceSchema.parse(JSON.parse(file.file_evidence_json)); try { await this.accept({ itemId: file.id, versionKey: file.version_key, rootId: row.download_root_id!, completedSegments: JSON.parse(file.target_segments_json), size: evidence.size, sha256: evidence.sha256 }, signal); check(); discovered++; checkedPaths.push(["completed", ...JSON.parse(file.target_segments_json)].join("/")); } catch (error) { await failed(["completed", ...JSON.parse(file.target_segments_json)], error); } }
       } else {
-        const ignored = this.ignored(row), files = await this.sources.get(sourceId)!.discover([], 10000, ignored), samples = sampleVideos(files, (name) => video.test(name)), observed = new Set<string>();
+        const ignored = this.ignored(row), files = await this.sources.get(sourceId)!.discover([], 10000, ignored, signal), samples = sampleVideos(files, (name) => video.test(name)), observed = new Set<string>();
         for (const relative of files) {
-          if (this.closed) break;
-          if (associated.test(relative.at(-1)!)) { await this.observeAccessory(sourceId, relative).catch(() => {}); continue; }
+          check();
+          if (associated.test(relative.at(-1)!)) { try { await this.observeAccessory(sourceId, relative, undefined, "local", check); } catch (error) { await failed(relative, error); } continue; }
           if (!video.test(relative.at(-1)!) && !unsupported.test(relative.at(-1)!) && !temporary.test(relative.at(-1)!)) continue;
-          try { await this.receive(sourceId, relative, undefined, samples.has(JSON.stringify(relative)) ? "同目录存在精确同基名主视频，已跳过样片；来源文件保留" : undefined); observed.add(JSON.stringify(relative)); discovered++; }
-          catch { /* 已知候选在下方逐项复核；一个不可读文件不阻断其他候选。 */ }
+          try { await this.receive(sourceId, relative, undefined, samples.has(JSON.stringify(relative)) ? "同目录存在精确同基名主视频，已跳过样片；来源文件保留" : undefined, check); check(); observed.add(JSON.stringify(relative)); discovered++; checkedPaths.push(relative.join("/")); }
+          catch (error) { await failed(relative, error); }
         }
         // 即使没有新事件，也主动复核已知候选；缺失／不可读保留证据，不冒充删除。
         for (const candidate of this.database.connection.prepare("SELECT * FROM ingestion_candidate WHERE source_id=? AND state IN ('OBSERVING','READY','UNAVAILABLE','QUEUED') LIMIT 10000").all(sourceId) as CandidateRow[]) {
-          if (this.closed) break;
+          check();
           if (observed.has(candidate.relative_json)) continue;
-          await this.observe(candidate).catch(() => {});
+          try { await this.observe(candidate, check); } catch (error) { await failed(JSON.parse(candidate.relative_json), error); }
         }
       }
-      this.database.connection.prepare("UPDATE desktop_source SET health='available' WHERE id=?").run(sourceId);
+      await checkRoot(); this.database.connection.prepare("UPDATE desktop_source SET health='available' WHERE id=?").run(sourceId);
     } catch (error) {
+      if (signal.aborted || this.closed) throw error;
       this.database.connection.prepare("UPDATE desktop_source SET health='unavailable' WHERE id=?").run(sourceId);
       if (error instanceof Error && "code" in error && ["LOCAL_UNAVAILABLE", "ENOENT", "ENOTDIR", "EACCES", "EPERM", "ENODEV", "ENXIO", "ESTALE", "EIO"].includes(String(error.code))) this.unavailableSource(sourceId);
       throw error;
     }
-    return { discovered };
+    return { discovered, checkedPaths, issues: [...issues].map(([relativePath, failure]) => ({ relativePath, failure })) };
   }
   list(input: CoreInput<"ingestion.candidates">): CoreOutput<"ingestion.candidates"> {
     const db = this.database.connection;
@@ -784,8 +806,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       this.recognitionEdits.matched(row.task_id!, recognitionRevision);
     })();
   }
-  private async observeAccessory(sourceId: string, relative: string[], expected?: SourceSnapshot, policyKey = "local") {
-    this.source(sourceId); const snapshot = await this.sources.get(sourceId)!.inspect(relative), version = sourceVersion(snapshot), key = sourceId + ":" + policyKey + ":" + JSON.stringify(relative);
+  private async observeAccessory(sourceId: string, relative: string[], expected?: SourceSnapshot, policyKey = "local", check?: () => void) {
+    check?.(); this.source(sourceId); const snapshot = await this.sources.get(sourceId)!.inspect(relative); check?.(); const version = sourceVersion(snapshot), key = sourceId + ":" + policyKey + ":" + JSON.stringify(relative);
     if (expected && !sameSnapshot(expected, snapshot)) throw conflict("附属文件已变化，请重新预览");
     const { now, current } = this.observeWindow(this.accessoryObservations, key, version);
     return snapshot.size > 0 && now - current.since >= 120000;
@@ -1020,6 +1042,6 @@ export class IngestionPipeline implements ManagedIngestionSink {
       } }
     } finally { this.controller = undefined; }
   }
-  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.organizeBatches.close(); await this.recognitionBatches.close(); await this.contentReviews.close(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
+  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const controller of this.scanControllers.values()) controller.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.organizeBatches.close(); await this.recognitionBatches.close(); await this.contentReviews.close(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
   async close() { await this.quiesce(); await Promise.allSettled([...this.sources.values()].map((source) => source.close())); this.sources.clear(); await this.targets.close(); }
 }

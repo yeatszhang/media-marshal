@@ -10,6 +10,7 @@ import { SeasonQueuePanel } from "../components/SeasonQueuePanel";
 import { DirectoryQueuePanel } from "../components/DirectoryQueuePanel";
 import { RecognitionEditor } from "../components/RecognitionEditor";
 import { OrganizeBatchEditor, OrganizeBatchPanel, type CommonWork } from "../components/OrganizeBatchPanel";
+import { SourceScansPanel } from "../components/SourceScansPanel";
 import { ContentReviewsPanel } from "../components/ContentReviewsPanel";
 
 export function Ingestion() {
@@ -31,7 +32,7 @@ export function Ingestion() {
     <Header title={t("ingestion.title")} description={t("ingestion.help")}><Button variant="outline" onClick={() => { void model.refresh(); }}><RefreshCw size={15} />{t("reload")}</Button></Header>
     <ErrorNotice message={state.error} />
     <ContentReviewsPanel sources={state.sources} />
-    <div className="download-controls">{state.sources.filter((source) => source.configuration?.organization).map((source) => <Button key={source.id} variant="outline" size="sm" disabled={state.busy || source.paused || source.reviewRequired} onClick={() => { void model.scan(source.id); }}>{t("ingestion.scan")} · {source.configuration?.name ?? source.draft.name}</Button>)}</div>
+    <SourceScansPanel sources={state.sources} />
     {editingTasks && <RecognitionEditor key={editingTasks.join(",")} taskIds={editingTasks} onClose={() => setEditingTasks(null)} onSaved={() => { setSelectedTasks([]); model.clearPreview(); setComplete(false); void model.refresh(); }} />}
     {organizing && <OrganizeBatchEditor key={JSON.stringify(organizing)} {...organizing} onClose={() => setOrganizing(null)} />}
     <OrganizeBatchPanel draftOpen={!!organizing} onInspect={(id) => { void model.select(id); }} />

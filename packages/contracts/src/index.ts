@@ -311,7 +311,9 @@ export interface DesktopApi {
   openEmby(taskId: string): Promise<void>;
   configureManagedIngestion(input: z.input<typeof ingestionConfigureSchema>): Promise<DesktopSource>;
   listIngestionCandidates(input: CoreInput<"ingestion.candidates">): Promise<CoreOutput<"ingestion.candidates">>;
-  scanIngestion(sourceId: string): Promise<CoreOutput<"ingestion.scan">>;
+  scanIngestion(sourceId: string, requestKey: string): Promise<CoreOutput<"ingestion.scan">>;
+  listIngestionScans(input: CoreInput<"ingestion.scans">): Promise<CoreOutput<"ingestion.scans">>;
+  getIngestionScan(input: CoreInput<"ingestion.scan-job">): Promise<CoreOutput<"ingestion.scan-job">>;
   reviewIngestionContent(input: CoreInput<"ingestion.review-content">): Promise<CoreOutput<"ingestion.review-content">>;
   listContentReviews(input: CoreInput<"ingestion.content-reviews">): Promise<CoreOutput<"ingestion.content-reviews">>;
   listContentReviewFiles(input: CoreInput<"ingestion.content-review-files">): Promise<CoreOutput<"ingestion.content-review-files">>;

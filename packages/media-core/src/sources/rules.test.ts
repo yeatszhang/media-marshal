@@ -14,6 +14,7 @@ import { unavailableHost } from "../cloud/host-gateway";
 import { MediaConnections } from "../application/media-connections";
 import { IngestionPipeline } from "../ingestion/pipeline";
 import { SourceRules } from "./rules";
+import { SourceRoot } from "../files/source-root";
 import { LocalSourceHealthChecks } from "./local-health";
 
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
@@ -38,6 +39,36 @@ async function fixture() {
   return { directory, sourcePath, targetPath, db, rules, grants, draft, pipeline, preview, advance(ms: number) { clock += ms; } };
 }
 describe("统一来源配置与真实 SQLite 事务", () => {
+  it("手动补扫先持久返回身份，读取中暂停不提交迟到候选，恢复沿原意图重新观察", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), source = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
+    let release!: () => void, entered!: () => void; const gate = new Promise<void>((done) => { release = done; }), ready = new Promise<void>((done) => { entered = done; }); cleanup.push(release);
+    const inspect = SourceRoot.prototype.inspect; vi.spyOn(SourceRoot.prototype, "inspect").mockImplementationOnce(async function (this: SourceRoot, ...args) { const snapshot = await inspect.apply(this, args); entered(); await gate; return snapshot; });
+    const input = { sourceId: source.id, requestKey: randomUUID() }, job = f.rules.scans.enqueue(input); expect(job.id).toBeTruthy(); await ready;
+    f.rules.control({ id: source.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() }); release(); await f.rules.scans.idle();
+    expect(f.rules.scans.get({ id: job.id }).job.state).toBe("WAITING_SOURCE"); expect(f.pipeline.list({}).total).toBe(0);
+    f.rules.control({ id: source.id, expectedVersion: 1, operation: "resume", requestKey: randomUUID() }); f.advance(5001); f.rules.scans.kick(); await f.rules.scans.idle();
+    expect(f.rules.scans.get({ id: job.id }).job).toMatchObject({ state: "COMPLETED", discovered: 1, failed: 0 }); expect(f.rules.scans.enqueue(input).id).toBe(job.id); expect(f.pipeline.list({}).items[0]).toMatchObject({ state: "OBSERVING", requiresConfirmation: true }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 }); expect(await readFile(join(f.sourcePath, "保留.mp4"), "utf8")).toBe("preserve-original");
+  });
+  it("扫描记录绑定有效配置，枚举中更换规则使旧意图失败，不接管新目录", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), source = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
+    let release!: () => void, entered!: () => void; const gate = new Promise<void>((done) => { release = done; }), ready = new Promise<void>((done) => { entered = done; }); cleanup.push(release);
+    const discover = SourceRoot.prototype.discover; vi.spyOn(SourceRoot.prototype, "discover").mockImplementationOnce(async function (this: SourceRoot, ...args) { entered(); await gate; return discover.apply(this, args); });
+    const job = f.rules.scans.enqueue({ sourceId: source.id, requestKey: randomUUID() }); await ready;
+    const next = f.rules.configure({ ...f.draft, expectedVersion: 1, expectedDraftRevision: 1, requestKey: randomUUID(), configuration: { ...f.draft.configuration, ignoredFilePatterns: ["*.mp4"] } }); await f.rules.apply({ previewId: f.preview(next).id, requestKey: randomUUID() }, f.grants);
+    release(); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: job.id }).job).toMatchObject({ state: "FAILED", failure: expect.stringContaining("配置") }); expect(f.pipeline.list({}).total).toBe(0); expect(f.rules.get(source.id)?.version).toBe(2);
+  });
+  it("枚举完成后原根被同名目录替换，补扫等待原目录而不把根故障冒充文件问题或完成", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), source = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants); await f.pipeline.scan(source.id);
+    const discover = SourceRoot.prototype.discover; vi.spyOn(SourceRoot.prototype, "discover").mockImplementationOnce(async function (this: SourceRoot, ...args) { const files = await discover.apply(this, args); await rename(f.sourcePath, f.sourcePath + "-原目录"); await mkdir(f.sourcePath); return files; });
+    const job = f.rules.scans.enqueue({ sourceId: source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: job.id })).toMatchObject({ job: { state: "WAITING_SOURCE", discovered: 0, failed: 0 } }); expect(f.pipeline.list({}).items[0]).toMatchObject({ state: "UNAVAILABLE" }); expect(await readdir(f.sourcePath)).toEqual([]);
+    await rmdir(f.sourcePath); await rename(f.sourcePath + "-原目录", f.sourcePath); f.advance(5001); f.rules.scans.kick(); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: job.id }).job).toMatchObject({ state: "COMPLETED", discovered: 1 }); expect(f.pipeline.list({}).items[0]).toMatchObject({ state: "OBSERVING", requiresConfirmation: true }); expect(await readFile(join(f.sourcePath, "保留.mp4"), "utf8")).toBe("preserve-original");
+  });
+  it("真实文件读取问题逐项保留并脱敏，其他候选继续，修复后重扫不清除历史问题", async () => {
+    const f = await fixture(); await writeFile(join(f.sourcePath, "暂不可读.mp4"), "不可丢弃的文件"); const draft = f.rules.configure(f.draft), source = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
+    const inspect = SourceRoot.prototype.inspect, deny = vi.spyOn(SourceRoot.prototype, "inspect").mockImplementation(async function (this: SourceRoot, parts) { if (parts.at(-1) === "暂不可读.mp4") throw Object.assign(new Error("fixture-private-secret"), { code: "EACCES" }); return inspect.call(this, parts); });
+    const job = f.rules.scans.enqueue({ sourceId: source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: job.id })).toMatchObject({ job: { state: "PARTIAL_FAILED", discovered: 1, failed: 1 }, issues: [{ relativePath: "暂不可读.mp4", failure: expect.stringContaining("读取权限") }] }); expect(JSON.stringify(f.rules.scans.get({ id: job.id }))).not.toContain("fixture-private-secret");
+    deny.mockRestore(); const next = f.rules.scans.enqueue({ sourceId: source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: next.id }).job).toMatchObject({ state: "COMPLETED", discovered: 2, failed: 0 }); expect(f.rules.scans.get({ id: job.id }).total).toBe(1); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
   it("本地目录检查分别核验原输入与目标，暂停时也可检查但不扫描或整理", async () => {
     const f = await fixture(), draft = f.rules.configure(f.draft), applied = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
     f.rules.control({ id: applied.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() });

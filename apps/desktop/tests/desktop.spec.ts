@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   test,
   expect,
@@ -207,7 +208,7 @@ test("全量内容复核经实际 IPC 保存逐项失败，重载和 Core 重启
     const preview = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: 0, expectedDraftRevision: draft.draftRevision, requestKey: crypto.randomUUID() });
     return window.desktopApi.applySourceRule({ previewId: preview.id, requestKey: crypto.randomUUID() });
   }, { source, target });
-  await window.evaluate((id) => window.desktopApi.scanIngestion(id), applied.id); await rename(missing, missing + ".保留"); const targetBefore = await readdir(target);
+  const scan = await window.evaluate((id) => window.desktopApi.scanIngestion(id, crypto.randomUUID()), applied.id); await expect.poll(async () => (await window.evaluate((id) => window.desktopApi.getIngestionScan({ id }), scan.id)).job.state).toBe("COMPLETED"); await rename(missing, missing + ".保留"); const targetBefore = await readdir(target);
   await window.getByRole("link", { name: "待处理", exact: true }).click();
   const panel = window.getByRole("region", { name: "全量内容复核", exact: true }); await expect(panel).toBeVisible();
   await panel.getByRole("button", { name: "开始全量内容复核", exact: true }).click();
@@ -1197,4 +1198,30 @@ test("真实 Utility Core 区分请求取消与后台工作，严格私有收据
   expect(evidence.expired.message).toContain("请求执行等待超时");
   await writeFile("test-results/desktop/request-boundary-evidence.json", JSON.stringify(evidence, null, 2) + "\n");
   const window = await application.firstWindow(); expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 }); expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
+});
+
+test("手动补扫立即返回持久作业，暂停与核心重启保留意图，逐项权限问题可修复重扫", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(60000);
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const sourceName = "手动目录补扫验收_" + "中文长名称_".repeat(12);
+  const root = await realpath(directory), input = join(root, "补扫输入 中文"), target = join(root, "补扫媒体目标 中文"); await mkdir(input); await mkdir(target);
+  const good = join(input, "已有样本.mp4"), denied = join(input, "不可读样本.mp4"); await writeFile(good, "完整原文件保留，扫描不整理"); await writeFile(denied, "权限恢复后仍保留此文件"); const inode = (await stat(good, { bigint: true })).ino; await chmod(denied, 0o000);
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [input, target]);
+  const source = await window.evaluate(async ({ input, target, sourceName }) => {
+    await window.desktopApi.chooseDirectory("source"); await window.desktopApi.chooseDirectory("target"); const draft = await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: sourceName, client: "custom", sourcePath: input, organization: { targetPath: target } } });
+    const preview = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: 0, expectedDraftRevision: 1, requestKey: crypto.randomUUID() }); const source = await window.desktopApi.applySourceRule({ previewId: preview.id, requestKey: crypto.randomUUID() }); await window.desktopApi.controlSourceRule({ id: source.id, expectedVersion: 1, expectedLifecycleRevision: 0, operation: "pause", requestKey: crypto.randomUUID() }); return source;
+  }, { input, target, sourceName });
+  const requestKey = randomUUID(), scan = await window.evaluate(({ id, key }) => window.desktopApi.scanIngestion(id, key), { id: source.id, key: requestKey }); expect(scan.state).toBe("WAITING_SOURCE"); expect((await window.evaluate(({ id, key }) => window.desktopApi.scanIngestion(id, key), { id: source.id, key: requestKey })).id).toBe(scan.id);
+  await window.getByRole("link", { name: "待处理", exact: true }).click(); const panel = window.getByRole("region", { name: "手动目录扫描", exact: true }); await expect(panel).toContainText(scan.id); await expect(panel).toContainText("等待来源恢复"); await expect(panel.getByRole("button", { name: `扫描目录 · ${sourceName}`, exact: true })).toBeDisabled();
+  await window.evaluate(() => window.desktopApi.restartCore()); await expect.poll(async () => (await window.evaluate((id) => window.desktopApi.getIngestionScan({ id }), scan.id)).job.state).toBe("WAITING_SOURCE");
+  await window.evaluate((id) => window.desktopApi.controlSourceRule({ id, expectedVersion: 1, expectedLifecycleRevision: 0, operation: "resume", requestKey: crypto.randomUUID() }), source.id);
+  await expect.poll(async () => (await window.evaluate((id) => window.desktopApi.getIngestionScan({ id }), scan.id)).job.state, { timeout: 25000 }).toBe("PARTIAL_FAILED");
+  const first = panel.getByRole("article").filter({ hasText: scan.id }); await expect(first).toContainText("部分文件未能核对"); await first.getByRole("button", { name: "查看扫描问题", exact: true }).click(); await expect(panel.getByRole("region", { name: "目录扫描逐项问题", exact: true })).toContainText("不可读样本.mp4"); await expect(panel).toContainText("读取权限");
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await expect.poll(() => window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await panel.screenshot({ path: "test-results/desktop/source-scan-partial-minimum.png" });
+  await chmod(denied, 0o600); await first.getByRole("button", { name: "重新扫描", exact: true }).click();
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listIngestionScans({}))).items.filter((row) => row.state === "COMPLETED").length).toBe(1);
+  const jobs = await window.evaluate(() => window.desktopApi.listIngestionScans({})); expect(jobs.total).toBe(2); const completed = jobs.items.find((row) => row.state === "COMPLETED")!; expect(completed).toMatchObject({ discovered: 2, failed: 0 }); expect(completed.id).not.toBe(scan.id);
+  await window.reload(); await expect(panel).toContainText(completed.id); await expect(panel).toContainText(scan.id); expect((await window.evaluate(() => window.desktopApi.listIngestionScans({}))).total).toBe(2); expect((await window.evaluate((id) => window.desktopApi.getIngestionScan({ id }), scan.id)).issues[0]!.relativePath).toBe("不可读样本.mp4");
+  await panel.screenshot({ path: "test-results/desktop/source-scan-restored-minimum.png" });
+  expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(0); expect((await window.evaluate(() => window.desktopApi.listDownloads({}))).total).toBe(0); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]); expect((await stat(good, { bigint: true })).ino).toBe(inode); expect(await readFile(good, "utf8")).toBe("完整原文件保留，扫描不整理"); expect(await readFile(denied, "utf8")).toBe("权限恢复后仍保留此文件"); expect((await readdir(target)).filter((name) => name !== ".media-marshal")).toEqual([]);
 });

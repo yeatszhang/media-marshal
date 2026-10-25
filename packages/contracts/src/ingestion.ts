@@ -36,6 +36,8 @@ const organizeBatchItemSchema = z.strictObject({ taskId: id, sourcePath: z.strin
 export const contentReviewSchema = z.strictObject({ id, sourceId: id, sourceVersion: z.number().int().positive(), state: z.enum(["PENDING", "RUNNING", "WAITING_SOURCE", "COMPLETED", "PARTIAL_FAILED", "FAILED", "CANCELLED"]), total: z.number().int().nonnegative(), checked: z.number().int().nonnegative(), changed: z.number().int().nonnegative(), baselined: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), currentPath: z.string().max(16384).nullable(), failure: z.string().max(500).nullable(), createdAt: z.string(), updatedAt: z.string() });
 export type ContentReview = z.infer<typeof contentReviewSchema>;
 const reviewFile = z.strictObject({ relativePath: z.string().max(16384), state: z.enum(["PENDING", "UNCHANGED", "BASELINED", "CHANGED", "FAILED"]), candidateId: id.nullable(), failure: z.string().max(500).nullable() });
+export const sourceScanSchema = z.strictObject({ id, sourceId: id, sourceName: z.string().max(100), state: z.enum(["PENDING", "RUNNING", "WAITING_SOURCE", "COMPLETED", "PARTIAL_FAILED", "FAILED"]), discovered: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), failure: z.string().max(500).nullable(), createdAt: z.string(), updatedAt: z.string() });
+export type SourceScan = z.infer<typeof sourceScanSchema>;
 export const ingestionActions = {
   "ingestion.seasons": { input: z.strictObject({ page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(ingestionSeasonSchema).max(25), total: z.number().int().nonnegative() }) },
   "ingestion.season": { input: z.strictObject({ id: directoryId, sourceId: id, page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ season: ingestionSeasonSchema, items: z.array(z.strictObject({ candidate: candidateSchema, task: recognitionSchema })).max(100) }) },
@@ -60,7 +62,9 @@ export const ingestionActions = {
   "ingestion.pause-status": { input: empty, output: z.strictObject({ paused: z.boolean() }) },
   "ingestion.set-paused": { input: z.strictObject({ paused: z.boolean(), requestKey: id }), output: z.strictObject({ paused: z.boolean() }) },
   "ingestion.candidates": { input: z.strictObject({ sourceId: id.optional(), page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(candidateSchema).max(100), total: z.number().int().nonnegative() }) },
-  "ingestion.scan": { input: z.strictObject({ sourceId: id }), output: z.strictObject({ discovered: z.number().int().nonnegative() }) },
+  "ingestion.scan": { input: z.strictObject({ sourceId: id, requestKey: id }), output: sourceScanSchema },
+  "ingestion.scans": { input: z.strictObject({ page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(sourceScanSchema).max(25), total: z.number().int().nonnegative() }) },
+  "ingestion.scan-job": { input: z.strictObject({ id, page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ job: sourceScanSchema, issues: z.array(z.strictObject({ relativePath: z.string().max(16384), failure: z.string().max(500) })).max(100), total: z.number().int().nonnegative() }) },
   "ingestion.recognize": { input: z.strictObject({ candidateId: id, requestKey: id }), output: z.strictObject({ taskId: id }) },
   "ingestion.task": { input: z.strictObject({ taskId: id }), output: recognitionSchema },
   "ingestion.preview": { input: z.strictObject({ taskId: id, requestKey: id, selection: selectionSchema, template: z.string().min(1).max(16384).optional(), includeAccessories: z.boolean().default(true) }), output: organizePreviewSchema },

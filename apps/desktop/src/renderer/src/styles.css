@@ -1024,3 +1024,13 @@ th:first-child {
 .season-member-list .check-label > span { min-width: 0; }
 .season-member-list small { display: block; margin-top: 7px; }
 .season-queue .pagination { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+
+.source-scans-panel { padding: 20px; margin-bottom: 20px; min-width: 0; }
+.source-scans-panel p { line-height: 1.8; overflow-wrap: anywhere; }
+.source-scan-list { display: grid; gap: 12px; margin-top: 14px; }
+.source-scan-list article { font-size: 13px; line-height: 1.8; padding: 14px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.source-scans-panel .download-controls { flex-wrap: wrap; }
+.source-scan-list .content-review-heading { flex-wrap: wrap; }
+.source-scans-panel a { color: var(--primary); text-decoration: underline; font-size: 13px; }
+.source-scans-panel .download-controls > .button { max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.source-scan-list .content-review-heading > strong { min-width: 0; overflow-wrap: anywhere; }

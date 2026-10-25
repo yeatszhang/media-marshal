@@ -1,3 +1,4 @@
+import { coreActions } from "@media-marshal/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, realpath, rm, symlink, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -38,6 +39,10 @@ afterEach(async () => {
   );
 });
 describe("框架组装与核心消息", () => {
+  it("所有受限公共动作均有当前 Application 的静态命令注册，不等待动态命令或落入全局中心", async () => {
+    const seen: string[] = [], runtime = createMediaApplication(":memory:", [{ id: "static-command-audit", dependencies: ["media.commands"], start(ctx) { for (const action of Object.keys(coreActions)) { expect(ctx.commandRegistry.getCommand(`media.${action}`)).toBeTypeOf("function"); seen.push(action); } } }]); running.push(runtime); await runtime.app.start(); expect(seen.sort()).toEqual(Object.keys(coreActions).sort());
+    await expect(runtime.dispatch(message("shell.exec"))).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+  });
   it.each(["TIMEOUT", "INTERRUPTED"] as const)("%s 收据结束请求等待，已落库草稿保留且同请求键不重复执行", async (reason) => {
     const { runtime } = await create(), db = runtime.app.container.get(DatabaseToken).connection;
     let release!: () => void, entered!: () => void; const gate = new Promise<void>((done) => { release = done; }), started = new Promise<void>((done) => { entered = done; }); releaseGates.push(release);

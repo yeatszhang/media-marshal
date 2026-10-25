@@ -22,6 +22,11 @@ const request = (action = "runtime.get", payload: unknown = {}) => ({
   payload,
 });
 describe("受限进程契约", () => {
+  it("手动扫描返回持久身份，只接受已有来源和幂等请求键，分页与逐项结果有界", () => {
+    const payload = { sourceId: randomUUID(), requestKey: randomUUID() }; expect(parseCoreRequest(request("ingestion.scan", payload)).payload).toEqual(payload);
+    for (const value of [{ sourceId: payload.sourceId }, { ...payload, path: "/任意扫描" }, { ...payload, automatic: true }, { ...payload, grant: {} }, { ...payload, requestKey: "任意字符串" }]) expect(() => parseCoreRequest(request("ingestion.scan", value))).toThrow();
+    expect(parseCoreRequest(request("ingestion.scans", {})).payload).toEqual({ page: 1 }); expect(() => parseCoreRequest(request("ingestion.scan-job", { id: randomUUID(), page: 1000001 }))).toThrow();
+  });
   it("请求取消仅是私有严格收据，不能伪装成业务命令或携带执行参数", () => {
     const value = { kind: "core.request.cancel", protocolVersion: 1, requestId: randomUUID(), reason: "TIMEOUT" };
     expect(coreRequestCancellationSchema.parse(value)).toEqual(value);

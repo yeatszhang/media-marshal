@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm, readFile, mkdir, writeFile, readdir, rename, lstat } from "node:fs/promises";
+import { mkdtemp, realpath, rm, readFile, mkdir, writeFile, readdir, rename, lstat, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { createServer } from "node:http";
@@ -340,6 +340,17 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='SCANNING'").get()).toEqual({ n: 1 });
     // 枚举和确认需要跨多个 500ms 调度周期，等待完整记账，避免全量并发检查中的瞬时状态。
     await expect.poll(() => ({ jobs: (f.db.connection.prepare("SELECT count(*) AS n FROM download_job").get() as { n: number }).n, complete: (f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='COMPLETE'").get() as { n: number }).n }), { timeout: 5000 }).toEqual({ jobs: 1, complete: 1 });
+  });
+  it("共享目录的手动扫描摘要仅包含本来源有效需求，其他来源的权限问题不会误归属", async () => {
+    const f = await setup(new Map([["甲/电影.mp4", Buffer.from("甲内容")], ["乙/电影.mp4", Buffer.from("乙内容")]])), targetPath = join(f.path, "共享扫描目标"); await mkdir(targetPath); const target = await probeManagedVolume(targetPath);
+    const first = await organized(f, "甲来源", f.entries.find((entry) => entry.name === "甲")!.ref, target), second = await organized(f, "乙来源", f.entries.find((entry) => entry.name === "乙")!.ref, target);
+    f.downloads.start(); await expect.poll(() => [first, second].map((row) => f.state(row.job.jobId).state), { timeout: 10000 }).toEqual(["COMPLETED", "COMPLETED"]);
+    const row = f.db.connection.prepare("SELECT i.target_segments_json FROM download_item i JOIN download_job_item ji ON ji.item_id=i.id WHERE ji.job_id=?").get(second.job.jobId) as { target_segments_json: string }, denied = join(f.rootPath, "completed", ...JSON.parse(row.target_segments_json)); await chmod(denied, 0o000);
+    try {
+      const a = f.rules.scans.enqueue({ sourceId: first.source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: a.id })).toMatchObject({ job: { state: "COMPLETED", discovered: 1, failed: 0 }, issues: [] });
+      const b = f.rules.scans.enqueue({ sourceId: second.source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: b.id })).toMatchObject({ job: { state: "PARTIAL_FAILED", discovered: 0, failed: 1 }, issues: [{ relativePath: expect.stringContaining("乙") }] });
+      expect(f.pipeline.list({}).items.filter((item) => item.relativePath.includes("甲"))).toHaveLength(1); expect(f.pipeline.list({}).total).toBeLessThanOrEqual(2); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
+    } finally { await chmod(denied, 0o600); }
   });
   it("共享根按需求区分只下载与整理，相同策略和 outbox 重投及补扫复用唯一候选", async () => {
     const f = await setup(new Map([["整理/电影.mp4", Buffer.from("整理内容")], ["仅下载/电影.mp4", Buffer.from("仅下载内容")]]));
