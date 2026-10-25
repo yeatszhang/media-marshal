@@ -7,6 +7,8 @@ import { CloudError } from "@media-marshal/contracts";
 import { managedRootGrantSchema, type ManagedRootGrant } from "@media-marshal/contracts/internal";
 
 const run = promisify(execFile);
+// Darwin PATH_MAX 的保守字节预算；只读来源不依赖卷对 pathconf 的实现（exFAT 可返回 EINVAL）。
+const DARWIN_PATH_MAX_BYTES = 1024;
 const command = async (file: string, args: string[]) => (await run(file, args, { encoding: "utf8", timeout: 5000, maxBuffer: 64 * 1024, windowsHide: true, shell: false })).stdout;
 const plistValue = (xml: string, key: string) => xml.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`))?.[1];
 
@@ -27,7 +29,7 @@ async function probeVolume(selectedPath: string, id: string, writable: boolean):
     const info = await command("/usr/sbin/diskutil", ["info", "-plist", device]);
     const fsType = plistValue(info, "FilesystemType"), volumeId = plistValue(info, "VolumeUUID")?.toLowerCase();
     if (!fsType || !volumeId || (writable && !["apfs", "hfs"].includes(fsType))) throw new CloudError("UNSUPPORTED_CAPABILITY", undefined, { reason: "UNSUPPORTED_FILESYSTEM" });
-    const pathMaxBytes = Number((await command("/usr/bin/getconf", ["PATH_MAX", path])).trim());
+    const pathMaxBytes = writable ? Number((await command("/usr/bin/getconf", ["PATH_MAX", path])).trim()) : DARWIN_PATH_MAX_BYTES;
     const nonce = `.media-marshal-probe-${randomUUID()}`, casePath = join(path, nonce + "-A"), unicodePath = join(path, nonce + "-é");
     const owned: string[] = [];
     const aliases = async (created: string, other: string) => {

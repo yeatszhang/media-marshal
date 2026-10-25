@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-25T11:00:00.657Z",
+  "os": "25.5.0",
+  "arch": "arm64",
+  "requestedFilesystems": [
+    "APFS",
+    "HFS+",
+    "exFAT"
+  ],
+  "method": "macOS 原生驱动挂载的独立稀疏磁盘映像；未访问用户媒体卷",
+  "sourceSha256": {
+    "packages/media-core/src/files/index.ts": "9f5e8f1010366bfa430f4893a15aacbe696cb15231a54117dccb625c1a54a74d",
+    "packages/media-core/src/files/source-root.ts": "ba52d0a26bbf14cc82308844e6020e4586d8eeb34408361e1f7e3454713bef80",
+    "apps/desktop/src/main/cloud/volume-probe.ts": "d646fde7d490d07fe790ba4fd2d55a399d17a2776458db9113fe990a593379f4"
+  },
+  "cleanup": {
+    "detached": true,
+    "temporaryDirectoryRemoved": true
+  },
+  "passed": true,
+  "productVersion": "26.5.2",
+  "buildVersion": "25F84",
+  "cases": [
+    {
+      "filesystem": "APFS",
+      "backing": "自有 256 MiB 稀疏磁盘映像",
+      "readOnlySource": {
+        "accepted": true,
+        "filesystemType": "apfs",
+        "contentPreserved": true,
+        "noProbeFilesWritten": true
+      },
+      "writableTarget": {
+        "accepted": true,
+        "filesystemType": "apfs",
+        "caseSensitive": false,
+        "unicodeEquivalent": true
+      },
+      "nativeHardLink": {
+        "supported": true
+      },
+      "races": [
+        {
+          "variant": "different-content",
+          "passed": true,
+          "targetPreserved": true,
+          "ownStageCleanupOnly": true
+        },
+        {
+          "variant": "same-content",
+          "passed": true,
+          "targetPreserved": true,
+          "ownStageCleanupOnly": true
+        },
+        {
+          "variant": "application-first",
+          "passed": true,
+          "targetPreserved": true,
+          "ownStageCleanupOnly": true
+        }
+      ],
+      "remount": {
+        "sameVolumeAndDirectoryIdentity": true,
+        "existingMarkerAccepted": true
+      },
+      "nativeMetadata": {
+        "filesystem": "apfs",
+        "volumeUuidLength": 36,
+        "volumeUuidAccepted": true,
+        "pathMax": "1024"
+      },
+      "phase": "complete"
+    },
+    {
+      "filesystem": "HFS+",
+      "backing": "自有 256 MiB 稀疏磁盘映像",
+      "readOnlySource": {
+        "accepted": true,
+        "filesystemType": "hfs",
+        "contentPreserved": true,
+        "noProbeFilesWritten": true
+      },
+      "writableTarget": {
+        "accepted": true,
+        "filesystemType": "hfs",
+        "caseSensitive": false,
+        "unicodeEquivalent": true
+      },
+      "nativeHardLink": {
+        "supported": true
+      },
+      "races": [
+        {
+          "variant": "different-content",
+          "passed": true,
+          "targetPreserved": true,
+          "ownStageCleanupOnly": true
+        },
+        {
+          "variant": "same-content",
+          "passed": true,
+          "targetPreserved": true,
+          "ownStageCleanupOnly": true
+        },
+        {
+          "variant": "application-first",
+          "passed": true,
+          "targetPreserved": true,
+          "ownStageCleanupOnly": true
+        }
+      ],
+      "remount": {
+        "sameVolumeAndDirectoryIdentity": true,
+        "existingMarkerAccepted": true
+      },
+      "nativeMetadata": {
+        "filesystem": "hfs",
+        "volumeUuidLength": 36,
+        "volumeUuidAccepted": true,
+        "pathMax": "1024"
+      },
+      "phase": "complete"
+    },
+    {
+      "filesystem": "exFAT",
+      "backing": "自有 256 MiB 稀疏磁盘映像",
+      "readOnlySource": {
+        "accepted": true,
+        "filesystemType": "exfat",
+        "contentPreserved": true,
+        "noProbeFilesWritten": true
+      },
+      "writableTarget": {
+        "accepted": false,
+        "code": "UNSUPPORTED_CAPABILITY",
+        "reason": "UNSUPPORTED_FILESYSTEM"
+      },
+      "nativeHardLink": {
+        "supported": false,
+        "code": "ENOTSUP"
+      },
+      "races": [],
+      "remount": null,
+      "nativeMetadata": {
+        "filesystem": "exfat",
+        "volumeUuidLength": 36,
+        "volumeUuidAccepted": true,
+        "pathMaxUnavailableCode": 71
+      },
+      "phase": "complete"
+    }
+  ],
+  "limitations": [
+    "本机 arm64 原生驱动及磁盘映像，未覆盖 Intel、其他系统版本或实际硬盘拔插",
+    "exFAT 仅验收只读来源及写入阻断，不将未执行的提交竞争算通过",
+    "case-sensitive APFS/HFS+、其他文件系统与网络卷未验收",
+    "同名文件竞争不代表敌对进程任意目录树改写全部时序已验证",
+    "不代替外部客户端完成行为、签名安装包或断电持久性验证"
+  ],
+  "checks": {
+    "targeted": {
+      "passed": 14,
+      "files": 2
+    },
+    "unit": {
+      "passed": 455,
+      "skipped": 13,
+      "filesPassed": 53,
+      "filesSkipped": 3
+    },
+    "electron": {
+      "passed": 2,
+      "scope": [
+        "统一来源本地授权及 Core 重启",
+        "IPC 目录失败原因及未知标记保留"
+      ],
+      "nativeDialogIsControlledSubstitute": true
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "desktopBuild": true,
+    "docsBuild": true
+  },
+  "buildSha256": {
+    "main/index.js": "9952e49a251f16d2c838c3a3d24a63c78aba63842cee32ab678b8edb8fe38777",
+    "main/worker.js": "1f5fdecaeab5269259d1ba0a467a2e664b99dacf2f23b1f5caf4feed401e6933",
+    "preload/index.js": "5488da659356534e46ae971b5939bd585940e2122a64d429a357c9510579614e"
+  }
+}
