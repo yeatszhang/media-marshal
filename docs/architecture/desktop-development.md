@@ -51,9 +51,21 @@ Mac 的 `desktop:build` 及 `beforePack` 准备 Node-API 8 安全修正组件，
 
 legacy 装饰器由 TypeScript 统一转换，参数使用显式 `@inject(Token)`。Vite 与 Vitest 共用转换插件，避免编译器默认装饰器语义不同。不得使用框架的深层源码入口或全局命令容器。
 
-来源表单草稿由路由上层 React Provider 持有，来源 ViewModel 只保存核心 DTO、操作反馈及 computed 投影。使用公开 `useService`／`useServiceState` 读取；框架 computed 为不可枚举 getter，组合组件草稿时显式投影，不能用对象展开假设它们会被复制。页面卸载释放订阅和轮询，根卸载解除草稿绑定并使旧查询失效；不停止组件树外共享的 Application。来源草稿迁移已完成组件与实际窗口验证，7.7 的受控重载清理仍单独完成，不能用普通窗口重载代替其验收。
+来源表单草稿由路由上层 React Provider 持有，来源 ViewModel 只保存核心 DTO、操作反馈及 computed 投影。使用公开 `useService`／`useServiceState` 读取；框架 computed 为不可枚举 getter，组合组件草稿时显式投影，不能用对象展开假设它们会被复制。页面卸载释放订阅和轮询，根卸载解除草稿绑定并使旧查询失效；不停止组件树外共享的 Application。
 
-设置查询分别核对请求与页面代际，保存前使旧读取失效，写入期间不发布旧 DTO；离页后的迟到结果不更新视图，重新进入仍只查询核心。地址草稿在 React 按字段记录是否编辑，保存密钥或刷新连接状态不覆盖未保存地址。已提交的保存仍由核心完成；Renderer 停止后不续发读取或接受新保存。此阶段补齐设置查询保护，7.7 的受控重载清理仍待完成。
+设置查询分别核对请求与页面代际，保存前使旧读取失效，写入期间不发布旧 DTO；离页后的迟到结果不更新视图，重新进入仍只查询核心。地址草稿在 React 按字段记录是否编辑，保存密钥或刷新连接状态不覆盖未保存地址。已提交的保存仍由核心完成；Renderer 停止后不续发读取或接受新保存。
+
+### Renderer 受控重载
+
+「视图」中的普通／忽略缓存重载及 Command+R、Command+Shift+R、F5 经过固定生命周期握手。Main 只接受当前受信任主窗口、原顶层 frame 和本次随机标识的严格收据，不接受任意动作、路径或错误原文。Preload 只允许注册一个本地异步清理回调，不向 Renderer 暴露通用事件或 IPC；回调不经过进程边界。
+
+Renderer 先卸载 React 根，再等待 `Application.stop()`，并发停止共用同一个 Promise。页面卸载取消的扫码请求与服务清理共用回执，应用停止会等待该回执，迟到登录响应不续发查询；已持久化的授权或媒体作业继续由 Main／Core 持有。清理成功后 Main 才调用 Electron 的刷新 API，Core、SQLite 和后台作业保持原实例。清理失败或十五秒超时不强制刷新，显示退出并重开的动作；旧收据不能完成新请求。导航、窗口销毁和进程中断使原握手失效。只有 Electron 已报告 `isCrashed()` 时才独立恢复界面，不把超时当成崩溃。
+
+HMR dispose 在异步启动完成前登记并记录清理 Promise，新模块在创建 Application 前等待上一代完成。启动期间被替换的一代等待已取得资源落定并清理，不再挂载旧页面；若受控重载已开始则不再启动一代 HMR 容器。没有依赖异步 unload 或 beforeunload 完成清理。普通页面刷新和进程强杀属于独立恢复路径，不冒认为受控清理成功。启动／替换交错使用受控 Promise 门验证，未宣称真实 Vite HMR 事件的专项验收。
+
+Electron 的 [before-input-event](https://www.electronjs.org/docs/latest/api/web-contents#event-before-input-event) 用于阻止默认快捷键并路由受控请求，[IpcMainEvent.senderFrame](https://www.electronjs.org/docs/latest/api/structures/ipc-main-event) 用于核对发送 frame；实现同时按当前安装的 Electron 类型编译。自动化通过 Electron 菜单回调和输入端口验证接线，不表示已覆盖 OS 原生菜单点击与系统快捷键分发。
+
+2026-10-26 本阶段全量 784 passed／13 skipped，类型、边界及框架来源检查通过。当前构建的两项窗口检查验证任务分页／筛选与识别字段 DTO 在 Core 重启及界面重载后恢复，不创建新文件作业；最终 arm64 未签名目录包另通过六项窗口检查，覆盖两类受控刷新、强杀 Renderer 恢复、主窗口销毁重建、同一 Core PID、草稿版本与作业数不变，以及设置草稿、来源表单、沙盒与运行偏好。React 根卸载及延迟清理、启动交错、扫码取消、旧请求、frame／nonce、失败和超时使用定向测试核对。源码、ASAR、截图及范围映射见 `tools/desktop-files/fixtures/mac-renderer-lifecycle-2026-10-26.json`；[实际已保存草稿恢复截图](/desktop/renderer-source-dto-restored.png)对应从 Core 读回的表单。7.7 据此完成；Intel、正式签名、完整 OS 安装与原生菜单验收仍由各自任务记录。
 
 ## 运行与数据
 

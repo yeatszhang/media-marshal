@@ -38,6 +38,7 @@ import { APP_ORIGIN, assetPath, requireEmbyItemUrl, requireTrustedRequest } from
 import { trayIcon } from "./tray-icon";
 import { HostPreferencesController } from "./host-preferences";
 import { DesktopAboutController } from "./desktop-about";
+import { RendererReloadController } from "./renderer-reload";
 import { SidecarSupervisor } from "./cloud/sidecar-supervisor";
 import { AccountCredentials } from "./cloud/account-credentials";
 import { defaultDiagnostic } from "./cloud/diagnostics";
@@ -85,6 +86,14 @@ async function bootstrap() {
   let tray: Tray | undefined;
   let exiting = false;
   let maintenance = false;
+  let rendererReload: RendererReloadController | undefined;
+  let reloadFlight: Promise<void> | undefined;
+  const requestReload = (ignoreCache = false) => {
+    if (reloadFlight || !rendererReload || exiting || maintenance || window?.webContents.isLoadingMainFrame()) return;
+    reloadFlight = rendererReload.request(ignoreCache).catch((error) => {
+      if (!exiting && !maintenance && window && !window.isDestroyed()) dialog.showErrorBox("界面未重载", error instanceof DesktopError ? error.message : "界面重载未完成，请退出客户端后重新打开");
+    }).finally(() => { reloadFlight = undefined; });
+  };
   const backups = new ManagedUpgradeBackups(app.getPath("userData"));
   const hostPreferences = new HostPreferencesController(join(app.getPath("userData"), "host-preferences.json"), {
     supported: process.platform === "darwin" && app.isPackaged,
@@ -144,6 +153,13 @@ async function bootstrap() {
       },
     });
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    rendererReload = new RendererReloadController(window.webContents, ipcMain, () => !exiting && !maintenance, developmentUrl);
+    window.webContents.on("before-input-event", (event, input) => {
+      if (input.type !== "keyDown" || input.isComposing || input.alt) return;
+      if (input.key === "F5" || (input.code === "KeyR" && (process.platform === "darwin" ? input.meta : input.control))) {
+        event.preventDefault(); if (!input.isAutoRepeat) requestReload(input.shift || (input.key === "F5" && input.control));
+      }
+    });
     window.webContents.on("will-navigate", (event, url) => {
       try {
         requireTrustedRequest({}, url, true, developmentUrl);
@@ -179,6 +195,7 @@ async function bootstrap() {
       } else window?.hide();
     });
     window.on("closed", () => {
+      rendererReload?.dispose(); rendererReload = undefined;
       window = undefined;
       grants.clear();
     });
@@ -534,6 +551,7 @@ async function bootstrap() {
     dependencies: ["desktop.bridge"],
     async start(ctx) {
       ctx.disposables.add(() => {
+        rendererReload?.dispose();
         tray?.destroy();
         if (window && !window.isDestroyed()) window.destroy();
       });
@@ -560,7 +578,13 @@ async function bootstrap() {
             ],
           },
           { role: "editMenu", label: "编辑" },
-          { role: "viewMenu", label: "视图" },
+          { label: "视图", submenu: [
+            { id: "desktop.reload", label: "重新加载界面", accelerator: "CmdOrCtrl+R", click: () => requestReload() },
+            { id: "desktop.reload-ignoring-cache", label: "忽略缓存并重新加载界面", accelerator: "CmdOrCtrl+Shift+R", click: () => requestReload(true) },
+            { type: "separator" }, { role: "toggleDevTools", label: "开发者工具" },
+            { type: "separator" }, { role: "resetZoom", label: "实际大小" }, { role: "zoomIn", label: "放大" }, { role: "zoomOut", label: "缩小" },
+            { type: "separator" }, { role: "togglefullscreen", label: "切换全屏" },
+          ] },
         ]),
       );
     },

@@ -9,9 +9,10 @@ export class CloudAccountsViewModel extends StatefulService<{ accounts: CloudAcc
   protected initState = { accounts: [], loadingAccounts: false, authorization: null, authorizing: false, loggingIn: false, error: null };
   private watchers = 0; private epoch = 0; private request = 0; private stopped = false; private timer?: ReturnType<typeof setTimeout>;
   private authorizationKey: string | null = null; private loginKey: string | null = null; private refreshFlight?: Promise<void>;
+  private cancellation?: { key: string; promise: Promise<void> };
   private queryError: string | null = null;
   constructor(@inject(DesktopClient) readonly client: DesktopApi) { super(); }
-  refreshAccounts(): Promise<void> { return this.refreshFlight ??= this.readAccounts().finally(() => { this.refreshFlight = undefined; }); }
+  refreshAccounts(): Promise<void> { if (this.stopped) return Promise.resolve(); return this.refreshFlight ??= this.readAccounts().finally(() => { this.refreshFlight = undefined; }); }
   private async readAccounts() {
     const request = ++this.request; this.setState({ loadingAccounts: true });
     try { const accounts = await this.client.listCloudAccounts(); if (!this.stopped && request === this.request) { this.setState({ accounts, error: this.queryError && this.state.error === this.queryError ? null : this.state.error }); this.queryError = null; } }
@@ -19,6 +20,7 @@ export class CloudAccountsViewModel extends StatefulService<{ accounts: CloudAcc
     finally { if (!this.stopped && request === this.request) this.setState({ loadingAccounts: false }); }
   }
   watch() {
+    if (this.stopped) return () => {};
     if (++this.watchers === 1) {
       const epoch = ++this.epoch;
       const tick = async () => {
@@ -37,8 +39,9 @@ export class CloudAccountsViewModel extends StatefulService<{ accounts: CloudAcc
   async authorize(input: CloudCredentialDraft) {
     if (this.state.authorizing || this.state.loggingIn || this.stopped) return;
     this.authorizationKey = input.requestKey; this.setState({ authorizing: true, authorization: null, error: null });
-    try { this.remember(await this.client.authorizeCloudAccount(input)); await this.refreshAccounts(); }
+    try { const job = await this.client.authorizeCloudAccount(input); if (this.stopped) return; this.remember(job); await this.refreshAccounts(); }
     catch (error) {
+      if (this.stopped) throw error;
       const job = await this.client.getCloudAuthorization(input.requestKey).catch(() => null);
       if (job) this.remember(job); else { this.authorizationKey = null; this.setState({ authorizing: false, error: message(error) }); }
       throw error;
@@ -49,14 +52,21 @@ export class CloudAccountsViewModel extends StatefulService<{ accounts: CloudAcc
     const requestKey = crypto.randomUUID(); this.loginKey = requestKey; this.setState({ loggingIn: true, authorization: null, error: null });
     try { const job = await this.client.loginCloudAccount({ name, accountId, requestKey }); if (this.stopped || !job) return false; this.remember(job); await this.refreshAccounts(); return true; }
     catch (error) {
+      if (this.stopped) return false;
       const job = await this.client.getCloudAuthorization(requestKey).catch(() => null);
       if (this.stopped) return false;
       if (job) { this.remember(job); await this.refreshAccounts(); return true; }
       this.setState({ error: message(error) }); return false;
-    } finally { if (this.loginKey === requestKey) { this.loginKey = null; if (!this.stopped) this.setState({ loggingIn: false }); } }
+    } finally { if (this.loginKey === requestKey) { this.loginKey = null; if (this.cancellation?.key === requestKey) this.cancellation = undefined; if (!this.stopped) this.setState({ loggingIn: false }); } }
   }
-  async cancelLogin() { if (this.loginKey) await this.client.cancelCloudLogin(this.loginKey).catch(() => {}); }
-  async disconnect(accountId: string) { try { await this.client.disconnectCloudAccount(accountId); await this.refreshAccounts(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
-  async restore() { try { await this.client.restoreCloudAccounts(); await this.refreshAccounts(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
-  protected dispose() { this.stopped = true; ++this.epoch; ++this.request; clearTimeout(this.timer); void this.cancelLogin(); }
+  private cancelCurrentLogin(): Promise<void> {
+    const key = this.loginKey; if (!key) return this.cancellation?.promise ?? Promise.resolve();
+    if (this.cancellation?.key === key) return this.cancellation.promise;
+    const promise = this.client.cancelCloudLogin(key).catch((error) => { if (this.cancellation?.promise === promise) this.cancellation = undefined; throw error; });
+    this.cancellation = { key, promise }; return promise;
+  }
+  async cancelLogin() { try { await this.cancelCurrentLogin(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
+  async disconnect(accountId: string) { if (this.stopped) return; try { await this.client.disconnectCloudAccount(accountId); await this.refreshAccounts(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
+  async restore() { if (this.stopped) return; try { await this.client.restoreCloudAccounts(); await this.refreshAccounts(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
+  protected async dispose() { this.stopped = true; ++this.epoch; ++this.request; clearTimeout(this.timer); await this.cancelCurrentLogin(); }
 }

@@ -1,0 +1,173 @@
+{
+  "capturedAt": "2026-10-25T21:22:25.723011+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "schema": 24,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "f38179799705d6f5908abccfac261b6619bf6d5f9951bf0514b592b09202a553",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "reactVersions": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "@yeatz/app-framework": "0.1.0"
+  },
+  "source": {
+    "packages/contracts/src/renderer-lifecycle.ts": "114536f8f1d33226bf563151bc469a453970cc70a83a3cf81a2721ae268ad158",
+    "packages/contracts/src/index.ts": "2bc4e5b1ff980efecc30a02f8df69f5f59c92fa9934b8f9b4b9febf212357d5e",
+    "apps/desktop/src/main/index.ts": "576a94e9b2518fa712164dcbf25590dad2a584acddb954805aeee27b616fb9c9",
+    "apps/desktop/src/main/renderer-reload.ts": "a6f12f50536e4379643d520de9930ae4230a7e4de7a7997ad54c1c61f50c3427",
+    "apps/desktop/src/main/renderer-reload.test.ts": "f8054a3b5e6d8a426eef807bcb14fdd4ebf32b0893ccb36b837689b552e0781a",
+    "apps/desktop/src/preload/index.ts": "49ad5beaa3d46f3384914ffac9ef10678758df5bf80998903a1332c72176daf2",
+    "apps/desktop/src/preload/renderer-lifecycle.ts": "3f66225c2c0d8a9edefd1326211c6a3fb9cface8acf837aa7de808996c8c6169",
+    "apps/desktop/src/preload/renderer-lifecycle.test.ts": "a9f971d2209602860741eb896ad0ec007e25b38ca8b570398cdca8e3c3147739",
+    "apps/desktop/src/renderer/src/main.tsx": "ba8cc442bf7ca5f62a6e858ca9e37ac742f1b42d5583b563c689033fad58806f",
+    "apps/desktop/src/renderer/src/lifecycle.ts": "b92f960269917aa7e6965afcb0c3ab20d45b51215ba92d0f64170624946fa6e5",
+    "apps/desktop/src/renderer/src/lifecycle.test.tsx": "9cc7914f3512770596f16432ed65fc79bb22008c33179752db635e0138875175",
+    "apps/desktop/src/renderer/src/desktop-client.ts": "82dbe73f78d50e234d0ac00bb1f8524965bf7bcef2102350732197cf02e21558",
+    "apps/desktop/src/renderer/src/services.ts": "d92be50bcaacef2d6266ee8d43960b1b4054d2d513d46c8c9333c10993a553d0",
+    "apps/desktop/src/renderer/src/source-rules-model.ts": "d571dd0d13d0d0150fd9a3ffb8a394bf54a20d8e49ecb8380f3682ad79d8758d",
+    "apps/desktop/src/renderer/src/source-draft-context.tsx": "c9e45f6cda3095bd3feff44952475b757e33ac082bac9cc3ff8c6c415559636b",
+    "apps/desktop/src/renderer/src/cloud-accounts-model.ts": "c969365fc14aa0bb39cf64a3bcdf3b6f1e4e7381de2174755e319a5507617337",
+    "apps/desktop/src/renderer/src/pages/SettingsPage.tsx": "fe580c4f69ad4ca57cc66ee5656a1973c4f8d91a4ec5a661765ce862ecf91d29",
+    "apps/desktop/src/renderer/src/pages/Tasks.tsx": "221986011af9a0a31ee12a861c40e2e747f21a95e4ce606cee44111f936517a3",
+    "apps/desktop/src/renderer/src/pages/Ingestion.tsx": "afd7f9382657cb58168029abba325382b1e4484ddf845680da99f54b8f4af46f",
+    "apps/desktop/src/renderer/src/source-rules.test.tsx": "b81b42756b9963ec182670ebe64db34cba73af995addb03363f9a203bd15d100",
+    "apps/desktop/src/renderer/src/tasks.test.tsx": "41d7920f0bc25eb004e4783bfcb1cdda636aaf4c3743384cbe7a1dafcaafaf1d",
+    "apps/desktop/src/renderer/src/ingestion-review.test.tsx": "a7e4e691ec32f4da56a905499eb8e90700cd9c8abde21d71bb7a55adb9c4085f",
+    "apps/desktop/src/renderer/src/settings-state.test.tsx": "d279d93ce03c2e87c996f5da0fe6c9d49605f8e86f95176c1d208671ce0687be",
+    "apps/desktop/tests/desktop.spec.ts": "435de7124055dd51ac9147671d0f66ca39e482366c308d431e9be16ee06e04db",
+    "apps/desktop/src/renderer/src/services.test.tsx": "4d29569d8c20d3f1eeb82cb677301c6cb86c4b6a5d0d33ba5007bc865e4c379e"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 784,
+      "skipped": 13,
+      "filesPassed": 79,
+      "filesSkipped": 3
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "frameworkFixedPackageAndContents": true,
+    "artifactWhitelist": true,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "likec4Export": {
+      "version": "1.60.0",
+      "views": 4
+    },
+    "devDtoWindows": 2,
+    "finalPackagedWindows": 6,
+    "finalLifecycleTestsAfterReceiptAudit": 5
+  },
+  "requirementEvidence": {
+    "publicFrameworkServicesHooksAndComputed": [
+      "apps/desktop/src/renderer/src/desktop-client.ts",
+      "apps/desktop/src/renderer/src/services.ts",
+      "apps/desktop/src/renderer/src/source-rules-model.ts",
+      "apps/desktop/src/renderer/src/pages/Tasks.tsx",
+      "apps/desktop/src/renderer/src/pages/Ingestion.tsx",
+      "apps/desktop/src/renderer/src/pages/SettingsPage.tsx"
+    ],
+    "localDraftsOnlyInReact": [
+      "apps/desktop/src/renderer/src/source-draft-context.tsx",
+      "apps/desktop/src/renderer/src/pages/SettingsPage.tsx",
+      "apps/desktop/src/renderer/src/pages/Ingestion.tsx",
+      "apps/desktop/src/renderer/src/source-rules.test.tsx",
+      "apps/desktop/src/renderer/src/settings-state.test.tsx"
+    ],
+    "createRootStrictModeSelectiveUpdatesAndRelease": [
+      "apps/desktop/src/renderer/src/source-rules.test.tsx",
+      "apps/desktop/src/renderer/src/tasks.test.tsx",
+      "apps/desktop/src/renderer/src/ingestion-review.test.tsx",
+      "apps/desktop/src/renderer/src/services.test.tsx",
+      "apps/desktop/src/renderer/src/lifecycle.test.tsx"
+    ],
+    "awaitedCleanupAndFailureBoundaries": [
+      "apps/desktop/src/main/renderer-reload.test.ts",
+      "apps/desktop/src/preload/renderer-lifecycle.test.ts",
+      "apps/desktop/src/renderer/src/lifecycle.test.tsx"
+    ],
+    "currentCoreDtoRecoveryWithoutMutationReplay": [
+      "apps/desktop/tests/desktop.spec.ts:任务分页筛选和 Core 重启",
+      "apps/desktop/tests/desktop.spec.ts:单条与批量识别字段",
+      "apps/desktop/tests/desktop.spec.ts:来源 React 草稿",
+      "apps/desktop/tests/desktop.spec.ts:设置保存密钥和刷新",
+      "apps/desktop/tests/desktop.spec.ts:菜单与快捷键受控重载"
+    ]
+  },
+  "assertions": {
+    "noDirectGlobalZustandStoreInRenderer": true,
+    "computedSelectorIgnoresLocalEdits": true,
+    "pageUnmountStopsPollingWithoutStoppingSharedApplication": true,
+    "oldSettingsReadCannotReplaceSavedState": true,
+    "saveKeyDoesNotReplaceLocalAddressDraft": true,
+    "rootUnmountPrecedesApplicationStopAndMainReload": true,
+    "applicationStopWaitsExistingLoginCancelReceipt": true,
+    "lateLoginDoesNotStartNewQueries": true,
+    "startupReplacementWaitsCleanupWithoutMountingOldRoot": true,
+    "partialMountFailureStillCleansApplication": true,
+    "fixedHandshakeRequiresCurrentContentsMainFrameAndNonce": true,
+    "malformedReceiptsAndRawErrorFieldsRejected": true,
+    "cleanupFailureAndTimeoutDoNotForceReload": true,
+    "duplicateMenuTriggerHasOneReload": true,
+    "normalAndIgnoreCacheMethodsVerified": [
+      "reload",
+      "reloadIgnoringCache"
+    ],
+    "emptyOldRootsObservedBeforeBothControlledReloads": [
+      true,
+      true
+    ],
+    "actualRendererCrashRecoveredFromMainMenuCallback": true,
+    "destroyedMainWindowRecreatedThroughActivateEvent": true,
+    "sameCorePidAcrossReloadCrashAndWindowRecreation": true,
+    "sameSavedSourceIdVersionAndDraftRevision": true,
+    "newExecutionSourcesJobsTasksDownloads": 0,
+    "persistedTaskFixtureCountAfterReload": 36,
+    "recognitionDtoRevisionsAfterRestart": [
+      1,
+      1
+    ],
+    "apiHasOneCleanupCallbackAndNoGenericIpc": true
+  },
+  "screenshot": {
+    "path": "docs/public/desktop/renderer-source-dto-restored.png",
+    "sha256": "abbb83837c143c4c83ea225d653f1de3d2e3b599ddd955bedf183f77a8e4e09a",
+    "description": "当前 arm64 目录包完整重载后，从核心打开原已保存草稿的实际表单"
+  },
+  "architecture": {
+    "docs/architecture/cloud-downloads.c4": "84f0af5999b360a4b8c078e97ea407b2f828b1f52dce22498ecaeea8b2499bcf",
+    "docs/public/architecture/cloud-downloads/index.png": "63da422f470b792da91dcf1b591b584c808b9d67275c1d1da515fa9d2784181b",
+    "docs/public/architecture/cloud-downloads/sources.png": "9d0c1a98ffb399d91a92f880bd2a03993e23a250f0c46b9f7e9308eb6abf24d9"
+  },
+  "fixtureBoundaries": {
+    "data": "临时用户数据、目录、合成媒体与假密钥；未读取或修改个人媒体和凭据",
+    "devDtoSeed": "任务和识别字段窗口使用退出后的独立 CoreDatabase 夹具，验证恢复与不重放，不代表完整下载或真实识别链路",
+    "cleanupObservation": "Main 刷新方法加测试观察包装，在读取旧 React 根为空后调用原 Electron 方法；生产握手、Preload、Renderer Application 与后台核心保持真实实现",
+    "loginCancellation": "取消回执与延迟清理使用受控 Promise 门，没有重新连接个人账号或打开真实扫码页",
+    "menuAndKeyboard": "菜单回调、Electron 输入端口及 app.activate 事件，不代替 OS 原生菜单点击、系统快捷键或 Dock 点击",
+    "crash": "实际 forcefullyCrashRenderer，Main 核对恢复后的真实 DOM／Preload；窗口重建后使用新的 Playwright Page",
+    "hmr": "仅验证启动／替换时序与清理门；未做真实 Vite HMR 事件专项",
+    "notCovered": [
+      "Mac Intel 运行",
+      "真实 OS 菜单与系统快捷键分发",
+      "完整安装／卸载矩阵",
+      "Developer ID 签名与公证",
+      "真实 Vite HMR 事件专项",
+      "全部 test:packaged 矩阵"
+    ]
+  },
+  "openSpec": {
+    "task": "7.7",
+    "done": true,
+    "progress": {
+      "total": 109,
+      "complete": 93,
+      "remaining": 16
+    }
+  }
+}

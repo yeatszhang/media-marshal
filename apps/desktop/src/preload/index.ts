@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { rendererReloadBridge } from "./renderer-lifecycle";
 import {
   DESKTOP_CHANNEL,
   PROTOCOL_VERSION,
@@ -25,6 +26,7 @@ async function invoke(action: string, payload: unknown): Promise<any> {
 }
 // 此对象仅暴露具体动作，不暴露 invoke、通道名或 Electron 对象。
 const api: DesktopApi = {
+  onBeforeReload: rendererReloadBridge(ipcRenderer),
   getHostPreferences: () => invoke("desktop.host-preferences.get", {}),
   saveHostPreferences: (input) => invoke("desktop.host-preferences.save", input),
   getDesktopAbout: () => invoke("desktop.about", {}),

@@ -104,4 +104,6 @@ schema v24 的批量修正服务已接通完整范围快照、后台预览／复
 
 7.6 的运行设置与许可页面证据见 `fixtures/mac-runtime-settings-ui-2026-10-26.json`，用户说明和两张实际窗口截图位于 `docs/product/desktop-settings.md`。最终 arm64 未签名目录包通过运行偏好、六类随包许可、默认取消的升级确认、备份恢复、诊断及代理校验五项窗口检查；真实登录项只读查询通过，注册／撤回与待批准状态使用系统 API 替身，不修改本机实际登录项。托盘原生菜单、注销登录、Intel 及完整安装和正式签名仍单独验收。
 
-来源表单的执行摘要、React 草稿与跨页／重载验证见 `fixtures/mac-source-react-draft-2026-10-26.json`，用户说明及三张实际截图位于 `docs/product/cloud-downloads.md`。当前 arm64 未签名目录包通过表单长路径／窄窗口、删除恢复、统一来源授权与 Core 重启、旧 schema 迁移、草稿跨页返回及完整重载五项窗口检查；目录授权对话框使用受控替身。7.7 的来源阶段已验证，设置查询代际和受控重载清理仍待完成，任务保持未勾选。
+来源表单的执行摘要、React 草稿与跨页／重载验证见 `fixtures/mac-source-react-draft-2026-10-26.json`，用户说明及三张实际截图位于 `docs/product/cloud-downloads.md`。当前 arm64 未签名目录包通过表单长路径／窄窗口、删除恢复、统一来源授权与 Core 重启、旧 schema 迁移、草稿跨页返回及完整重载五项窗口检查；目录授权对话框使用受控替身。此记录只验证了来源阶段，当时设置查询代际和受控重载尚未完成，7.7 保持未勾选。
+
+7.7 的后续设置查询与受控重载证据见 `fixtures/mac-renderer-lifecycle-2026-10-26.json`。来源、任务、待处理和设置均使用公开框架服务／hooks，临时输入保留在 React；固定重载握手只在 React 与 Application 清理完成后刷新。测试分别核对异步清理、扫码取消回执、请求代际、顶层 frame／nonce、失败／超时、真实 Renderer 强杀与主窗口销毁重建，以及同一 Core PID 和持久 DTO 不变。Electron 菜单回调、输入端口与 app.activate 事件用于窗口自动化，不代替 OS 原生菜单、系统快捷键和 Dock 点击；HMR 启停交错以受控 Promise 门验证。上方来源阶段记录保留当时未完成状态，后续完成状态以当前 OpenSpec 和此证据为准。

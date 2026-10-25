@@ -17,10 +17,10 @@ model {
   emby = system '已有 Emby 服务器'
   desktop = system 'Media Marshal · macOS' {
     renderer = process 'Renderer' {
-      description 'React / StatefulService；账号连接、统一来源草稿与预览、单条／批量修正、任务及交付状态'
+      description 'React 临时草稿；StatefulService 核心 DTO / computed；统一来源、待处理、任务与设置'
     }
     main = process 'Electron Main' {
-      description '系统保险箱、原生授权、运行偏好及随包许可、进程身份及确认后的升级备份'
+      description '系统保险箱、原生授权、运行偏好及许可；Renderer 清理握手、进程监管与升级备份'
     }
     core = process 'Media Core' {
       description '唯一业务库写入者；来源版本、调度、识别、COPY、修正与独立交付'
@@ -62,7 +62,8 @@ model {
     target = storage '已授权媒体目标'
   }
   user -> desktop.renderer '配置、预览并确认'
-  desktop.renderer -> desktop.main '受限公开桥；不持有内部协议'
+  desktop.renderer -> desktop.main '受限公开桥'
+  desktop.main -> desktop.renderer '重载前清理 Renderer'
   desktop.main -> desktop.core '公开命令 / 私有账号及根授权'
   desktop.main -> desktop.core.sources '来源命令（私有 Core 桥）；复核原生授权'
   desktop.core -> desktop.main '反向宿主 RPC；代际、attempt、幂等键'

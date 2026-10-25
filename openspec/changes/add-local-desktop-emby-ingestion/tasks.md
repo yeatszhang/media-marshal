@@ -120,7 +120,7 @@
 - [x] 7.4 实现总览、任务分页/筛选、文件与交付状态，以及有界可取消轮询；测试 StrictMode 重挂载、窗口重开和缓存丢失不重复提交，核心离线展示恢复入口。
 - [x] 7.5 实现候选/季集/目录分组确认、模板预览及单条/批量修正与历史；验证编辑不触发整理、预览过期需重新确认、部分失败可定位，组件测试与真实窗口测试覆盖主路径和失败重试。
 - [x] 7.6 实现运行设置、代理、关于、诊断与危险操作确认（语言设置已迁出）；验证托盘/登录启动设置、脱敏导出、版本和许可说明，更新客户端用户手册与真实运行截图。
-- [ ] 7.7 实现 desktop-client 与来源/任务/待处理/设置 StatefulService ViewModel，以 useService/useServiceState 和 computed 连接 React；本地草稿使用组件状态，不另建全局 Zustand store。锁定同版本 React/React DOM，用 createRoot 和 StrictMode 验证选择性更新、页面订阅/轮询释放、共享 Application 不被误停、受控重载清理，以及核心 DTO 恢复不重放写命令。
+- [x] 7.7 实现 desktop-client 与来源/任务/待处理/设置 StatefulService ViewModel，以 useService/useServiceState 和 computed 连接 React；本地草稿使用组件状态，不另建全局 Zustand store。锁定同版本 React/React DOM，用 createRoot 和 StrictMode 验证选择性更新、页面订阅/轮询释放、共享 Application 不被误停、受控重载清理，以及核心 DTO 恢复不重放写命令。
 
 7.1 和 7.7 的 Renderer 组装及状态约定先于其余页面实现，组件测试不能只覆盖兼容旧 ReactDOM.render 的挂载方式。
 

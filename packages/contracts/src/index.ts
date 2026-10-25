@@ -1,5 +1,6 @@
 import { hostPreferencesDraftSchema, licenseIdSchema, type HostPreferencesDraft, type HostPreferences, type DesktopAbout, type LicenseId, type LicenseText } from "./desktop-host.js";
 export * from "./desktop-host.js";
+export * from "./renderer-lifecycle.js";
 import { z } from "zod";
 import { directoryIssueSchema, type DirectoryIssue } from "./directory-issues.js";
 export * from "./directory-issues.js";
@@ -262,6 +263,7 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  onBeforeReload(listener: () => Promise<void>): () => void;
   getHostPreferences(): Promise<HostPreferences>;
   saveHostPreferences(input: HostPreferencesDraft): Promise<HostPreferences>;
   getDesktopAbout(): Promise<DesktopAbout>;

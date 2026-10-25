@@ -1054,3 +1054,51 @@ test("设置保存密钥和刷新不覆盖未保存地址，重载只读取已�
   await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(emby).toHaveValue(original.embyUrl); await expect(proxy).toHaveValue(original.tmdbProxy); await expect(key).toHaveValue("");
   expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(0); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
 });
+
+test("菜单与快捷键受控重载先清理 React，保留同一后台核心与草稿且不重放写入", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(60000);
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const source = join(await realpath(directory), "重载输入"), target = join(await realpath(directory), "重载媒体目标"); await mkdir(source); await mkdir(target);
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [source, target]);
+  await window.getByRole("link", { name: "来源", exact: true }).click(); await window.getByRole("button", { name: "添加来源", exact: true }).click(); await window.getByLabel("来源类型", { exact: true }).selectOption("local"); await window.getByLabel("来源名称", { exact: true }).fill("重载保留核心草稿");
+  await window.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click(); await window.getByRole("button", { name: "保存草稿", exact: true }).click();
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listSourceRules())).length).toBe(1); const saved = (await window.evaluate(() => window.desktopApi.listSourceRules()))[0]!;
+  const corePid = await application.evaluate(({ app }) => app.getAppMetrics().find((row) => row.name === "Media Marshal Core")!.pid);
+  const registered = await window.evaluate(() => { try { window.desktopApi.onBeforeReload(async () => {}); return true; } catch { return false; } }); expect(registered).toBe(false);
+  await application.evaluate(({ BrowserWindow, ipcMain }) => {
+    const contents = BrowserWindow.getAllWindows()[0]!.webContents, state = { prepared: 0, reloads: 0, methods: [] as string[], crashRecoveries: 0, emptyRoots: [] as boolean[], checks: [] as Promise<void>[] };
+    (globalThis as any).rendererReloadEvidence = state;
+    ipcMain.prependListener("media-marshal:renderer:reload-result:v1", (event, value) => { if (event.sender === contents && value.state === "prepared") ++state.prepared; });
+    for (const method of ["reload", "reloadIgnoringCache"] as const) {
+      const original = contents[method].bind(contents);
+      // 只在测试中观察刷新前的旧文档；生产控制器和清理回调均使用真实实现。
+      contents[method] = () => { ++state.reloads; state.methods.push(method); if (contents.isCrashed()) { ++state.crashRecoveries; original(); return; } const check = contents.executeJavaScript('document.getElementById("root").childElementCount === 0').then((empty) => { state.emptyRoots.push(empty); original(); }); state.checks.push(check); };
+    }
+  });
+  await window.getByLabel("来源名称", { exact: true }).fill("未保存内容不会通过重载执行");
+  await application.evaluate(({ Menu }) => { const item = Menu.getApplicationMenu()!.getMenuItemById("desktop.reload")!; item.click(undefined as never, undefined as never, {} as never); item.click(undefined as never, undefined as never, {} as never); });
+  await expect.poll(() => application.evaluate(() => (globalThis as any).rendererReloadEvidence.reloads)).toBe(1);
+  await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(window.getByLabel("来源名称", { exact: true })).toHaveCount(0); await expect(window.getByRole("article", { name: "来源 重载保留核心草稿", exact: true })).toBeVisible();
+  // 通过 Electron 的输入端口验证 Main 的 before-input-event 路由；OS 菜单点击另行验收。
+  await application.evaluate(({ BrowserWindow }) => { const contents = BrowserWindow.getAllWindows()[0]!.webContents; contents.focus(); contents.sendInputEvent({ type: "keyDown", keyCode: "R", modifiers: ["meta", "shift"] }); contents.sendInputEvent({ type: "keyUp", keyCode: "R", modifiers: ["meta", "shift"] }); });
+  await expect.poll(() => application.evaluate(() => (globalThis as any).rendererReloadEvidence.reloads)).toBe(2); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const evidence = await application.evaluate(async () => { const state = (globalThis as any).rendererReloadEvidence; await Promise.all(state.checks); return { prepared: state.prepared, reloads: state.reloads, methods: state.methods, emptyRoots: state.emptyRoots }; });
+  expect(evidence).toEqual({ prepared: 2, reloads: 2, methods: ["reload", "reloadIgnoringCache"], emptyRoots: [true, true] }); expect(await application.evaluate(({ app }) => app.getAppMetrics().find((row) => row.name === "Media Marshal Core")!.pid)).toBe(corePid);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.forcefullyCrashRenderer());
+  await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.isCrashed())).toBe(true);
+  await application.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById("desktop.reload")!.click(undefined as never, undefined as never, {} as never));
+  await expect.poll(() => application.evaluate(() => (globalThis as any).rendererReloadEvidence.reloads)).toBe(3);
+  await expect.poll(() => application.evaluate(async ({ BrowserWindow }) => { const contents = BrowserWindow.getAllWindows()[0]!.webContents; if (contents.isCrashed() || contents.isLoadingMainFrame()) return false; try { return await contents.executeJavaScript('document.body.textContent.includes("核心已连接")'); } catch { return false; } })).toBe(true);
+  expect(await application.evaluate(() => { const state = (globalThis as any).rendererReloadEvidence; return { prepared: state.prepared, reloads: state.reloads, crashRecoveries: state.crashRecoveries }; })).toEqual({ prepared: 2, reloads: 3, crashRecoveries: 1 });
+  expect(await application.evaluate(({ app }) => app.getAppMetrics().find((row) => row.name === "Media Marshal Core")!.pid)).toBe(corePid);
+  // Playwright 的旧 Page 句柄会记住 crashed；经 Main 查询恢复后的真实文档与固定 Preload。
+  const restored = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.executeJavaScript('Promise.all([window.desktopApi.listSourceRules(), window.desktopApi.listSources(), window.desktopApi.listJobs(), window.desktopApi.listTasks({}), window.desktopApi.listDownloads({})])'));
+  const [after, sources, jobs, tasks, downloads] = restored; expect(after).toHaveLength(1); expect(after[0]).toMatchObject({ id: saved.id, version: 0, draftRevision: 1, configuration: null, draft: { name: "重载保留核心草稿" } });
+  expect(sources).toEqual([]); expect(jobs).toEqual([]); expect(tasks.total).toBe(0); expect(downloads.total).toBe(0);
+  const newWindow = application.waitForEvent("window");
+  await application.evaluate(({ BrowserWindow, app }) => { BrowserWindow.getAllWindows()[0]!.destroy(); app.emit("activate"); });
+  const reopened = await newWindow; await expect(reopened.getByText("核心已连接", { exact: true })).toBeVisible(); await reopened.getByRole("link", { name: "来源", exact: true }).click();
+  await expect(reopened.getByRole("article", { name: "来源 重载保留核心草稿", exact: true })).toBeVisible(); await expect(reopened.getByLabel("来源名称", { exact: true })).toHaveCount(0);
+  expect((await reopened.evaluate(() => window.desktopApi.listSourceRules()))[0]).toMatchObject({ id: saved.id, version: 0, draftRevision: 1, configuration: null });
+  expect(await reopened.evaluate(() => window.desktopApi.listJobs())).toEqual([]); expect(await application.evaluate(({ app }) => app.getAppMetrics().find((row) => row.name === "Media Marshal Core")!.pid)).toBe(corePid);
+});
