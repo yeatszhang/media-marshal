@@ -345,8 +345,12 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     const f = await setup(new Map([["甲/电影.mp4", Buffer.from("甲内容")], ["乙/电影.mp4", Buffer.from("乙内容")]])), targetPath = join(f.path, "共享扫描目标"); await mkdir(targetPath); const target = await probeManagedVolume(targetPath);
     const first = await organized(f, "甲来源", f.entries.find((entry) => entry.name === "甲")!.ref, target), second = await organized(f, "乙来源", f.entries.find((entry) => entry.name === "乙")!.ref, target);
     f.downloads.start(); await expect.poll(() => [first, second].map((row) => f.state(row.job.jobId).state), { timeout: 10000 }).toEqual(["COMPLETED", "COMPLETED"]);
+    // 完成状态先于下载调度收尾；先停止写入者，再排空已开始的扫描，隔离权限故障注入。
+    await f.downloads.close();
+    await f.pipeline.scan(f.pipeline.bootstrap()[0]!.sourceId);
     const row = f.db.connection.prepare("SELECT i.target_segments_json FROM download_item i JOIN download_job_item ji ON ji.item_id=i.id WHERE ji.job_id=?").get(second.job.jobId) as { target_segments_json: string }, denied = join(f.rootPath, "completed", ...JSON.parse(row.target_segments_json)); await chmod(denied, 0o000);
     try {
+      await f.pipeline.scan(f.pipeline.bootstrap()[0]!.sourceId);
       const a = f.rules.scans.enqueue({ sourceId: first.source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: a.id })).toMatchObject({ job: { state: "COMPLETED", discovered: 1, failed: 0 }, issues: [] });
       const b = f.rules.scans.enqueue({ sourceId: second.source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: b.id })).toMatchObject({ job: { state: "PARTIAL_FAILED", discovered: 0, failed: 1 }, issues: [{ relativePath: expect.stringContaining("乙") }] });
       expect(f.pipeline.list({}).items.filter((item) => item.relativePath.includes("甲"))).toHaveLength(1); expect(f.pipeline.list({}).total).toBeLessThanOrEqual(2); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
@@ -410,7 +414,9 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     const pipeline = new IngestionPipeline(f.db, () => parser, connections, () => wall, () => monotonic, controlledWatch); cleanup.push(() => pipeline.close());
     const rules = new SourceRules(f.db, f.downloads, f.subscriptions, pipeline); cleanup.push(() => rules.close());
     await pipeline.authorizeTarget(gx); await pipeline.authorizeTarget(gy); await pipeline.authorizeManagedSource({ sourceId: bootstrap.sourceId, sourceVersion: bootstrap.sourceVersion, source: bootstrap.source });
-    await pipeline.scan(bootstrap.sourceId); for (let i = 0; i < 12; i++) { wall += 10000; monotonic += 10000; await pipeline.scan(bootstrap.sourceId); }
+    await pipeline.scan(bootstrap.sourceId);
+    for (let i = 0; i < 24 && pipeline.list({}).items.filter((row) => /\.(?:mkv|mp4)$/.test(row.relativePath) && row.state === "READY").length !== 2; i++) { wall += 10000; monotonic += 10000; await pipeline.scan(bootstrap.sourceId); }
+    expect(pipeline.list({}).items.filter((row) => /\.(?:mkv|mp4)$/.test(row.relativePath)).map((row) => row.state)).toEqual(["READY", "READY"]);
     const candidate = pipeline.list({}).items.find((row) => row.relativePath.endsWith("乙.mp4"))!, task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick();
     if (scope === "相同目标的其他来源") rules.control({ id: first.source.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() });
     const preview = await pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" } }); expect(preview.accessories).toHaveLength(1);
@@ -433,15 +439,19 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     const gx = await probeManagedVolume(x), gy = await probeManagedVolume(y), first = await organized(f, "mkv 来源", f.account.rootRef!, gx, ["mkv"]);
     const second = await organized(f, "mp4 来源", f.account.rootRef!, gy, ["mp4"]);
     f.downloads.start(); await expect.poll(() => [first, second].map((row) => f.state(row.job.jobId).state), { timeout: 10000 }).toEqual(["COMPLETED", "COMPLETED"]);
+    f.downloads.quiesce(); await expect.poll(() => (Reflect.get(f.downloads, "active") as Map<string, unknown>).size).toBe(0);
     const bootstrap = f.pipeline.bootstrap()[0]!; await f.pipeline.close();
     const server = createServer((request, response) => { response.setHeader("Content-Type", "application/json"); const movie = { id: 1, title: "测试电影", original_title: "Test Movie", release_date: "2026-01-01" }; response.end(JSON.stringify(request.url!.startsWith("/search/") ? { results: [movie] } : movie)); });
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); cleanup.push(() => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }));
     const connections = new MediaConnections(f.db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" }), { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` }); cleanup.push(() => connections.close()); connections.install({ tmdb: "fixture", emby: null });
-    let monotonic = 0; const parser = { ready: true, parse: async (name: string) => normalizeParse({ title: "测试电影", year: 2026, type: "movie" }, name) };
-    const pipeline = new IngestionPipeline(f.db, () => parser, connections, Date.now, () => monotonic); cleanup.push(() => pipeline.close());
+    let wall = Date.now(), monotonic = 0; const parser = { ready: true, parse: async (name: string) => normalizeParse({ title: "测试电影", year: 2026, type: "movie" }, name) };
+    const controlledWatch = (() => Object.assign(new EventEmitter(), { close() {} })) as unknown as typeof watch;
+    const pipeline = new IngestionPipeline(f.db, () => parser, connections, () => wall, () => monotonic, controlledWatch); cleanup.push(() => pipeline.close());
     await pipeline.authorizeTarget(gx); await pipeline.authorizeTarget(gy); await pipeline.authorizeManagedSource({ sourceId: bootstrap.sourceId, sourceVersion: bootstrap.sourceVersion, source: bootstrap.source });
     await pipeline.authorizeLibrary({ mediaType: "MOVIE", target: gy });
-    await pipeline.scan(bootstrap.sourceId); for (let i = 0; i < 12; i++) { monotonic += 10000; await pipeline.scan(bootstrap.sourceId); }
+    await pipeline.scan(bootstrap.sourceId);
+    for (let i = 0; i < 24 && pipeline.list({}).items.filter((row) => /\.(?:mkv|mp4)$/.test(row.relativePath) && row.state === "READY").length !== 2; i++) { wall += 10000; monotonic += 10000; await pipeline.scan(bootstrap.sourceId); }
+    expect(pipeline.list({}).items.filter((row) => /\.(?:mkv|mp4)$/.test(row.relativePath)).map((row) => row.state)).toEqual(["READY", "READY"]);
     const candidate = pipeline.list({}).items.find((row) => row.relativePath.endsWith("甲.mkv"))!; expect(candidate.state).toBe("READY");
     const task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick();
     const preview = await pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false });
