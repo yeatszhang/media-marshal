@@ -60,6 +60,40 @@ test.afterEach(async () => {
   if (application) await application.close().catch(() => {});
   if (directory) await rm(directory, { recursive: true, force: true });
 });
+test("来源表单按文件去向分组，长路径与最小窗口下开关文字保持相邻", async () => {
+  test.skip(process.platform !== "darwin");
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), download = join(canonical, "中文下载目录_".repeat(9)), target = join(canonical, "中文媒体库目录_".repeat(8));
+  await mkdir(download); await mkdir(target);
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [download, target]);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 900));
+  await window.getByRole("link", { name: "来源", exact: true }).click(); await window.getByRole("button", { name: "添加来源", exact: true }).click();
+  const form = window.getByRole("form", { name: "来源配置草稿" });
+  await window.getByLabel("来源名称", { exact: true }).fill("追剧下载与媒体库整理"); await window.getByRole("button", { name: "选择下载目录", exact: true }).click();
+  await expect(form.getByRole("region")).toHaveCount(4); await expect(window.getByLabel("文件处理流程")).toContainText(download);
+  await expect(window.getByLabel("文件处理流程")).toContainText("未开启，仅保存下载文件");
+  await expect(window.getByLabel("扫描间隔", { exact: true })).toHaveCount(0); await expect(window.getByLabel("媒体类型", { exact: true })).toHaveCount(0);
+  await form.screenshot({ path: "test-results/desktop/source-form-cloud-download.png" });
+  const periodic = window.getByRole("checkbox", { name: "定期扫描目录", exact: true }), organize = window.getByRole("checkbox", { name: "下载后接入整理", exact: true });
+  await periodic.focus(); await window.keyboard.press("Space"); await expect(periodic).toBeChecked(); await expect(window.getByLabel("扫描间隔", { exact: true })).toBeVisible();
+  await organize.locator("..").click(); await expect(organize).toBeChecked(); await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click();
+  await expect(window.getByLabel("文件处理流程")).toContainText(target);
+  for (const width of [1280, 920]) {
+    await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 900), width);
+    expect(await window.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await expect.poll(() => window.getByLabel("文件处理流程").evaluate((flow) => getComputedStyle(flow).gridTemplateColumns.split(" ").length)).toBe(width === 920 ? 1 : 3);
+    for (const checkbox of [periodic, organize]) {
+      const geometry = await checkbox.evaluate((input) => { const box = input.getBoundingClientRect(), title = input.parentElement!.querySelector("strong")!.getBoundingClientRect(); return { boxWidth: box.width, titleWidth: title.width, gap: title.left - box.right, topDifference: Math.abs(title.top - box.top) }; });
+      expect(geometry.boxWidth).toBeLessThanOrEqual(20); expect(geometry.boxWidth).toBeGreaterThanOrEqual(16); expect(geometry.titleWidth).toBeGreaterThan(100); expect(geometry.gap).toBeGreaterThanOrEqual(8); expect(geometry.gap).toBeLessThanOrEqual(16); expect(geometry.topDifference).toBeLessThan(8);
+    }
+  }
+  await form.screenshot({ path: "test-results/desktop/source-form-cloud-organize-minimum.png" });
+  await window.getByLabel("来源类型", { exact: true }).selectOption("local"); await expect(form.getByRole("region")).toHaveCount(3);
+  await expect(periodic).toHaveCount(0); await expect(organize).toHaveCount(0); await expect(window.getByRole("button", { name: "选择本地输入目录", exact: true })).toBeVisible();
+  await form.screenshot({ path: "test-results/desktop/source-form-local-minimum.png" });
+  expect(await window.evaluate(() => window.desktopApi.listSourceRules())).toEqual([]); expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 }); expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
+});
+
 test("统一来源草稿、原生授权确认及 Core 重启保留同一配置版本", async () => {
   test.skip(process.platform !== "darwin");
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();

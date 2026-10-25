@@ -88,6 +88,19 @@ async function selectRemote(name: string) { await click("选择远端范围"); a
 async function cloudDraft(f: Awaited<ReturnType<typeof mount>>) { await click("添加来源"); await fill("来源名称", "我的下载来源"); await selectRemote(f.directory.name); await click("选择下载目录"); }
 
 describe("统一来源页、连接返回和确认边界", () => {
+  it("按文件去向解释下载与整理，开关就近展开对应设置且编辑不执行", async () => {
+    const f = await mount(); await cloudDraft(f);
+    expect([...f.element.querySelectorAll(".source-step h3")].map((node) => node.textContent)).toEqual(["选择网盘内容", "选择本地下载位置", "设置下载方式", "是否整理到媒体库"]);
+    const flow = f.element.querySelector('[aria-label="文件处理流程"]')!;
+    expect(flow.textContent).toContain("影视目录"); expect(flow.textContent).toContain("/中文 下载"); expect(flow.textContent).toContain("未开启，仅保存下载文件");
+    expect(f.element.querySelector('[aria-label="扫描间隔"]')).toBeNull(); expect(f.element.querySelector('[aria-label="媒体类型"]')).toBeNull();
+    await checkbox("定期扫描目录"); await checkbox("下载后接入整理"); await click("选择整理目标目录");
+    expect(field("扫描间隔").closest("section")?.getAttribute("aria-labelledby")).toBe(field("定期扫描目录").closest("section")?.getAttribute("aria-labelledby"));
+    expect(field("媒体类型").closest("section")?.getAttribute("aria-labelledby")).toBe(field("下载后接入整理").closest("section")?.getAttribute("aria-labelledby"));
+    expect(flow.textContent).toContain("/电影 媒体库"); expect(f.element.textContent).toContain("原文件保留");
+    await checkbox("下载后接入整理"); expect(flow.textContent).toContain("未开启，仅保存下载文件"); expect(f.element.querySelector('[aria-label="媒体类型"]')).toBeNull();
+    expect(f.api.configureSourceRule).not.toHaveBeenCalled(); expect(f.api.applySourceRule).not.toHaveBeenCalled(); expect(f.api.runSourceOnce).not.toHaveBeenCalled();
+  });
   it("本地忽略区分默认、显式关闭与自定义，重开保留设置且未确认不执行", async () => {
     const f = await mount(); await click("添加来源"); await fill("来源类型", "local"); await fill("来源名称", "本地忽略验收");
     await click("选择本地输入目录"); await click("选择整理目标目录");

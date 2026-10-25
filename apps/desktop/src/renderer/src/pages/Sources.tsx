@@ -21,7 +21,7 @@ export function Sources() {
   const open = (row: SourceRule) => { if (sourceId === row.id) void model.openSource(row.id); else setQuery({ source: row.id }); };
   const pages = Math.max(1, Math.ceil(state.items.length / 25)), visiblePage = Math.min(page, pages);
   return <>
-    <Header title="来源配置" description="网盘来源定义账号、远端范围和下载位置；本地来源接入已下载目录。整理按需开启。">
+    <Header title="来源配置" description="把网盘内容下载到本地，或整理已有本地文件。每个来源独立设置下载方式和媒体库目标。">
       <Button variant="outline" disabled={busy} onClick={() => { void model.toggleOrganizePause(); }}>{state.organizePaused ? "恢复全部整理" : "暂停全部整理"}</Button>
       <Button variant="outline" onClick={() => { void model.reload(); }} aria-label="刷新来源"><RefreshCw size={15} /></Button>
       <Button ref={addRef} disabled={busy} onClick={() => { setQuery({}); model.newSource(); }}><Plus size={16} />添加来源</Button>
