@@ -238,7 +238,7 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
   await expect(window.getByLabel("文件处理流程")).toContainText("未开启，仅保存下载文件");
   await expect(window.getByLabel("扫描间隔", { exact: true })).toHaveCount(0); await expect(window.getByLabel("媒体类型", { exact: true })).toHaveCount(0);
   await form.screenshot({ path: "test-results/desktop/source-form-cloud-download.png" });
-  const periodic = window.getByRole("checkbox", { name: "定期扫描目录", exact: true }), organize = window.getByRole("checkbox", { name: "下载后接入整理", exact: true });
+  const periodic = window.getByRole("checkbox", { name: "定期检查网盘目录", exact: true }), organize = window.getByRole("checkbox", { name: "下载后整理到媒体库", exact: true });
   await periodic.focus(); await window.keyboard.press("Space"); await expect(periodic).toBeChecked(); await expect(window.getByLabel("扫描间隔", { exact: true })).toBeVisible();
   await organize.locator("..").click(); await expect(organize).toBeChecked(); await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click();
   await expect(window.getByLabel("文件处理流程")).toContainText(target);
@@ -372,7 +372,7 @@ db.close(); console.log(JSON.stringify({localId,subscriptionId}));
   await expect(window.getByRole("heading", { name: "来源配置", exact: true })).toBeVisible();
   await expect(window.getByLabel("扩展名过滤", { exact: true })).toHaveValue("mp4");
   await expect(window.getByLabel("精确文件名过滤", { exact: true })).toHaveValue("已授权单片.mp4");
-  await expect(window.getByRole("checkbox", { name: "定期扫描目录", exact: true })).toBeChecked();
+  await expect(window.getByRole("checkbox", { name: "定期检查网盘目录", exact: true })).toBeChecked();
   await expect(window.getByRole("button", { name: "确认启用并扫描", exact: true })).toHaveCount(0);
   await window.screenshot({ path: "test-results/desktop/legacy-source-migration.png", fullPage: true });
   await window.reload(); await window.evaluate(() => window.desktopApi.restartCore());

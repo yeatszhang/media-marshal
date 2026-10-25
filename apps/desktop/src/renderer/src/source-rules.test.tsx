@@ -114,11 +114,11 @@ describe("统一来源页、连接返回和确认边界", () => {
     const flow = f.element.querySelector('[aria-label="文件处理流程"]')!;
     expect(flow.textContent).toContain("影视目录"); expect(flow.textContent).toContain("/中文 下载"); expect(flow.textContent).toContain("未开启，仅保存下载文件");
     expect(f.element.querySelector('[aria-label="扫描间隔"]')).toBeNull(); expect(f.element.querySelector('[aria-label="媒体类型"]')).toBeNull();
-    await checkbox("定期扫描目录"); await checkbox("下载后接入整理"); await click("选择整理目标目录");
-    expect(field("扫描间隔").closest("section")?.getAttribute("aria-labelledby")).toBe(field("定期扫描目录").closest("section")?.getAttribute("aria-labelledby"));
-    expect(field("媒体类型").closest("section")?.getAttribute("aria-labelledby")).toBe(field("下载后接入整理").closest("section")?.getAttribute("aria-labelledby"));
+    await checkbox("定期检查网盘目录"); await checkbox("下载后整理到媒体库"); await click("选择整理目标目录");
+    expect(field("扫描间隔").closest("section")?.getAttribute("aria-labelledby")).toBe(field("定期检查网盘目录").closest("section")?.getAttribute("aria-labelledby"));
+    expect(field("媒体类型").closest("section")?.getAttribute("aria-labelledby")).toBe(field("下载后整理到媒体库").closest("section")?.getAttribute("aria-labelledby"));
     expect(flow.textContent).toContain("/电影 媒体库"); expect(f.element.textContent).toContain("原文件保留");
-    await checkbox("下载后接入整理"); expect(flow.textContent).toContain("未开启，仅保存下载文件"); expect(f.element.querySelector('[aria-label="媒体类型"]')).toBeNull();
+    await checkbox("下载后整理到媒体库"); expect(flow.textContent).toContain("未开启，仅保存下载文件"); expect(f.element.querySelector('[aria-label="媒体类型"]')).toBeNull();
     expect(f.api.configureSourceRule).not.toHaveBeenCalled(); expect(f.api.applySourceRule).not.toHaveBeenCalled(); expect(f.api.runSourceOnce).not.toHaveBeenCalled();
   });
   it("本地忽略区分默认、显式关闭与自定义，重开保留设置且未确认不执行", async () => {
@@ -180,7 +180,7 @@ describe("统一来源页、连接返回和确认边界", () => {
     expect([...f.rows.values()][0]!.configuration).toMatchObject({ periodic: { enabled: false }, organization: null }); expect(f.api.confirmDownload).not.toHaveBeenCalled();
   });
   it("过滤变更撤销旧确认，周期扫描与可选整理经同一来源预览生效", async () => {
-    const f = await mount(); await cloudDraft(f); await checkbox("定期扫描目录"); await checkbox("下载后接入整理"); await click("选择整理目标目录");
+    const f = await mount(); await cloudDraft(f); await checkbox("定期检查网盘目录"); await checkbox("下载后整理到媒体库"); await click("选择整理目标目录");
     await click("预览配置"); expect(button("确认启用并扫描").disabled).toBe(false); await fill("扩展名过滤", "mp4,mkv");
     expect([...document.querySelectorAll("button")].some((value) => value.textContent === "确认启用并扫描")).toBe(false); expect(f.api.applySourceRule).not.toHaveBeenCalled();
     await click("预览配置"); await click("确认启用并扫描");
@@ -188,7 +188,7 @@ describe("统一来源页、连接返回和确认边界", () => {
     expect(f.api.applySourceRule).toHaveBeenCalledOnce(); expect(f.api.runSourceOnce).not.toHaveBeenCalled(); expect(f.api.configureCloudSubscription).not.toHaveBeenCalled();
   });
   it("浏览器取消不改范围，长中文、未知总量和分页失败保留已有条目，文件不启用周期", async () => {
-    const f = await mount(); await cloudDraft(f); await checkbox("定期扫描目录");
+    const f = await mount(); await cloudDraft(f); await checkbox("定期检查网盘目录");
     await click("选择远端范围"); await click("取消选择远端范围"); expect(f.model.state.editor?.remoteRef).toBe(f.directory.ref);
     let finish!: (value: Awaited<ReturnType<DesktopApi["listRemote"]>>) => void;
     vi.mocked(f.api.listRemote).mockImplementationOnce(() => new Promise((done) => { finish = done; })).mockRejectedValueOnce(new Error("网络暂不可用"));
@@ -197,7 +197,7 @@ describe("统一来源页、连接返回和确认边界", () => {
     expect(f.element.textContent).toContain("总数未知"); expect(document.querySelector(`[title="${f.file.name}"]`)).toBeTruthy();
     await click("加载更多"); expect(f.element.textContent).toContain("网络暂不可用"); expect(document.querySelectorAll("tbody tr")).toHaveLength(1);
     await act(async () => document.querySelector<HTMLButtonElement>(`button[aria-label="选择范围 ${f.file.name}"]`)!.click());
-    expect((field("定期扫描目录") as HTMLInputElement).checked).toBe(false); expect(field("定期扫描目录").disabled).toBe(true); expect(f.model.state.editor?.remoteType).toBe("file");
+    expect((field("定期检查网盘目录") as HTMLInputElement).checked).toBe(false); expect(field("定期检查网盘目录").disabled).toBe(true); expect(f.model.state.editor?.remoteType).toBe("file");
   });
   it("预览失败显式重试复用请求标识，刷新和表单重挂载不重放创建", async () => {
     const f = await mount(); await cloudDraft(f); vi.mocked(f.api.previewSourceRule).mockRejectedValueOnce(new Error("暂时断开"));
