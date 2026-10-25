@@ -60,6 +60,31 @@ test.afterEach(async () => {
   if (application) await application.close().catch(() => {});
   if (directory) await rm(directory, { recursive: true, force: true });
 });
+test("来源删除确认、只读历史与恢复暂停经真实 IPC 保留，重载不重放", async () => {
+  test.skip(process.platform !== "darwin");
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), source = join(canonical, "保留来源中文_".repeat(10)), target = join(canonical, "保留媒体库_".repeat(10)); await mkdir(source); await mkdir(target); await writeFile(join(source, "保留.mp4"), "原文件内容不能变化");
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [source, target]);
+  const row = await window.evaluate(async ({ source, target }) => {
+    await window.desktopApi.chooseDirectory("source"); await window.desktopApi.chooseDirectory("target");
+    const draft = await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: "来源删除与恢复中文名称_".repeat(5), client: "custom", sourcePath: source, organization: { targetPath: target } } });
+    const p = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: 0, expectedDraftRevision: 1, requestKey: crypto.randomUUID() });
+    return window.desktopApi.applySourceRule({ previewId: p.id, requestKey: crypto.randomUUID() });
+  }, { source, target });
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  await window.getByRole("link", { name: "来源", exact: true }).click();
+  const card = window.getByRole("article", { name: `来源 ${row.draft.name}`, exact: true }); await card.getByRole("button", { name: "删除来源…", exact: true }).click();
+  const dialog = window.getByRole("dialog", { name: "删除来源？", exact: true }); await expect(dialog).toBeVisible(); await expect(dialog.getByRole("button", { name: "取消", exact: true })).toBeFocused();
+  await window.keyboard.press("Escape"); await expect(dialog).toHaveCount(0); await expect(card.getByRole("button", { name: "删除来源…", exact: true })).toBeFocused(); expect((await window.evaluate((id) => window.desktopApi.getSourceRule(id), row.id))?.deletedAt).toBeNull();
+  await card.getByRole("button", { name: "删除来源…", exact: true }).click(); expect(await dialog.evaluate((element) => element.scrollTop)).toBe(0); await expect(dialog.getByRole("heading", { name: "删除来源？", exact: true })).toBeInViewport(); await dialog.screenshot({ path: "test-results/desktop/source-remove-confirmation.png" });
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true); await dialog.getByRole("button", { name: "确认删除来源", exact: true }).click(); await expect(dialog).toHaveCount(0); await expect(window.getByRole("button", { name: "添加来源", exact: true })).toBeFocused();
+  expect(await window.evaluate(() => window.desktopApi.listSourceRules())).toEqual([]); await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.getByRole("link", { name: "来源", exact: true }).click(); await window.getByText("已删除来源（1）", { exact: true }).click();
+  await window.getByRole("button", { name: "查看保留配置", exact: true }).click(); await expect(window.getByLabel("来源名称", { exact: true })).toBeDisabled(); await window.getByRole("button", { name: "关闭配置查看", exact: true }).click();
+  await window.getByRole("button", { name: "恢复已删除来源…", exact: true }).click(); const restore = window.getByRole("dialog", { name: "恢复已删除来源？", exact: true }); await restore.getByRole("button", { name: "确认恢复来源", exact: true }).click(); await expect(restore).toHaveCount(0);
+  const restored = await window.evaluate((id) => window.desktopApi.getSourceRule(id), row.id); expect(restored).toMatchObject({ id: row.id, version: 1, draftRevision: 1, lifecycleRevision: 2, deletedAt: null, paused: true });
+  expect(await readFile(join(source, "保留.mp4"), "utf8")).toBe("原文件内容不能变化"); expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 }); expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 });
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); expect((await window.evaluate((id) => window.desktopApi.getSourceRule(id), row.id))?.paused).toBe(true);
+});
 test("全量内容复核经实际 IPC 保存逐项失败，重载和 Core 重启只恢复记录且不整理", async () => {
   test.skip(process.platform !== "darwin");
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();

@@ -88,7 +88,7 @@ export class CoreService {
     const count = (table: "source_rule" | "media_task") =>
       (
         this.database.connection
-          .prepare(`SELECT count(*) AS count FROM ${table}`)
+          .prepare(`SELECT count(*) AS count FROM ${table}${table === "source_rule" ? " WHERE deleted_at IS NULL" : ""}`)
           .get() as { count: number }
       ).count;
     return {
@@ -103,7 +103,7 @@ export class CoreService {
     return (
       this.database.connection
         .prepare(
-          "SELECT s.*,i.mode,i.download_root_id FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id ORDER BY s.created_at,s.id LIMIT 1000",
+          "SELECT s.*,i.mode,i.download_root_id FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id WHERE NOT EXISTS(SELECT 1 FROM source_rule r WHERE r.local_source_id=s.id AND r.deleted_at IS NOT NULL) ORDER BY s.created_at,s.id LIMIT 1000",
         )
         .all() as SourceRow[]
     ).map(sourceDto);

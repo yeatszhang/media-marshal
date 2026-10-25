@@ -8,23 +8,27 @@ import { sourceClients, sourceDate, sourceRunLabels, sourceScanLabels } from "..
 import { SourceEditorForm } from "../components/SourceEditorForm";
 import { SourceRemotePicker } from "../components/SourceRemotePicker";
 import { SourceExecutionPreview } from "../components/SourceExecutionPreview";
+import { SourceLifecycleDialog } from "../components/SourceLifecycleDialog";
 import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 
 export function Sources() {
   const model = useService(SourceRulesViewModel), state = useServiceState(model, (value) => value), [query, setQuery] = useSearchParams();
   const [page, setPage] = useState(1), addRef = useRef<HTMLButtonElement>(null), sourceId = query.get("source"), legacyJob = query.get("legacyJob"), busy = !!state.pending;
+  const [archivedPage, setArchivedPage] = useState(1), [lifecycle, setLifecycle] = useState<{ row: SourceRule; operation: "remove" | "restore" } | null>(null);
   useEffect(() => model.watch(), [model]);
   useEffect(() => { if (sourceId) void model.openSource(sourceId); }, [model, sourceId]);
   useEffect(() => { if (!sourceId && legacyJob) void model.openLegacy("download-job", legacyJob); }, [model, sourceId, legacyJob]);
   const close = () => { model.closeEditor(); setQuery({}); requestAnimationFrame(() => addRef.current?.focus()); };
   const open = (row: SourceRule) => { if (sourceId === row.id) void model.openSource(row.id); else setQuery({ source: row.id }); };
   const pages = Math.max(1, Math.ceil(state.items.length / 25)), visiblePage = Math.min(page, pages);
+  const archivePages = Math.max(1, Math.ceil(state.archived.length / 25)), visibleArchivePage = Math.min(archivedPage, archivePages);
+  const requestLifecycle = (row: SourceRule, operation: "remove" | "restore") => { if (model.prepareLifecycle(row)) setLifecycle({ row, operation }); };
   return <>
     <Header title="来源配置" description="把网盘内容下载到本地，或整理已有本地文件。每个来源独立设置下载方式和媒体库目标。">
       <Button variant="outline" disabled={busy} onClick={() => { void model.toggleOrganizePause(); }}>{state.organizePaused ? "恢复全部整理" : "暂停全部整理"}</Button>
       <Button variant="outline" onClick={() => { void model.reload(); }} aria-label="刷新来源"><RefreshCw size={15} /></Button>
-      <Button ref={addRef} disabled={busy} onClick={() => { setQuery({}); model.newSource(); }}><Plus size={16} />添加来源</Button>
+      <Button ref={addRef} data-source-add disabled={busy} onClick={() => { setQuery({}); model.newSource(); }}><Plus size={16} />添加来源</Button>
     </Header>
     <ErrorNotice message={state.error} retry={() => { void model.reload(); }} />
     {state.legacyNotice && <p className="notice" role="status">{state.legacyNotice} <Link to="/downloads">查看下载历史</Link></p>}
@@ -49,10 +53,15 @@ export function Sources() {
           {configuration.type === "cloud" && <Button data-source-execution-source={row.id} data-source-execution-force="true" variant="ghost" size="sm" disabled={rowBusy || row.paused || row.reviewRequired} onClick={() => { void model.previewExecution(row, true); }}>强制重新下载…</Button>}
           {configuration.type === "cloud" && configuration.periodic.enabled && <Button variant="outline" size="sm" disabled={rowBusy || row.paused || row.reviewRequired} onClick={() => { void model.control(row, "scan"); }}>立即扫描</Button>}
           <Button variant="ghost" size="sm" disabled={rowBusy || (row.paused && row.reviewRequired)} onClick={() => { void model.control(row, row.paused ? "resume" : "pause"); }}>{row.paused ? "恢复来源" : "暂停来源"}</Button>
-        </>}</div>
+        </>}<Button variant="ghost" size="sm" disabled={rowBusy} onClick={() => requestLifecycle(row, "remove")}>删除来源…</Button></div>
       </article>;
     })}</div>
     {pages > 1 && <div className="download-pagination"><Button variant="outline" disabled={visiblePage <= 1} onClick={() => setPage(visiblePage - 1)}>上一页来源</Button><span>{visiblePage} / {pages}</span><Button variant="outline" disabled={visiblePage >= pages} onClick={() => setPage(visiblePage + 1)}>下一页来源</Button></div>}
+    {!!state.archived.length && <details className="panel source-archive"><summary>已删除来源（{state.archived.length}）</summary><p className="cloud-hint">原文件、配置和任务历史保留。恢复后仍保持暂停。</p><div className="source-list">{state.archived.slice((visibleArchivePage - 1) * 25, visibleArchivePage * 25).map((row) => {
+      const configuration = row.configuration ?? row.draft;
+      return <article className="source-rule-card" key={row.id} aria-label={`已删除来源 ${configuration.name}`}><h3>{configuration.name}</h3><p className="cloud-root-path">{configuration.type === "local" ? configuration.sourcePath : state.roots.find((root) => root.id === configuration.downloadRootId)?.path ?? "原下载目录需核对"}</p><p className="cloud-hint">删除于 {sourceDate(row.deletedAt ?? null)} · {row.version ? `保留版本 v${row.version}` : "保留草稿"}</p><div className="download-controls"><Button variant="outline" size="sm" disabled={busy} onClick={() => open(row)}>查看保留配置</Button><Button variant="outline" size="sm" disabled={busy} onClick={() => requestLifecycle(row, "restore")}>恢复已删除来源…</Button></div></article>;
+    })}</div>{archivePages > 1 && <div className="download-pagination"><Button variant="outline" disabled={visibleArchivePage <= 1} onClick={() => setArchivedPage(visibleArchivePage - 1)}>上一页已删除来源</Button><span>{visibleArchivePage} / {archivePages}</span><Button variant="outline" disabled={visibleArchivePage >= archivePages} onClick={() => setArchivedPage(visibleArchivePage + 1)}>下一页已删除来源</Button></div>}</details>}
+    {lifecycle && <SourceLifecycleDialog {...lifecycle} onClose={() => { setLifecycle(null); if (!state.editor) setQuery({}); }} />}
     {!!state.legacy.length && <section className="panel"><h2>升级后待核对的旧配置</h2><p className="cloud-hint">保留原文件与历史，不按下载根推定整理归属。</p>{state.legacy.map((reference) => <div className="download-controls" key={`${reference.kind}:${reference.id}`}><span>{reference.kind === "subscription" ? "旧目录订阅" : reference.kind === "managed-binding" ? "旧整理绑定" : reference.kind === "download-job" ? "旧下载记录" : "旧本地来源"} · 归属或历史快照待核对</span><Button variant="ghost" size="sm" onClick={() => { void model.openLegacy(reference.kind, reference.id); }}>定位旧配置</Button></div>)}</section>}
     <p className="cloud-hint">暂停来源会停止其新扫描、下载需求与整理接入；仍被其他有效来源需要的共享文件继续处理。全局下载暂停与全局整理暂停各自独立，恢复来源不会解除它们。</p>
   </>;

@@ -33,7 +33,8 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
       {editor.type === "cloud" && <li><span><Folder size={16} aria-hidden="true" />下载到本地</span><strong title={root?.path}>{root?.path || "选择下载目录"}</strong></li>}
       <li className={editor.type === "cloud" && !editor.organize ? "is-muted" : undefined}><span><FolderOutput size={16} aria-hidden="true" />{editor.type === "cloud" ? "可选：整理到媒体库" : "整理到媒体库"}</span><strong title={editor.type === "cloud" && !editor.organize ? undefined : editor.targetPath}>{editor.type === "cloud" && !editor.organize ? "未开启，仅保存下载文件" : editor.targetPath || "选择整理目标"}</strong></li>
     </ol>
-    <fieldset disabled={busy || state.picker} className="source-rule-fields">
+    {editor.archived && <p className="notice" role="status">来源已删除，以下配置仅供查看；请先从「已删除来源」恢复后再编辑。</p>}
+    <fieldset disabled={busy || state.picker || editor.archived} className="source-rule-fields">
       <div className="form-grid source-basics"><label>来源名称<input aria-label="来源名称" ref={nameRef} value={editor.name} maxLength={100} onChange={(event) => model.change({ name: event.target.value })} placeholder="例如：追剧下载、电影整理" /></label><label>来源类型<select aria-label="来源类型" value={editor.type} disabled={editor.draftRevision > 0} onChange={(event) => model.change({ type: event.target.value as "cloud" | "local" })}><option value="cloud">网盘来源</option><option value="local">本地目录来源</option></select></label></div>
       {editor.type === "cloud" ? <>
         <SourceStep number={1} title="选择网盘内容" description="账号决定从哪个网盘下载，文件或目录决定本次下载的范围。">
@@ -73,6 +74,7 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
       </>}
       <div className="source-editor-footer"><p>「保存草稿」只保存填写内容。点击「预览配置」查看影响范围，确认后才会生效；现有来源在此之前继续使用原配置。</p><div className="form-actions"><Button variant="ghost" onClick={onClose}>取消编辑</Button><Button type="submit" variant="outline">保存草稿</Button><Button onClick={() => { void model.preview(); }}>{preview && preview.state !== "APPLIED" ? "重新预览" : "预览配置"}</Button></div></div>
     </fieldset>
+    {editor.archived && <div className="form-actions"><Button variant="outline" onClick={onClose}>关闭配置查看</Button></div>}
     {state.pending && <p role="status">{state.pending === "native" ? "等待系统目录选择…" : state.pending === "apply" ? "正在确认配置…" : state.pending === "save" ? "正在保存草稿…" : "正在建立范围预览…"}</p>}
     {preview && <section className="cloud-preview" aria-label="来源配置预览">
       <h3>配置预览</h3>

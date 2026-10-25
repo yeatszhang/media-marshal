@@ -28,6 +28,7 @@ export const sourceRuleSchema = z.strictObject({
   id, type: z.enum(["local", "cloud"]), version, draftRevision: version,
   draft: sourceConfigurationSchema, configuration: sourceConfigurationSchema.nullable(),
   paused: z.boolean(), reviewRequired: z.boolean(),
+  deletedAt: z.string().nullable().optional(), lifecycleRevision: version.optional(),
   localSourceId: id.nullable(), subscriptionId: id.nullable(), ingestionSourceId: id.nullable(),
   createdAt: z.string(), updatedAt: z.string(),
   remoteName: z.string().max(1024).nullable().optional(),
@@ -36,10 +37,12 @@ export const sourceRuleSchema = z.strictObject({
 export type SourceRule = z.output<typeof sourceRuleSchema>;
 export const sourceRuleDraftSchema = z.strictObject({
   id, expectedVersion: version, expectedDraftRevision: version, requestKey: id,
+  expectedLifecycleRevision: version.optional(),
   configuration: sourceConfigurationSchema,
 });
 export const sourceRulePreviewSchema = z.strictObject({
   id, sourceId: id, version, draftRevision: version, configuration: sourceConfigurationSchema,
+  lifecycleRevision: version.optional(),
   state: z.enum(["BUILDING", "READY", "FAILED", "EXPIRED", "APPLIED"]), expiresAt: z.number().int(),
   download: downloadPreviewSchema.nullable(),
   organizationConflicts: z.array(z.strictObject({ sourceId: id, name: z.string().max(100) })).max(1000),
@@ -52,8 +55,8 @@ export const sourceLegacyReferenceSchema = z.strictObject({
   reason: z.enum(["NONE", "NO_AUTHORIZATION", "AMBIGUOUS_OWNERSHIP", "SNAPSHOT_UNAVAILABLE", "UNCONFIRMED", "CANCELLED", "NO_SOURCE"]),
 });
 export type SourceLegacyReference = z.output<typeof sourceLegacyReferenceSchema>;
-const empty = z.strictObject({});
-const sourceCommand = z.strictObject({ id, expectedVersion: version, requestKey: id });
+const sourceCommand = z.strictObject({ id, expectedVersion: version, expectedLifecycleRevision: version.optional(), requestKey: id });
+const lifecycleCommand = sourceCommand.extend({ expectedDraftRevision: version, expectedLifecycleRevision: version });
 export const sourceRunSchema = z.strictObject({
   id, sourceId: id, sourceVersion: version, state: z.enum(["QUEUED", "SCANNING", "SUBMITTED", "FAILED", "ABANDONED"]),
   jobId: id.nullable(), failure: cloudFailureSchema.nullable(), createdAt: z.string(), updatedAt: z.string(),
@@ -62,11 +65,14 @@ export const sourceRunSchema = z.strictObject({
 export type SourceRun = z.output<typeof sourceRunSchema>;
 export const sourceExecutionPreviewSchema = z.strictObject({
   id, sourceId: id, sourceVersion: version, name: z.string().max(100), forceRedownload: z.boolean(),
+  lifecycleRevision: version.optional(),
   state: z.enum(["BUILDING", "READY", "FAILED", "EXPIRED", "APPLIED"]), expiresAt: z.number().int(),
   download: downloadPreviewSchema, run: sourceRunSchema.nullable(),
 });
 export type SourceExecutionPreview = z.output<typeof sourceExecutionPreviewSchema>;
 export const sourceRuleActions = {
+  "source-rules.remove": { input: lifecycleCommand, output: sourceRuleSchema },
+  "source-rules.restore": { input: lifecycleCommand, output: sourceRuleSchema },
   "source-rules.preview-execution": { input: sourceCommand.extend({ forceRedownload: z.boolean().default(false) }), output: sourceExecutionPreviewSchema },
   "source-rules.get-execution-preview": { input: z.strictObject({ id }), output: sourceExecutionPreviewSchema.nullable() },
   "source-rules.execute": { input: z.strictObject({ previewId: id, requestKey: id }), output: sourceRunSchema },
@@ -76,9 +82,9 @@ export const sourceRuleActions = {
   "source-rules.resolve-legacy": { input: sourceLegacyReferenceSchema.pick({ kind: true, id: true }), output: sourceLegacyReferenceSchema.nullable() },
   "source-rules.legacy": { input: z.strictObject({ page: z.number().int().min(1).max(1000000).default(1), pageSize: z.number().int().min(1).max(100).default(25), status: sourceLegacyReferenceSchema.shape.status.optional() }), output: z.strictObject({ items: z.array(sourceLegacyReferenceSchema).max(100), total: z.number().int().nonnegative() }) },
   "source-rules.configure": { input: sourceRuleDraftSchema, output: sourceRuleSchema },
-  "source-rules.list": { input: empty, output: z.array(sourceRuleSchema).max(1000) },
+  "source-rules.list": { input: z.strictObject({ includeDeleted: z.boolean().optional() }), output: z.array(sourceRuleSchema).max(1000) },
   "source-rules.get": { input: z.strictObject({ id }), output: sourceRuleSchema.nullable() },
-  "source-rules.preview": { input: z.strictObject({ id, expectedVersion: version, expectedDraftRevision: version, requestKey: id }), output: sourceRulePreviewSchema },
+  "source-rules.preview": { input: z.strictObject({ id, expectedVersion: version, expectedDraftRevision: version, expectedLifecycleRevision: version.optional(), requestKey: id }), output: sourceRulePreviewSchema },
   "source-rules.get-preview": { input: z.strictObject({ id }), output: sourceRulePreviewSchema.nullable() },
   "source-rules.apply": { input: sourceRuleApplySchema, output: sourceRuleSchema },
 } as const;

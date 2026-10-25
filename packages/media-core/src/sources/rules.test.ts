@@ -37,6 +37,41 @@ async function fixture() {
   return { directory, sourcePath, targetPath, db, rules, grants, draft, pipeline, preview, advance(ms: number) { clock += ms; } };
 }
 describe("统一来源配置与真实 SQLite 事务", () => {
+  it("删除与恢复草稿保留原记录，旧请求不能跨生命周期改变来源", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), preview = f.preview(draft), remove = { id: draft.id, expectedVersion: 0, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() };
+    const deleted = f.rules.lifecycle(remove, "remove"); expect(deleted).toMatchObject({ deletedAt: expect.any(String), lifecycleRevision: 1, paused: true, version: 0 }); expect(f.rules.list()).toEqual([]); expect(f.rules.list(true)).toHaveLength(1); expect(f.rules.lifecycle(remove, "remove")).toEqual(deleted);
+    expect(f.rules.getPreview(preview.id)?.state).toBe("EXPIRED"); expect(() => f.rules.configure({ ...f.draft, expectedDraftRevision: 1, requestKey: randomUUID() })).toThrow();
+    expect(() => f.rules.lifecycle({ ...remove, requestKey: randomUUID(), expectedLifecycleRevision: 0 }, "restore")).toThrow();
+    const restored = f.rules.lifecycle({ ...remove, expectedLifecycleRevision: 1, requestKey: randomUUID() }, "restore"); expect(restored).toMatchObject({ deletedAt: null, lifecycleRevision: 2, paused: true, draftRevision: 1 });
+    expect(f.rules.lifecycle(remove, "remove")).toMatchObject({ deletedAt: null, lifecycleRevision: 2 }); expect(() => f.rules.lifecycle({ ...remove, requestKey: randomUUID() }, "remove")).toThrow();
+    const edited = f.rules.configure({ ...f.draft, expectedDraftRevision: 1, expectedLifecycleRevision: 2, requestKey: randomUUID(), configuration: { ...f.draft.configuration, name: "恢复后继续编辑" } }); expect(edited.draftRevision).toBe(2); expect(f.db.connection.prepare("SELECT count(*) AS n FROM source_rule_lifecycle_command").get()).toEqual({ n: 2 });
+    expect(await readFile(join(f.sourcePath, "保留.mp4"), "utf8")).toBe("preserve-original");
+  });
+  it("删除已配置来源不动文件，恢复保持暂停，新控制携带当前生命周期后才补扫", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), p = f.preview(draft), source = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() }, f.grants); await f.pipeline.scan(source.id);
+    const original = f.pipeline.list({}).items[0]!, command = { id: source.id, expectedVersion: 1, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() };
+    f.rules.lifecycle(command, "remove"); expect(f.rules.list()).toEqual([]); await expect(f.pipeline.scan(source.id)).rejects.toMatchObject({ code: "CONFLICT" });
+    await writeFile(join(f.sourcePath, "删除期间新增.mp4"), "新输入保留"); expect(f.pipeline.list({}).items).toHaveLength(1);
+    const restored = f.rules.lifecycle({ ...command, expectedLifecycleRevision: 1, requestKey: randomUUID() }, "restore"); expect(restored).toMatchObject({ paused: true, version: 1, localSourceId: source.id, lifecycleRevision: 2 });
+    expect(() => f.rules.control({ id: source.id, expectedVersion: 1, operation: "resume", requestKey: randomUUID() })).toThrow();
+    f.rules.control({ id: source.id, expectedVersion: 1, expectedLifecycleRevision: 2, operation: "resume", requestKey: randomUUID() }); await f.pipeline.scan(source.id);
+    expect(f.pipeline.list({}).items).toEqual(expect.arrayContaining([expect.objectContaining({ id: original.id }), expect.objectContaining({ relativePath: "删除期间新增.mp4", state: "OBSERVING" })])); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
+  });
+  it("删除事务失败保留原来源、预览和暂停状态，重试同一请求可完成", async () => {
+    const f = await fixture(), row = f.rules.configure(f.draft), p = f.preview(row), command = { id: row.id, expectedVersion: 0, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() };
+    f.db.connection.exec("CREATE TRIGGER remove_fault BEFORE INSERT ON source_rule_lifecycle_command BEGIN SELECT RAISE(ABORT,'受控删除记账故障'); END");
+    expect(() => f.rules.lifecycle(command, "remove")).toThrow("受控删除记账故障"); expect(f.rules.get(row.id)).toMatchObject({ deletedAt: null, lifecycleRevision: 0 }); expect(f.rules.getPreview(p.id)?.state).toBe("READY");
+    f.db.connection.exec("DROP TRIGGER remove_fault"); expect(f.rules.lifecycle(command, "remove").lifecycleRevision).toBe(1);
+  });
+  it("已删除来源不再占用输入范围，恢复前检查新接管来源，历史媒体目标仍被保护", async () => {
+    const f = await fixture(), first = f.rules.configure(f.draft), p = f.preview(first), applied = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() }, f.grants);
+    f.rules.lifecycle({ id: first.id, expectedVersion: 1, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() }, "remove");
+    const second = f.rules.configure({ ...f.draft, id: randomUUID(), requestKey: randomUUID() }), np = f.preview(second); await f.rules.apply({ previewId: np.id, requestKey: randomUUID() }, f.grants);
+    expect(() => f.rules.lifecycle({ id: applied.id, expectedVersion: 1, expectedDraftRevision: 1, expectedLifecycleRevision: 1, requestKey: randomUUID() }, "restore")).toThrow("重叠"); expect(f.rules.get(applied.id)?.deletedAt).not.toBeNull(); expect(f.rules.get(second.id)?.paused).toBe(false);
+    f.rules.lifecycle({ id: second.id, expectedVersion: 1, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() }, "remove");
+    const target = join(f.directory, "独立目标"); await mkdir(target); const unsafe = f.rules.configure({ ...f.draft, id: randomUUID(), requestKey: randomUUID(), configuration: { ...f.draft.configuration, type: "local", sourcePath: f.targetPath, organization: { targetPath: target } } }), up = f.preview(unsafe);
+    await expect(f.rules.apply({ previewId: up.id, requestKey: randomUUID() }, { source: await grant(f.targetPath), target: await grant(target) })).rejects.toMatchObject({ code: "UNSAFE_PATH" });
+  });
   it.each(["相同目录", "目标在来源内", "来源在目标内"])("真实目录授权拒绝%s，不创建执行配置或管理标记", async (relation) => {
     const f = await fixture(); let sourcePath = f.sourcePath, targetPath = f.targetPath, source = f.grants.source, target = f.grants.target;
     if (relation === "相同目录") { targetPath = sourcePath; target = await grant(targetPath); }

@@ -20,6 +20,31 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v16 删除迁移保留来源、任务与外键，历史路径可复用且旧核心拒绝打开", async () => {
+    const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 16)), id = randomUUID(), task = randomUUID(), stamp = new Date().toISOString();
+    const configuration = JSON.stringify({ type: "local", name: "历史来源", client: "custom", sourcePath: "/旧输入", organization: { targetPath: "/旧目标" } });
+    first.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'历史来源','custom','/旧输入','/旧目标','AUTO','COPY',?)").run(id, stamp);
+    first.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,local_source_id,created_at,updated_at) VALUES(?,'local',1,2,?,?,?,?)").run(id, configuration, id, stamp, stamp);
+    first.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,created_at) VALUES(?,1,?,?,?)").run(id, configuration, id, stamp);
+    first.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'DONE',?,?)").run(task, id, "/旧输入/原文件.mp4", stamp, stamp); first.close();
+    const upgraded = await CoreDatabase.open(path);
+    try {
+      const db = upgraded.connection; expect(upgraded.schemaVersion).toBe(17); expect(db.pragma("foreign_keys", { simple: true })).toBe(1); expect(db.pragma("foreign_key_check")).toEqual([]);
+      expect(db.prepare("SELECT version,draft_revision,draft_json,deleted_at,lifecycle_revision FROM source_rule").get()).toEqual({ version: 1, draft_revision: 2, draft_json: configuration, deleted_at: null, lifecycle_revision: 0 });
+      expect(db.prepare("SELECT id,source_id,status FROM media_task").get()).toEqual({ id: task, source_id: id, status: "DONE" });
+      expect(() => db.prepare("UPDATE source_rule SET paused=0,deleted_at=? WHERE id=?").run(stamp, id)).toThrow("必须保持暂停");
+      expect(() => db.prepare("DELETE FROM desktop_source WHERE id=?").run(id)).toThrow();
+      db.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'新来源','custom','/旧输入','/新目标','AUTO','COPY',?)").run(randomUUID(), stamp);
+      expect(db.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 1 });
+    } finally { upgraded.close(); }
+    const backup = new Database(`${path}.before-v17.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(16); expect(backup.prepare("SELECT count(*) AS n FROM desktop_source").get()).toEqual({ n: 1 }); } finally { backup.close(); }
+    await expect(CoreDatabase.open(path, migrations.slice(0, 16))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
+  it("重建引用表失败会回滚表和 schema 版本", async () => {
+    const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 16)); first.close();
+    await expect(CoreDatabase.open(path, [...migrations.slice(0, 16), { ...migrations[16]!, sql: migrations[16]!.sql + "SELECT missing_migration_function();" }])).rejects.toThrow();
+    const original = await CoreDatabase.open(path, migrations.slice(0, 16)); try { expect(original.schemaVersion).toBe(16); expect(original.connection.prepare("SELECT count(*) AS n FROM desktop_source").get()).toEqual({ n: 0 }); expect(original.connection.prepare("SELECT name FROM pragma_table_info('source_rule') WHERE name='deleted_at'").get()).toBeUndefined(); } finally { original.close(); }
+  });
   it("v15 资产历史升级后仅保留一个当前版本，已完成 COPY 摘要作为原内容基线", async () => {
     const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 15)), source = randomUUID(), old = randomUUID(), latest = randomUUID(), task = randomUUID(), target = randomUUID(), stamp = new Date().toISOString(), sha = "a".repeat(64);
     const sql = first.connection;
@@ -29,7 +54,7 @@ describe("显式数据库迁移", () => {
     sql.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,snapshot_json,state,created_at,updated_at) VALUES(?,?,'[\"保留.mp4\"]','新属性','{}','OBSERVING',?,?)").run(latest, source, stamp, stamp);
     sql.prepare("INSERT INTO media_target_root(id,grant_json) VALUES(?,'{}')").run(target);
     sql.prepare("INSERT INTO ingestion_operation(id,candidate_id,task_id,request_key,target_root_id,target_slot,plan_json,attempt_id,phase,evidence_json,created_at,updated_at) VALUES(?,?,?,?,?,'slot','{}',?,'RECORDED',?,?,?)").run(randomUUID(), old, task, randomUUID(), target, randomUUID(), JSON.stringify({ sha256: sha }), stamp, stamp); first.close();
-    const upgraded = await CoreDatabase.open(path);
+    const upgraded = await CoreDatabase.open(path, migrations.slice(0, 16));
     try {
       expect(upgraded.schemaVersion).toBe(16);
       expect(upgraded.connection.prepare("SELECT id,attribute_key,is_current,expected_sha256 FROM ingestion_candidate ORDER BY rowid").all()).toEqual([{ id: old, attribute_key: "旧属性", is_current: 0, expected_sha256: sha }, { id: latest, attribute_key: "新属性", is_current: 1, expected_sha256: null }]);

@@ -16,8 +16,9 @@ interface Row {
   id: string; type: SourceRule["type"]; version: number; draft_revision: number; draft_json: string;
   paused: number; review_required: number; local_source_id: string | null; subscription_id: string | null;
   ingestion_source_id: string | null; created_at: string; updated_at: string;
+  deleted_at: string | null; lifecycle_revision: number;
 }
-interface PreviewRow { id: string; source_id: string; version: number; draft_revision: number; request_key: string; configuration_json: string; download_preview_id: string | null; state: "READY" | "APPLIED" | "EXPIRED"; expires_at: number }
+interface PreviewRow { id: string; source_id: string; version: number; draft_revision: number; lifecycle_revision: number; request_key: string; configuration_json: string; download_preview_id: string | null; state: "READY" | "APPLIED" | "EXPIRED"; expires_at: number }
 export interface SourceRuleGrants { source: ManagedRootGrant; target: ManagedRootGrant }
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const conflict = (message = "来源配置已变化，请刷新并重新预览") => new DesktopError("CONFLICT", message);
@@ -29,7 +30,7 @@ export class SourceRules {
   readonly executions: SourceExecutionPreviews;
   constructor(private readonly database: CoreDatabase, private readonly downloads: CloudDownloads, private readonly subscriptions: CloudSubscriptions, private readonly ingestion: IngestionPipeline, private readonly now = Date.now) { this.runs = new SourceRuns(database, downloads, now); this.executions = new SourceExecutionPreviews(database, downloads, this.runs, now); }
   start() { this.synchronize(); this.runs.start(); }
-  synchronize() { for (const source of this.list()) { try { this.reconcile(source.id); } catch { /* 主机授权恢复后再次协调，不因离线阻止 Core 启动。 */ } } }
+  synchronize() { for (const source of this.list(true)) { try { this.reconcile(source.id); } catch { /* 主机授权恢复后再次协调，不因离线阻止 Core 启动。 */ } } }
   quiesce() { this.accepting = false; this.runs.quiesce(); this.executions.quiesce(); }
   private writable() { if (!this.accepting) throw new DesktopError("INTERRUPTED", "来源配置正在停止", true); }
   private row(id: string) { return this.database.connection.prepare("SELECT * FROM source_rule WHERE id=?").get(id) as Row | undefined; }
@@ -39,41 +40,85 @@ export class SourceRules {
     const configuration = active ? sourceConfigurationSchema.parse(JSON.parse(active.configuration_json)) : null, draft = sourceConfigurationSchema.parse(JSON.parse(row.draft_json));
     const visible = configuration ?? draft;
     const remote = visible.type === "cloud" ? this.database.connection.prepare("SELECT name FROM remote_entry WHERE id=? AND account_id=?").get(visible.remoteRef, visible.accountId) as { name: string } | undefined : undefined;
-    return sourceRuleSchema.parse({ id, type: row.type, version: row.version, draftRevision: row.draft_revision, draft, configuration, paused: !!row.paused, reviewRequired: !!row.review_required, localSourceId: row.local_source_id, subscriptionId: row.subscription_id, ingestionSourceId: row.ingestion_source_id, createdAt: row.created_at, updatedAt: row.updated_at, remoteName: remote?.name ?? null, lastRun: this.runs.list({ sourceId: id, pageSize: 1 }).items[0] ?? null });
+    return sourceRuleSchema.parse({ id, type: row.type, version: row.version, draftRevision: row.draft_revision, draft, configuration, paused: !!row.paused, reviewRequired: !!row.review_required, deletedAt: row.deleted_at, lifecycleRevision: row.lifecycle_revision, localSourceId: row.local_source_id, subscriptionId: row.subscription_id, ingestionSourceId: row.ingestion_source_id, createdAt: row.created_at, updatedAt: row.updated_at, remoteName: remote?.name ?? null, lastRun: this.runs.list({ sourceId: id, pageSize: 1 }).items[0] ?? null });
   }
-  list() { return (this.database.connection.prepare("SELECT id FROM source_rule ORDER BY created_at,id LIMIT 1000").all() as { id: string }[]).map((row) => this.get(row.id)!); }
+  list(includeDeleted = false) { return (this.database.connection.prepare("SELECT id FROM source_rule WHERE ?=1 OR deleted_at IS NULL ORDER BY created_at,id LIMIT 1000").all(Number(includeDeleted)) as { id: string }[]).map((row) => this.get(row.id)!); }
+  private pauseIntent(source: SourceRule) {
+    const db = this.database.connection;
+    db.prepare("INSERT OR IGNORE INTO source_rule_pause_job(source_id,job_id) SELECT ?,j.id FROM download_job j JOIN download_source_demand d ON d.job_id=j.id WHERE d.source_id=? AND d.source_version=? AND (j.state IN ('QUEUED','RUNNING','VERIFYING','COMMITTING','RETRY_WAIT') OR EXISTS(SELECT 1 FROM cloud_global_pause_job p WHERE p.job_id=j.id))").run(source.id, source.id, source.version);
+    db.prepare("UPDATE source_rule_execution_preview SET expires_at=0 WHERE source_id=? AND run_id IS NULL").run(source.id);
+  }
+  lifecycle(input: CoreInput<"source-rules.remove">, operation: "remove" | "restore"): SourceRule {
+    this.writable(); const db = this.database.connection;
+    const old = db.prepare("SELECT * FROM source_rule_lifecycle_command WHERE request_key=?").get(input.requestKey) as { source_id: string; version: number; draft_revision: number; lifecycle_revision: number; operation: string } | undefined;
+    if (old) {
+      if (old.source_id !== input.id || old.version !== input.expectedVersion || old.draft_revision !== input.expectedDraftRevision || old.lifecycle_revision !== input.expectedLifecycleRevision || old.operation !== operation) throw conflict("请求标识已用于其他来源删除或恢复");
+      this.reconcile(input.id); return this.get(input.id)!;
+    }
+    const source = this.get(input.id), row = this.row(input.id);
+    if (!source || !row || source.version !== input.expectedVersion || source.draftRevision !== input.expectedDraftRevision || source.lifecycleRevision !== input.expectedLifecycleRevision) throw conflict();
+    if ((operation === "remove") === !!source.deletedAt) throw conflict(operation === "remove" ? "来源已经删除，请刷新列表" : "来源尚未删除，请刷新列表");
+    const physical = source.localSourceId ?? source.ingestionSourceId;
+    if (operation === "remove") {
+      const job = db.prepare("SELECT j.id FROM download_job j JOIN download_source_demand d ON d.job_id=j.id WHERE d.source_id=? AND j.state IN ('RUNNING','VERIFYING','COMMITTING','PAUSING','CANCELLING') LIMIT 1").get(source.id) as { id: string } | undefined;
+      if (job) throw conflict(`下载任务 ${job.id} 仍在运行或停止中，请先暂停来源并等待停止完成后再删除`);
+      if (physical) this.ingestion.assertRuleRemovalSafe(source.id, physical);
+    } else {
+      if (source.configuration) {
+        const conflicts = organizationConflicts(this.database, source.id, source.configuration);
+        if (conflicts.length) throw conflict(`恢复来源与「${conflicts[0]!.name}」的整理范围冲突，请先调整该来源（关联来源：${conflicts[0]!.sourceId}）`);
+      }
+      if (source.localSourceId) this.ingestion.assertRuleRestoreSafe(source.localSourceId);
+    }
+    const stamp = new Date(this.now()).toISOString();
+    db.transaction(() => {
+      if (operation === "remove") this.pauseIntent(source);
+      db.prepare("UPDATE source_rule SET deleted_at=?,paused=1,lifecycle_revision=lifecycle_revision+1,updated_at=? WHERE id=?").run(operation === "remove" ? stamp : null, stamp, source.id);
+      db.prepare("UPDATE source_rule_preview SET state='EXPIRED' WHERE source_id=? AND state='READY'").run(source.id);
+      db.prepare("UPDATE source_rule_execution_preview SET expires_at=0 WHERE source_id=? AND run_id IS NULL").run(source.id);
+      if (operation === "remove") {
+        db.prepare("UPDATE cloud_preview SET state='EXPIRED' WHERE id IN (SELECT download_preview_id FROM source_rule_preview WHERE source_id=?) AND NOT EXISTS(SELECT 1 FROM download_job j WHERE j.preview_id=cloud_preview.id)").run(source.id);
+        db.prepare("UPDATE source_rule_run SET state=CASE WHEN EXISTS(SELECT 1 FROM download_job j WHERE j.preview_id=source_rule_run.preview_id) THEN 'SUBMITTED' ELSE 'ABANDONED' END,job_id=coalesce(job_id,(SELECT j.id FROM download_job j WHERE j.preview_id=source_rule_run.preview_id)),updated_at=? WHERE source_id=? AND state IN ('QUEUED','SCANNING')").run(stamp, source.id);
+        if (source.localSourceId) db.prepare("UPDATE ingestion_content_review SET state='CANCELLED',failure='所属来源已删除；已完成复核结果保留',updated_at=? WHERE source_id=? AND state IN ('PENDING','RUNNING','WAITING_SOURCE')").run(stamp, source.localSourceId);
+      }
+      if (physical) db.prepare("UPDATE desktop_source SET paused=1 WHERE id=? AND NOT EXISTS(SELECT 1 FROM source_rule s WHERE (s.local_source_id=? OR s.ingestion_source_id=?) AND s.deleted_at IS NULL AND s.paused=0 AND s.review_required=0)").run(physical, physical, physical);
+      db.prepare("INSERT INTO source_rule_lifecycle_command VALUES(?,?,?,?,?,?,?)").run(input.requestKey, source.id, source.version, source.draftRevision, source.lifecycleRevision, operation, stamp);
+    })();
+    this.reconcile(source.id);
+    if (physical) { if (source.type === "local") this.ingestion.sourceChanged(physical); this.ingestion.syncSourceWatcher(physical); }
+    return this.get(source.id)!;
+  }
   control(input: CoreInput<"source-rules.control">): SourceRule {
     this.writable(); const db = this.database.connection;
-    const prior = db.prepare("SELECT source_id,version,operation FROM source_rule_control WHERE request_key=?").get(input.requestKey) as { source_id: string; version: number; operation: string } | undefined;
+    const prior = db.prepare("SELECT source_id,version,operation,lifecycle_revision FROM source_rule_control WHERE request_key=?").get(input.requestKey) as { source_id: string; version: number; operation: string; lifecycle_revision: number } | undefined;
     if (prior) {
-      if (prior.source_id !== input.id || prior.version !== input.expectedVersion || prior.operation !== input.operation) throw conflict("请求标识已用于其他来源控制");
+      if (prior.source_id !== input.id || prior.version !== input.expectedVersion || prior.operation !== input.operation || prior.lifecycle_revision !== (input.expectedLifecycleRevision ?? 0)) throw conflict("请求标识已用于其他来源控制");
       this.reconcile(input.id); return this.get(input.id)!;
     }
     const source = this.get(input.id);
-    if (!source || source.version !== input.expectedVersion) throw conflict();
+    if (!source || source.deletedAt || source.version !== input.expectedVersion || source.lifecycleRevision !== (input.expectedLifecycleRevision ?? 0)) throw conflict("来源或删除状态已变化，请刷新后操作");
     if (input.operation !== "pause" && (!source.configuration || source.reviewRequired)) throw conflict("来源尚未确认或需要核对，请重新预览确认");
     if (input.operation === "scan") {
       if (source.paused || source.configuration?.type !== "cloud" || !source.configuration.periodic.enabled || !source.subscriptionId) throw conflict("仅已启用周期扫描的网盘来源可立即扫描");
       db.transaction(() => {
         this.subscriptions.control({ subscriptionId: source.subscriptionId!, operation: "scan", requestKey: input.requestKey }, true);
-        db.prepare("INSERT INTO source_rule_control VALUES(?,?,?,?,?)").run(input.requestKey, source.id, source.version, input.operation, new Date(this.now()).toISOString());
+        db.prepare("INSERT INTO source_rule_control VALUES(?,?,?,?,?,?)").run(input.requestKey, source.id, source.version, input.operation, new Date(this.now()).toISOString(), source.lifecycleRevision);
       })();
       return this.get(source.id)!;
     }
     if (input.operation === "resume" && db.prepare("SELECT 1 FROM source_rule_pause_job p JOIN download_job j ON j.id=p.job_id WHERE p.source_id=? AND j.state='PAUSING' LIMIT 1").get(source.id)) throw conflict("云端写入仍在停止，请到达安全点后恢复来源");
     db.transaction(() => {
-      if (input.operation === "pause") db.prepare("INSERT OR IGNORE INTO source_rule_pause_job(source_id,job_id) SELECT ?,j.id FROM download_job j JOIN download_source_demand d ON d.job_id=j.id WHERE d.source_id=? AND d.source_version=? AND (j.state IN ('QUEUED','RUNNING','VERIFYING','COMMITTING','RETRY_WAIT') OR EXISTS(SELECT 1 FROM cloud_global_pause_job p WHERE p.job_id=j.id))").run(source.id, source.id, source.version);
-      if (input.operation === "pause") db.prepare("UPDATE source_rule_execution_preview SET expires_at=0 WHERE source_id=? AND run_id IS NULL").run(source.id);
+      if (input.operation === "pause") this.pauseIntent(source);
       db.prepare("UPDATE source_rule SET paused=?,updated_at=? WHERE id=?").run(Number(input.operation === "pause"), new Date(this.now()).toISOString(), source.id);
       if (input.operation === "resume") db.prepare("UPDATE ingestion_outbox SET delivery_attempts=0,next_attempt_at=NULL WHERE state='PENDING' AND item_id IN (SELECT ji.item_id FROM download_job_item ji JOIN download_source_demand d ON d.job_id=ji.job_id WHERE d.source_id=? AND d.source_version=?)").run(source.id, source.version);
-      db.prepare("INSERT INTO source_rule_control VALUES(?,?,?,?,?)").run(input.requestKey, source.id, source.version, input.operation, new Date(this.now()).toISOString());
+      db.prepare("INSERT INTO source_rule_control VALUES(?,?,?,?,?,?)").run(input.requestKey, source.id, source.version, input.operation, new Date(this.now()).toISOString(), source.lifecycleRevision);
     })();
     this.reconcile(source.id, input.operation === "resume"); return this.get(source.id)!;
   }
   /** 持久暂停意图先提交；启动和重复请求均按当前意图协调，不重放旧控制。 */
   private reconcile(id: string, rescan = false) {
     const source = this.get(id); if (!source || !source.configuration) return;
-    const db = this.database.connection, blocked = source.paused || source.reviewRequired;
+    const db = this.database.connection, blocked = !!source.deletedAt || source.paused || source.reviewRequired;
     if (source.subscriptionId) {
       const subscription = db.prepare("SELECT s.enabled,r.state FROM cloud_subscription s JOIN cloud_subscription_runtime r ON r.subscription_id=s.id WHERE s.id=?").get(source.subscriptionId) as { enabled: number; state: string } | undefined;
       const enabled = !blocked && source.configuration.type === "cloud" && source.configuration.periodic.enabled;
@@ -123,10 +168,11 @@ export class SourceRules {
     this.database.connection.prepare("INSERT INTO source_rule_command(request_key,source_id,signature,operation,created_at) VALUES(?,?,?,?,?)").run(requestKey, sourceId, signature, operation, new Date(this.now()).toISOString());
   }
   configure(value: CoreInput<"source-rules.configure">): SourceRule {
-    this.writable(); const input = sourceRuleDraftSchema.parse(value), signature = hash({ operation: "configure", ...input }), db = this.database.connection;
+    this.writable(); const input = sourceRuleDraftSchema.parse(value), { expectedLifecycleRevision, ...original } = input, signature = hash({ operation: "configure", ...original, ...(expectedLifecycleRevision ? { expectedLifecycleRevision } : {}) }), db = this.database.connection;
     const previous = this.previous(input.requestKey, signature); if (previous) return this.get(previous)!;
     return db.transaction(() => {
       const row = this.row(input.id);
+      if (row?.deleted_at || (row?.lifecycle_revision ?? 0) !== (input.expectedLifecycleRevision ?? 0)) throw conflict("来源的删除状态已变化，请重新打开来源配置");
       if (row ? row.version !== input.expectedVersion || row.draft_revision !== input.expectedDraftRevision || row.type !== input.configuration.type : input.expectedVersion !== 0 || input.expectedDraftRevision !== 0) throw conflict();
       if (input.configuration.type === "local" && !["quark", "custom"].includes(input.configuration.client)) {
         const previous = row ? sourceConfigurationSchema.parse(JSON.parse(row.draft_json)) : null;
@@ -145,15 +191,15 @@ export class SourceRules {
     this.writable(); const row = this.row(input.id), db = this.database.connection;
     const repeated = db.prepare("SELECT * FROM source_rule_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (repeated) {
-      if (repeated.source_id !== input.id || repeated.version !== input.expectedVersion || repeated.draft_revision !== input.expectedDraftRevision) throw conflict();
+      if (repeated.source_id !== input.id || repeated.version !== input.expectedVersion || repeated.draft_revision !== input.expectedDraftRevision || repeated.lifecycle_revision !== (input.expectedLifecycleRevision ?? 0)) throw conflict();
       return this.previewDto(repeated);
     }
-    if (!row || row.version !== input.expectedVersion || row.draft_revision !== input.expectedDraftRevision) throw conflict();
+    if (!row || row.deleted_at || row.lifecycle_revision !== (input.expectedLifecycleRevision ?? 0) || row.version !== input.expectedVersion || row.draft_revision !== input.expectedDraftRevision) throw conflict();
     const configuration = sourceConfigurationSchema.parse(JSON.parse(row.draft_json));
     const download = configuration.type === "cloud" ? this.downloads.previews.start({ accountId: configuration.accountId, remoteRef: configuration.remoteRef, targetGrantId: configuration.downloadRootId, requestKey: input.requestKey, filters: configuration.filters, layout: "drive" }) : null;
     const id = randomUUID();
-    db.prepare("INSERT INTO source_rule_preview(id,source_id,version,draft_revision,request_key,configuration_json,download_preview_id,state,expires_at,created_at) VALUES(?,?,?,?,?,?,?,'READY',?,?)")
-      .run(id, row.id, row.version, row.draft_revision, input.requestKey, row.draft_json, download?.id ?? null, this.now() + 15 * 60 * 1000, new Date(this.now()).toISOString());
+    db.prepare("INSERT INTO source_rule_preview(id,source_id,version,draft_revision,request_key,configuration_json,download_preview_id,state,expires_at,created_at,lifecycle_revision) VALUES(?,?,?,?,?,?,?,'READY',?,?,?)")
+      .run(id, row.id, row.version, row.draft_revision, input.requestKey, row.draft_json, download?.id ?? null, this.now() + 15 * 60 * 1000, new Date(this.now()).toISOString(), row.lifecycle_revision);
     return this.getPreview(id)!;
   }
   getPreview(id: string): SourceRulePreview | null {
@@ -165,8 +211,8 @@ export class SourceRules {
     const underlying = row.download_preview_id ? this.downloads.previews.row(row.download_preview_id) : undefined;
     const download = underlying ? this.downloads.previews.get(underlying.request_key) : null;
     const conflicts = row.state === "APPLIED" ? [] : organizationConflicts(this.database, row.source_id, configuration);
-    const state = row.state === "APPLIED" ? "APPLIED" : row.expires_at <= this.now() || row.state === "EXPIRED" || source?.version !== row.version || source.draft_revision !== row.draft_revision ? "EXPIRED" : conflicts.length ? "FAILED" : configuration.type === "cloud" ? download?.state === "BUILDING" ? "BUILDING" : download?.state === "READY" && download.complete && download.conflicts === 0 ? "READY" : "FAILED" : "READY";
-    return { id: row.id, sourceId: row.source_id, version: row.version, draftRevision: row.draft_revision, configuration, state, expiresAt: row.expires_at, download, organizationConflicts: conflicts };
+    const state = row.state === "APPLIED" ? "APPLIED" : row.expires_at <= this.now() || row.state === "EXPIRED" || source?.deleted_at || source?.lifecycle_revision !== row.lifecycle_revision || source?.version !== row.version || source.draft_revision !== row.draft_revision ? "EXPIRED" : conflicts.length ? "FAILED" : configuration.type === "cloud" ? download?.state === "BUILDING" ? "BUILDING" : download?.state === "READY" && download.complete && download.conflicts === 0 ? "READY" : "FAILED" : "READY";
+    return { id: row.id, sourceId: row.source_id, version: row.version, draftRevision: row.draft_revision, lifecycleRevision: row.lifecycle_revision, configuration, state, expiresAt: row.expires_at, download, organizationConflicts: conflicts };
   }
   apply(input: CoreInput<"source-rules.apply">, grants?: SourceRuleGrants): Promise<SourceRule> {
     const task = this.queue.catch(() => {}).then(() => this.applyOnce(input, grants)); this.queue = task; return task;
@@ -204,7 +250,7 @@ export class SourceRules {
       }
       this.database.connection.transaction(() => {
         this.writable(); const current = this.row(row.id), checked = this.getPreview(preview.id);
-        if (!current || current.version !== preview.version || current.draft_revision !== preview.draftRevision || current.paused !== row.paused || checked?.state !== "READY") throw conflict();
+        if (!current || current.deleted_at || current.lifecycle_revision !== row.lifecycle_revision || current.version !== preview.version || current.draft_revision !== preview.draftRevision || current.paused !== row.paused || checked?.state !== "READY") throw conflict();
         const installed = prepared?.commit(), subscriptionId = subscription?.commit() ?? null, nextVersion = preview.version + 1, stamp = new Date(this.now()).toISOString();
         this.database.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,subscription_id,ingestion_source_id,target_root_id,created_at) VALUES(?,?,?,?,?,?,?,?)")
           .run(row.id, nextVersion, JSON.stringify(configuration), configuration.type === "local" ? physicalId : null, subscriptionId, configuration.type === "cloud" ? physicalId : null, installed?.targetRootId ?? null, stamp);
@@ -213,7 +259,7 @@ export class SourceRules {
         this.database.connection.prepare("UPDATE source_rule_run SET state='ABANDONED',updated_at=? WHERE source_id=? AND source_version!=? AND state IN ('QUEUED','SCANNING')").run(stamp, row.id, nextVersion);
         this.database.connection.prepare("UPDATE source_rule_preview SET state=CASE WHEN id=? THEN 'APPLIED' ELSE 'EXPIRED' END WHERE source_id=? AND state='READY'").run(preview.id, row.id);
         this.receipt(input.requestKey, row.id, "apply", signature);
-        if (input.runOnce) this.runs.enqueue({ id: row.id, expectedVersion: nextVersion, requestKey: input.requestKey });
+        if (input.runOnce) this.runs.enqueue({ id: row.id, expectedVersion: nextVersion, expectedLifecycleRevision: row.lifecycle_revision, requestKey: input.requestKey });
         this.database.connection.prepare("UPDATE source_rule_legacy_reference SET status='MAPPED',reason='NONE' WHERE source_id=? AND kind IN ('local-source','subscription')").run(row.id);
       })(); committed = true;
       await prepared?.activate(); subscription?.activate();

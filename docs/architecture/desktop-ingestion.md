@@ -61,3 +61,5 @@ schema v16 将本地候选的属性键 `attribute_key` 与资产版本 `version_
 复现命令：`npm test -- packages/media-core/src/ingestion/pipeline.test.ts packages/media-core/src/infrastructure/database.test.ts packages/contracts/src/contracts.test.ts apps/desktop/src/renderer/src/content-reviews.test.tsx apps/desktop/src/main/cloud/ingestion-crash.test.ts`；窗口检查使用 `npm run desktop:build` 后执行 `npm run test:desktop -- --grep '全量内容复核经实际 IPC'`。
 
 内容复核实现（`aa1a5b0`）的回归为 488 项核心／契约／组件测试通过、13 项跳过，24 项真实 Electron 开发构建检查通过。类型、依赖边界、桌面构建、OpenSpec 严格校验与文档构建通过；LikeC4 1.60.0 校验并重新导出四个视图。该结果不替代 Mac Intel、正式签名或安装态验收。
+
+来源删除与恢复保留同一候选、任务和 COPY 计划；实际写入须先暂停并等待停止，恢复后重新观察，沿原计划处理。已完成文件及独立 Emby 交付不回滚。界面和生命周期并发检查见[统一来源的可恢复删除](./source-rules.md#可恢复删除)。

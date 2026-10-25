@@ -9,11 +9,11 @@ export type ManagedOrganizationResolution = { state: "ENABLED"; policy: ManagedO
 export const organizationKey = (configuration: OrganizationConfiguration) => createHash("sha256").update(JSON.stringify(configuration)).digest("hex");
 
 /** 只使用下载当时落库的需求版本；相同下载根不是整理意图的证据。 */
-export function resolveManagedOrganization(database: CoreDatabase, itemId: string, versionKey: string): ManagedOrganizationResolution {
+export function resolveManagedOrganization(database: CoreDatabase, itemId: string, versionKey: string, excludingSourceId?: string): ManagedOrganizationResolution {
   const db = database.connection;
   const item = db.prepare("SELECT target_root_id FROM download_item WHERE id=? AND version_key=?").get(itemId, versionKey) as { target_root_id: string } | undefined;
   if (!item) return { state: "UNASSIGNED" };
-  const rows = db.prepare("SELECT d.source_version,d.review_required,s.version,s.paused,s.review_required AS source_review,v.configuration_json,v.ingestion_source_id,v.target_root_id,j.state,ji.demand_state FROM download_job_item ji JOIN download_job j ON j.id=ji.job_id JOIN download_source_demand d ON d.job_id=j.id JOIN source_rule s ON s.id=d.source_id JOIN source_rule_version v ON v.source_id=d.source_id AND v.version=d.source_version WHERE ji.item_id=?").all(itemId) as { source_version: number; review_required: number; version: number; paused: number; source_review: number; configuration_json: string; ingestion_source_id: string | null; target_root_id: string | null; state: string; demand_state: string }[];
+  const rows = db.prepare("SELECT d.source_version,d.review_required,s.version,s.paused,s.review_required AS source_review,v.configuration_json,v.ingestion_source_id,v.target_root_id,j.state,ji.demand_state FROM download_job_item ji JOIN download_job j ON j.id=ji.job_id JOIN download_source_demand d ON d.job_id=j.id JOIN source_rule s ON s.id=d.source_id JOIN source_rule_version v ON v.source_id=d.source_id AND v.version=d.source_version WHERE ji.item_id=? AND (? IS NULL OR s.id!=?)").all(itemId, excludingSourceId ?? null, excludingSourceId ?? null) as { source_version: number; review_required: number; version: number; paused: number; source_review: number; configuration_json: string; ingestion_source_id: string | null; target_root_id: string | null; state: string; demand_state: string }[];
   const policies = new Map<string, ManagedOrganization>(); let review = false, paused = false;
   for (const row of rows) {
     if (row.demand_state !== "ACTIVE" || ["CANCELLED", "CANCELLING"].includes(row.state)) continue;
@@ -66,7 +66,7 @@ function scopesOverlap(database: CoreDatabase, a: CloudConfiguration, b: CloudCo
 export function organizationConflicts(database: CoreDatabase, sourceId: string, configuration: SourceConfiguration): { sourceId: string; name: string }[] {
   if (configuration.type !== "cloud" || !configuration.organization) return [];
   const key = organizationKey(configuration.organization), result: { sourceId: string; name: string }[] = [];
-  const sources = database.connection.prepare("SELECT s.id,v.configuration_json FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.type='cloud' AND s.id!=? ORDER BY s.id LIMIT 1000").all(sourceId) as { id: string; configuration_json: string }[];
+  const sources = database.connection.prepare("SELECT s.id,v.configuration_json FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.type='cloud' AND s.deleted_at IS NULL AND s.id!=? ORDER BY s.id LIMIT 1000").all(sourceId) as { id: string; configuration_json: string }[];
   for (const source of sources) {
     const other = sourceConfigurationSchema.parse(JSON.parse(source.configuration_json));
     if (other.type === "cloud" && other.organization && key !== organizationKey(other.organization) && scopesOverlap(database, configuration, other)) result.push({ sourceId: source.id, name: other.name });

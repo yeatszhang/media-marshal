@@ -13,6 +13,8 @@ import { Subscriptions } from "./pages/Subscriptions";
 import { i18nReady } from "./i18n";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+// jsdom 不实现顶层模态窗口，真实焦点与 Escape 行为由 Electron 验收。
+Object.assign(HTMLDialogElement.prototype, { showModal() { this.setAttribute("open", ""); }, close() { this.removeAttribute("open"); } });
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); document.body.innerHTML = ""; vi.useRealTimers(); });
 function memoryApi() {
@@ -63,6 +65,8 @@ function memoryApi() {
       const run: SourceRun = { id: crypto.randomUUID(), sourceId: row.id, sourceVersion: row.version, forceRedownload: preview.forceRedownload, state: "SUBMITTED", jobId: crypto.randomUUID(), failure: null, createdAt: stamp, updatedAt: stamp }; preview.state = "APPLIED"; preview.run = run; row.lastRun = run; return copy(run);
     }),
     controlSourceRule: vi.fn(async (input: Parameters<DesktopApi["controlSourceRule"]>[0]) => { const row = rows.get(input.id)!; if (input.operation !== "scan") row.paused = input.operation === "pause"; return copy(row); }),
+    removeSourceRule: vi.fn(async (input: Parameters<DesktopApi["removeSourceRule"]>[0]) => { const row = rows.get(input.id)!; row.deletedAt = stamp; row.paused = true; row.lifecycleRevision = (row.lifecycleRevision ?? 0) + 1; return copy(row); }),
+    restoreSourceRule: vi.fn(async (input: Parameters<DesktopApi["restoreSourceRule"]>[0]) => { const row = rows.get(input.id)!; row.deletedAt = null; row.paused = true; row.lifecycleRevision = (row.lifecycleRevision ?? 0) + 1; return copy(row); }),
     loginCloudAccount: vi.fn(), cancelCloudLogin: vi.fn(async () => {}), getCloudAuthorization: vi.fn(async () => null), authorizeCloudAccount: vi.fn(), disconnectCloudAccount: vi.fn(async () => {}), restoreCloudAccounts: vi.fn(async () => {}),
     configureCloudSubscription: vi.fn(), confirmDownload: vi.fn(), previewDownload: vi.fn(), saveSource: vi.fn(), configureManagedIngestion: vi.fn(),
   };
@@ -88,6 +92,22 @@ async function selectRemote(name: string) { await click("选择远端范围"); a
 async function cloudDraft(f: Awaited<ReturnType<typeof mount>>) { await click("添加来源"); await fill("来源名称", "我的下载来源"); await selectRemote(f.directory.name); await click("选择下载目录"); }
 
 describe("统一来源页、连接返回和确认边界", () => {
+  it("删除须明确确认，取消不写；保留配置只读可关闭，恢复保持暂停并传新生命周期", async () => {
+    const f = await mount(); await cloudDraft(f); await click("保存草稿"); const row = [...f.rows.values()][0]!; await click("取消编辑");
+    expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("删除来源…"); expect(document.querySelector("dialog[open]")).not.toBeNull(); expect(document.activeElement?.textContent).toBe("取消");
+    await click("取消"); expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("删除来源…"); await click("确认删除来源");
+    expect(f.api.removeSourceRule).toHaveBeenCalledWith(expect.objectContaining({ id: row.id, expectedLifecycleRevision: 0, expectedDraftRevision: 1 })); expect(f.element.textContent).toContain("已删除来源（1）");
+    f.api.statRemote.mockClear(); await act(async () => { await f.model.openSource(row.id); }); expect(field("来源名称").closest("fieldset")?.disabled).toBe(true); await click("关闭配置查看");
+    await click("恢复已删除来源…"); await click("确认恢复来源"); expect(f.api.restoreSourceRule).toHaveBeenCalledWith(expect.objectContaining({ expectedLifecycleRevision: 1 }));
+    expect(f.rows.get(row.id)).toMatchObject({ paused: true, deletedAt: null, lifecycleRevision: 2 }); expect(f.api.controlSourceRule).not.toHaveBeenCalled(); expect(f.api.statRemote).not.toHaveBeenCalled();
+  });
+  it("未保存编辑阻止删除；响应丢失通过当前记录核对，不生成第二次删除", async () => {
+    const f = await mount(); await cloudDraft(f); await click("保存草稿"); const row = [...f.rows.values()][0]!; await fill("来源名称", "尚未保存的新名称"); await click("删除来源…");
+    expect(document.querySelector("dialog")).toBeNull(); expect(f.element.textContent).toContain("请先保存草稿或取消当前编辑"); expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("取消编辑");
+    const remove = f.api.removeSourceRule.getMockImplementation()!; f.api.removeSourceRule.mockImplementationOnce(async (input) => { await remove(input); throw new Error("响应丢失"); });
+    await click("删除来源…"); await click("确认删除来源"); expect(f.api.removeSourceRule).toHaveBeenCalledTimes(1); expect(f.element.textContent).toContain("来源已移入已删除来源");
+    expect(f.api.getSourceRule).toHaveBeenCalledWith(row.id); expect(f.api.applySourceRule).not.toHaveBeenCalled();
+  });
   it("按文件去向解释下载与整理，开关就近展开对应设置且编辑不执行", async () => {
     const f = await mount(); await cloudDraft(f);
     expect([...f.element.querySelectorAll(".source-step h3")].map((node) => node.textContent)).toEqual(["选择网盘内容", "选择本地下载位置", "设置下载方式", "是否整理到媒体库"]);

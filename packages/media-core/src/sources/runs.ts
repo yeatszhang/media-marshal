@@ -11,26 +11,26 @@ export class SourceRuns {
   private timer?: ReturnType<typeof setInterval>; private flight?: Promise<void>; private closed = false;
   constructor(private readonly database: CoreDatabase, private readonly downloads: CloudDownloads, private readonly now = Date.now) {}
   start() { if (!this.closed && !this.timer) this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 500); }
-  private source(id: string) { return this.database.connection.prepare("SELECT s.*,v.configuration_json FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.id=?").get(id) as { id: string; version: number; paused: number; review_required: number; subscription_id: string | null; configuration_json: string } | undefined; }
+  private source(id: string) { return this.database.connection.prepare("SELECT s.*,v.configuration_json FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.id=?").get(id) as { id: string; version: number; lifecycle_revision: number; deleted_at: string | null; paused: number; review_required: number; subscription_id: string | null; configuration_json: string } | undefined; }
   get(id: string) { const row = this.database.connection.prepare("SELECT * FROM source_rule_run WHERE id=?").get(id) as RunRow | undefined; return row ? dto(row) : null; }
   enqueue(input: CoreInput<"source-rules.run-once">, prepared?: { previewId: string; previewKey: string; forceRedownload: boolean }): SourceRun {
     if (this.closed) throw new DesktopError("INTERRUPTED", "来源执行正在停止", true);
     const db = this.database.connection;
     return db.transaction(() => {
-      const receipt = db.prepare("SELECT r.*,q.source_id AS requested_source,q.version AS requested_version,q.preview_id AS requested_preview FROM source_rule_run_request q JOIN source_rule_run r ON r.id=q.run_id WHERE q.request_key=?").get(input.requestKey) as (RunRow & { requested_source: string; requested_version: number; requested_preview: string | null }) | undefined;
+      const receipt = db.prepare("SELECT r.*,q.source_id AS requested_source,q.version AS requested_version,q.lifecycle_revision AS requested_lifecycle,q.preview_id AS requested_preview FROM source_rule_run_request q JOIN source_rule_run r ON r.id=q.run_id WHERE q.request_key=?").get(input.requestKey) as (RunRow & { requested_source: string; requested_version: number; requested_lifecycle: number; requested_preview: string | null }) | undefined;
       if (receipt) {
-        if (receipt.requested_source !== input.id || receipt.requested_version !== input.expectedVersion || receipt.requested_preview !== (prepared?.previewId ?? null) || !!receipt.force_redownload !== !!prepared?.forceRedownload) throw new DesktopError("CONFLICT", "请求标识已用于其他来源执行");
+        if (receipt.requested_source !== input.id || receipt.requested_version !== input.expectedVersion || receipt.requested_lifecycle !== (input.expectedLifecycleRevision ?? 0) || receipt.requested_preview !== (prepared?.previewId ?? null) || !!receipt.force_redownload !== !!prepared?.forceRedownload) throw new DesktopError("CONFLICT", "请求标识已用于其他来源执行");
         return dto(receipt);
       }
       const source = this.source(input.id);
-      if (!source || source.version !== input.expectedVersion || source.paused || source.review_required || sourceConfigurationSchema.parse(JSON.parse(source.configuration_json)).type !== "cloud") throw new DesktopError("CONFLICT", "请先预览确认并恢复网盘来源");
+      if (!source || source.deleted_at || source.lifecycle_revision !== (input.expectedLifecycleRevision ?? 0) || source.version !== input.expectedVersion || source.paused || source.review_required || sourceConfigurationSchema.parse(JSON.parse(source.configuration_json)).type !== "cloud") throw new DesktopError("CONFLICT", "请先预览确认并恢复网盘来源");
       let run = db.prepare("SELECT * FROM source_rule_run WHERE source_id=? AND source_version=? AND force_redownload=? AND state IN ('QUEUED','SCANNING')").get(input.id, input.expectedVersion, Number(!!prepared?.forceRedownload)) as RunRow | undefined;
       if (!run) {
         const stamp = new Date(this.now()).toISOString();
         run = { id: randomUUID(), source_id: input.id, source_version: input.expectedVersion, state: prepared ? "SCANNING" : "QUEUED", preview_id: prepared?.previewId ?? null, preview_key: prepared?.previewKey ?? randomUUID(), job_id: null, failure_json: null, created_at: stamp, updated_at: stamp, force_redownload: Number(!!prepared?.forceRedownload) };
         db.prepare("INSERT INTO source_rule_run(id,source_id,source_version,state,preview_id,preview_key,created_at,updated_at,force_redownload) VALUES(?,?,?,?,?,?,?,?,?)").run(run.id, run.source_id, run.source_version, run.state, run.preview_id, run.preview_key, stamp, stamp, run.force_redownload);
       }
-      db.prepare("INSERT INTO source_rule_run_request(request_key,run_id,source_id,version,preview_id) VALUES(?,?,?,?,?)").run(input.requestKey, run.id, input.id, input.expectedVersion, prepared?.previewId ?? null);
+      db.prepare("INSERT INTO source_rule_run_request(request_key,run_id,source_id,version,preview_id,lifecycle_revision) VALUES(?,?,?,?,?,?)").run(input.requestKey, run.id, input.id, input.expectedVersion, prepared?.previewId ?? null, source.lifecycle_revision);
       return dto(run);
     })();
   }
@@ -86,7 +86,7 @@ export class SourceRuns {
         // 暂停或变更发生在异步预算检查期间时，保留原意图供协调或废弃。
         const latest = this.source(run.source_id);
         if (this.closed || latest?.paused || latest?.version !== run.source_version) continue;
-        db.prepare("UPDATE source_rule_run SET state='FAILED',failure_json=?,updated_at=? WHERE id=?").run(JSON.stringify(cloudFailure(error)), new Date(this.now()).toISOString(), run.id);
+        db.prepare("UPDATE source_rule_run SET state='FAILED',failure_json=?,updated_at=? WHERE id=? AND state IN ('QUEUED','SCANNING')").run(JSON.stringify(cloudFailure(error)), new Date(this.now()).toISOString(), run.id);
       }
     }
   }

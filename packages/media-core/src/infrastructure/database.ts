@@ -13,6 +13,7 @@ import { sourceRuleLegacyMigrationSql, migrateLegacySourceRules } from "./source
 import { sourceExecutionMigrationSql } from "./source-execution-migration.js";
 import { sourceOrganizationMigrationSql } from "./source-organization-migration.js";
 import { sourceExecutionPreviewMigrationSql } from "./source-execution-preview-migration.js";
+import { sourceLifecycleMigrationSql } from "./source-lifecycle-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
@@ -20,6 +21,7 @@ export interface Migration {
   version: number;
   sql: string;
   apply?: (connection: Database.Database) => void;
+  rebuildsReferencedTables?: boolean;
 }
 export const migrations: readonly Migration[] = [
   {
@@ -65,6 +67,7 @@ export const migrations: readonly Migration[] = [
   // 恢复核对中的 RECORDED 操作可暂为 PROCESSING；旧核心不得忽略持久核对队列。
   { version: 15, sql: "SELECT 1;" },
   { version: 16, sql: ingestionContentReviewMigrationSql },
+  { version: 17, sql: sourceLifecycleMigrationSql, rebuildsReferencedTables: true },
 ];
 
 export class CoreDatabase {
@@ -129,11 +132,16 @@ export class CoreDatabase {
       connection.pragma("journal_mode = WAL");
       for (const migration of plan) {
         if (migration.version <= version) continue;
-        connection.transaction(() => {
-          connection.exec(migration.sql);
-          migration.apply?.(connection);
-          connection.pragma(`user_version = ${migration.version}`);
-        })();
+        // SQLite 重建被引用表须在事务外关闭外键；提交前核对全部引用，失败整体回滚。
+        if (migration.rebuildsReferencedTables) connection.pragma("foreign_keys = OFF");
+        try {
+          connection.transaction(() => {
+            connection.exec(migration.sql);
+            migration.apply?.(connection);
+            if (migration.rebuildsReferencedTables && (connection.pragma("foreign_key_check") as unknown[]).length) throw new DesktopError("STORAGE_ERROR", "数据库迁移引用核对失败，已回滚");
+            connection.pragma(`user_version = ${migration.version}`);
+          })();
+        } finally { if (migration.rebuildsReferencedTables) connection.pragma("foreign_keys = ON"); }
       }
       return new CoreDatabase(connection);
     } catch (error) {

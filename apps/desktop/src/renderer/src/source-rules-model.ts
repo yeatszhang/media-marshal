@@ -4,6 +4,7 @@ import { DesktopClient } from "./desktop-client";
 
 export interface SourceEditor {
   id: string; version: number; draftRevision: number; type: "local" | "cloud"; name: string;
+  lifecycleRevision: number; archived: boolean;
   client: "quark" | "baidu" | "alipan" | "custom"; sourcePath: string;
   ignoreMode: "default" | "none" | "custom"; ignoredFilePatterns: string;
   accountId: string; remoteRef: string; remoteName: string; remoteType: "file" | "directory" | null; downloadRootId: string;
@@ -11,7 +12,7 @@ export interface SourceEditor {
   organize: boolean; targetPath: string; mediaType: "AUTO" | "MOVIE" | "TV_SHOW";
 }
 interface State {
-  items: SourceRule[]; accounts: CloudAccount[]; roots: ManagedDownloadRoot[]; subscriptions: CloudSubscription[];
+  items: SourceRule[]; archived: SourceRule[]; accounts: CloudAccount[]; roots: ManagedDownloadRoot[]; subscriptions: CloudSubscription[];
   legacy: SourceLegacyReference[]; legacyNotice: string | null; loading: boolean; error: string | null; notice: string | null;
   editor: SourceEditor | null; dirty: boolean; pending: string | null; busy: string[]; preview: SourceRulePreview | null;
   picker: boolean; trail: RemoteEntry[]; entries: RemoteEntry[]; cursor: string | null; total: number | null; complete: boolean; browsing: boolean; browserError: string | null;
@@ -19,21 +20,22 @@ interface State {
   executionPreview: SourceExecutionPreview | null;
 }
 const errorText = (error: unknown) => error instanceof Error ? error.message : "操作失败，请重试";
-const emptyEditor = (accountId = ""): SourceEditor => ({ id: crypto.randomUUID(), version: 0, draftRevision: 0, type: "cloud", name: "", client: "custom", sourcePath: "", ignoreMode: "default", ignoredFilePatterns: "", accountId, remoteRef: "", remoteName: "", remoteType: null, downloadRootId: "", extensions: "", names: "", periodic: false, intervalSeconds: 900, organize: false, targetPath: "", mediaType: "AUTO" });
+const emptyEditor = (accountId = ""): SourceEditor => ({ id: crypto.randomUUID(), version: 0, draftRevision: 0, lifecycleRevision: 0, archived: false, type: "cloud", name: "", client: "custom", sourcePath: "", ignoreMode: "default", ignoredFilePatterns: "", accountId, remoteRef: "", remoteName: "", remoteType: null, downloadRootId: "", extensions: "", names: "", periodic: false, intervalSeconds: 900, organize: false, targetPath: "", mediaType: "AUTO" });
 function fromSource(row: SourceRule): SourceEditor {
-  const configuration = row.draft, common = { ...emptyEditor(), id: row.id, version: row.version, draftRevision: row.draftRevision, type: row.type, name: configuration.name, organize: !!configuration.organization, targetPath: configuration.organization?.targetPath ?? "", mediaType: configuration.organization?.mediaType ?? "AUTO" };
+  const configuration = row.draft, common = { ...emptyEditor(), id: row.id, version: row.version, draftRevision: row.draftRevision, lifecycleRevision: row.lifecycleRevision ?? 0, archived: !!row.deletedAt, type: row.type, name: configuration.name, organize: !!configuration.organization, targetPath: configuration.organization?.targetPath ?? "", mediaType: configuration.organization?.mediaType ?? "AUTO" };
   return configuration.type === "local" ? { ...common, client: configuration.client, sourcePath: configuration.sourcePath, ignoreMode: configuration.ignoredFilePatterns == null ? "default" : configuration.ignoredFilePatterns.length ? "custom" : "none", ignoredFilePatterns: configuration.ignoredFilePatterns?.join("\n") ?? "" } : { ...common, accountId: configuration.accountId, remoteRef: configuration.remoteRef, remoteName: row.remoteName ?? "已保存的远端范围", downloadRootId: configuration.downloadRootId, extensions: configuration.filters.extensions.join(","), names: configuration.filters.names.join("\n"), periodic: configuration.periodic.enabled, intervalSeconds: configuration.periodic.intervalSeconds };
 }
 
 /** 编辑状态留在应用级服务中；路由切换保留草稿，订阅和 effect 只执行查询。 */
 @injectable()
 export class SourceRulesViewModel extends StatefulService<State> {
-  protected initState: State = { items: [], accounts: [], roots: [], subscriptions: [], legacy: [], legacyNotice: null, loading: false, error: null, notice: null, editor: null, dirty: false, pending: null, busy: [], preview: null, picker: false, trail: [], entries: [], cursor: null, total: null, complete: false, browsing: false, browserError: null, organizePaused: false, executionPreview: null };
+  protected initState: State = { items: [], archived: [], accounts: [], roots: [], subscriptions: [], legacy: [], legacyNotice: null, loading: false, error: null, notice: null, editor: null, dirty: false, pending: null, busy: [], preview: null, picker: false, trail: [], entries: [], cursor: null, total: null, complete: false, browsing: false, browserError: null, organizePaused: false, executionPreview: null };
   private stopped = false; private watchers = 0; private epoch = 0; private request = 0; private navigation = 0; private editorEpoch = 0;
   private timer?: ReturnType<typeof setTimeout>; private flight?: Promise<void>; private editorRow: SourceRule | null = null;
   private queryError: string | null = null;
   private saveIntent?: { signature: string; key: string }; private previewIntent?: { signature: string; key: string };
   private executionIntent?: { signature: string; key: string };
+  private lifecycleIntents = new Map<string, string>();
   private confirmations = new Map<string, string>(); private controls = new Map<string, string>();
   constructor(@inject(DesktopClient) readonly client: DesktopApi) { super(); }
   watch() {
@@ -46,14 +48,16 @@ export class SourceRulesViewModel extends StatefulService<State> {
   private async read() {
     const request = ++this.request; this.setState({ loading: true });
     try {
-      const [items, accounts, roots, subscriptions, legacy, pause] = await Promise.all([this.client.listSourceRules(), this.client.listCloudAccounts(), this.client.listDownloadRoots(), this.client.listCloudSubscriptions({ page: 1, pageSize: 100 }), this.client.listSourceLegacy({ status: "REVIEW_REQUIRED", page: 1, pageSize: 100 }), this.client.getOrganizePause()]);
+      const [allItems, accounts, roots, subscriptions, legacy, pause] = await Promise.all([this.client.listSourceRules({ includeDeleted: true }), this.client.listCloudAccounts(), this.client.listDownloadRoots(), this.client.listCloudSubscriptions({ page: 1, pageSize: 100 }), this.client.listSourceLegacy({ status: "REVIEW_REQUIRED", page: 1, pageSize: 100 }), this.client.getOrganizePause()]);
       if (this.stopped || request !== this.request) return;
+      const items = allItems.filter((row) => !row.deletedAt), archived = allItems.filter((row) => !!row.deletedAt), edited = allItems.find((row) => row.id === this.state.editor?.id);
       const newlyConnected = !this.state.accounts.length && accounts.length === 1 && accounts[0]!.status === "READY" && this.state.editor?.type === "cloud" && !this.state.editor.accountId ? { ...this.state.editor, accountId: accounts[0]!.id } : this.state.editor;
-      this.setState({ items, accounts, roots, subscriptions: subscriptions.items, legacy: legacy.items, organizePaused: pause.paused, editor: newlyConnected, error: this.queryError && this.state.error === this.queryError ? null : this.state.error }); this.queryError = null;
-      const configuredPreview = this.state.preview, configuredSource = items.find((item) => item.id === configuredPreview?.sourceId);
-      if (configuredPreview && configuredPreview.state !== "APPLIED" && configuredSource && (configuredSource.version !== configuredPreview.version || configuredSource.draftRevision !== configuredPreview.draftRevision)) this.setState({ preview: { ...configuredPreview, state: "EXPIRED" } });
-      const execution = this.state.executionPreview, executionSource = items.find((item) => item.id === execution?.sourceId);
-      if (execution && execution.state !== "APPLIED" && executionSource && (executionSource.version !== execution.sourceVersion || executionSource.paused || executionSource.reviewRequired)) this.setState({ executionPreview: { ...execution, state: "EXPIRED" } });
+      this.setState({ items, archived, accounts, roots, subscriptions: subscriptions.items, legacy: legacy.items, organizePaused: pause.paused, editor: newlyConnected && edited ? { ...newlyConnected, archived: !!edited.deletedAt } : newlyConnected, error: this.queryError && this.state.error === this.queryError ? null : this.state.error }); this.queryError = null;
+      if (edited?.deletedAt && this.state.picker) this.closePicker();
+      const configuredPreview = this.state.preview, configuredSource = allItems.find((item) => item.id === configuredPreview?.sourceId);
+      if (configuredPreview && configuredPreview.state !== "APPLIED" && configuredSource && (configuredSource.deletedAt || (configuredSource.lifecycleRevision ?? 0) !== (configuredPreview.lifecycleRevision ?? 0) || configuredSource.version !== configuredPreview.version || configuredSource.draftRevision !== configuredPreview.draftRevision)) this.setState({ preview: { ...configuredPreview, state: "EXPIRED" } });
+      const execution = this.state.executionPreview, executionSource = allItems.find((item) => item.id === execution?.sourceId);
+      if (execution && execution.state !== "APPLIED" && executionSource && (executionSource.deletedAt || (executionSource.lifecycleRevision ?? 0) !== (execution.lifecycleRevision ?? 0) || executionSource.version !== execution.sourceVersion || executionSource.paused || executionSource.reviewRequired)) this.setState({ executionPreview: { ...execution, state: "EXPIRED" } });
       const previewId = this.state.preview?.id;
       if (previewId && this.state.preview?.state === "BUILDING") { const preview = await this.client.getSourceRulePreview(previewId); if (!this.stopped && this.state.preview?.id === previewId) this.setState({ preview }); }
       const executionId = this.state.executionPreview?.id;
@@ -81,7 +85,7 @@ export class SourceRulesViewModel extends StatefulService<State> {
       if (!row) throw new Error("来源已不存在，请刷新来源列表");
       this.editorRow = row; this.saveIntent = undefined; this.previewIntent = undefined;
       this.setState({ editor: fromSource(row), preview: null, dirty: false, picker: false, error: null, notice: null });
-      if (row.draft.type === "cloud") {
+      if (!row.deletedAt && row.draft.type === "cloud") {
         try { const entry = await this.client.statRemote(row.draft.accountId, row.draft.remoteRef); if (!this.stopped && epoch === this.editorEpoch && this.state.editor?.remoteRef === entry.ref) this.setState({ editor: { ...this.state.editor, remoteName: entry.name, remoteType: entry.type } }); }
         catch { if (!this.stopped && epoch === this.editorEpoch) this.setState({ notice: "原远端范围尚不可用，请检查账号连接或重新选择范围；已保存的配置仍然保留。" }); }
       }
@@ -89,7 +93,7 @@ export class SourceRulesViewModel extends StatefulService<State> {
   }
   closeEditor() { if (this.state.pending) return; ++this.editorEpoch; ++this.navigation; this.editorRow = null; this.setState({ editor: null, preview: null, picker: false, error: null }); }
   change(patch: Partial<SourceEditor>) {
-    const editor = this.state.editor; if (!editor || this.state.pending) return;
+    const editor = this.state.editor; if (!editor || editor.archived || this.state.pending) return;
     if (patch.type && patch.type !== editor.type && editor.draftRevision) { this.setState({ error: "已保存来源的类型不能切换，请新建另一类型来源。" }); return; }
     this.previewIntent = undefined;
     this.setState({ editor: { ...editor, ...patch }, dirty: true, preview: null, error: null, notice: null });
@@ -97,6 +101,7 @@ export class SourceRulesViewModel extends StatefulService<State> {
   changeAccount(accountId: string) { ++this.navigation; this.change({ accountId, remoteRef: "", remoteName: "", remoteType: null, periodic: false }); this.setState({ picker: false }); }
   private configuration(): SourceConfiguration {
     const editor = this.state.editor; if (!editor) throw new Error("请先选择来源");
+    if (editor.archived) throw new Error("来源已删除，请先从已删除来源中恢复");
     if (!editor.name.trim()) throw new Error("请填写来源名称");
     const organization = { targetPath: editor.targetPath, mediaType: editor.mediaType, operation: "COPY", automatic: false };
     if (editor.type === "local" && (!editor.sourcePath || !editor.targetPath)) throw new Error("请选择本地输入目录和整理目标目录");
@@ -121,13 +126,13 @@ export class SourceRulesViewModel extends StatefulService<State> {
   private async saveDraft() {
     const configuration = this.configuration(), editor = this.state.editor!;
     if (this.editorRow && JSON.stringify(this.editorRow.draft) === JSON.stringify(configuration)) { this.setState({ dirty: false }); return this.editorRow; }
-    const signature = JSON.stringify([editor.id, editor.version, editor.draftRevision, configuration]);
+    const signature = JSON.stringify([editor.id, editor.version, editor.draftRevision, editor.lifecycleRevision, configuration]);
     if (this.saveIntent?.signature !== signature) this.saveIntent = { signature, key: crypto.randomUUID() };
     let row: SourceRule;
-    try { row = await this.client.configureSourceRule({ id: editor.id, expectedVersion: editor.version, expectedDraftRevision: editor.draftRevision, requestKey: this.saveIntent.key, configuration }); }
+    try { row = await this.client.configureSourceRule({ id: editor.id, expectedVersion: editor.version, expectedDraftRevision: editor.draftRevision, ...(editor.lifecycleRevision ? { expectedLifecycleRevision: editor.lifecycleRevision } : {}), requestKey: this.saveIntent.key, configuration }); }
     catch (error) {
       const saved = await this.client.getSourceRule(editor.id).catch(() => null);
-      if (!saved || saved.version !== editor.version || saved.draftRevision !== editor.draftRevision + 1 || JSON.stringify(saved.draft) !== JSON.stringify(configuration)) throw error;
+      if (!saved || saved.deletedAt || (saved.lifecycleRevision ?? 0) !== editor.lifecycleRevision || saved.version !== editor.version || saved.draftRevision !== editor.draftRevision + 1 || JSON.stringify(saved.draft) !== JSON.stringify(configuration)) throw error;
       row = saved;
     }
     this.editorRow = row;
@@ -136,9 +141,9 @@ export class SourceRulesViewModel extends StatefulService<State> {
   }
   save() { return this.mutate("save", () => this.saveDraft()); }
   preview() { return this.mutate("preview", async () => {
-    const row = await this.saveDraft(), signature = JSON.stringify([row.id, row.version, row.draftRevision]);
+    const row = await this.saveDraft(), signature = JSON.stringify([row.id, row.version, row.draftRevision, row.lifecycleRevision ?? 0]);
     if (this.previewIntent?.signature !== signature || ["EXPIRED", "FAILED"].includes(this.state.preview?.state ?? "")) this.previewIntent = { signature, key: crypto.randomUUID() };
-    const preview = await this.client.previewSourceRule({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, requestKey: this.previewIntent.key });
+    const preview = await this.client.previewSourceRule({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, ...(row.lifecycleRevision ? { expectedLifecycleRevision: row.lifecycleRevision } : {}), requestKey: this.previewIntent.key });
     if (!this.stopped) this.setState({ preview, notice: null }); return preview;
   }); }
   confirm(runOnce = false) { return this.mutate("apply", async () => {
@@ -148,7 +153,7 @@ export class SourceRulesViewModel extends StatefulService<State> {
     try { row = await this.client.applySourceRule({ previewId: preview.id, requestKey, runOnce }); }
     catch (error) {
       const [saved, checked] = await Promise.all([this.client.getSourceRule(preview.sourceId).catch(() => null), this.client.getSourceRulePreview(preview.id).catch(() => null)]);
-      if (!saved || checked?.state !== "APPLIED" || saved.version !== preview.version + 1 || JSON.stringify(saved.configuration) !== JSON.stringify(preview.configuration)) throw error;
+      if (!saved || saved.deletedAt || (saved.lifecycleRevision ?? 0) !== (preview.lifecycleRevision ?? 0) || checked?.state !== "APPLIED" || saved.version !== preview.version + 1 || JSON.stringify(saved.configuration) !== JSON.stringify(preview.configuration)) throw error;
       row = saved;
     }
     this.editorRow = row;
@@ -160,18 +165,42 @@ export class SourceRulesViewModel extends StatefulService<State> {
     if (operation === "once") { await this.previewExecution(row, false); return; }
     if (this.state.busy.includes(row.id) || this.stopped || this.state.pending) return;
     this.setState({ busy: [...this.state.busy, row.id], error: null, notice: null });
-    const signature = JSON.stringify([row.id, row.version, operation]); let key = this.controls.get(signature); if (!key) { key = crypto.randomUUID(); this.controls.set(signature, key); }
+    const signature = JSON.stringify([row.id, row.version, row.lifecycleRevision ?? 0, operation]); let key = this.controls.get(signature); if (!key) { key = crypto.randomUUID(); this.controls.set(signature, key); }
     try {
-      await this.client.controlSourceRule({ id: row.id, expectedVersion: row.version, operation, requestKey: key });
+      await this.client.controlSourceRule({ id: row.id, expectedVersion: row.version, ...(row.lifecycleRevision ? { expectedLifecycleRevision: row.lifecycleRevision } : {}), operation, requestKey: key });
       this.controls.delete(signature); await this.refresh();
       if (!this.stopped) this.setState({ notice: operation === "scan" ? "已请求立即扫描，已有扫描会合并。" : operation === "pause" ? "已暂停此来源的新工作，共享文件仍可由其他有效来源继续处理。" : "已恢复来源，全局下载与整理暂停设置保持不变。" });
     } catch (error) { if (!this.stopped) this.setState({ error: errorText(error) }); }
     finally { if (!this.stopped) this.setState({ busy: this.state.busy.filter((id) => id !== row.id) }); }
   }
+  prepareLifecycle(row: SourceRule) {
+    if (this.stopped || this.state.pending || this.state.busy.includes(row.id)) return false;
+    if (this.state.editor?.id === row.id && this.state.dirty) { this.setState({ error: "请先保存草稿或取消当前编辑，再删除或恢复此来源" }); return false; }
+    this.setState({ error: null }); return true;
+  }
+  lifecycle(row: SourceRule, operation: "remove" | "restore") { return this.mutate(operation, async () => {
+    const revision = row.lifecycleRevision ?? 0, signature = JSON.stringify([row.id, row.version, row.draftRevision, revision, operation]);
+    let key = this.lifecycleIntents.get(signature); if (!key) { key = crypto.randomUUID(); this.lifecycleIntents.set(signature, key); }
+    const input = { id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, expectedLifecycleRevision: revision, requestKey: key };
+    let saved: SourceRule;
+    try { saved = await (operation === "remove" ? this.client.removeSourceRule(input) : this.client.restoreSourceRule(input)); }
+    catch (error) {
+      const current = await this.client.getSourceRule(row.id).catch(() => null);
+      if (!current || !!current.deletedAt !== (operation === "remove") || current.lifecycleRevision !== revision + 1 || current.version !== row.version || current.draftRevision !== row.draftRevision) throw error;
+      saved = current;
+    }
+    if (!!saved.deletedAt !== (operation === "remove")) throw new Error("来源状态已变化，请刷新后重新选择操作");
+    if (!this.stopped) {
+      ++this.request;
+      if (this.state.editor?.id === row.id) { ++this.editorEpoch; ++this.navigation; this.editorRow = null; this.setState({ editor: null, preview: null, picker: false, dirty: false }); }
+      this.setState({ loading: false, items: [...this.state.items.filter((item) => item.id !== row.id), ...(!saved.deletedAt ? [saved] : [])], archived: [...this.state.archived.filter((item) => item.id !== row.id), ...(saved.deletedAt ? [saved] : [])], executionPreview: this.state.executionPreview?.sourceId === row.id ? null : this.state.executionPreview, notice: operation === "remove" ? "来源已移入已删除来源，文件、历史和原计划保留。" : "来源已恢复，当前保持暂停；核对原目录后可手动恢复工作。" });
+    }
+    await this.flight?.catch(() => {}); await this.refresh(); return saved;
+  }); }
   previewExecution(row: SourceRule, forceRedownload: boolean) { return this.mutate("execution-preview", async () => {
-    const signature = JSON.stringify([row.id, row.version, forceRedownload]);
+    const signature = JSON.stringify([row.id, row.version, row.lifecycleRevision ?? 0, forceRedownload]);
     if (this.executionIntent?.signature !== signature || ["EXPIRED", "FAILED", "APPLIED"].includes(this.state.executionPreview?.state ?? "")) this.executionIntent = { signature, key: crypto.randomUUID() };
-    const executionPreview = await this.client.previewSourceExecution({ id: row.id, expectedVersion: row.version, requestKey: this.executionIntent.key, forceRedownload });
+    const executionPreview = await this.client.previewSourceExecution({ id: row.id, expectedVersion: row.version, ...(row.lifecycleRevision ? { expectedLifecycleRevision: row.lifecycleRevision } : {}), requestKey: this.executionIntent.key, forceRedownload });
     if (!this.stopped) this.setState({ executionPreview }); return executionPreview;
   }); }
   retryExecutionPreview() { const preview = this.state.executionPreview, row = this.state.items.find((item) => item.id === preview?.sourceId); if (row && preview) { this.executionIntent = undefined; return this.previewExecution(row, preview.forceRedownload); } }
@@ -215,5 +244,5 @@ export class SourceRulesViewModel extends StatefulService<State> {
       if (reference?.sourceId) await this.openSource(reference.sourceId);
     } catch (error) { this.setState({ legacyNotice: "旧入口暂时无法定位，请在来源列表核对配置。", error: errorText(error) }); }
   }
-  protected dispose() { this.stopped = true; ++this.epoch; ++this.request; ++this.navigation; ++this.editorEpoch; clearTimeout(this.timer); this.confirmations.clear(); this.controls.clear(); }
+  protected dispose() { this.stopped = true; ++this.epoch; ++this.request; ++this.navigation; ++this.editorEpoch; clearTimeout(this.timer); this.confirmations.clear(); this.controls.clear(); this.lifecycleIntents.clear(); }
 }

@@ -78,6 +78,20 @@
 .source-rule-fields textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .source-rule-fields .notice { flex-wrap: wrap; line-height: 1.6; }
 .source-rule-card { min-width: 0; padding: 20px; }
+.source-archive { margin-top: 24px; }
+.source-archive > summary { cursor: pointer; font-weight: 600; }
+.source-archive .source-rule-card { border-top: 1px solid var(--border); }
+.source-lifecycle-dialog { margin: auto; width: min(580px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid var(--border); border-radius: 12px; padding: 24px; background: var(--background, white); color: var(--foreground); }
+.source-lifecycle-dialog::backdrop { background: rgb(20 30 45 / 45%); }
+.source-lifecycle-dialog h2 { margin: 0 0 16px; }
+.source-lifecycle-dialog p { line-height: 1.7; }
+.source-lifecycle-dialog dl { max-height: 32vh; overflow: auto; background: #f6f8fa; border-radius: 8px; padding: 14px; }
+.source-lifecycle-dialog dl > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); gap: 12px; margin: 8px 0; }
+.source-lifecycle-dialog dt { color: var(--muted-foreground); }
+.source-lifecycle-dialog dd { margin: 0; overflow-wrap: anywhere; }
+.source-lifecycle-dialog .form-actions { flex-wrap: wrap; }
+.source-lifecycle-dialog .source-remove-button { background: #a73535; color: white; }
+.source-lifecycle-dialog .source-remove-button:hover { background: #8d2929; }
 .source-rule-card h3 { overflow-wrap: anywhere; min-width: 0; }
 .source-rule-card .cloud-browser-toolbar { align-items: flex-start; }
 .source-rule-card .cloud-root-path { overflow-wrap: anywhere; white-space: pre-wrap; }

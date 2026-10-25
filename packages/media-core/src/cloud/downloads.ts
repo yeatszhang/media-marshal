@@ -127,14 +127,16 @@ export class CloudDownloads {
   private retainedDemand(itemId: string) { return !!this.database.connection.prepare("SELECT 1 FROM download_job_item d JOIN download_job j ON j.id=d.job_id WHERE d.item_id=? AND d.demand_state='ACTIVE' AND j.state NOT IN ('CANCELLED','CANCELLING') LIMIT 1").get(itemId); }
   private sourceSnapshot(previewId: string, owner?: DownloadOwner) {
     const db = this.database.connection;
-    if (owner && "sourceId" in owner) return { source_id: owner.sourceId, source_version: owner.sourceVersion };
-    if (owner) return db.prepare("SELECT id AS source_id,version AS source_version FROM source_rule WHERE subscription_id=?").get(owner.subscriptionId) as { source_id: string; source_version: number } | undefined;
+    if (owner && "sourceId" in owner) { const row = db.prepare("SELECT lifecycle_revision FROM source_rule WHERE id=?").get(owner.sourceId) as { lifecycle_revision: number } | undefined; return { source_id: owner.sourceId, source_version: owner.sourceVersion, source_lifecycle: row?.lifecycle_revision ?? 0 }; }
+    if (owner) return db.prepare("SELECT id AS source_id,version AS source_version,lifecycle_revision AS source_lifecycle FROM source_rule WHERE subscription_id=?").get(owner.subscriptionId) as { source_id: string; source_version: number; source_lifecycle: number } | undefined;
     const preview = db.prepare("SELECT source_id,version+1 AS source_version,state FROM source_rule_preview WHERE download_preview_id=?").get(previewId) as { source_id: string; source_version: number; state: string } | undefined;
     if (preview && preview.state !== "APPLIED") throw new CloudError("CONFLICT");
-    return preview;
+    if (!preview) return undefined;
+    const row = db.prepare("SELECT lifecycle_revision FROM source_rule WHERE id=?").get(preview.source_id) as { lifecycle_revision: number };
+    return { ...preview, source_lifecycle: row.lifecycle_revision };
   }
-  private assertSourceSnapshot(snapshot: { source_id: string; source_version: number } | undefined) {
-    if (snapshot && !this.database.connection.prepare("SELECT 1 FROM source_rule WHERE id=? AND version=? AND paused=0 AND review_required=0").get(snapshot.source_id, snapshot.source_version)) throw new CloudError("CONFLICT");
+  private assertSourceSnapshot(snapshot: { source_id: string; source_version: number; source_lifecycle: number } | undefined) {
+    if (snapshot && !this.database.connection.prepare("SELECT 1 FROM source_rule WHERE id=? AND version=? AND lifecycle_revision=? AND deleted_at IS NULL AND paused=0 AND review_required=0").get(snapshot.source_id, snapshot.source_version, snapshot.source_lifecycle)) throw new CloudError("CONFLICT");
   }
   async confirm(input: CloudInput<"cloud.downloads.confirm">, owner?: DownloadOwner) {
     if (this.closed) throw new CloudError("INTERRUPTED");

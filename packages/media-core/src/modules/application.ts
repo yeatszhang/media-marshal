@@ -47,7 +47,9 @@ declare module "@yeatz/app-framework/command" {
     "media.ingestion.set-paused": (input: CoreInput<"ingestion.set-paused">) => CoreOutput<"ingestion.set-paused">;
     "media.source-rules.legacy": (input: CoreInput<"source-rules.legacy">) => CoreOutput<"source-rules.legacy">;
     "media.source-rules.configure": (input: CoreInput<"source-rules.configure">) => CoreOutput<"source-rules.configure">;
-    "media.source-rules.list": () => CoreOutput<"source-rules.list">;
+    "media.source-rules.list": (input: CoreInput<"source-rules.list">) => CoreOutput<"source-rules.list">;
+    "media.source-rules.remove": (input: CoreInput<"source-rules.remove">) => CoreOutput<"source-rules.remove">;
+    "media.source-rules.restore": (input: CoreInput<"source-rules.restore">) => CoreOutput<"source-rules.restore">;
     "media.source-rules.get": (input: CoreInput<"source-rules.get">) => CoreOutput<"source-rules.get">;
     "media.source-rules.preview": (input: CoreInput<"source-rules.preview">) => CoreOutput<"source-rules.preview">;
     "media.source-rules.get-preview": (input: CoreInput<"source-rules.get-preview">) => CoreOutput<"source-rules.get-preview">;
@@ -179,7 +181,9 @@ export function createMediaApplication(
       add(registry.register("media.ingestion.set-paused", (_, input) => ingestion.setPaused(input)));
       add(registry.register("media.source-rules.legacy", (_, input) => sourceRules.legacy(input)));
       add(registry.register("media.source-rules.configure", (_, input) => sourceRules.configure(input)));
-      add(registry.register("media.source-rules.list", () => sourceRules.list()));
+      add(registry.register("media.source-rules.list", (_, input) => sourceRules.list(input.includeDeleted)));
+      add(registry.register("media.source-rules.remove", (_, input) => sourceRules.lifecycle(input, "remove")));
+      add(registry.register("media.source-rules.restore", (_, input) => sourceRules.lifecycle(input, "restore")));
       add(registry.register("media.source-rules.get", (_, input) => sourceRules.get(input.id)));
       add(registry.register("media.source-rules.preview", (_, input) => sourceRules.preview(input)));
       add(registry.register("media.source-rules.get-preview", (_, input) => sourceRules.getPreview(input.id)));

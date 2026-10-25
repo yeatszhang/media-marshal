@@ -25,7 +25,7 @@ type Authorization = PrivateCoreInput<"media.sources.authorize">;
 interface SourceRow { source_id: string; mode: "local" | "managed"; download_root_id: string | null; source_grant_json: string; target_root_id: string; source_version: number; available: number; paused: number; version: number; source_path: string; target_path: string; media_type: "AUTO" | "MOVIE" | "TV_SHOW"; policy_key?: string }
 interface CandidateRow { id: string; source_id: string; relative_json: string; version_key: string; attribute_key: string; is_current: number; snapshot_json: string; expected_sha256: string | null; managed_item_id: string | null; managed_version_key: string | null; state: CoreOutput<"ingestion.candidates">["items"][number]["state"]; task_id: string | null; reason: string | null; created_at: string; updated_at: string }
 interface Accessory { sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null }
-interface Plan { taskId: string; candidateId: string; sourceId: string; sourceVersion: number; connectionVersion: number; source: ManagedRootGrant; target: ManagedRootGrant; sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null; parsed: ParsedMedia; metadata: MetadataWork; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null }; episodeTitle: string | null; accessories?: Accessory[] }
+interface Plan { taskId: string; candidateId: string; sourceId: string; sourceVersion: number; sourceLifecycles?: { id: string; revision: number }[]; connectionVersion: number; source: ManagedRootGrant; target: ManagedRootGrant; sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null; parsed: ParsedMedia; metadata: MetadataWork; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null }; episodeTitle: string | null; accessories?: Accessory[] }
 interface PreviewRow { id: string; request_key: string; task_id: string; input_hash: string; plan_json: string; expires_at: number; operation_id: string | null }
 interface OperationRow { id: string; task_id: string; candidate_id: string; target_root_id: string; plan_json: string; attempt_id: string; phase: string; evidence_json: string | null }
 interface Observation { since: number; last: number; wall: number; version: string }
@@ -151,7 +151,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("INSERT INTO app_setting VALUES(?,?)").run(key, String(input.paused));
       if (!input.paused) db.prepare("UPDATE ingestion_outbox SET delivery_attempts=0,next_attempt_at=NULL WHERE state='PENDING'").run();
     })();
-    if (input.paused) { this.controller?.abort(); this.contentReviews.interrupt(); } this.resetObservations(); return this.pauseStatus();
+    if (input.paused) { this.controller?.abort(); this.contentReviews.interrupt(); } this.resetObservations(); for (const id of this.sources.keys()) this.syncSourceWatcher(id); return this.pauseStatus();
   }
   resetObservations() {
     this.observations.clear();
@@ -171,6 +171,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     for (const row of this.database.connection.prepare("SELECT id FROM ingestion_candidate WHERE source_id=?").all(id) as { id: string }[]) this.observations.delete(row.id);
     for (const key of this.accessoryObservations.keys()) if (key.startsWith(id + ":")) this.accessoryObservations.delete(key);
     this.database.connection.prepare("UPDATE ingestion_candidate SET state='OBSERVING',reason='来源配置或暂停状态已变化，请重新观察' WHERE source_id=? AND state='READY'").run(id);
+    this.syncSourceWatcher(id);
   }
   sourceRuleChanged(id: string) {
     const rows = this.database.connection.prepare("SELECT * FROM ingestion_candidate WHERE source_id=?").all(id) as CandidateRow[];
@@ -183,6 +184,35 @@ export class IngestionPipeline implements ManagedIngestionSink {
       if (associated.test(relative.at(-1)!)) this.accessoryObservations.delete(`${id}:${this.candidatePolicy(row)?.policy_key ?? "local"}:${row.relative_json}`);
       this.database.connection.prepare("UPDATE ingestion_candidate SET state=CASE WHEN state='READY' THEN 'OBSERVING' ELSE state END,reason='所属来源暂停或配置变化，请核对整理需求' WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(row.id);
     }
+    this.syncSourceWatcher(id);
+  }
+  /** 只检查当前写入者；停止在暂存阶段的持久计划保留，恢复后仍沿原计划处理。 */
+  assertRuleRemovalSafe(ruleId: string, sourceId: string) {
+    const db = this.database.connection;
+    const legacy = db.prepare("SELECT o.id FROM ingestion_operation o JOIN ingestion_candidate c ON c.id=o.candidate_id WHERE c.source_id=? AND c.managed_item_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM ingestion_candidate_policy p WHERE p.candidate_id=c.id) AND (o.phase NOT IN ('RECORDED','NEEDS_ATTENTION') OR EXISTS(SELECT 1 FROM ingestion_accessory a WHERE a.operation_id=o.id AND a.phase NOT IN ('RECORDED','NEEDS_ATTENTION'))) LIMIT 1").get(sourceId) as { id: string } | undefined;
+    if (legacy) throw conflict(`共享目录中的历史整理计划 ${legacy.id} 归属尚未确定，请先处理原任务再删除来源`);
+    for (const work of this.activeWork.values()) {
+      if (work.sourceId !== sourceId) continue;
+      const candidate = this.candidate(work.candidateId);
+      if (candidate.managed_item_id && candidate.managed_version_key) {
+        const owner = db.prepare("SELECT 1 FROM download_job_item ji JOIN download_source_demand d ON d.job_id=ji.job_id WHERE ji.item_id=? AND d.source_id=? LIMIT 1").get(candidate.managed_item_id, ruleId);
+        if (!owner) continue;
+        const policy = this.candidatePolicy(candidate), remaining = resolveManagedOrganization(this.database, candidate.managed_item_id, candidate.managed_version_key, ruleId);
+        if (policy && remaining.state === "ENABLED" && remaining.policy.key === policy.policy_key) continue;
+      }
+      throw conflict(`来源还有活动整理任务 ${candidate.task_id ?? candidate.id}，请先暂停并等待当前文件到达安全点后删除`);
+    }
+  }
+  assertRuleRestoreSafe(sourceId: string) {
+    const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(sourceId) as SourceRow | undefined;
+    if (!row || row.mode !== "local") return;
+    const target = this.database.connection.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(row.target_root_id) as { grant_json: string };
+    this.checkConfiguration({ sourceId, sourceVersion: row.source_version, mode: "local", downloadRootId: null, source: JSON.parse(row.source_grant_json), target: JSON.parse(target.grant_json) });
+  }
+  syncSourceWatcher(id: string) {
+    const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(id) as SourceRow | undefined, source = this.sources.get(id);
+    if (!this.closed && row?.available && !row.paused && source && !this.pauseStatus().paused) { if (!this.watches.has(id)) this.watchSource(id, source.grant.path); return; }
+    const owned = this.watches.get(id); if (owned) { clearTimeout(owned.timer); owned.watcher.close(); this.watches.delete(id); }
   }
   bootstrap(): PrivateCoreOutput<"media.sources.bootstrap"> {
     return (this.database.connection.prepare("SELECT i.*,t.grant_json FROM ingestion_source i JOIN media_target_root t ON t.id=i.target_root_id ORDER BY i.source_id LIMIT 1000").all() as (SourceRow & { grant_json: string })[])
@@ -223,14 +253,14 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (previous && (JSON.parse(previous.grant_json).path !== input.target.path || !sameVolumeRoot(JSON.parse(previous.grant_json).volume, input.target.volume))) throw new DesktopError("LOCAL_UNAVAILABLE", "目标原卷身份不一致", true);
     const overlaps = () => {
       const roots = db.prepare("SELECT canonical_path FROM managed_download_root").all() as { canonical_path: string }[];
-      const sources = db.prepare("SELECT source_path FROM desktop_source").all() as { source_path: string }[];
+      const sources = db.prepare("SELECT source_path FROM desktop_source d WHERE NOT EXISTS(SELECT 1 FROM source_rule s WHERE s.local_source_id=d.id AND s.deleted_at IS NOT NULL)").all() as { source_path: string }[];
       if ([...roots.map((row) => row.canonical_path), ...sources.map((row) => row.source_path)].some((path) => pathsOverlap(path, input.target.path, input.target.volume)) || targets.some((row) => row.id !== input.target.id && pathsOverlap(JSON.parse(row.grant_json).path, input.target.path, input.target.volume))) throw new DesktopError("UNSAFE_PATH", "媒体目标与其他来源或目标重叠");
     }; overlaps(); await this.targets.install(input.target); overlaps();
     db.transaction(() => { db.prepare("INSERT INTO media_target_root VALUES(?,?,1) ON CONFLICT(id) DO UPDATE SET grant_json=excluded.grant_json,available=1").run(input.target.id, JSON.stringify(input.target)); db.prepare("INSERT INTO media_library_route VALUES(?,?) ON CONFLICT(media_type) DO UPDATE SET target_root_id=excluded.target_root_id").run(input.mediaType, input.target.id); })();
     return {};
   }); }
   libraries(): CoreOutput<"media.libraries"> {
-    const rows = this.database.connection.prepare("SELECT t.id,t.grant_json,t.available,r.media_type FROM media_library_route r JOIN media_target_root t ON t.id=r.target_root_id UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(v.configuration_json,'$.organization.mediaType') AS media_type FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version JOIN media_target_root t ON t.id=v.target_root_id WHERE json_extract(v.configuration_json,'$.organization') IS NOT NULL UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM emby_delivery d JOIN ingestion_operation o ON o.id=d.operation_id JOIN media_target_root t ON t.id=o.target_root_id WHERE d.state!='COLLECTED' LIMIT 2000").all() as { id: string; grant_json: string; available: number; media_type: "AUTO" | "MOVIE" | "TV_SHOW" }[];
+    const rows = this.database.connection.prepare("SELECT t.id,t.grant_json,t.available,r.media_type FROM media_library_route r JOIN media_target_root t ON t.id=r.target_root_id UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(v.configuration_json,'$.organization.mediaType') AS media_type FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version JOIN media_target_root t ON t.id=v.target_root_id WHERE s.deleted_at IS NULL AND json_extract(v.configuration_json,'$.organization') IS NOT NULL UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM emby_delivery d JOIN ingestion_operation o ON o.id=d.operation_id JOIN media_target_root t ON t.id=o.target_root_id WHERE d.state!='COLLECTED' LIMIT 2000").all() as { id: string; grant_json: string; available: number; media_type: "AUTO" | "MOVIE" | "TV_SHOW" }[];
     const targets = new Map<string, CoreOutput<"media.libraries">[number]>();
     for (const row of rows) { const previous = targets.get(row.id); targets.set(row.id, { targetId: row.id, mediaType: previous && previous.mediaType !== row.media_type ? "AUTO" : row.media_type, path: managedRootGrantSchema.parse(JSON.parse(row.grant_json)).path, available: !!row.available }); }
     return [...targets.values()];
@@ -247,7 +277,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const sourcePath = input.mode === "managed" ? join(input.source.path, "completed") : input.source.path;
     if (!source || source.version !== input.sourceVersion || source.source_path !== sourcePath || source.target_path !== input.target.path) throw conflict();
     if (pathsOverlap(input.source.path, input.target.path, input.target.volume)) throw new DesktopError("UNSAFE_PATH", "来源和目标不能相互包含");
-    const others = db.prepare("SELECT id,name,source_path,target_path FROM desktop_source WHERE id!=?").all(input.sourceId) as { id: string; name: string; source_path: string; target_path: string }[];
+    const others = db.prepare("SELECT id,name,source_path,target_path FROM desktop_source d WHERE id!=? AND NOT EXISTS(SELECT 1 FROM source_rule r WHERE r.local_source_id=d.id AND r.deleted_at IS NOT NULL)").all(input.sourceId) as { id: string; name: string; source_path: string; target_path: string }[];
     const overlap = others.find((row) => pathsOverlap(row.source_path, input.source.path, input.target.volume) || pathsOverlap(row.source_path, input.target.path, input.target.volume) || pathsOverlap(row.target_path, input.source.path, input.target.volume) || (row.target_path !== input.target.path && pathsOverlap(row.target_path, input.target.path, input.target.volume)));
     if (overlap) {
       const sourceOverlap = pathsOverlap(overlap.source_path, input.source.path, input.target.volume) || pathsOverlap(overlap.source_path, input.target.path, input.target.volume);
@@ -265,6 +295,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const existing = db.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(input.target.id) as { grant_json: string } | undefined;
     if (existing && (JSON.parse(existing.grant_json).path !== input.target.path || !sameVolumeRoot(JSON.parse(existing.grant_json).volume, input.target.volume))) throw new DesktopError("LOCAL_UNAVAILABLE", "目标原卷身份不一致", true);
     const storedTargets = db.prepare("SELECT id,grant_json FROM media_target_root WHERE id!=?").all(input.target.id) as { id: string; grant_json: string }[];
+    const sourceOverlap = storedTargets.find((row) => pathsOverlap(JSON.parse(row.grant_json).path, input.source.path, input.source.volume));
+    if (sourceOverlap) throw new DesktopError("UNSAFE_PATH", `来源与历史媒体目标重叠，请选择独立输入目录（关联目标：${sourceOverlap.id}）`, false, undefined, { reason: "TARGET_OVERLAP", conflict: { kind: "media-target", id: sourceOverlap.id } });
     const targetOverlap = storedTargets.find((row) => pathsOverlap(JSON.parse(row.grant_json).path, input.target.path, input.target.volume));
     if (targetOverlap) throw new DesktopError("CONFLICT", `目标与历史操作保留的目录重叠，请使用原有目标授权或独立目录（关联目标：${targetOverlap.id}）`, false, undefined, { reason: "TARGET_OVERLAP", conflict: { kind: "media-target", id: targetOverlap.id } });
   }
@@ -356,7 +388,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (this.pauseStatus().paused) throw conflict("全部整理已暂停，请先恢复整理");
     const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(id) as SourceRow | undefined;
     if (!row || !row.available || row.source_version !== row.version || !this.sources.has(id)) throw new DesktopError("LOCAL_UNAVAILABLE", "来源需重新授权或原卷尚未就绪", true);
-    if (row.paused) throw conflict("来源已暂停"); return row;
+    if (row.paused || this.database.connection.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? AND deleted_at IS NOT NULL").get(id)) throw conflict("来源已暂停或已删除"); return row;
   }
   private checkContentReview(id: string, version: number) {
     if (this.closed) throw new DesktopError("INTERRUPTED", "内容复核正在停止", true);
@@ -448,7 +480,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   }
   private watchSource(id: string, path: string) {
     const previous = this.watches.get(id); if (previous) { clearTimeout(previous.timer); previous.watcher.close(); this.watches.delete(id); }
-    if (this.closed) return;
+    if (this.closed || this.pauseStatus().paused || (this.database.connection.prepare("SELECT paused FROM desktop_source WHERE id=?").get(id) as { paused: number } | undefined)?.paused) return;
     try {
       const watcher = this.watchFiles(path, { recursive: true }, (_event, filename) => {
         if (this.closed || filename?.split(/[/\\]/).some((part) => part.normalize("NFC").toLowerCase() === ".media-marshal")) return;
@@ -668,13 +700,25 @@ export class IngestionPipeline implements ManagedIngestionSink {
     return result;
   }
   private previewDto(row: PreviewRow): CoreOutput<"ingestion.preview"> { const plan = JSON.parse(row.plan_json) as Plan; return { id: row.id, taskId: row.task_id, title: plan.metadata.title, mediaType: plan.metadata.mediaType, targetPath: join(plan.target.path, ...plan.targetSegments), sourcePath: join(plan.source.path, ...plan.sourceSegments), size: plan.snapshot.size, season: plan.selection.season, episode: plan.selection.episode, episodeEnd: plan.selection.episodeEnd, expiresAt: row.expires_at, operationId: row.operation_id, accessories: plan.accessories?.map((asset) => ({ sourcePath: join(plan.source.path, ...asset.sourceSegments), targetPath: join(plan.target.path, ...asset.targetSegments), size: asset.snapshot.size })) ?? [] }; }
+  private previewScope(candidate: CandidateRow) {
+    const db = this.database.connection;
+    const sql = candidate.managed_item_id
+      ? "SELECT DISTINCT s.id,s.lifecycle_revision AS revision FROM source_rule s JOIN download_source_demand d ON d.source_id=s.id AND d.source_version=s.version JOIN download_job j ON j.id=d.job_id JOIN download_job_item ji ON ji.job_id=j.id JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE ji.item_id=? AND d.review_required=0 AND ji.demand_state='ACTIVE' AND j.state NOT IN ('CANCELLED','CANCELLING') AND s.deleted_at IS NULL AND s.paused=0 AND s.review_required=0 AND json_extract(v.configuration_json,'$.organization') IS NOT NULL"
+      : "SELECT id,lifecycle_revision AS revision FROM source_rule WHERE local_source_id=? AND deleted_at IS NULL AND paused=0";
+    return db.prepare(sql).all(candidate.managed_item_id ?? candidate.source_id) as { id: string; revision: number }[];
+  }
+  private assertPreviewScope(candidate: CandidateRow, original?: Plan["sourceLifecycles"]) {
+    const current = this.previewScope(candidate);
+    // 同策略的其他原始需求仍有效时允许共享确认；全部原需求已删除／恢复则旧预览失效。
+    if (original?.length ? !original.some((prior) => current.some((row) => row.id === prior.id && row.revision === prior.revision)) : current.some((row) => row.revision > 0)) throw conflict("来源已经删除或恢复，请重新预览整理范围");
+  }
   async preview(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">> {
     const db = this.database.connection, digest = fingerprint(input), existing = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (existing) { if (existing.input_hash !== digest) throw conflict("预览请求键已用于不同内容"); return this.previewDto(existing); }
     const row = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id WHERE t.id=? AND t.status='AWAITING_CONFIRMATION'").get(input.taskId) as CandidateRow | undefined;
     if (!row || !await this.observe(row)) throw conflict("任务或文件尚未就绪");
     this.assertCandidateCurrent(row);
-    const source = this.candidateSource(row), target = this.targetFor(source, input.selection.mediaType), connectionVersion = this.connections.version;
+    const source = this.candidateSource(row), sourceLifecycles = this.previewScope(row), target = this.targetFor(source, input.selection.mediaType), connectionVersion = this.connections.version;
     const parsedRow = db.prepare("SELECT parsed_json FROM media_task WHERE id=?").get(input.taskId) as { parsed_json: string | null };
     if (!parsedRow.parsed_json) throw conflict("请先完成名称识别");
     const parsed = JSON.parse(parsedRow.parsed_json) as ParsedMedia, selection = { ...input.selection, season: input.selection.season ?? null, episode: input.selection.episode ?? null, episodeEnd: input.selection.episodeEnd ?? null };
@@ -691,7 +735,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (connectionVersion !== this.connections.version || this.candidateSource(row).version !== source.version || !await this.observe(row)) throw conflict();
     this.assertCandidateCurrent(row);
     this.assertCoordinates(selection, row.id);
-    const plan: Plan = { taskId: input.taskId, candidateId: row.id, sourceId: row.source_id, sourceVersion: source.version, connectionVersion, source: JSON.parse(source.source_grant_json), target: target.grant, sourceSegments: JSON.parse(row.relative_json), targetSegments: segments, snapshot: JSON.parse(row.snapshot_json), expectedSha256: row.expected_sha256, parsed, metadata, selection, episodeTitle, accessories };
+    this.assertPreviewScope(row, sourceLifecycles);
+    const plan: Plan = { taskId: input.taskId, candidateId: row.id, sourceId: row.source_id, sourceVersion: source.version, sourceLifecycles, connectionVersion, source: JSON.parse(source.source_grant_json), target: target.grant, sourceSegments: JSON.parse(row.relative_json), targetSegments: segments, snapshot: JSON.parse(row.snapshot_json), expectedSha256: row.expected_sha256, parsed, metadata, selection, episodeTitle, accessories };
     const result: PreviewRow = { id: randomUUID(), request_key: input.requestKey, task_id: input.taskId, input_hash: digest, plan_json: JSON.stringify(plan), expires_at: this.now() + 10 * 60 * 1000, operation_id: null };
     const concurrent = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (concurrent) { if (concurrent.input_hash !== digest) throw conflict(); return this.previewDto(concurrent); }
@@ -709,6 +754,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (previous) { if (receipt?.operation_id !== previous.id) throw conflict("确认请求键已用于其他预览"); return { operationId: previous.id }; }
     if (!receipt) throw conflict("预览不存在"); if (receipt.operation_id) return { operationId: receipt.operation_id };
     const plan = JSON.parse(receipt.plan_json) as Plan, candidate = this.candidate(plan.candidateId), source = this.candidateSource(candidate);
+    this.assertPreviewScope(candidate, plan.sourceLifecycles);
     this.assertCandidateCurrent(candidate);
     if (plan.expectedSha256 !== candidate.expected_sha256) throw conflict("内容复核证据已更新，请重新预览后确认");
     if (receipt.expires_at <= this.now() || source.version !== plan.sourceVersion || this.targetFor(source, plan.selection.mediaType).grant.id !== plan.target.id || this.connections.version !== plan.connectionVersion || candidate.task_id !== receipt.task_id || !["QUEUED", "READY"].includes(candidate.state) || !await this.observe(candidate)) throw conflict("预览已过期或文件变化，请重新预览");
@@ -718,6 +764,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (concurrent) { const updated = db.prepare("SELECT operation_id FROM ingestion_preview WHERE id=?").get(receipt.id) as { operation_id: string | null }; if (updated.operation_id === concurrent.id) return { operationId: concurrent.id }; throw conflict(); }
     db.transaction(() => {
       if (this.candidateSource(candidate).version !== plan.sourceVersion || this.connections.version !== plan.connectionVersion) throw conflict();
+      this.assertPreviewScope(candidate, plan.sourceLifecycles);
       this.assertCandidateCurrent(candidate);
       if (plan.expectedSha256 !== this.candidate(candidate.id).expected_sha256) throw conflict("内容复核证据已更新，请重新预览后确认");
       if (db.prepare("SELECT 1 FROM ingestion_operation WHERE candidate_id=?").get(candidate.id)) throw conflict("此文件已有整理计划");

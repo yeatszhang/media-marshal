@@ -110,6 +110,25 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     const p = await f.preview(draft), source = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() }, target ? { source: f.grant, target } : undefined);
     return { p, source, job: await f.downloads.confirm({ previewId: p.download!.id, requestKey: randomUUID() }) };
   }
+  it("删除废弃未提交执行和旧预览，恢复保持暂停且不会重放原意图", async () => {
+    const f = await setup(), p = await f.preview(f.configure()), source = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() }, undefined);
+    const execution = await f.rules.executions.start({ id: source.id, expectedVersion: 1, requestKey: randomUUID() });
+    const run = f.rules.runs.enqueue({ id: source.id, expectedVersion: 1, requestKey: randomUUID() }), remove = { id: source.id, expectedVersion: 1, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() };
+    f.rules.lifecycle(remove, "remove"); expect(f.rules.runs.list({ sourceId: source.id }).items[0]).toMatchObject({ id: run.id, state: "ABANDONED" }); expect(f.rules.executions.get(execution.id)?.state).toBe("EXPIRED");
+    f.rules.lifecycle({ ...remove, expectedLifecycleRevision: 1, requestKey: randomUUID() }, "restore"); expect(f.rules.get(source.id)).toMatchObject({ paused: true, lifecycleRevision: 2 });
+    f.rules.control({ id: source.id, expectedVersion: 1, expectedLifecycleRevision: 2, operation: "resume", requestKey: randomUUID() });
+    await expect(f.downloads.confirm({ previewId: p.download!.id, requestKey: randomUUID() })).rejects.toMatchObject({ code: "CONFLICT" });
+    await f.rules.runs.tick(); expect(f.downloads.list({}).total).toBe(0); expect(f.fileEngine.starts).toBe(0);
+  });
+  it("预算等待期间删除并恢复来源，旧确认仍被生命周期栅栏拒绝", async () => {
+    const f = await setup(), p = await f.preview(f.configure()), source = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() });
+    let entered!: () => void, release!: () => void; const ready = new Promise<void>((resolve) => { entered = resolve; }), gate = new Promise<void>((resolve) => { release = resolve; }); cleanup.push(() => release());
+    const budget = f.roots.budget.bind(f.roots), spy = vi.spyOn(f.roots, "budget").mockImplementationOnce(async (...args) => { const result = await budget(...args); entered(); await gate; return result; });
+    const confirmation = f.downloads.confirm({ previewId: p.download!.id, requestKey: randomUUID() }); const rejected = expect(confirmation).rejects.toMatchObject({ code: "CONFLICT" }); await ready;
+    const command = { id: source.id, expectedVersion: 1, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() };
+    f.rules.lifecycle(command, "remove"); f.rules.lifecycle({ ...command, expectedLifecycleRevision: 1, requestKey: randomUUID() }, "restore"); f.rules.control({ id: source.id, expectedVersion: 1, expectedLifecycleRevision: 2, operation: "resume", requestKey: randomUUID() }); release(); await rejected; spy.mockRestore();
+    expect(f.downloads.list({}).total).toBe(0); expect(f.fileEngine.starts).toBe(0);
+  });
   it("只保存和预览不创建下载，确认配置后的一次下载保存来源快照且不启用周期扫描", async () => {
     const f = await setup(), draft = f.configure(), p = await f.preview(draft);
     await expect(f.downloads.confirm({ previewId: p.download!.id, requestKey: randomUUID() })).rejects.toMatchObject({ code: "CONFLICT" });
@@ -360,10 +379,11 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     await restored.authorizeManagedSource({ sourceId: bootstrap.sourceId, sourceVersion: bootstrap.sourceVersion, source: bootstrap.source });
     expect(restored.libraries()).toEqual(expect.arrayContaining([{ targetId: gy.id, path: y, available: true, mediaType: "MOVIE" }, { targetId: gx.id, path: x, available: false, mediaType: "MOVIE" }]));
   });
-  it.each(["其他策略", "本策略", "相同目标的其他来源"])("共享根字幕复制中暂停%s，只取消对应工作并重新计算恢复观察", async (scope) => {
+  it.each(["其他策略", "本策略", "相同目标的其他来源", "删除其他策略", "删除共享需求"])("共享根字幕复制中控制%s，只影响所属需求并重新计算恢复观察", async (scope) => {
     const subtitle = Buffer.from("乙字幕".repeat(10)), f = await setup(new Map([["目录/甲.mkv", Buffer.from("甲视频")], ["目录/甲.zh.srt", Buffer.from("甲字幕")], ["目录/乙.mp4", Buffer.from("乙视频")], ["目录/乙.zh.ass", subtitle]]));
     const x = join(f.path, "媒体甲"), y = join(f.path, "媒体乙"); await mkdir(x); await mkdir(y); const gx = await probeManagedVolume(x), gy = scope === "相同目标的其他来源" ? gx : await probeManagedVolume(y);
     const first = await organized(f, "策略甲", f.account.rootRef!, gx, ["mkv", "srt"]), second = await organized(f, "策略乙", f.account.rootRef!, gy, ["mp4", "ass"]);
+    if (scope === "删除共享需求") await organized(f, "共享乙策略", f.account.rootRef!, gy, ["mp4", "ass"]);
     f.downloads.start(); await expect.poll(() => [first, second].map((row) => f.state(row.job.jobId).state), { timeout: 10000 }).toEqual(["COMPLETED", "COMPLETED"]);
     // 先等待下载执行收尾，稳定观察从已静止的文件开始，避免依赖后台调度速度。
     await f.downloads.close();
@@ -381,8 +401,9 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     const preview = await pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" } }); expect(preview.accessories).toHaveLength(1);
     let release!: () => void, entered!: () => void, held = false, active!: AbortSignal; const gate = new Promise<void>((done) => { release = done; }), ready = new Promise<void>((done) => { entered = done; }), digest = SourceRoot.prototype.digest; cleanup.push(() => release());
     const spy = vi.spyOn(SourceRoot.prototype, "digest").mockImplementation(function (this: SourceRoot, handle, size, signal, consume) { return digest.call(this, handle, size, signal, consume && (async (bytes) => { await consume(bytes); if (!held && bytes.equals(subtitle)) { held = true; active = signal; entered(); await gate; } })); });
-    await pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await ready; const inode = (await lstat(preview.targetPath)).ino, source = scope === "本策略" ? second.source : first.source;
-    rules.control({ id: source.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() }); expect(active.aborted).toBe(scope === "本策略"); release(); await pipeline.tick(); spy.mockRestore();
+    await pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await ready; const inode = (await lstat(preview.targetPath)).ino, source = scope === "本策略" || scope === "删除共享需求" ? second.source : first.source;
+    if (scope.startsWith("删除")) rules.lifecycle({ id: source.id, expectedVersion: 1, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() }, "remove");
+    else rules.control({ id: source.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() }); expect(active.aborted).toBe(scope === "本策略"); release(); await pipeline.tick(); spy.mockRestore();
     expect(pipeline.task(task.taskId).state).toBe("DONE"); expect((await lstat(preview.targetPath)).ino).toBe(inode);
     if (scope === "本策略") {
       expect(pipeline.task(task.taskId).accessories![0]).toMatchObject({ state: "COPYING", failure: null });

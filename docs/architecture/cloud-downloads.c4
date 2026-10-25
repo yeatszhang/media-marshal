@@ -25,7 +25,7 @@ model {
     core = process 'Media Core' {
       description '唯一业务库写入者；来源版本、调度、识别、COPY 和独立交付'
       sources = component 'SourceRules' {
-        description '唯一配置入口；草稿、不可变有效版本、旧身份定位和执行预览'
+        description '唯一配置入口；草稿、不可变有效版本、旧身份定位、执行预览及可恢复删除'
       }
       subscriptions = component 'CloudSubscriptions' {
         description '按有效来源版本周期补扫；共享需求和分层暂停'
@@ -48,7 +48,7 @@ model {
     guardian = process 'Guardian'
     openlist = process 'OpenList · v4.2.7'
     rclone = process 'Rclone CLI · v1.75.2'
-    database = storage '业务 SQLite · v16'
+    database = storage '业务 SQLite · v17'
     vault = storage '系统保护的凭据密文'
     backups = storage '受限升级备份'
     managed = storage '已授权原卷' {

@@ -5,6 +5,13 @@ import { sourceConfigurationSchema, sourceRuleDraftSchema, parseCoreRequest } fr
 const cloud = { type: "cloud", name: "网盘来源", accountId: randomUUID(), remoteRef: randomUUID(), downloadRootId: randomUUID() };
 const local = { type: "local", name: "本地来源", sourcePath: "/input", organization: { targetPath: "/library" } };
 describe("统一来源受限契约", () => {
+  it("删除和恢复要求配置、草稿与生命周期版本，只接受固定 ID", () => {
+    const payload = { id: randomUUID(), expectedVersion: 1, expectedDraftRevision: 2, expectedLifecycleRevision: 0, requestKey: randomUUID() };
+    for (const action of ["source-rules.remove", "source-rules.restore"]) {
+      const request = { kind: "request", protocolVersion: 1, requestId: randomUUID(), action, payload }; expect(parseCoreRequest(request).action).toBe(action);
+      for (const extra of [{ sourcePath: "/任意目录" }, { deleteFiles: true }, { credential: "fixture-private" }, { expectedLifecycleRevision: undefined }, { expectedDraftRevision: undefined }]) expect(() => parseCoreRequest({ ...request, payload: { ...payload, ...extra } })).toThrow();
+    }
+  });
   it("本地忽略保留未配置、默认和显式空列表的区别，网盘不接收本地规则", () => {
     expect(sourceConfigurationSchema.parse(local)).not.toHaveProperty("ignoredFilePatterns");
     for (const ignoredFilePatterns of [null, [], ["cache/", "*.tmp"]]) expect(sourceConfigurationSchema.parse({ ...local, ignoredFilePatterns })).toMatchObject({ ignoredFilePatterns });

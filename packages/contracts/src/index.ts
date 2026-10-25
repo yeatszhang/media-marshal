@@ -256,7 +256,9 @@ export interface DesktopApi {
   resolveSourceLegacy(input: CoreInput<"source-rules.resolve-legacy">): Promise<CoreOutput<"source-rules.resolve-legacy">>;
   listSourceLegacy(input: CoreInput<"source-rules.legacy">): Promise<CoreOutput<"source-rules.legacy">>;
   configureSourceRule(input: CoreInput<"source-rules.configure">): Promise<CoreOutput<"source-rules.configure">>;
-  listSourceRules(): Promise<CoreOutput<"source-rules.list">>;
+  listSourceRules(input?: CoreInput<"source-rules.list">): Promise<CoreOutput<"source-rules.list">>;
+  removeSourceRule(input: CoreInput<"source-rules.remove">): Promise<CoreOutput<"source-rules.remove">>;
+  restoreSourceRule(input: CoreInput<"source-rules.restore">): Promise<CoreOutput<"source-rules.restore">>;
   getSourceRule(id: string): Promise<CoreOutput<"source-rules.get">>;
   previewSourceRule(input: CoreInput<"source-rules.preview">): Promise<CoreOutput<"source-rules.preview">>;
   getSourceRulePreview(id: string): Promise<CoreOutput<"source-rules.get-preview">>;

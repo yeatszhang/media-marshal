@@ -17,7 +17,7 @@ export class CloudRoots {
   private overlap(grant: ManagedRootGrant) {
     const db = this.database.connection;
     const otherRoots = (db.prepare("SELECT * FROM managed_download_root WHERE id!=?").all(grant.id) as RootRow[]);
-    const sources = db.prepare("SELECT s.id,s.source_path,s.target_path,i.download_root_id FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id ORDER BY s.created_at,s.id").all() as { id: string; source_path: string; target_path: string; download_root_id: string | null }[];
+    const sources = db.prepare("SELECT s.id,s.source_path,s.target_path,i.download_root_id FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id WHERE NOT EXISTS(SELECT 1 FROM source_rule r WHERE r.local_source_id=s.id AND r.deleted_at IS NOT NULL) ORDER BY s.created_at,s.id").all() as { id: string; source_path: string; target_path: string; download_root_id: string | null }[];
     const targets = db.prepare("SELECT id,grant_json FROM media_target_root ORDER BY id").all() as { id: string; grant_json: string }[];
     const target = targets.find((row) => pathsOverlap(grant.path, JSON.parse(row.grant_json).path, grant.volume));
     if (target) throw new CloudError("CONFLICT", undefined, { reason: "TARGET_OVERLAP", conflict: { kind: "media-target", id: target.id } });
