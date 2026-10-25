@@ -20,12 +20,27 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v20 修正文件日志迁移保留已完成任务，不触发文件变更，并保留备份与旧版拒绝边界", async () => {
+    const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 20)), source = randomUUID(), task = randomUUID(), stamp = new Date().toISOString();
+    first.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'历史来源','custom','/输入','/媒体目标','AUTO','COPY',?)").run(source, stamp);
+    first.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,target_path,created_at,updated_at) VALUES(?,?,?,'DONE',?,?,?)").run(task, source, "/输入/保留.mp4", "/媒体目标/保留.mp4", stamp, stamp); first.close();
+    const upgraded = await CoreDatabase.open(path); try { expect(upgraded.schemaVersion).toBe(21); expect(upgraded.connection.prepare("SELECT id,status,target_path FROM media_task").get()).toEqual({ id: task, status: "DONE", target_path: "/媒体目标/保留.mp4" }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_file_relocation").get()).toEqual({ n: 0 }); expect(upgraded.connection.pragma("foreign_key_check")).toEqual([]); } finally { upgraded.close(); }
+    const backup = new Database(`${path}.before-v21.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(20); expect(backup.prepare("SELECT status FROM media_task WHERE id=?").get(task)).toEqual({ status: "DONE" }); } finally { backup.close(); }
+    await expect(CoreDatabase.open(path, migrations.slice(0, 20))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
+  it("v21 日志迁移失败回滚表与版本，重试保留原 v20 备份和配置", async () => {
+    const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 20)); first.connection.prepare("INSERT INTO app_setting VALUES('迁移前配置','保留')").run(); first.close();
+    await expect(CoreDatabase.open(path, [...migrations.slice(0, 20), { ...migrations[20]!, sql: migrations[20]!.sql + "SELECT missing_relocation_migration();" }])).rejects.toThrow();
+    const original = await CoreDatabase.open(path, migrations.slice(0, 20)); try { expect(original.schemaVersion).toBe(20); expect(original.connection.prepare("SELECT name FROM sqlite_master WHERE name='media_file_relocation'").get()).toBeUndefined(); expect(original.connection.prepare("SELECT value FROM app_setting WHERE key='迁移前配置'").get()).toEqual({ value: "保留" }); } finally { original.close(); }
+    const retry = await CoreDatabase.open(path); try { expect(retry.schemaVersion).toBe(21); expect(retry.connection.prepare("SELECT count(*) AS n FROM media_file_relocation").get()).toEqual({ n: 0 }); } finally { retry.close(); }
+    const backup = new Database(`${path}.before-v21.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(20); expect(backup.prepare("SELECT value FROM app_setting WHERE key='迁移前配置'").get()).toEqual({ value: "保留" }); } finally { backup.close(); }
+  });
   it("v19 批量整理迁移保留旧配置和待确认任务，不自动创建预览或操作，旧核心拒绝新库", async () => {
     const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 19)), source = randomUUID(), task = randomUUID(), stamp = new Date().toISOString();
     first.connection.prepare("INSERT INTO app_setting VALUES('保留批次配置','原值')").run();
     first.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'保留来源','custom','/输入','/目标','AUTO','COPY',?)").run(source, stamp);
     first.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'AWAITING_CONFIRMATION',?,?)").run(task, source, "/输入/原文件.mp4", stamp, stamp); first.close();
-    const upgraded = await CoreDatabase.open(path); try { expect(upgraded.schemaVersion).toBe(20); expect(upgraded.connection.prepare("SELECT value FROM app_setting WHERE key='保留批次配置'").get()).toEqual({ value: "原值" }); expect(upgraded.connection.prepare("SELECT id,status FROM media_task").get()).toEqual({ id: task, status: "AWAITING_CONFIRMATION" }); for (const table of ["ingestion_organize_batch", "ingestion_organize_batch_item", "ingestion_operation"]) expect(upgraded.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 }); } finally { upgraded.close(); }
+    const upgraded = await CoreDatabase.open(path, migrations.slice(0, 20)); try { expect(upgraded.schemaVersion).toBe(20); expect(upgraded.connection.prepare("SELECT value FROM app_setting WHERE key='保留批次配置'").get()).toEqual({ value: "原值" }); expect(upgraded.connection.prepare("SELECT id,status FROM media_task").get()).toEqual({ id: task, status: "AWAITING_CONFIRMATION" }); for (const table of ["ingestion_organize_batch", "ingestion_organize_batch_item", "ingestion_operation"]) expect(upgraded.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 }); } finally { upgraded.close(); }
     const backup = new Database(`${path}.before-v20.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(19); } finally { backup.close(); }
     await expect(CoreDatabase.open(path, migrations.slice(0, 19))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
   });

@@ -2,7 +2,7 @@
 
 本目录提供 `renameatx_np(..., RENAME_EXCL)` 的 Node-API 8 绑定，作为后续单条／批量修正的底层能力。Apple 将独占改名定义为文件系统能力，不能从普通 `rename` 或词法预检推断支持：[Apple 文档](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsexclusiverenaming)。Node-API 的接口版本与 Electron 的普通 C++ 模块 ABI 分开，实际可加载性仍须按目标运行验证：[Node-API 文档](https://nodejs.org/api/n-api.html)。
 
-当前只在隔离测试中使用，**尚未由 Core 修正服务调用，也没有进入安装包**。不改变当前 COPY、来源授权或已有媒体文件。任务 5.6／5.7 保持未完成；修正预览、持久日志、历史链、跨卷 COPY、旧目标回收、安装态和签名仍须接入及验收。
+当前用于隔离测试和下方内部文件日志组件，**尚未接入客户端修正入口，也没有进入安装包**。不改变当前 COPY、来源授权或已有媒体文件。任务 5.6／5.7 保持未完成；修正预览、持久日志、历史链、跨卷 COPY、旧目标回收、安装态和签名仍须接入及验收。
 
 ## 构建与验证
 
@@ -49,4 +49,17 @@ Core 的 `files/native-rename.ts` 校验 Main 私有启动参数指定的 manife
 
 `fixtures/mac-rename-beneath-2026-10-26.json` 另记录同一源码下的根内改名、嵌套发布、占用保留及跨卷提前拒绝实测；APFS／HFS+ 通过，exFAT 改名与发布均不支持，未执行降级；映像均完成核对卸载。
 
-尚未覆盖“改名后来源被并发替换”的 `UNCERTAIN` 实际竞争窗口及同步故障注入；该返回分支只是必要契约，不能据此宣称修正恢复已验证。后续仍须完成旧目标隔离与确切归属回收、主视频／附属文件逐项日志、目标提交后记账前 SIGKILL、部分失败和历史恢复，不沿用旧 Java 的内存回滚方式。
+尚未覆盖“改名后来源被并发替换”的 `UNCERTAIN` 实际竞争窗口及同步故障注入；该返回分支只是必要契约，不能据此宣称修正恢复已验证。下方组件已补齐旧目标隔离、逐文件日志及相应 SIGKILL 恢复；上层修正仍须接入主视频／附属文件范围、业务历史和 Emby 事务，并完成整条流程的部分失败与强杀恢复，不沿用旧 Java 的内存回滚方式。
+
+## 文件日志组件验证
+
+schema v21 的 `FileRelocations` 已在内部组件层连接上述原语，冻结逐文件计划、执行同卷隔离／改名或 COPY／发布／旧目标回收，并在历史记账前保留位置占用和暂存锚点。它不自行建立业务历史或 Emby 交付，也尚未进入客户端修正入口和安装包。
+
+```sh
+npm run build -w @media-marshal/contracts
+npm run build -w @media-marshal/media-core
+npm test -- packages/media-core/src/files/relocations.test.ts
+ELECTRON_RUN_AS_NODE=1 node_modules/.bin/electron tools/desktop-files/check-relocations.mjs
+```
+
+日志测试的六个独立进程检查点使用 `relocation-crash-child.mjs`，父测试只对自己启动并已到达检查点的进程发 SIGKILL，核对退出后才打开原库恢复。单元 COPY 分支使用不同授权卷身份，真实跨设备另由 HFS+ 自有映像工具验证 APFS → HFS+、HFS+ → APFS 和 HFS+ 本卷改名；双向 COPY 都核对新文件后才回收旧媒体，并保留下载原件。工具先关闭所属资源，核对映像与设备归属后卸载，未确认卸载时保留目录而不递归删除。脱敏结果为 `fixtures/mac-relocation-journal-2026-10-26.json`，不代替修正界面、附属文件、批量历史或签名安装验收。

@@ -17,6 +17,7 @@ import { sourceLifecycleMigrationSql } from "./source-lifecycle-migration.js";
 import { recognitionEditMigrationSql } from "./recognition-edit-migration.js";
 import { recognitionBatchMigrationSql } from "./recognition-batch-migration.js";
 import { organizeBatchMigrationSql } from "./organize-batch-migration.js";
+import { fileRelocationMigrationSql } from "./file-relocation-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
@@ -74,6 +75,7 @@ export const migrations: readonly Migration[] = [
   { version: 18, sql: recognitionEditMigrationSql },
   { version: 19, sql: recognitionBatchMigrationSql },
   { version: 20, sql: organizeBatchMigrationSql },
+  { version: 21, sql: fileRelocationMigrationSql },
 ];
 
 export class CoreDatabase {
