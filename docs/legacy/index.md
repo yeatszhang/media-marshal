@@ -19,3 +19,14 @@
 - 新需求、设计与任务维护在仓库 `openspec/`，不继续追加这里的历史 ADR、需求表或实施日志。旧工程有新的修改时，也在对应变更中记录与历史快照的差异，更新实际适用的维护文档。
 - 快照中的“不做下载”、Vue 双语要求、Java HTTP 及四种文件操作不约束 Electron 客户端；具体交付边界以对应 OpenSpec 变更为准。
 - 历史正文中保留原路径、时间和角色约定用于追溯；相邻文档的 Markdown 链接已更新，原 Cursor 元数据已移除。不得将历史成功记录当成本轮验证结果。
+
+## 规则迁移去向
+
+| 原 Cursor 规则 | 当前维护位置 |
+| --- | --- |
+| project-context | 根 `AGENTS.md` 提供当前工程入口；旧上下文在本目录保留快照 |
+| backend-rules / frontend-rules / parser-rules | 各旧源码目录的 `AGENTS.md`，仅作用于对应工程 |
+| error-feedback | [错误反馈约定](../development/error-feedback.md)，由根和旧工程指令按任务引用 |
+| API、ADR、需求、路线图与实施日志 | 上方六份历史资料；新的规划与证据归 OpenSpec 及当前维护文档 |
+
+迁移时移除了 Cursor frontmatter、冗余代码示例和旧日志强制追加流程；保留接口、配置、版本发布和错误处理的有效约束。Java debug 配置统一遵循源码的 SettingsService 优先级，不沿用旧规则中互相冲突的直接注入示例。

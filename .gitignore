@@ -45,11 +45,8 @@ parser/dist/
 !.vscode/settings.json
 *.iml
 
-# Cursor IDE（只提交 rules/，忽略缓存和用户偏好）
-.cursor/*
-!.cursor/rules/
-.cursor/rules/*
-!.cursor/rules/*.mdc
+# Cursor 旧规则已迁入 AGENTS.md 与 docs/；不再跟踪 IDE 私有内容
+.cursor/
 pet-runs
 
 # ── Docker / Dev ─────────────────────────────────────────────
