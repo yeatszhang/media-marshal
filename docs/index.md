@@ -2,7 +2,7 @@
 layout: home
 hero:
   name: Media Marshal
-  text: 媒体来源、识别与整理
+  text: 你的本地媒体库
   tagline: 桌面客户端的开发、架构与验收文档。
   actions:
     - theme: brand

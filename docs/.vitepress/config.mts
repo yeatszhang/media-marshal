@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   lang: 'zh-CN',
   title: 'Media Marshal',
-  description: '面向 Emby、Jellyfin 和 Plex 用户的自托管媒体文件整理工具',
+  description: 'Media Marshal，你的本地媒体库',
   cleanUrls: true,
 
   themeConfig: {
