@@ -13,7 +13,8 @@
         "飞驰人生3",
         "Pegasus 3",
         "飞驰人生3 Pegasus 3"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#buildsChineseAndEnglishQueriesForBilingualMovieTitle"
     },
     {
       "id": "bilingualSeries",
@@ -28,7 +29,8 @@
         "长乐曲",
         "Melody Of Golden Age",
         "长乐曲 Melody Of Golden Age"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#buildsChineseAndEnglishQueriesForBilingualSeriesTitle"
     },
     {
       "id": "bracketedBilingual",
@@ -43,7 +45,8 @@
         "钢铁森林",
         "Sunsets Secrets Regrets",
         "钢铁森林 Sunsets Secrets Regrets"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsBracketedChineseAndEnglishTitle"
     },
     {
       "id": "shortChineseTitle",
@@ -58,7 +61,8 @@
         "逍遥",
         "The Unclouded Soul",
         "逍遥 The Unclouded Soul"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsBracketedChineseAndEnglishTitleWithShortChineseName"
     },
     {
       "id": "titleNumbers",
@@ -73,7 +77,8 @@
         "方圆八百米",
         "Eight Hundred",
         "方圆八百米 Eight Hundred"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#buildsChineseAndEnglishQueriesForEightHundredSeriesTitle"
     },
     {
       "id": "excludeEpisodeTitle",
@@ -86,7 +91,8 @@
       },
       "expected": [
         "Your Friends and Neighbors"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#doesNotUseEpisodeTitleAsSeriesQuery"
     },
     {
       "id": "anime1",
@@ -98,7 +104,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
     },
     {
       "id": "anime2",
@@ -110,7 +117,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
     },
     {
       "id": "anime3",
@@ -122,7 +130,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
     },
     {
       "id": "anime4",
@@ -134,7 +143,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
     },
     {
       "id": "anime5",
@@ -146,7 +156,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
     },
     {
       "id": "anime6",
@@ -158,7 +169,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
     },
     {
       "id": "anime7",
@@ -170,7 +182,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
     },
     {
       "id": "anime8",
@@ -182,7 +195,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
     },
     {
       "id": "subtitleGroupWithoutParsedGroup",
@@ -193,7 +207,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#recognizesExplicitSubtitleGroupWithoutGuessitReleaseGroup"
     },
     {
       "id": "knownReleaseGroup",
@@ -205,7 +220,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#removesKnownReleaseGroupWithoutAssumingEveryLeadingBracketIsAGroup"
     },
     {
       "id": "separateBilingual",
@@ -219,7 +235,8 @@
         "咒术回战",
         "Jujutsu Kaisen",
         "咒术回战 Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsSeparateBilingualBracketedTitles"
     },
     {
       "id": "noReleaseGroup",
@@ -230,7 +247,8 @@
       },
       "expected": [
         "Jujutsu Kaisen"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#preservesBracketedTitleWithoutReleaseGroup"
     },
     {
       "id": "numericWorkTitle",
@@ -241,7 +259,8 @@
       },
       "expected": [
         "86"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#preservesNumericTitleAndTitleNumbers"
     },
     {
       "id": "numericTitleToken",
@@ -252,7 +271,8 @@
       },
       "expected": [
         "Mob Psycho 100"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#preservesNumericTitleAndTitleNumbers"
     },
     {
       "id": "unknownLeadingBracket",
@@ -263,7 +283,8 @@
       },
       "expected": [
         "Odd Taxi"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#doesNotDiscardUnknownBracketedTextAsReleaseGroup"
     },
     {
       "id": "parentheticalTitle",
@@ -274,7 +295,8 @@
       },
       "expected": [
         "It Chapter Two"
-      ]
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#preservesUnmarkedParentheticalTitle"
     },
     {
       "id": "metadataOnly",
@@ -284,7 +306,22 @@
         "episode": 48,
         "release_group": "BeanSub"
       },
-      "expected": []
+      "expected": [],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#doesNotGenerateQueriesFromMetadataOnlyFilename"
+    },
+    {
+      "id": "guessitFallbackDeduplication",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#keepsGuessitTitleAsFallbackAndDeduplicatesIt",
+      "filename": "[BeanSub][Jujutsu_Kaisen][48][GB].mp4",
+      "raw": {
+        "title": "Jujutsu Kaisen",
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
     }
   ]
 }

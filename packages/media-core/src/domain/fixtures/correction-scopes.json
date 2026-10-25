@@ -1,0 +1,1113 @@
+{
+  "defaults": {
+    "id": "anchor",
+    "sourceId": "source-1",
+    "policyKey": "policy-1",
+    "status": "DONE",
+    "mediaType": "TV_SHOW",
+    "assetType": "VIDEO_FILE",
+    "tmdbId": 1978,
+    "season": 1,
+    "episode": 2,
+    "episodeEnd": null,
+    "targetPath": "/fixture/library/Show.S01E02.mkv",
+    "updatedAt": "2026-08-29T01:00:00.000Z",
+    "assetVersion": "asset-v1"
+  },
+  "cases": [
+    {
+      "id": "stable-SAME_SEASON",
+      "source": "backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java#resolvesCompleteSeasonAndSeriesRangesInStableEpisodeOrder",
+      "basis": "preserved",
+      "scope": "SAME_SEASON",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "season-2",
+          "season": 2,
+          "episode": 1,
+          "targetPath": "/fixture/library/Show.S02E01.mkv"
+        },
+        {
+          "id": "episode-10",
+          "episode": 10,
+          "targetPath": "/fixture/library/Show.S01E10.mkv"
+        },
+        {
+          "id": "anchor"
+        }
+      ],
+      "expected": [
+        "anchor",
+        "episode-10"
+      ],
+      "error": null,
+      "blockers": [],
+      "expectedFingerprint": "54b21816be25146561cf36efa8d3b06d0dd8c9e5678ce13f7fcbe6d275154a5b"
+    },
+    {
+      "id": "stable-SAME_SERIES",
+      "source": "backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java#resolvesCompleteSeasonAndSeriesRangesInStableEpisodeOrder",
+      "basis": "preserved",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "season-2",
+          "season": 2,
+          "episode": 1,
+          "targetPath": "/fixture/library/Show.S02E01.mkv"
+        },
+        {
+          "id": "episode-10",
+          "episode": 10,
+          "targetPath": "/fixture/library/Show.S01E10.mkv"
+        },
+        {
+          "id": "anchor"
+        }
+      ],
+      "expected": [
+        "anchor",
+        "episode-10",
+        "season-2"
+      ],
+      "error": null,
+      "blockers": [],
+      "expectedFingerprint": "11aca1c0d2ed59436164fd5c3131462b8867cecd13343632f051861cbbe5200c"
+    },
+    {
+      "id": "source-policy-status-and-work-boundary",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "basis": "desktop-source-identity",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "season-2",
+          "season": 2,
+          "episode": 1,
+          "targetPath": "/fixture/library/Show.S02E01.mkv"
+        },
+        {
+          "id": "episode-10",
+          "episode": 10,
+          "targetPath": "/fixture/library/Show.S01E10.mkv"
+        },
+        {
+          "id": "anchor"
+        },
+        {
+          "id": "other-source",
+          "sourceId": "source-2"
+        },
+        {
+          "id": "other-policy",
+          "policyKey": "policy-2"
+        },
+        {
+          "id": "other-work",
+          "tmdbId": 88
+        },
+        {
+          "id": "movie",
+          "mediaType": "MOVIE"
+        },
+        {
+          "id": "failed",
+          "status": "FAILED"
+        },
+        {
+          "id": "working",
+          "status": "PROCESSING"
+        },
+        {
+          "id": "superseded",
+          "status": "CORRECTED"
+        }
+      ],
+      "expected": [
+        "anchor",
+        "episode-10",
+        "season-2"
+      ],
+      "error": null,
+      "blockers": []
+    },
+    {
+      "id": "missing-member-fields-stay-visible",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#scopeWarnings",
+      "basis": "legacy-scopeWarnings",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor"
+        },
+        {
+          "id": "missing-season",
+          "season": null
+        },
+        {
+          "id": "missing-episode",
+          "episode": null,
+          "targetPath": null
+        }
+      ],
+      "expected": [
+        "anchor",
+        "missing-episode",
+        "missing-season"
+      ],
+      "error": null,
+      "blockers": [
+        {
+          "taskId": "missing-episode",
+          "reasons": [
+            "缺少有效集号或合并集范围",
+            "缺少当前目标路径"
+          ]
+        },
+        {
+          "taskId": "missing-season",
+          "reasons": [
+            "缺少有效季号"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "non-video-member-is-not-silently-dropped",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "basis": "desktop-ordinary-video-boundary",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor"
+        },
+        {
+          "id": "iso",
+          "assetType": "ISO",
+          "episode": 3
+        }
+      ],
+      "expected": [
+        "anchor",
+        "iso"
+      ],
+      "error": null,
+      "blockers": [
+        {
+          "taskId": "iso",
+          "reasons": [
+            "修正只支持普通视频文件"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "natural-file-order-and-special-season",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#taskComparator",
+      "basis": "preserved",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor"
+        },
+        {
+          "id": "ten",
+          "targetPath": "/fixture/library/Show.10.mkv"
+        },
+        {
+          "id": "two",
+          "targetPath": "/fixture/library/show.2.mkv"
+        },
+        {
+          "id": "special",
+          "season": 0,
+          "episode": 1
+        }
+      ],
+      "expected": [
+        "special",
+        "two",
+        "ten",
+        "anchor"
+      ],
+      "error": null,
+      "blockers": []
+    },
+    {
+      "id": "anchor-not-done",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "basis": "legacy-anchorUnsupportedReasons",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor",
+          "status": "FAILED"
+        }
+      ],
+      "expected": null,
+      "error": "ANCHOR_UNSUPPORTED",
+      "blockers": []
+    },
+    {
+      "id": "anchor-not-series",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "basis": "legacy-anchorUnsupportedReasons",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor",
+          "mediaType": "MOVIE"
+        }
+      ],
+      "expected": null,
+      "error": "ANCHOR_UNSUPPORTED",
+      "blockers": []
+    },
+    {
+      "id": "anchor-not-video",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "basis": "legacy-anchorUnsupportedReasons",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor",
+          "assetType": "ISO"
+        }
+      ],
+      "expected": null,
+      "error": "ANCHOR_UNSUPPORTED",
+      "blockers": []
+    },
+    {
+      "id": "anchor-missing-tmdb",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "basis": "legacy-anchorUnsupportedReasons",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor",
+          "tmdbId": null
+        }
+      ],
+      "expected": null,
+      "error": "ANCHOR_UNSUPPORTED",
+      "blockers": []
+    },
+    {
+      "id": "anchor-missing-source",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "basis": "legacy-anchorUnsupportedReasons",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor",
+          "sourceId": null
+        }
+      ],
+      "expected": null,
+      "error": "ANCHOR_UNSUPPORTED",
+      "blockers": []
+    },
+    {
+      "id": "anchor-missing-target",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "basis": "legacy-anchorUnsupportedReasons",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor",
+          "targetPath": " "
+        }
+      ],
+      "expected": null,
+      "error": "ANCHOR_UNSUPPORTED",
+      "blockers": []
+    },
+    {
+      "id": "missing-anchor",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#loadAnchor",
+      "basis": "preserved",
+      "scope": "SAME_SERIES",
+      "anchorId": "absent",
+      "members": [
+        {
+          "id": "season-2",
+          "season": 2,
+          "episode": 1,
+          "targetPath": "/fixture/library/Show.S02E01.mkv"
+        },
+        {
+          "id": "episode-10",
+          "episode": 10,
+          "targetPath": "/fixture/library/Show.S01E10.mkv"
+        },
+        {
+          "id": "anchor"
+        }
+      ],
+      "expected": null,
+      "error": "ANCHOR_MISSING",
+      "blockers": []
+    },
+    {
+      "id": "duplicate-member",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "basis": "desktop-stale-read-boundary",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor"
+        },
+        {
+          "id": "anchor"
+        }
+      ],
+      "expected": null,
+      "error": "DUPLICATE_MEMBER",
+      "blockers": []
+    },
+    {
+      "id": "invalid-scope",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#parseScope",
+      "basis": "preserved",
+      "scope": "ALL",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "season-2",
+          "season": 2,
+          "episode": 1,
+          "targetPath": "/fixture/library/Show.S02E01.mkv"
+        },
+        {
+          "id": "episode-10",
+          "episode": 10,
+          "targetPath": "/fixture/library/Show.S01E10.mkv"
+        },
+        {
+          "id": "anchor"
+        }
+      ],
+      "expected": null,
+      "error": "SCOPE_INVALID",
+      "blockers": []
+    },
+    {
+      "id": "missing-anchor-season",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "basis": "preserved",
+      "scope": "SAME_SEASON",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor",
+          "season": null
+        }
+      ],
+      "expected": null,
+      "error": "SEASON_MISSING",
+      "blockers": []
+    },
+    {
+      "id": "whole-series-includes-anchor-with-missing-season",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#scopeWarnings",
+      "basis": "legacy-scopeWarnings",
+      "scope": "SAME_SERIES",
+      "anchorId": "anchor",
+      "members": [
+        {
+          "id": "anchor",
+          "season": null
+        }
+      ],
+      "expected": [
+        "anchor"
+      ],
+      "error": null,
+      "blockers": [
+        {
+          "taskId": "anchor",
+          "reasons": [
+            "缺少有效季号"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whole-range-crosses-ui-page-size",
+      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "basis": "desktop-complete-database-scope",
+      "scope": "SAME_SEASON",
+      "anchorId": "episode-2",
+      "members": [
+        {
+          "id": "episode-101",
+          "episode": 101,
+          "targetPath": "/fixture/library/Show.S01E101.mkv"
+        },
+        {
+          "id": "episode-100",
+          "episode": 100,
+          "targetPath": "/fixture/library/Show.S01E100.mkv"
+        },
+        {
+          "id": "episode-99",
+          "episode": 99,
+          "targetPath": "/fixture/library/Show.S01E99.mkv"
+        },
+        {
+          "id": "episode-98",
+          "episode": 98,
+          "targetPath": "/fixture/library/Show.S01E98.mkv"
+        },
+        {
+          "id": "episode-97",
+          "episode": 97,
+          "targetPath": "/fixture/library/Show.S01E97.mkv"
+        },
+        {
+          "id": "episode-96",
+          "episode": 96,
+          "targetPath": "/fixture/library/Show.S01E96.mkv"
+        },
+        {
+          "id": "episode-95",
+          "episode": 95,
+          "targetPath": "/fixture/library/Show.S01E95.mkv"
+        },
+        {
+          "id": "episode-94",
+          "episode": 94,
+          "targetPath": "/fixture/library/Show.S01E94.mkv"
+        },
+        {
+          "id": "episode-93",
+          "episode": 93,
+          "targetPath": "/fixture/library/Show.S01E93.mkv"
+        },
+        {
+          "id": "episode-92",
+          "episode": 92,
+          "targetPath": "/fixture/library/Show.S01E92.mkv"
+        },
+        {
+          "id": "episode-91",
+          "episode": 91,
+          "targetPath": "/fixture/library/Show.S01E91.mkv"
+        },
+        {
+          "id": "episode-90",
+          "episode": 90,
+          "targetPath": "/fixture/library/Show.S01E90.mkv"
+        },
+        {
+          "id": "episode-89",
+          "episode": 89,
+          "targetPath": "/fixture/library/Show.S01E89.mkv"
+        },
+        {
+          "id": "episode-88",
+          "episode": 88,
+          "targetPath": "/fixture/library/Show.S01E88.mkv"
+        },
+        {
+          "id": "episode-87",
+          "episode": 87,
+          "targetPath": "/fixture/library/Show.S01E87.mkv"
+        },
+        {
+          "id": "episode-86",
+          "episode": 86,
+          "targetPath": "/fixture/library/Show.S01E86.mkv"
+        },
+        {
+          "id": "episode-85",
+          "episode": 85,
+          "targetPath": "/fixture/library/Show.S01E85.mkv"
+        },
+        {
+          "id": "episode-84",
+          "episode": 84,
+          "targetPath": "/fixture/library/Show.S01E84.mkv"
+        },
+        {
+          "id": "episode-83",
+          "episode": 83,
+          "targetPath": "/fixture/library/Show.S01E83.mkv"
+        },
+        {
+          "id": "episode-82",
+          "episode": 82,
+          "targetPath": "/fixture/library/Show.S01E82.mkv"
+        },
+        {
+          "id": "episode-81",
+          "episode": 81,
+          "targetPath": "/fixture/library/Show.S01E81.mkv"
+        },
+        {
+          "id": "episode-80",
+          "episode": 80,
+          "targetPath": "/fixture/library/Show.S01E80.mkv"
+        },
+        {
+          "id": "episode-79",
+          "episode": 79,
+          "targetPath": "/fixture/library/Show.S01E79.mkv"
+        },
+        {
+          "id": "episode-78",
+          "episode": 78,
+          "targetPath": "/fixture/library/Show.S01E78.mkv"
+        },
+        {
+          "id": "episode-77",
+          "episode": 77,
+          "targetPath": "/fixture/library/Show.S01E77.mkv"
+        },
+        {
+          "id": "episode-76",
+          "episode": 76,
+          "targetPath": "/fixture/library/Show.S01E76.mkv"
+        },
+        {
+          "id": "episode-75",
+          "episode": 75,
+          "targetPath": "/fixture/library/Show.S01E75.mkv"
+        },
+        {
+          "id": "episode-74",
+          "episode": 74,
+          "targetPath": "/fixture/library/Show.S01E74.mkv"
+        },
+        {
+          "id": "episode-73",
+          "episode": 73,
+          "targetPath": "/fixture/library/Show.S01E73.mkv"
+        },
+        {
+          "id": "episode-72",
+          "episode": 72,
+          "targetPath": "/fixture/library/Show.S01E72.mkv"
+        },
+        {
+          "id": "episode-71",
+          "episode": 71,
+          "targetPath": "/fixture/library/Show.S01E71.mkv"
+        },
+        {
+          "id": "episode-70",
+          "episode": 70,
+          "targetPath": "/fixture/library/Show.S01E70.mkv"
+        },
+        {
+          "id": "episode-69",
+          "episode": 69,
+          "targetPath": "/fixture/library/Show.S01E69.mkv"
+        },
+        {
+          "id": "episode-68",
+          "episode": 68,
+          "targetPath": "/fixture/library/Show.S01E68.mkv"
+        },
+        {
+          "id": "episode-67",
+          "episode": 67,
+          "targetPath": "/fixture/library/Show.S01E67.mkv"
+        },
+        {
+          "id": "episode-66",
+          "episode": 66,
+          "targetPath": "/fixture/library/Show.S01E66.mkv"
+        },
+        {
+          "id": "episode-65",
+          "episode": 65,
+          "targetPath": "/fixture/library/Show.S01E65.mkv"
+        },
+        {
+          "id": "episode-64",
+          "episode": 64,
+          "targetPath": "/fixture/library/Show.S01E64.mkv"
+        },
+        {
+          "id": "episode-63",
+          "episode": 63,
+          "targetPath": "/fixture/library/Show.S01E63.mkv"
+        },
+        {
+          "id": "episode-62",
+          "episode": 62,
+          "targetPath": "/fixture/library/Show.S01E62.mkv"
+        },
+        {
+          "id": "episode-61",
+          "episode": 61,
+          "targetPath": "/fixture/library/Show.S01E61.mkv"
+        },
+        {
+          "id": "episode-60",
+          "episode": 60,
+          "targetPath": "/fixture/library/Show.S01E60.mkv"
+        },
+        {
+          "id": "episode-59",
+          "episode": 59,
+          "targetPath": "/fixture/library/Show.S01E59.mkv"
+        },
+        {
+          "id": "episode-58",
+          "episode": 58,
+          "targetPath": "/fixture/library/Show.S01E58.mkv"
+        },
+        {
+          "id": "episode-57",
+          "episode": 57,
+          "targetPath": "/fixture/library/Show.S01E57.mkv"
+        },
+        {
+          "id": "episode-56",
+          "episode": 56,
+          "targetPath": "/fixture/library/Show.S01E56.mkv"
+        },
+        {
+          "id": "episode-55",
+          "episode": 55,
+          "targetPath": "/fixture/library/Show.S01E55.mkv"
+        },
+        {
+          "id": "episode-54",
+          "episode": 54,
+          "targetPath": "/fixture/library/Show.S01E54.mkv"
+        },
+        {
+          "id": "episode-53",
+          "episode": 53,
+          "targetPath": "/fixture/library/Show.S01E53.mkv"
+        },
+        {
+          "id": "episode-52",
+          "episode": 52,
+          "targetPath": "/fixture/library/Show.S01E52.mkv"
+        },
+        {
+          "id": "episode-51",
+          "episode": 51,
+          "targetPath": "/fixture/library/Show.S01E51.mkv"
+        },
+        {
+          "id": "episode-50",
+          "episode": 50,
+          "targetPath": "/fixture/library/Show.S01E50.mkv"
+        },
+        {
+          "id": "episode-49",
+          "episode": 49,
+          "targetPath": "/fixture/library/Show.S01E49.mkv"
+        },
+        {
+          "id": "episode-48",
+          "episode": 48,
+          "targetPath": "/fixture/library/Show.S01E48.mkv"
+        },
+        {
+          "id": "episode-47",
+          "episode": 47,
+          "targetPath": "/fixture/library/Show.S01E47.mkv"
+        },
+        {
+          "id": "episode-46",
+          "episode": 46,
+          "targetPath": "/fixture/library/Show.S01E46.mkv"
+        },
+        {
+          "id": "episode-45",
+          "episode": 45,
+          "targetPath": "/fixture/library/Show.S01E45.mkv"
+        },
+        {
+          "id": "episode-44",
+          "episode": 44,
+          "targetPath": "/fixture/library/Show.S01E44.mkv"
+        },
+        {
+          "id": "episode-43",
+          "episode": 43,
+          "targetPath": "/fixture/library/Show.S01E43.mkv"
+        },
+        {
+          "id": "episode-42",
+          "episode": 42,
+          "targetPath": "/fixture/library/Show.S01E42.mkv"
+        },
+        {
+          "id": "episode-41",
+          "episode": 41,
+          "targetPath": "/fixture/library/Show.S01E41.mkv"
+        },
+        {
+          "id": "episode-40",
+          "episode": 40,
+          "targetPath": "/fixture/library/Show.S01E40.mkv"
+        },
+        {
+          "id": "episode-39",
+          "episode": 39,
+          "targetPath": "/fixture/library/Show.S01E39.mkv"
+        },
+        {
+          "id": "episode-38",
+          "episode": 38,
+          "targetPath": "/fixture/library/Show.S01E38.mkv"
+        },
+        {
+          "id": "episode-37",
+          "episode": 37,
+          "targetPath": "/fixture/library/Show.S01E37.mkv"
+        },
+        {
+          "id": "episode-36",
+          "episode": 36,
+          "targetPath": "/fixture/library/Show.S01E36.mkv"
+        },
+        {
+          "id": "episode-35",
+          "episode": 35,
+          "targetPath": "/fixture/library/Show.S01E35.mkv"
+        },
+        {
+          "id": "episode-34",
+          "episode": 34,
+          "targetPath": "/fixture/library/Show.S01E34.mkv"
+        },
+        {
+          "id": "episode-33",
+          "episode": 33,
+          "targetPath": "/fixture/library/Show.S01E33.mkv"
+        },
+        {
+          "id": "episode-32",
+          "episode": 32,
+          "targetPath": "/fixture/library/Show.S01E32.mkv"
+        },
+        {
+          "id": "episode-31",
+          "episode": 31,
+          "targetPath": "/fixture/library/Show.S01E31.mkv"
+        },
+        {
+          "id": "episode-30",
+          "episode": 30,
+          "targetPath": "/fixture/library/Show.S01E30.mkv"
+        },
+        {
+          "id": "episode-29",
+          "episode": 29,
+          "targetPath": "/fixture/library/Show.S01E29.mkv"
+        },
+        {
+          "id": "episode-28",
+          "episode": 28,
+          "targetPath": "/fixture/library/Show.S01E28.mkv"
+        },
+        {
+          "id": "episode-27",
+          "episode": 27,
+          "targetPath": "/fixture/library/Show.S01E27.mkv"
+        },
+        {
+          "id": "episode-26",
+          "episode": 26,
+          "targetPath": "/fixture/library/Show.S01E26.mkv"
+        },
+        {
+          "id": "episode-25",
+          "episode": 25,
+          "targetPath": "/fixture/library/Show.S01E25.mkv"
+        },
+        {
+          "id": "episode-24",
+          "episode": 24,
+          "targetPath": "/fixture/library/Show.S01E24.mkv"
+        },
+        {
+          "id": "episode-23",
+          "episode": 23,
+          "targetPath": "/fixture/library/Show.S01E23.mkv"
+        },
+        {
+          "id": "episode-22",
+          "episode": 22,
+          "targetPath": "/fixture/library/Show.S01E22.mkv"
+        },
+        {
+          "id": "episode-21",
+          "episode": 21,
+          "targetPath": "/fixture/library/Show.S01E21.mkv"
+        },
+        {
+          "id": "episode-20",
+          "episode": 20,
+          "targetPath": "/fixture/library/Show.S01E20.mkv"
+        },
+        {
+          "id": "episode-19",
+          "episode": 19,
+          "targetPath": "/fixture/library/Show.S01E19.mkv"
+        },
+        {
+          "id": "episode-18",
+          "episode": 18,
+          "targetPath": "/fixture/library/Show.S01E18.mkv"
+        },
+        {
+          "id": "episode-17",
+          "episode": 17,
+          "targetPath": "/fixture/library/Show.S01E17.mkv"
+        },
+        {
+          "id": "episode-16",
+          "episode": 16,
+          "targetPath": "/fixture/library/Show.S01E16.mkv"
+        },
+        {
+          "id": "episode-15",
+          "episode": 15,
+          "targetPath": "/fixture/library/Show.S01E15.mkv"
+        },
+        {
+          "id": "episode-14",
+          "episode": 14,
+          "targetPath": "/fixture/library/Show.S01E14.mkv"
+        },
+        {
+          "id": "episode-13",
+          "episode": 13,
+          "targetPath": "/fixture/library/Show.S01E13.mkv"
+        },
+        {
+          "id": "episode-12",
+          "episode": 12,
+          "targetPath": "/fixture/library/Show.S01E12.mkv"
+        },
+        {
+          "id": "episode-11",
+          "episode": 11,
+          "targetPath": "/fixture/library/Show.S01E11.mkv"
+        },
+        {
+          "id": "episode-10",
+          "episode": 10,
+          "targetPath": "/fixture/library/Show.S01E10.mkv"
+        },
+        {
+          "id": "episode-9",
+          "episode": 9,
+          "targetPath": "/fixture/library/Show.S01E9.mkv"
+        },
+        {
+          "id": "episode-8",
+          "episode": 8,
+          "targetPath": "/fixture/library/Show.S01E8.mkv"
+        },
+        {
+          "id": "episode-7",
+          "episode": 7,
+          "targetPath": "/fixture/library/Show.S01E7.mkv"
+        },
+        {
+          "id": "episode-6",
+          "episode": 6,
+          "targetPath": "/fixture/library/Show.S01E6.mkv"
+        },
+        {
+          "id": "episode-5",
+          "episode": 5,
+          "targetPath": "/fixture/library/Show.S01E5.mkv"
+        },
+        {
+          "id": "episode-4",
+          "episode": 4,
+          "targetPath": "/fixture/library/Show.S01E4.mkv"
+        },
+        {
+          "id": "episode-3",
+          "episode": 3,
+          "targetPath": "/fixture/library/Show.S01E3.mkv"
+        },
+        {
+          "id": "episode-2",
+          "episode": 2,
+          "targetPath": "/fixture/library/Show.S01E2.mkv"
+        },
+        {
+          "id": "episode-1",
+          "episode": 1,
+          "targetPath": "/fixture/library/Show.S01E1.mkv"
+        }
+      ],
+      "expected": [
+        "episode-1",
+        "episode-2",
+        "episode-3",
+        "episode-4",
+        "episode-5",
+        "episode-6",
+        "episode-7",
+        "episode-8",
+        "episode-9",
+        "episode-10",
+        "episode-11",
+        "episode-12",
+        "episode-13",
+        "episode-14",
+        "episode-15",
+        "episode-16",
+        "episode-17",
+        "episode-18",
+        "episode-19",
+        "episode-20",
+        "episode-21",
+        "episode-22",
+        "episode-23",
+        "episode-24",
+        "episode-25",
+        "episode-26",
+        "episode-27",
+        "episode-28",
+        "episode-29",
+        "episode-30",
+        "episode-31",
+        "episode-32",
+        "episode-33",
+        "episode-34",
+        "episode-35",
+        "episode-36",
+        "episode-37",
+        "episode-38",
+        "episode-39",
+        "episode-40",
+        "episode-41",
+        "episode-42",
+        "episode-43",
+        "episode-44",
+        "episode-45",
+        "episode-46",
+        "episode-47",
+        "episode-48",
+        "episode-49",
+        "episode-50",
+        "episode-51",
+        "episode-52",
+        "episode-53",
+        "episode-54",
+        "episode-55",
+        "episode-56",
+        "episode-57",
+        "episode-58",
+        "episode-59",
+        "episode-60",
+        "episode-61",
+        "episode-62",
+        "episode-63",
+        "episode-64",
+        "episode-65",
+        "episode-66",
+        "episode-67",
+        "episode-68",
+        "episode-69",
+        "episode-70",
+        "episode-71",
+        "episode-72",
+        "episode-73",
+        "episode-74",
+        "episode-75",
+        "episode-76",
+        "episode-77",
+        "episode-78",
+        "episode-79",
+        "episode-80",
+        "episode-81",
+        "episode-82",
+        "episode-83",
+        "episode-84",
+        "episode-85",
+        "episode-86",
+        "episode-87",
+        "episode-88",
+        "episode-89",
+        "episode-90",
+        "episode-91",
+        "episode-92",
+        "episode-93",
+        "episode-94",
+        "episode-95",
+        "episode-96",
+        "episode-97",
+        "episode-98",
+        "episode-99",
+        "episode-100",
+        "episode-101"
+      ],
+      "error": null,
+      "blockers": []
+    }
+  ],
+  "mutations": [
+    {
+      "id": "target",
+      "patch": {
+        "targetPath": "/fixture/library/Changed.S01E02.mkv"
+      }
+    },
+    {
+      "id": "updated",
+      "patch": {
+        "updatedAt": "2026-08-29T01:00:01.000Z"
+      }
+    },
+    {
+      "id": "asset",
+      "patch": {
+        "assetVersion": "asset-v2"
+      }
+    },
+    {
+      "id": "episode",
+      "patch": {
+        "episode": 3
+      }
+    },
+    {
+      "id": "range",
+      "patch": {
+        "episodeEnd": 4
+      }
+    },
+    {
+      "id": "policy",
+      "patch": {
+        "policyKey": "policy-2"
+      }
+    },
+    {
+      "id": "source",
+      "patch": {
+        "sourceId": "source-2"
+      }
+    }
+  ]
+}

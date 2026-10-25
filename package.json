@@ -18,6 +18,7 @@
     "desktop:rebuild": "npm run rebuild -w @media-marshal/desktop",
     "typecheck": "npm run build -w @media-marshal/contracts && npm run typecheck --workspaces --if-present",
     "test": "node scripts/test-electron-node.mjs",
+    "test:rules": "node scripts/test-electron-node.mjs packages/media-core/src/domain",
     "test:electron-node": "node scripts/test-electron-node.mjs",
     "test:desktop": "playwright test --config apps/desktop/playwright.config.ts",
     "test:packaged": "node scripts/check-desktop-artifact.mjs && node scripts/test-packaged-desktop.mjs",

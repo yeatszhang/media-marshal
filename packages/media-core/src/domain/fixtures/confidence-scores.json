@@ -1,0 +1,426 @@
+{
+  "cases": [
+    {
+      "id": "scoresExactTitleYearAndTypeHighly",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#scoresExactTitleYearAndTypeHighly",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "movie",
+        "title": "飞驰人生3",
+        "year": 2026
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "飞驰人生3",
+        "originalTitle": "Pegasus 3",
+        "year": 2026,
+        "mediaType": "MOVIE"
+      },
+      "queries": [
+        {
+          "query": "飞驰人生3",
+          "type": "LOCALIZED",
+          "weight": 1
+        },
+        {
+          "query": "Pegasus 3",
+          "type": "ORIGINAL",
+          "weight": 1
+        }
+      ],
+      "matchedIndex": null,
+      "resultCount": 0,
+      "expected": {
+        "confidence": 1,
+        "titleScore": 1,
+        "yearScore": 1,
+        "mediaTypeScore": 1,
+        "structureBonus": 1
+      }
+    },
+    {
+      "id": "filtersStrongMediaTypeMismatch",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#filtersStrongMediaTypeMismatch",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "episode",
+        "title": "长乐曲",
+        "year": 2024,
+        "season": 1,
+        "episode": 1
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "长乐曲",
+        "originalTitle": "Melody Of Golden Age",
+        "year": 2024,
+        "mediaType": "MOVIE"
+      },
+      "queries": [
+        {
+          "query": "长乐曲",
+          "type": "LOCALIZED",
+          "weight": 1
+        }
+      ],
+      "matchedIndex": null,
+      "resultCount": 0,
+      "expected": {
+        "confidence": 0.8,
+        "titleScore": 1,
+        "yearScore": 1,
+        "mediaTypeScore": 0,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "givesPartialCreditForAdjacentYear",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#givesPartialCreditForAdjacentYear",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "movie",
+        "title": "影片名",
+        "year": 2026
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "影片名",
+        "originalTitle": "Movie Title",
+        "year": 2025,
+        "mediaType": "MOVIE"
+      },
+      "queries": [
+        {
+          "query": "影片名",
+          "type": "LOCALIZED",
+          "weight": 1
+        }
+      ],
+      "matchedIndex": null,
+      "resultCount": 0,
+      "expected": {
+        "confidence": 0.76,
+        "titleScore": 1,
+        "yearScore": 0.3,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "treatsLaterSeasonTvYearAsSeasonAirYear",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#treatsLaterSeasonTvYearAsSeasonAirYear",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "episode",
+        "title": "Slow Horses",
+        "year": 2025,
+        "season": 4,
+        "episode": 1
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "Slow Horses",
+        "originalTitle": "Slow Horses",
+        "year": 2022,
+        "mediaType": "TV_SHOW"
+      },
+      "queries": [
+        {
+          "query": "Slow Horses",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": null,
+      "resultCount": 0,
+      "expected": {
+        "confidence": 0.87,
+        "titleScore": 0.95,
+        "yearScore": 1,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "keepsFirstSeasonTvYearStrict",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#keepsFirstSeasonTvYearStrict",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "episode",
+        "title": "Slow Horses",
+        "year": 2025,
+        "season": 1,
+        "episode": 1
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "Slow Horses",
+        "originalTitle": "Slow Horses",
+        "year": 2022,
+        "mediaType": "TV_SHOW"
+      },
+      "queries": [
+        {
+          "query": "Slow Horses",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": null,
+      "resultCount": 0,
+      "expected": {
+        "confidence": 0.67,
+        "titleScore": 0.95,
+        "yearScore": 0,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "awardsStructureBonusOnlyWhenLocalizedAndOriginalQueriesHitSameCandidate",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#awardsStructureBonusOnlyWhenLocalizedAndOriginalQueriesHitSameCandidate",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "episode",
+        "title": "长乐曲",
+        "year": 2024,
+        "season": 1,
+        "episode": 2
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "长乐曲",
+        "originalTitle": "Melody Of Golden Age",
+        "year": 2024,
+        "mediaType": "TV_SHOW"
+      },
+      "queries": [
+        {
+          "query": "长乐曲",
+          "type": "LOCALIZED",
+          "weight": 1
+        },
+        {
+          "query": "Melody Of Golden Age",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": null,
+      "resultCount": 0,
+      "expected": {
+        "confidence": 1,
+        "titleScore": 1,
+        "yearScore": 1,
+        "mediaTypeScore": 1,
+        "structureBonus": 1
+      }
+    },
+    {
+      "id": "doesNotAwardStructureBonusForSeriesStructureAlone",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#doesNotAwardStructureBonusForSeriesStructureAlone",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "episode",
+        "title": "Your Friends and Neighbors",
+        "year": 2025,
+        "season": 1,
+        "episode": 1
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "Your Friends and Neighbors",
+        "originalTitle": "Your Friends and Neighbors",
+        "year": 2025,
+        "mediaType": "TV_SHOW"
+      },
+      "queries": [
+        {
+          "query": "Your Friends and Neighbors",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": null,
+      "resultCount": 0,
+      "expected": {
+        "confidence": 0.87,
+        "titleScore": 0.95,
+        "yearScore": 1,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "boostsConfidenceWhenEnglishAliasUniquelyFindsChineseMovieCandidate",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsConfidenceWhenEnglishAliasUniquelyFindsChineseMovieCandidate",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "movie",
+        "title": "The Flowers of War",
+        "year": 2011
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "金陵十三钗",
+        "originalTitle": "金陵十三钗",
+        "year": 2011,
+        "mediaType": "MOVIE"
+      },
+      "queries": [
+        {
+          "query": "The Flowers of War",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": 0,
+      "resultCount": 1,
+      "expected": {
+        "confidence": 0.8244,
+        "titleScore": 0.874,
+        "yearScore": 1,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "boostsConfidenceWhenEnglishAliasUniquelyFindsChineseSeriesCandidate",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsConfidenceWhenEnglishAliasUniquelyFindsChineseSeriesCandidate",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "episode",
+        "title": "For the Sake of the Republic",
+        "year": 2003,
+        "season": 1,
+        "episode": 1
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "走向共和",
+        "originalTitle": "走向共和",
+        "year": 2003,
+        "mediaType": "TV_SHOW"
+      },
+      "queries": [
+        {
+          "query": "For the Sake of the Republic",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": 0,
+      "resultCount": 1,
+      "expected": {
+        "confidence": 0.8244,
+        "titleScore": 0.874,
+        "yearScore": 1,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "boostsAliasEvidenceForLaterSeasonTvWhenSeriesStartedEarlier",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsAliasEvidenceForLaterSeasonTvWhenSeriesStartedEarlier",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "episode",
+        "title": "For the Sake of the Republic",
+        "year": 2004,
+        "season": 2,
+        "episode": 1
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "走向共和",
+        "originalTitle": "走向共和",
+        "year": 2003,
+        "mediaType": "TV_SHOW"
+      },
+      "queries": [
+        {
+          "query": "For the Sake of the Republic",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": 0,
+      "resultCount": 1,
+      "expected": {
+        "confidence": 0.8244,
+        "titleScore": 0.874,
+        "yearScore": 1,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "penalizesAliasEvidenceWhenYearDoesNotMatch",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#penalizesAliasEvidenceWhenYearDoesNotMatch",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "episode",
+        "title": "For the Sake of the Republic",
+        "year": 2004,
+        "season": 1,
+        "episode": 1
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "走向共和",
+        "originalTitle": "走向共和",
+        "year": 2003,
+        "mediaType": "TV_SHOW"
+      },
+      "queries": [
+        {
+          "query": "For the Sake of the Republic",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": 0,
+      "resultCount": 1,
+      "expected": {
+        "confidence": 0.4165,
+        "titleScore": 0.4275,
+        "yearScore": 0.3,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    },
+    {
+      "id": "penalizesAliasEvidenceWhenYearIsMissing",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#penalizesAliasEvidenceWhenYearIsMissing",
+      "filename": "固定识别样例.mkv",
+      "raw": {
+        "type": "movie",
+        "title": "The Flowers of War",
+        "year": null
+      },
+      "candidate": {
+        "tmdbId": 7,
+        "title": "金陵十三钗",
+        "originalTitle": "金陵十三钗",
+        "year": 2011,
+        "mediaType": "MOVIE"
+      },
+      "queries": [
+        {
+          "query": "The Flowers of War",
+          "type": "ORIGINAL",
+          "weight": 0.95
+        }
+      ],
+      "matchedIndex": 0,
+      "resultCount": 1,
+      "expected": {
+        "confidence": 0.4165,
+        "titleScore": 0.4275,
+        "yearScore": 0.3,
+        "mediaTypeScore": 1,
+        "structureBonus": 0
+      }
+    }
+  ]
+}

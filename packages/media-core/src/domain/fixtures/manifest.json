@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "baseline": "3358a70",
+  "method": "根据仓库内 Java 测试和实现人工提取固定输入与断言，数值展开使用原评分公式；未宣称运行 Java 生成结果。",
+  "fixtures": {
+    "templates.json": 14,
+    "search-plans.json": 24,
+    "confidence-scores.json": 12,
+    "episode-reconciliation.json": 16,
+    "correction-scopes.json": 18,
+    "intentional-differences.json": 2
+  },
+  "sources": [
+    {
+      "path": "backend/src/main/java/com/mediamarshal/model/dto/ParseResult.java",
+      "sha256": "bfa5d63fe118b0264840f25a19905f82904c4d5d5ca98e8d7ece2ac2757795bd"
+    },
+    {
+      "path": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java",
+      "sha256": "189c8dc529c380d6902457e912595a20895f9a056d35d7210bba034e66f18d36"
+    },
+    {
+      "path": "backend/src/main/java/com/mediamarshal/service/matcher/TmdbConfidenceScorer.java",
+      "sha256": "8e4649b32e5e6bc2aed07e4ab844076292486334b7da7ac21eda0e5654800b72"
+    },
+    {
+      "path": "backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java",
+      "sha256": "842cf9f1611609a2c1f764f48fdbd40271447d743cfed3a61176b8c219ffe6aa"
+    },
+    {
+      "path": "backend/src/test/java/com/mediamarshal/service/matcher/ParentFolderMatchEnhancerTest.java",
+      "sha256": "5bf777460836faad62a0e7fa4e3eb8bf027446edb109cb905c3691ebc3776af3"
+    },
+    {
+      "path": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java",
+      "sha256": "96e91bc34c87b9355797955daf886d1370e3eb8fda65076dcea0c9ffbbeea12f"
+    },
+    {
+      "path": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java",
+      "sha256": "7b5768104a486b0d9ee9411eea7468f428d9120759c565268f804480fc6e178d"
+    },
+    {
+      "path": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java",
+      "sha256": "acdabdb048fe8d638975fc50761069d85ecfc433ad97877cddd805b66df03a60"
+    },
+    {
+      "path": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java",
+      "sha256": "03af498284e13b84c1a35f9492c040f2a33f1132b97ca2f8a60798b15ff76c82"
+    }
+  ]
+}
