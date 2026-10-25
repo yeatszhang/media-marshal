@@ -200,4 +200,11 @@ describe("统一来源配置与真实 SQLite 事务", () => {
     await expect(f.pipeline.scan(source.id)).resolves.toMatchObject({ discovered: 1 });
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
   });
+  it("恢复本地来源立即请求受管补扫，暂停期间新增文件仍从观察开始", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), preview = f.preview(draft), source = await f.rules.apply({ previewId: preview.id, requestKey: randomUUID() }, f.grants);
+    f.rules.control({ id: source.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() }); await writeFile(join(f.sourcePath, "暂停期间新增.mp4"), "新文件保留");
+    const scans = vi.spyOn(f.pipeline, "scan"); f.rules.control({ id: source.id, expectedVersion: 1, operation: "resume", requestKey: randomUUID() });
+    expect(scans).toHaveBeenCalledWith(source.id); await Promise.all(scans.mock.results.map((result) => result.value));
+    expect(f.pipeline.list({ sourceId: source.id }).items.find((row) => row.relativePath === "暂停期间新增.mp4")).toMatchObject({ state: "OBSERVING", requiresConfirmation: true }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
+  });
 });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm, readFile, mkdir, writeFile, readdir, rename } from "node:fs/promises";
+import { mkdtemp, realpath, rm, readFile, mkdir, writeFile, readdir, rename, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { createServer } from "node:http";
@@ -359,6 +359,37 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     await rename(x, x + ".offline"); await expect(restored.authorizeTarget(gx)).rejects.toThrow(); await restored.authorizeTarget(gy);
     await restored.authorizeManagedSource({ sourceId: bootstrap.sourceId, sourceVersion: bootstrap.sourceVersion, source: bootstrap.source });
     expect(restored.libraries()).toEqual(expect.arrayContaining([{ targetId: gy.id, path: y, available: true, mediaType: "MOVIE" }, { targetId: gx.id, path: x, available: false, mediaType: "MOVIE" }]));
+  });
+  it.each(["其他策略", "本策略", "相同目标的其他来源"])("共享根字幕复制中暂停%s，只取消对应工作并重新计算恢复观察", async (scope) => {
+    const subtitle = Buffer.from("乙字幕".repeat(10)), f = await setup(new Map([["目录/甲.mkv", Buffer.from("甲视频")], ["目录/甲.zh.srt", Buffer.from("甲字幕")], ["目录/乙.mp4", Buffer.from("乙视频")], ["目录/乙.zh.ass", subtitle]]));
+    const x = join(f.path, "媒体甲"), y = join(f.path, "媒体乙"); await mkdir(x); await mkdir(y); const gx = await probeManagedVolume(x), gy = scope === "相同目标的其他来源" ? gx : await probeManagedVolume(y);
+    const first = await organized(f, "策略甲", f.account.rootRef!, gx, ["mkv", "srt"]), second = await organized(f, "策略乙", f.account.rootRef!, gy, ["mp4", "ass"]);
+    f.downloads.start(); await expect.poll(() => [first, second].map((row) => f.state(row.job.jobId).state), { timeout: 10000 }).toEqual(["COMPLETED", "COMPLETED"]);
+    // 先等待下载执行收尾，稳定观察从已静止的文件开始，避免依赖后台调度速度。
+    await f.downloads.close();
+    const bootstrap = f.pipeline.bootstrap()[0]!; await f.pipeline.close();
+    const server = createServer((request, response) => { response.setHeader("Content-Type", "application/json"); const movie = { id: 1, title: "测试电影", original_title: "Test Movie", release_date: "2026-01-01" }; response.end(JSON.stringify(request.url!.startsWith("/search/") ? { results: [movie] } : movie)); });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); cleanup.push(() => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }));
+    const connections = new MediaConnections(f.db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" }), { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` }); cleanup.push(() => connections.close()); connections.install({ tmdb: "fixture", emby: null });
+    let monotonic = 0; const parser = { ready: true, parse: async (name: string) => normalizeParse({ title: "测试电影", year: 2026, type: "movie" }, name) };
+    const pipeline = new IngestionPipeline(f.db, () => parser, connections, Date.now, () => monotonic); cleanup.push(() => pipeline.close());
+    const rules = new SourceRules(f.db, f.downloads, f.subscriptions, pipeline); cleanup.push(() => rules.close());
+    await pipeline.authorizeTarget(gx); await pipeline.authorizeTarget(gy); await pipeline.authorizeManagedSource({ sourceId: bootstrap.sourceId, sourceVersion: bootstrap.sourceVersion, source: bootstrap.source });
+    await pipeline.scan(bootstrap.sourceId); for (let i = 0; i < 12; i++) { monotonic += 10000; await pipeline.scan(bootstrap.sourceId); }
+    const candidate = pipeline.list({}).items.find((row) => row.relativePath.endsWith("乙.mp4"))!, task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick();
+    if (scope === "相同目标的其他来源") rules.control({ id: first.source.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() });
+    const preview = await pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" } }); expect(preview.accessories).toHaveLength(1);
+    let release!: () => void, entered!: () => void, held = false, active!: AbortSignal; const gate = new Promise<void>((done) => { release = done; }), ready = new Promise<void>((done) => { entered = done; }), digest = SourceRoot.prototype.digest; cleanup.push(() => release());
+    const spy = vi.spyOn(SourceRoot.prototype, "digest").mockImplementation(function (this: SourceRoot, handle, size, signal, consume) { return digest.call(this, handle, size, signal, consume && (async (bytes) => { await consume(bytes); if (!held && bytes.equals(subtitle)) { held = true; active = signal; entered(); await gate; } })); });
+    await pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await ready; const inode = (await lstat(preview.targetPath)).ino, source = scope === "本策略" ? second.source : first.source;
+    rules.control({ id: source.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() }); expect(active.aborted).toBe(scope === "本策略"); release(); await pipeline.tick(); spy.mockRestore();
+    expect(pipeline.task(task.taskId).state).toBe("DONE"); expect((await lstat(preview.targetPath)).ino).toBe(inode);
+    if (scope === "本策略") {
+      expect(pipeline.task(task.taskId).accessories![0]).toMatchObject({ state: "COPYING", failure: null });
+      const scans = vi.spyOn(pipeline, "scan"); rules.control({ id: source.id, expectedVersion: 1, operation: "resume", requestKey: randomUUID() }); expect(scans).toHaveBeenCalledWith(bootstrap.sourceId); await pipeline.tick(); expect(pipeline.task(task.taskId).accessories![0]!.state).toBe("COPYING");
+      for (let i = 0; i < 12; i++) { monotonic += 10000; await pipeline.scan(bootstrap.sourceId); } await pipeline.tick();
+    }
+    expect(pipeline.task(task.taskId).accessories![0]!.state).toBe("RECORDED"); expect(await readFile(preview.accessories![0]!.targetPath)).toEqual(subtitle); expect((await lstat(preview.targetPath)).ino).toBe(inode); expect(await readFile(join(f.rootPath, "completed", "目录", "乙.zh.ass"))).toEqual(subtitle);
   });
   it("过滤分离的共享根按各自快照 COPY，活动计划阻止移除策略，下载完成和 Emby 交付分别记账", async () => {
     const f = await setup(new Map([["目录/甲.mkv", Buffer.from("甲视频")], ["目录/乙.mp4", Buffer.from("乙视频")]]));

@@ -54,6 +54,9 @@ const temporary = /(?:\.(?:part|tmp|temp|aria2|download|downloading|qkdownloadin
 const unsupported = /\.(?:mp3|flac|wav|m4a|aac|ogg|iso)$/i;
 const associated = /\.(?:srt|ass|ssa|sub|idx|nfo|jpg|jpeg|png|webp|md5|vtt)$/i;
 const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+class SourceWorkInterrupted extends DesktopError {
+  constructor() { super("INTERRUPTED", "所属来源已暂停或配置变化，等待恢复并重新观察", true); }
+}
 
 /** SQLite 持有所有业务事实；内存只记录本次进程的稳定观察时钟和可取消的执行。 */
 export class IngestionPipeline implements ManagedIngestionSink {
@@ -63,6 +66,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private readonly observations = new Map<string, Observation>();
   private readonly accessoryObservations = new Map<string, Observation>();
   private readonly ignorePolicies = new Map<string, { version: number; ignored: ReturnType<typeof discoveryIgnore> }>();
+  private readonly activeWork = new Map<AbortController, { sourceId: string; candidateId: string }>();
   private timer?: ReturnType<typeof setInterval>; private flight?: Promise<void>; private closed = false; private controller?: AbortController;
   private configurationQueue: Promise<unknown> = Promise.resolve();
   private readonly scans = new Map<string, Promise<{ discovered: number }>>();
@@ -162,17 +166,23 @@ export class IngestionPipeline implements ManagedIngestionSink {
     observations.set(key, current); return { now, current };
   }
   sourceChanged(id: string) {
-    this.controller?.abort();
+    for (const [controller, work] of this.activeWork) if (work.sourceId === id) controller.abort();
     this.contentReviews.interrupt(id);
     for (const row of this.database.connection.prepare("SELECT id FROM ingestion_candidate WHERE source_id=?").all(id) as { id: string }[]) this.observations.delete(row.id);
     for (const key of this.accessoryObservations.keys()) if (key.startsWith(id + ":")) this.accessoryObservations.delete(key);
     this.database.connection.prepare("UPDATE ingestion_candidate SET state='OBSERVING',reason='来源配置或暂停状态已变化，请重新观察' WHERE source_id=? AND state='READY'").run(id);
   }
   sourceRuleChanged(id: string) {
-    const rows = this.database.connection.prepare("SELECT * FROM ingestion_candidate WHERE source_id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").all(id) as CandidateRow[];
+    const rows = this.database.connection.prepare("SELECT * FROM ingestion_candidate WHERE source_id=?").all(id) as CandidateRow[];
     const affected = rows.filter((row) => !this.managedCandidateEnabled(row));
-    if (affected.length) this.controller?.abort();
-    for (const row of affected) { this.observations.delete(row.id); this.database.connection.prepare("UPDATE ingestion_candidate SET state=CASE WHEN state='READY' THEN 'OBSERVING' ELSE state END,reason='所属来源暂停或配置变化，请核对整理需求' WHERE id=?").run(row.id); }
+    // 已完成主视频的字幕仍可能在写入，取消范围不能只看未完成候选列表。
+    for (const [controller, work] of this.activeWork) if (work.sourceId === id && !this.managedCandidateEnabled(this.candidate(work.candidateId))) controller.abort();
+    for (const row of affected) {
+      this.observations.delete(row.id);
+      const relative: string[] = JSON.parse(row.relative_json);
+      if (associated.test(relative.at(-1)!)) this.accessoryObservations.delete(`${id}:${this.candidatePolicy(row)?.policy_key ?? "local"}:${row.relative_json}`);
+      this.database.connection.prepare("UPDATE ingestion_candidate SET state=CASE WHEN state='READY' THEN 'OBSERVING' ELSE state END,reason='所属来源暂停或配置变化，请核对整理需求' WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(row.id);
+    }
   }
   bootstrap(): PrivateCoreOutput<"media.sources.bootstrap"> {
     return (this.database.connection.prepare("SELECT i.*,t.grant_json FROM ingestion_source i JOIN media_target_root t ON t.id=i.target_root_id ORDER BY i.source_id LIMIT 1000").all() as (SourceRow & { grant_json: string })[])
@@ -482,7 +492,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const source = this.source(sourceId), snapshot = await this.sources.get(sourceId)!.inspect(relative), version = sourceVersion(snapshot), db = this.database.connection;
     if (managed && snapshot.size !== managed.size) throw conflict();
     if (managed?.policy) { const current = resolveManagedOrganization(this.database, managed.itemId, managed.versionKey); if (current.state !== "ENABLED" || current.policy.key !== managed.policy.key) throw conflict("整理需求已暂停或变化，请核对来源"); }
-    if (associated.test(relative.at(-1)!)) await this.observeAccessory(sourceId, relative);
+    if (associated.test(relative.at(-1)!)) await this.observeAccessory(sourceId, relative, undefined, managed?.policy?.key);
     let previous = managed ? db.prepare("SELECT * FROM ingestion_candidate WHERE managed_item_id=? AND managed_version_key=?").get(managed.itemId, managed.versionKey) as CandidateRow | undefined : undefined;
     if (previous && previous.version_key !== version) throw conflict("受管下载文件已被修改，请核验下载成果");
     if (previous && managed?.policy && this.candidatePolicy(previous)?.policy_key !== managed.policy.key) throw conflict("既有候选的整理策略不同或证据不足，请核对原操作");
@@ -520,6 +530,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (previous) {
       if (previous.expected_sha256 !== input.sha256 || sourceSnapshotSchema.parse(JSON.parse(previous.snapshot_json)).size !== input.size) throw conflict();
       let available = false; try { this.source(previous.source_id); available = true; } catch { /* 已接收候选的重复确认不创建新工作，可在暂停或缺盘时补记。 */ }
+      if (available && this.managedCandidateEnabled(previous) && associated.test((JSON.parse(previous.relative_json) as string[]).at(-1)!)) await this.observeAccessory(previous.source_id, JSON.parse(previous.relative_json), undefined, this.candidatePolicy(previous)?.policy_key);
       if (available && this.managedCandidateEnabled(previous) && !["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(previous.state)) await this.observe(previous);
       return { candidateId: previous.id };
     }
@@ -632,8 +643,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(matches.length ? null : "没有可靠候选，请手动输入 TMDB ID 预览", row.id);
     })();
   }
-  private async observeAccessory(sourceId: string, relative: string[], expected?: SourceSnapshot) {
-    this.source(sourceId); const snapshot = await this.sources.get(sourceId)!.inspect(relative), version = sourceVersion(snapshot), key = sourceId + ":" + JSON.stringify(relative);
+  private async observeAccessory(sourceId: string, relative: string[], expected?: SourceSnapshot, policyKey = "local") {
+    this.source(sourceId); const snapshot = await this.sources.get(sourceId)!.inspect(relative), version = sourceVersion(snapshot), key = sourceId + ":" + policyKey + ":" + JSON.stringify(relative);
     if (expected && !sameSnapshot(expected, snapshot)) throw conflict("附属文件已变化，请重新预览");
     const { now, current } = this.observeWindow(this.accessoryObservations, key, version);
     return snapshot.size > 0 && now - current.since >= 120000;
@@ -650,7 +661,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         if (source.policy_key) { const policy = resolveManagedOrganization(this.database, proof.id, proof.version_key); if (policy.state !== "ENABLED" || policy.policy.key !== source.policy_key) continue; }
         expectedSha256 = localFileEvidenceSchema.parse(JSON.parse(proof.file_evidence_json)).sha256;
       }
-      if (!await this.observeAccessory(source.source_id, entry)) throw conflict("同名附属文件还未稳定 120 秒，请稍后预览或取消附属文件复制");
+      if (!await this.observeAccessory(source.source_id, entry, undefined, source.policy_key)) throw conflict("同名附属文件还未稳定 120 秒，请稍后预览或取消附属文件复制");
       result.push({ sourceSegments: entry, targetSegments: [...targetSegments.slice(0, -1), sameBase ? targetBase + name.slice(base.length) : name], snapshot: await this.sources.get(source.source_id)!.inspect(entry), expectedSha256 });
       if (result.length > 100) throw conflict("附属文件超过一百项，请缩小来源范围");
     }
@@ -701,7 +712,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     this.assertCandidateCurrent(candidate);
     if (plan.expectedSha256 !== candidate.expected_sha256) throw conflict("内容复核证据已更新，请重新预览后确认");
     if (receipt.expires_at <= this.now() || source.version !== plan.sourceVersion || this.targetFor(source, plan.selection.mediaType).grant.id !== plan.target.id || this.connections.version !== plan.connectionVersion || candidate.task_id !== receipt.task_id || !["QUEUED", "READY"].includes(candidate.state) || !await this.observe(candidate)) throw conflict("预览已过期或文件变化，请重新预览");
-    const target = this.targets.get(plan.target.id); await target.assertVacant(plan.targetSegments); for (const asset of plan.accessories ?? []) if (!await this.observeAccessory(plan.sourceId, asset.sourceSegments, asset.snapshot)) throw conflict("附属文件需重新观察"); assertSpaceBudget(await target.check(), plan.snapshot.size + (plan.accessories ?? []).reduce((sum, asset) => sum + asset.snapshot.size, 0), this.reserved(plan.target.id));
+    const target = this.targets.get(plan.target.id); await target.assertVacant(plan.targetSegments); for (const asset of plan.accessories ?? []) if (!await this.observeAccessory(plan.sourceId, asset.sourceSegments, asset.snapshot, source.policy_key)) throw conflict("附属文件需重新观察"); assertSpaceBudget(await target.check(), plan.snapshot.size + (plan.accessories ?? []).reduce((sum, asset) => sum + asset.snapshot.size, 0), this.reserved(plan.target.id));
     const id = randomUUID(), current = timestamp(this.now);
     const concurrent = db.prepare("SELECT id FROM ingestion_operation WHERE candidate_id=?").get(candidate.id) as { id: string } | undefined;
     if (concurrent) { const updated = db.prepare("SELECT operation_id FROM ingestion_preview WHERE id=?").get(receipt.id) as { operation_id: string | null }; if (updated.operation_id === concurrent.id) return { operationId: concurrent.id }; throw conflict(); }
@@ -725,7 +736,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     let evidence = operation.evidence_json ? localFileEvidenceSchema.parse(JSON.parse(operation.evidence_json)) : undefined;
     if (!evidence) {
       if (sourceRow.version !== plan.sourceVersion || this.targetFor(sourceRow, plan.selection.mediaType).grant.id !== plan.target.id) throw conflict("来源规则或路由已变化，未开始计划需要重新预览");
-      if (table === "ingestion_operation" ? !await this.observe(this.candidate(plan.candidateId)) : !await this.observeAccessory(plan.sourceId, plan.sourceSegments, plan.snapshot)) return;
+      if (table === "ingestion_operation" ? !await this.observe(this.candidate(plan.candidateId)) : !await this.observeAccessory(plan.sourceId, plan.sourceSegments, plan.snapshot, sourceRow.policy_key)) return;
       assertSpaceBudget(await target.check(), plan.snapshot.size, this.reserved(target.grant.id, operation.id)); await target.assertVacant(plan.targetSegments);
       // COPYING 重启时仅清理持有本操作标记的残留暂存，再换新尝试 ID。
       if (operation.phase === "COPYING") { await target.cleanupAttempt(operation.attempt_id).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); operation.attempt_id = randomUUID(); db.prepare(`UPDATE ${table} SET attempt_id=? WHERE id=?`).run(operation.attempt_id, operation.id); }
@@ -787,6 +798,14 @@ export class IngestionPipeline implements ManagedIngestionSink {
     db.prepare("UPDATE media_task SET status=?,updated_at=? WHERE id=?").run(operation ? "PROCESSING" : "PENDING", timestamp(this.now), taskId); db.prepare("UPDATE ingestion_candidate SET reason=NULL WHERE id=?").run(candidate.id); void this.tick().catch(() => {}); return {};
   }
   tick(): Promise<void> { if (this.closed) return Promise.resolve(); return this.flight ??= this.run().finally(() => { this.flight = undefined; }); }
+  private async withSourceWork<T>(candidateId: string, parent: AbortSignal, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const candidate = this.candidate(candidateId), controller = new AbortController(), abort = () => controller.abort();
+    if (parent.aborted) abort(); else parent.addEventListener("abort", abort, { once: true });
+    this.activeWork.set(controller, { sourceId: candidate.source_id, candidateId });
+    try { return await work(controller.signal); }
+    catch (error) { if (controller.signal.aborted && !parent.aborted) throw new SourceWorkInterrupted(); throw error; }
+    finally { parent.removeEventListener("abort", abort); this.activeWork.delete(controller); }
+  }
   private async run() {
     this.contentReviews.kick();
     await this.auditRestored();
@@ -795,15 +814,17 @@ export class IngestionPipeline implements ManagedIngestionSink {
     try {
       for (const source of db.prepare(sourceQuery + " WHERE i.available=1 AND s.paused=0 AND i.source_version=s.version ORDER BY i.source_id LIMIT 1000").all() as SourceRow[]) { if (controller.signal.aborted) return; await this.scan(source.source_id).catch(() => {}); }
       const candidates = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id JOIN desktop_source s ON s.id=c.source_id WHERE t.status='PENDING' AND s.paused=0 ORDER BY t.created_at,t.id LIMIT 10").all() as CandidateRow[];
-      for (const row of candidates) { if (controller.signal.aborted) return; if (!this.managedCandidateEnabled(row) || this.contentReviews.active(row.source_id)) continue; try { await this.identify(row, controller.signal); } catch (error) {
+      for (const row of candidates) { if (controller.signal.aborted) return; if (!this.managedCandidateEnabled(row) || this.contentReviews.active(row.source_id)) continue; try { await this.withSourceWork(row.id, controller.signal, (signal) => this.identify(row, signal)); } catch (error) {
         if (controller.signal.aborted) { db.prepare("UPDATE media_task SET status='PENDING',updated_at=? WHERE id=? AND status='PROCESSING'").run(timestamp(this.now), row.task_id); return; }
         const latest = this.candidate(row.id);
         if (!latest.managed_item_id && !latest.is_current) { db.prepare("UPDATE media_task SET status='SKIPPED',updated_at=? WHERE id=? AND status!='DONE'").run(timestamp(this.now), row.task_id); continue; }
+        if (error instanceof SourceWorkInterrupted) { db.prepare("UPDATE media_task SET status='PENDING',updated_at=? WHERE id=? AND status='PROCESSING'").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(error.message, row.id); continue; }
         db.prepare("UPDATE media_task SET status='AWAITING_CONFIRMATION',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(recognitionFailure(error), row.id);
       } }
       const operations = db.prepare("SELECT o.* FROM ingestion_operation o JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND s.paused=0 ORDER BY o.created_at,o.id LIMIT 10").all() as OperationRow[];
-      for (const operation of operations) { if (controller.signal.aborted) return; if (!this.operationRunnable(operation)) continue; try { await this.copy(operation, controller.signal); } catch (error) {
+      for (const operation of operations) { if (controller.signal.aborted) return; if (!this.operationRunnable(operation)) continue; try { await this.withSourceWork(operation.candidate_id, controller.signal, (signal) => this.copy(operation, signal)); } catch (error) {
         if (controller.signal.aborted) return;
+        if (error instanceof SourceWorkInterrupted) continue;
         if (!this.operationRunnable(operation)) continue;
         const unavailable = error instanceof DesktopError && error.code === "LOCAL_UNAVAILABLE" || error instanceof Error && "code" in error && error.code === "LOCAL_UNAVAILABLE";
         if (unavailable) { db.prepare("UPDATE desktop_source SET health='unavailable' WHERE id=(SELECT source_id FROM ingestion_candidate WHERE id=?)").run(operation.candidate_id); continue; }
@@ -812,8 +833,9 @@ export class IngestionPipeline implements ManagedIngestionSink {
         db.prepare("UPDATE ingestion_candidate SET reason='整理中断或证据冲突，未覆盖现有文件；请检查后重试' WHERE id=?").run(operation.candidate_id);
       } }
       const accessories = db.prepare("SELECT a.*,o.task_id,o.candidate_id FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase='RECORDED' AND a.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND s.paused=0 ORDER BY a.created_at,a.id LIMIT 100").all() as (OperationRow & { operation_id: string })[];
-      for (const asset of accessories) { if (controller.signal.aborted) return; if (!this.operationRunnable(asset)) continue; try { await this.copyAccessory(asset, controller.signal); } catch (error) {
+      for (const asset of accessories) { if (controller.signal.aborted) return; if (!this.operationRunnable(asset)) continue; try { await this.withSourceWork(asset.candidate_id, controller.signal, (signal) => this.copyAccessory(asset, signal)); } catch (error) {
         if (controller.signal.aborted) return;
+        if (error instanceof SourceWorkInterrupted) continue;
         if (!this.operationRunnable(asset)) continue;
         if (error instanceof Error && "code" in error && error.code === "LOCAL_UNAVAILABLE") continue;
         db.prepare("UPDATE ingestion_accessory SET phase='NEEDS_ATTENTION',failure_code=?,updated_at=? WHERE id=?").run(error instanceof DesktopError ? error.code : "STORAGE_ERROR", timestamp(this.now), asset.id); this.accessoryJobState(asset.operation_id);

@@ -68,10 +68,10 @@ export class SourceRules {
       if (input.operation === "resume") db.prepare("UPDATE ingestion_outbox SET delivery_attempts=0,next_attempt_at=NULL WHERE state='PENDING' AND item_id IN (SELECT ji.item_id FROM download_job_item ji JOIN download_source_demand d ON d.job_id=ji.job_id WHERE d.source_id=? AND d.source_version=?)").run(source.id, source.version);
       db.prepare("INSERT INTO source_rule_control VALUES(?,?,?,?,?)").run(input.requestKey, source.id, source.version, input.operation, new Date(this.now()).toISOString());
     })();
-    this.reconcile(source.id); return this.get(source.id)!;
+    this.reconcile(source.id, input.operation === "resume"); return this.get(source.id)!;
   }
   /** 持久暂停意图先提交；启动和重复请求均按当前意图协调，不重放旧控制。 */
-  private reconcile(id: string) {
+  private reconcile(id: string, rescan = false) {
     const source = this.get(id); if (!source || !source.configuration) return;
     const db = this.database.connection, blocked = source.paused || source.reviewRequired;
     if (source.subscriptionId) {
@@ -84,6 +84,7 @@ export class SourceRules {
       const paused = source.type === "local" ? blocked : !db.prepare("SELECT 1 FROM source_rule WHERE ingestion_source_id=? AND paused=0 AND review_required=0 LIMIT 1").get(physical);
       const changed = db.prepare("UPDATE desktop_source SET paused=? WHERE id=? AND paused!=?").run(Number(paused), physical, Number(paused));
       if (source.type === "cloud") this.ingestion.sourceRuleChanged(physical); else if (changed.changes) this.ingestion.sourceChanged(physical);
+      if (!blocked && !paused && (changed.changes || rescan)) void this.ingestion.scan(physical).catch(() => {});
     }
     const jobs = db.prepare("SELECT j.id,j.state,d.source_version FROM source_rule_pause_job p JOIN download_job j ON j.id=p.job_id JOIN download_source_demand d ON d.job_id=j.id WHERE p.source_id=?").all(id) as { id: string; state: string; source_version: number }[];
     for (const job of jobs) {
