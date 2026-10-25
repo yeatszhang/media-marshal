@@ -13,6 +13,7 @@ import type { NativeRenameApi } from "../files/native-rename.js";
 import type { IngestionPipeline } from "./pipeline.js";
 import { assertMediaCoordinates } from "./coordinates.js";
 import { previewFailure } from "./preview-errors.js";
+import { CorrectionPreparations, type PreparationProgress } from "./correction-preparations.js";
 import { correctionConflict, correctionHash, correctionManifest, correctionReceipt, correctionTask, collectCorrectionAssets, assertCorrectionTarget, type CorrectionPlan, type CorrectionAsset } from "./correction-assets.js";
 
 interface PreviewRow { id: string; request_key: string; task_id: string; input_hash: string; plan_json: string; expires_at: number; operation_id: string | null }
@@ -22,13 +23,37 @@ const timestamp = (now: () => number) => new Date(now()).toISOString();
 /** 普通视频的修正编排；SQL 只记意图和历史，实际 IO 由持久文件执行器推进。 */
 export class Corrections {
   readonly files: FileRelocations | undefined;
+  readonly preparations: CorrectionPreparations;
   private readonly previewGeneration = randomUUID();
   private readonly lifetime = new AbortController();
-  private readonly previews = new Map<string, { hash: string; flight: Promise<CoreOutput<"corrections.preview">> }>();
+  private readonly previews = new Map<string, { hash: string; flight: Promise<CoreOutput<"corrections.get-preview">> }>();
   private timer?: ReturnType<typeof setInterval>;
   private flight?: Promise<void>;
   private closed = false;
-  constructor(private readonly database: CoreDatabase, private readonly ingestion: IngestionPipeline, private readonly connections: MediaConnections, native?: NativeRenameApi, private readonly now = Date.now) { if (native) this.files = new FileRelocations(database, ingestion.targets, native, now, () => !ingestion.pauseStatus().paused); }
+  constructor(private readonly database: CoreDatabase, private readonly ingestion: IngestionPipeline, private readonly connections: MediaConnections, native?: NativeRenameApi, private readonly now = Date.now) {
+    if (native) this.files = new FileRelocations(database, ingestion.targets, native, now, () => !ingestion.pauseStatus().paused);
+    this.preparations = new CorrectionPreparations(database, {
+      taskId: (kind, input) => {
+        this.executor();
+        if (kind === "PREVIEW") return correctionTask(database, correctionActions["corrections.preview"].input.parse(input).taskId).id;
+        const preview = this.getPreview(correctionActions["corrections.confirm"].input.parse(input).previewId);
+        if (preview.state === "EXPIRED") throw correctionConflict("修正预览已过期，请重新预览后确认"); return preview.taskId;
+      },
+      run: async (kind, input, signal, progress, acceptedAt) => kind === "PREVIEW"
+        ? { previewId: (await this.preview(correctionActions["corrections.preview"].input.parse(input), signal, progress)).id }
+        : { operationId: (await this.confirm(correctionActions["corrections.confirm"].input.parse(input), signal, progress, acceptedAt)).id },
+      recover: (kind, input) => {
+        if (kind === "PREVIEW") {
+          const parsed = correctionActions["corrections.preview"].input.parse(input), row = database.connection.prepare("SELECT id,input_hash FROM media_correction_preview WHERE request_key=?").get(parsed.requestKey) as { id: string; input_hash: string } | undefined;
+          return row?.input_hash === correctionHash(parsed) ? { previewId: row.id } : null;
+        }
+        const parsed = correctionActions["corrections.confirm"].input.parse(input), row = database.connection.prepare("SELECT operation_id FROM media_correction_confirmation WHERE request_key=? AND preview_id=?").get(parsed.requestKey, parsed.previewId) as { operation_id: string } | undefined;
+        return row ? { operationId: row.operation_id } : null;
+      },
+    }, now);
+  }
+  preparePreview(input: CoreInput<"corrections.preview">) { this.writable(); return this.preparations.enqueue("PREVIEW", correctionActions["corrections.preview"].input.parse(input)); }
+  prepareConfirmation(input: CoreInput<"corrections.confirm">) { this.writable(); return this.preparations.enqueue("CONFIRM", correctionActions["corrections.confirm"].input.parse(input)); }
   private writable() { if (this.closed) throw new DesktopError("INTERRUPTED", "修正服务正在停止，请查询原作业后重试", true); }
   private executor() { this.writable(); if (!this.files) throw new DesktopError("COMPONENT_UNAVAILABLE", "安全修正文件组件不可用，请使用组件完整且匹配当前架构的客户端"); return this.files; }
   private active(taskId: string) { return this.database.connection.prepare(operationQuery + " WHERE (o.original_task_id=? OR o.new_task_id=?) AND (o.phase!='RECORDED' OR EXISTS(SELECT 1 FROM app_setting s WHERE s.key='correction.restore.audit.'||o.id))").get(taskId, taskId) as OperationRow | undefined; }
@@ -42,7 +67,7 @@ export class Corrections {
   }
   describe(input: CoreInput<"corrections.task">): CoreOutput<"corrections.task"> {
     const task = correctionTask(this.database, input.taskId), active = this.active(task.id), selected = task.confirmed_json ? selectionSchema.safeParse(JSON.parse(task.confirmed_json)) : null;
-    return { taskId: task.id, status: task.status, targetPath: task.target_path, selection: selected?.success ? selected.data : null, previousTaskId: task.corrected_from_id, nextTaskId: task.corrected_to_id, active: active ? this.dto(active) : null, targets: (this.database.connection.prepare("SELECT id,grant_json,available FROM media_target_root ORDER BY id").all() as { id: string; grant_json: string; available: number }[]).map((row) => ({ id: row.id, path: managedRootGrantSchema.parse(JSON.parse(row.grant_json)).path, available: !!row.available })), available: !!this.files };
+    return { taskId: task.id, status: task.status, targetPath: task.target_path, selection: selected?.success ? selected.data : null, previousTaskId: task.corrected_from_id, nextTaskId: task.corrected_to_id, active: active ? this.dto(active) : null, preparation: this.preparations.forTask(task.id), targets: (this.database.connection.prepare("SELECT id,grant_json,available FROM media_target_root ORDER BY id").all() as { id: string; grant_json: string; available: number }[]).map((row) => ({ id: row.id, path: managedRootGrantSchema.parse(JSON.parse(row.grant_json)).path, available: !!row.available })), available: !!this.files };
   }
   private dto(row: OperationRow): CorrectionOperation {
     const files = this.storedFiles(row.id);
@@ -56,23 +81,24 @@ export class Corrections {
     const row = this.database.connection.prepare("SELECT * FROM media_correction_preview WHERE id=?").get(id) as PreviewRow | undefined; if (!row) throw correctionConflict("修正预览不存在，请重新预览");
     const plan = JSON.parse(row.plan_json) as CorrectionPlan; return { id: row.id, taskId: row.task_id, title: plan.metadata.title, selection: plan.selection, targetId: plan.target.id, targetPath: join(plan.target.path, ...plan.targetSegments), expiresAt: row.expires_at, state: row.operation_id ? "CONFIRMED" : row.expires_at <= this.now() || plan.previewGeneration !== this.previewGeneration ? "EXPIRED" : "READY", operationId: row.operation_id, files: plan.files.map((asset) => this.assetDto(asset)), warnings: plan.warnings };
   }
-  async preview(input: CoreInput<"corrections.preview">): Promise<CoreOutput<"corrections.preview">> {
+  async preview(input: CoreInput<"corrections.preview">, signal?: AbortSignal, progress?: (value: PreparationProgress) => void): Promise<CoreOutput<"corrections.get-preview">> {
+    signal = AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]); signal.throwIfAborted();
     input = correctionActions["corrections.preview"].input.parse(input); this.executor(); const hash = correctionHash(input), previous = this.previews.get(input.requestKey); if (previous) { if (previous.hash !== hash) throw correctionConflict("预览请求键已用于不同修正内容"); return previous.flight; }
-    const flight = this.buildPreview(input, hash).catch((error) => { throw previewFailure(error); }).finally(() => { if (this.previews.get(input.requestKey)?.flight === flight) this.previews.delete(input.requestKey); }); this.previews.set(input.requestKey, { hash, flight }); return flight;
+    const flight = this.buildPreview(input, hash, signal, progress).catch((error) => { throw previewFailure(error); }).finally(() => { if (this.previews.get(input.requestKey)?.flight === flight) this.previews.delete(input.requestKey); }); this.previews.set(input.requestKey, { hash, flight }); return flight;
   }
-  private async buildPreview(input: CoreInput<"corrections.preview">, hash: string) {
+  private async buildPreview(input: CoreInput<"corrections.preview">, hash: string, signal: AbortSignal, progress?: (value: PreparationProgress) => void) {
     const db = this.database.connection, previous = db.prepare("SELECT id,input_hash FROM media_correction_preview WHERE request_key=?").get(input.requestKey) as { id: string; input_hash: string } | undefined;
     if (previous) { if (previous.input_hash !== hash) throw correctionConflict("预览请求键已用于不同修正内容"); return this.getPreview(previous.id); }
     return this.ingestion.withCorrectionLease(input.taskId, async () => {
       if (this.active(input.taskId)) throw correctionConflict("此文件已有活动修正，请查看原作业，不重复创建计划");
-      const receipt = correctionReceipt(this.database, this.ingestion.targets, input.taskId), connectionVersion = this.connections.version, expires = this.now() + 600000, target = this.target(input.targetId ?? receipt.root.grant.id), selection = selectionSchema.parse(input.selection);
-      const metadata = await this.connections.tmdb.detail(selection.tmdbId, selection.mediaType, this.lifetime.signal); let episodeTitle: string | null = null;
-      if (selection.mediaType === "TV_SHOW") { if (selection.season === null || selection.episode === null) throw correctionConflict("剧集修正需要明确季号和集号"); const checked = await reconcileEpisodes({ season: selection.season, episode: selection.episode, episodeEnd: selection.episodeEnd }, metadata.seasons, (season) => this.connections.tmdb.episodes(selection.tmdbId, season, this.lifetime.signal)); Object.assign(selection, { season: checked.season, episode: checked.episode, episodeEnd: checked.episodeEnd }); episodeTitle = checked.episodeTitle; } else Object.assign(selection, { season: null, episode: null, episodeEnd: null });
+      const receipt = correctionReceipt(this.database, this.ingestion.targets, input.taskId), connectionVersion = this.connections.version, target = this.target(input.targetId ?? receipt.root.grant.id), selection = selectionSchema.parse(input.selection);
+      const metadata = await this.connections.tmdb.detail(selection.tmdbId, selection.mediaType, signal); let episodeTitle: string | null = null;
+      if (selection.mediaType === "TV_SHOW") { if (selection.season === null || selection.episode === null) throw correctionConflict("剧集修正需要明确季号和集号"); const checked = await reconcileEpisodes({ season: selection.season, episode: selection.episode, episodeEnd: selection.episodeEnd }, metadata.seasons, (season) => this.connections.tmdb.episodes(selection.tmdbId, season, signal)); Object.assign(selection, { season: checked.season, episode: checked.episode, episodeEnd: checked.episodeEnd }); episodeTitle = checked.episodeTitle; } else Object.assign(selection, { season: null, episode: null, episodeEnd: null });
       assertMediaCoordinates(this.database, selection, input.taskId, receipt.plan.targetSegments.at(-1)!);
       const parsed = receipt.plan.parsed, variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(receipt.plan.targetSegments.at(-1)!).slice(1) };
       const template = input.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}"), segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments);
-      const assets = await collectCorrectionAssets(receipt, target, segments, input.includeAccessories !== false, this.lifetime.signal), plan: CorrectionPlan = { taskId: input.taskId, originalContext: receipt.context, previewGeneration: this.previewGeneration, connectionVersion, target: target.grant, targetSegments: segments, selection, metadata, parsed, includeAccessories: input.includeAccessories !== false, ...assets };
-      await this.checkFiles(plan, target); this.checkContext(plan); const id = randomUUID(); db.prepare("INSERT INTO media_correction_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(id, input.requestKey, input.taskId, hash, JSON.stringify(plan), expires); return this.getPreview(id);
+      const assets = await collectCorrectionAssets(receipt, target, segments, input.includeAccessories !== false, signal, progress), plan: CorrectionPlan = { taskId: input.taskId, originalContext: receipt.context, previewGeneration: this.previewGeneration, connectionVersion, target: target.grant, targetSegments: segments, selection, metadata, parsed, includeAccessories: input.includeAccessories !== false, ...assets };
+      await this.checkFiles(plan, target); signal.throwIfAborted(); this.checkContext(plan); const id = randomUUID(); db.prepare("INSERT INTO media_correction_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(id, input.requestKey, input.taskId, hash, JSON.stringify(plan), this.now() + 600000); return this.getPreview(id);
     });
   }
   private checkContext(plan: CorrectionPlan) { this.writable(); if (plan.previewGeneration !== this.previewGeneration || this.connections.version !== plan.connectionVersion || correctionReceipt(this.database, this.ingestion.targets, plan.taskId).context !== plan.originalContext) throw correctionConflict("任务、文件收据、连接或核心已变化，请重新预览修正"); assertMediaCoordinates(this.database, plan.selection, plan.taskId, plan.files[0]!.from.segments.at(-1)!); }
@@ -86,18 +112,19 @@ export class Corrections {
     const reserved = (this.database.connection.prepare("SELECT plan_json FROM media_file_relocation WHERE to_root_id=? AND recorded=0 AND phase IN ('PENDING','COPYING')").all(target.grant.id) as { plan_json: string }[]).reduce((total, row) => { const plan = JSON.parse(row.plan_json); return total + (plan.mode === "COPY" ? plan.expected.size : 0); }, 0); assertSpaceBudget(await target.check(), bytes, reserved);
   }
   private bindConfirmation(requestKey: string, previewId: string, operationId: string) { this.database.connection.prepare("INSERT INTO media_correction_confirmation VALUES(?,?,?)").run(requestKey, previewId, operationId); return this.dto(this.row(operationId)); }
-  async confirm(input: CoreInput<"corrections.confirm">): Promise<CorrectionOperation> {
+  async confirm(input: CoreInput<"corrections.confirm">, signal?: AbortSignal, progress?: (value: PreparationProgress) => void, acceptedAt = this.now()): Promise<CorrectionOperation> {
+    signal = AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]); signal.throwIfAborted();
     input = correctionActions["corrections.confirm"].input.parse(input);
     const executor = this.executor(), db = this.database.connection, prior = db.prepare("SELECT preview_id,operation_id FROM media_correction_confirmation WHERE request_key=?").get(input.requestKey) as { preview_id: string; operation_id: string } | undefined;
     if (prior) { if (prior.preview_id !== input.previewId) throw correctionConflict("确认请求键已用于另一个预览"); return this.dto(this.row(prior.operation_id)); }
     const receipt = db.prepare("SELECT * FROM media_correction_preview WHERE id=?").get(input.previewId) as PreviewRow | undefined; if (!receipt) throw correctionConflict("修正预览不存在，请重新预览"); if (receipt.operation_id) return this.bindConfirmation(input.requestKey, receipt.id, receipt.operation_id);
     return this.ingestion.withCorrectionLease(receipt.task_id, async () => {
-      const plan = JSON.parse(receipt.plan_json) as CorrectionPlan; if (receipt.expires_at <= this.now() || this.active(plan.taskId)) throw correctionConflict("预览已过期或此文件已有活动修正，请查看原作业或重新预览"); this.checkContext(plan);
-      const source = correctionReceipt(this.database, this.ingestion.targets, plan.taskId), target = this.target(plan.target.id, plan.target), current = await collectCorrectionAssets(source, target, plan.targetSegments, plan.includeAccessories, this.lifetime.signal);
-      if (correctionManifest(current.files) !== correctionManifest(plan.files)) throw correctionConflict("主视频或附属文件范围、内容已经变化，请重新预览并确认完整文件清单"); await this.checkFiles(plan, target);
+      const plan = JSON.parse(receipt.plan_json) as CorrectionPlan; if (receipt.expires_at <= acceptedAt || this.active(plan.taskId)) throw correctionConflict("预览已过期或此文件已有活动修正，请查看原作业或重新预览"); this.checkContext(plan);
+      const source = correctionReceipt(this.database, this.ingestion.targets, plan.taskId), target = this.target(plan.target.id, plan.target), current = await collectCorrectionAssets(source, target, plan.targetSegments, plan.includeAccessories, signal, progress);
+      if (correctionManifest(current.files) !== correctionManifest(plan.files)) throw correctionConflict("主视频或附属文件范围、内容已经变化，请重新预览并确认完整文件清单"); await this.checkFiles(plan, target); signal!.throwIfAborted();
       const id = randomUUID(), jobId = randomUUID(), newTask = randomUUID(), time = timestamp(this.now);
       const result = db.transaction(() => {
-        this.checkContext(plan); if (receipt.expires_at <= this.now() || this.active(plan.taskId)) throw correctionConflict("修正预览已过期或任务已有计划，请重新读取"); for (const file of plan.files) if (file.action !== "KEEP") assertCorrectionTarget(this.database, target, file.to.segments, plan.taskId);
+        this.checkContext(plan); if (receipt.expires_at <= acceptedAt || this.active(plan.taskId)) throw correctionConflict("修正预览已过期或任务已有计划，请重新读取"); for (const file of plan.files) if (file.action !== "KEEP") assertCorrectionTarget(this.database, target, file.to.segments, plan.taskId);
         db.prepare("INSERT INTO desktop_job VALUES(?,'correction','PLANNED',?,?)").run(jobId, receipt.plan_json, time); db.prepare("INSERT INTO correction_item VALUES(?,?,?,'PENDING',?)").run(id, jobId, plan.taskId, receipt.plan_json);
         db.prepare("INSERT INTO media_task(id,source_id,source_path,title,status,parsed_json,metadata_json,confirmed_json,corrected_from_id,created_at,updated_at) VALUES(?,?,?,?,'PROCESSING',?,?,?,?,?,?)").run(newTask, source.task.source_id, source.task.source_path, plan.metadata.title, JSON.stringify(plan.parsed), JSON.stringify(plan.metadata), JSON.stringify(plan.selection), plan.taskId, time, time);
         db.prepare("INSERT INTO media_correction_operation(id,preview_id,request_key,original_task_id,new_task_id,target_root_id,target_slot,plan_json,phase,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'PLANNED',?,?)").run(id, receipt.id, input.requestKey, plan.taskId, newTask, plan.target.id, "pending:" + id, receipt.plan_json, time, time);
@@ -158,5 +185,5 @@ export class Corrections {
       db.prepare("INSERT INTO emby_delivery(task_id,correction_id,connection_id,connection_version,state,next_attempt_at,updated_at) VALUES(?,?,?,?,'REFRESH_PENDING',?,?)").run(row.new_task_id, row.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, time);
     })();
   }
-  async close() { this.closed = true; this.lifetime.abort(); clearInterval(this.timer); this.interrupt(); await Promise.allSettled([...this.previews.values()].map((value) => value.flight)); await this.flight?.catch(() => {}); await this.files?.close(); }
+  async close() { this.closed = true; this.lifetime.abort(); clearInterval(this.timer); this.interrupt(); await this.preparations.close(); await Promise.allSettled([...this.previews.values()].map((value) => value.flight)); await this.flight?.catch(() => {}); await this.files?.close(); }
 }

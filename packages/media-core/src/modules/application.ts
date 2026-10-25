@@ -38,10 +38,12 @@ import { loadNativeRename, type NativeRenameLaunch } from "../files/native-renam
 
 declare module "@yeatz/app-framework/command" {
   interface Commands {
+    "media.corrections.preparation": (input: CoreInput<"corrections.preparation">) => CoreOutput<"corrections.preparation">;
+    "media.corrections.cancel-preparation": (input: CoreInput<"corrections.cancel-preparation">) => CoreOutput<"corrections.cancel-preparation">;
     "media.corrections.task": (input: CoreInput<"corrections.task">) => CoreOutput<"corrections.task">;
-    "media.corrections.preview": (input: CoreInput<"corrections.preview">) => Promise<CoreOutput<"corrections.preview">>;
+    "media.corrections.preview": (input: CoreInput<"corrections.preview">) => CoreOutput<"corrections.preview">;
     "media.corrections.get-preview": (input: CoreInput<"corrections.get-preview">) => CoreOutput<"corrections.get-preview">;
-    "media.corrections.confirm": (input: CoreInput<"corrections.confirm">) => Promise<CoreOutput<"corrections.confirm">>;
+    "media.corrections.confirm": (input: CoreInput<"corrections.confirm">) => CoreOutput<"corrections.confirm">;
     "media.corrections.list": (input: CoreInput<"corrections.list">) => CoreOutput<"corrections.list">;
     "media.corrections.get": (input: CoreInput<"corrections.get">) => CoreOutput<"corrections.get">;
     "media.corrections.retry": (input: CoreInput<"corrections.retry">) => CoreOutput<"corrections.retry">;
@@ -195,10 +197,12 @@ export function createMediaApplication(
       corrections = new Corrections(ctx.get(DatabaseToken), ingestion, connections, native); ctx.disposables.add(() => corrections.close());
       const registry = ctx.commandRegistry;
       const add = (dispose: () => void) => ctx.disposables.add(dispose);
+      add(registry.register("media.corrections.preparation", (_, input) => corrections.preparations.get(input.id)));
+      add(registry.register("media.corrections.cancel-preparation", (_, input) => corrections.preparations.cancel(input.id)));
       add(registry.register("media.corrections.task", (_, input) => corrections.describe(input)));
-      add(registry.register("media.corrections.preview", (_, input) => corrections.preview(input)));
+      add(registry.register("media.corrections.preview", (_, input) => corrections.preparePreview(input)));
       add(registry.register("media.corrections.get-preview", (_, input) => corrections.getPreview(input.id)));
-      add(registry.register("media.corrections.confirm", (_, input) => corrections.confirm(input)));
+      add(registry.register("media.corrections.confirm", (_, input) => corrections.prepareConfirmation(input)));
       add(registry.register("media.corrections.list", (_, input) => corrections.list(input)));
       add(registry.register("media.corrections.get", (_, input) => corrections.details(input)));
       add(registry.register("media.corrections.retry", (_, input) => corrections.retry(input)));

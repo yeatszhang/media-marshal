@@ -66,3 +66,5 @@ ELECTRON_RUN_AS_NODE=1 node_modules/.bin/electron tools/desktop-files/check-relo
 
 
 schema v22 的上层业务测试为 `npm test -- packages/media-core/src/ingestion/corrections.test.ts`。`correction-crash-child.mjs` 仅用于该测试的两个独立进程检查点：父测试核对检查点后 SIGKILL，重建不恢复下载来源、不注入个人凭据，只按已确认媒体目标计划补历史或清理。Core 的私有启动参数可传入经完整性校验的原语；Main／worker 资源接线和客户端页面仍未完成，不据此宣称安装态修正可用。
+
+大文件核验：schema v23 将公开预览／确认动作改为先返回持久核验编号，`corrections.preparation` 查询当前文件读取进度，`corrections.cancel-preparation` 传递取消信号；Core 内部仍可直接等待核验方法，测试不会以该内部方法冒充 IPC 立即返回。核验队列、请求合并、取消、停止及恢复收据测试位于 `packages/media-core/src/ingestion/correction-preparations.test.ts`。Main／页面接线仍待完成。

@@ -19,6 +19,7 @@ import { IngestionPipeline } from "./pipeline";
 import { Corrections } from "./corrections";
 import { EmbyDelivery } from "./emby-delivery";
 import { loadNativeRename, type NativeRenameApi } from "../files/native-rename";
+import { ManagedRoot } from "../files/index";
 
 const run = promisify(execFile), cleanup: (() => unknown | Promise<unknown>)[] = [];
 let work: string, native: NativeRenameApi, nativeLaunch: { manifestPath: string; manifestSha256: string };
@@ -63,6 +64,31 @@ describe.skipIf(process.platform !== "darwin")("单条修正的预览、文件�
     const f = await fixture(), input = { taskId: f.taskId, requestKey: randomUUID(), selection: { tmdbId: 2, mediaType: "MOVIE" as const } }, [a, b] = await Promise.all([f.corrections.preview(input), f.corrections.preview(input)]); expect(a.id).toBe(b.id);
     const other = await f.preview(), key = randomUUID(), job = await f.corrections.confirm({ previewId: a.id, requestKey: key, filesComplete: true }); expect((await f.corrections.confirm({ previewId: a.id, requestKey: randomUUID(), filesComplete: true })).id).toBe(job.id); await expect(f.corrections.confirm({ previewId: other.id, requestKey: key, filesComplete: true })).rejects.toThrow("另一个预览"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_operation").get()).toEqual({ n: 1 });
     const g = await fixture(), preview = await g.preview(); g.advance(600001); await expect(g.corrections.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true })).rejects.toThrow("过期"); const fresh = await g.preview(), restored = new Corrections(g.db, g.pipeline, g.connections, native); cleanup.push(() => restored.close()); expect(restored.getPreview(fresh.id).state).toBe("EXPIRED"); await expect(restored.confirm({ previewId: fresh.id, requestKey: randomUUID(), filesComplete: true })).rejects.toThrow("核心已变化");
+  });
+  it("大文件核验结束后才开始预览有效期，期限内接受的确认不会因自身核验耗时而失效", async () => {
+    const f = await fixture(), inspect = ManagedRoot.prototype.inspectForRelocation;
+    const spy = vi.spyOn(ManagedRoot.prototype, "inspectForRelocation").mockImplementation(async function (this: ManagedRoot, ...args) { const result = await inspect.apply(this, args); f.advance(700000); return result; });
+    const preview = await f.preview(); expect(preview.state).toBe("READY"); expect(preview.expiresAt - f.now()).toBe(600000);
+    const job = await f.corrections.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true }); spy.mockRestore(); await f.corrections.tick(); expect(f.corrections.details({ id: job.id }).operation.state).toBe("RECORDED"); expect(await readFile(f.original)).toEqual(f.bytes);
+  });
+  it("公开预览核验返回持久编号后可中断实际文件读取，不留下可确认预览或文件计划", async () => {
+    const f = await fixture(), inspect = ManagedRoot.prototype.inspectForRelocation; let entered!: () => void; const ready = new Promise<void>((done) => { entered = done; });
+    vi.spyOn(ManagedRoot.prototype, "inspectForRelocation").mockImplementation(async function (this: ManagedRoot, parts, signal, progress) {
+      if (join(this.grant.path, ...parts) === f.oldPath) { progress?.(0, f.bytes.length); entered(); await new Promise<void>((_done, fail) => { if (signal!.aborted) fail(new Error("取消")); else signal!.addEventListener("abort", () => fail(new Error("取消")), { once: true }); }); }
+      return inspect.call(this, parts, signal, progress);
+    });
+    const job = f.corrections.preparePreview({ taskId: f.taskId, requestKey: randomUUID(), selection: { tmdbId: 2, mediaType: "MOVIE" } }); expect(job.state).toBe("PENDING"); const flight = f.corrections.preparations.tick(); await ready;
+    expect(f.corrections.preparations.get(job.id)).toMatchObject({ state: "RUNNING", currentPath: f.oldPath, readBytes: 0, totalBytes: f.bytes.length }); expect(f.corrections.preparations.cancel(job.id).state).toBe("CANCELING"); await flight;
+    expect(f.corrections.preparations.get(job.id).state).toBe("CANCELED"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_preview").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_file_relocation").get()).toEqual({ n: 0 }); expect(await readFile(f.oldPath)).toEqual(f.bytes); expect(await readFile(f.original)).toEqual(f.bytes);
+  });
+  it("确认收据已提交但核验响应未记账，恢复原编号与任务关联而不重复确认", async () => {
+    const f = await fixture(), p = await f.preview(), preparation = f.corrections.prepareConfirmation({ previewId: p.id, requestKey: randomUUID(), filesComplete: true }); await f.corrections.preparations.tick(); const ready = f.corrections.preparations.get(preparation.id); expect(ready.state).toBe("READY");
+    f.db.connection.prepare("UPDATE media_correction_preparation SET state='RUNNING',operation_id=NULL WHERE id=?").run(preparation.id); const restored = new Corrections(f.db, f.pipeline, f.connections, native); cleanup.push(() => restored.close());
+    expect(restored.preparations.get(preparation.id)).toMatchObject({ state: "READY", operationId: ready.operationId }); expect(restored.describe({ taskId: f.taskId }).preparation?.id).toBe(preparation.id); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_operation").get()).toEqual({ n: 1 }); expect(await readFile(f.oldPath)).toEqual(f.bytes);
+  });
+  it("旧版预览请求键被用于不同内容时，后台恢复不会错认成旧预览成功", async () => {
+    const f = await fixture(), requestKey = randomUUID(); await f.preview({ requestKey }); const job = f.corrections.preparePreview({ taskId: f.taskId, requestKey, selection: { tmdbId: 3, mediaType: "MOVIE" } }); await f.corrections.preparations.tick();
+    expect(f.corrections.preparations.get(job.id)).toMatchObject({ state: "FAILED", previewId: null, failure: { code: "CONFLICT" } }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_preview").get()).toEqual({ n: 1 }); expect(await readFile(f.oldPath)).toEqual(f.bytes);
   });
   it("附属成员或文件内容变化使预览失效，不创建修正意图", async () => {
     const f = await fixture(), preview = await f.preview(); await writeFile(join(dirname(f.oldPath), basename(f.oldPath, ".mkv") + ".ass"), "新出现字幕"); await expect(f.corrections.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true })).rejects.toThrow("范围、内容已经变化"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_operation").get()).toEqual({ n: 0 }); expect(await readFile(f.original)).toEqual(f.bytes);
@@ -132,18 +158,21 @@ describe.skipIf(process.platform !== "darwin")("单条修正的预览、文件�
   it("受限 Core 命令接入真实原生组件并返回历史链接，Renderer 参数不能注入文件路径", async () => {
     const f = await fixture(); await f.preview();
     // 用本地固定服务器产生的合法原始响应准备离线缓存，测试不连接真实 TMDB，也不开放生产测试端点。
-    const cached = f.db.connection.prepare("SELECT value FROM tmdb_cache WHERE json_extract(value,'$.id')=2 LIMIT 1").get() as { value: string }, key = createHash("sha256").update("tmdb-v1|https://api.themoviedb.org/3/movie/2?language=zh-CN").digest("hex"); f.db.connection.prepare("INSERT INTO tmdb_cache VALUES(?,?,?)").run(key, cached.value, Date.now() + 600000); f.db.close();
+    const cached = f.db.connection.prepare("SELECT value FROM tmdb_cache WHERE json_extract(value,'$.id')=2 LIMIT 1").get() as { value: string }, key = createHash("sha256").update("tmdb-v1|https://api.themoviedb.org/3/movie/2?language=zh-CN").digest("hex"); f.db.connection.prepare("INSERT INTO tmdb_cache VALUES(?,?,?)").run(key, cached.value, Date.now() + 600000); await f.corrections.close(); await f.pipeline.close(); await f.connections.close(); f.db.close();
     const runtime = createMediaApplication(join(f.path, "core.sqlite3"), [], { nativeFiles: nativeLaunch }); cleanup.push(() => runtime.stop()); await runtime.app.start();
     const privateCall = (action: string, payload: unknown) => runtime.dispatchPrivate({ kind: "core.private.request", requestId: randomUUID(), action, payload }), call = (action: string, payload: unknown) => runtime.dispatch({ kind: "request", protocolVersion: 1, requestId: randomUUID(), action, payload });
     for (const grant of [f.oldGrant, f.targetGrant]) await privateCall("media.targets.authorize", grant); await privateCall("media.credentials.install", { tmdb: "fixture-offline-cache", emby: null });
     await expect(call("corrections.preview", { taskId: f.taskId, requestKey: randomUUID(), selection: { tmdbId: 2, mediaType: "MOVIE" }, targetPath: "/不得访问" })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
-    const p = await call("corrections.preview", { taskId: f.taskId, requestKey: randomUUID(), selection: { tmdbId: 2, mediaType: "MOVIE" }, targetId: f.targetGrant.id }) as CoreOutput<"corrections.preview">; expect(await readFile(f.oldPath)).toEqual(f.bytes);
-    const job = await call("corrections.confirm", { previewId: p.id, requestKey: randomUUID(), filesComplete: true }) as CoreOutput<"corrections.confirm">; await expect.poll(async () => (await call("corrections.get", { id: job.id }) as CoreOutput<"corrections.get">).operation.state, { timeout: 10000 }).toBe("RECORDED");
+    const preparation = (id: string) => call("corrections.preparation", { id }) as Promise<CoreOutput<"corrections.preparation">>;
+    const prepared = await call("corrections.preview", { taskId: f.taskId, requestKey: randomUUID(), selection: { tmdbId: 2, mediaType: "MOVIE" }, targetId: f.targetGrant.id }) as CoreOutput<"corrections.preview">; expect(prepared.state).toBe("PENDING"); await expect.poll(async () => (await preparation(prepared.id)).state).toBe("READY");
+    const p = await call("corrections.get-preview", { id: (await preparation(prepared.id)).previewId! }) as CoreOutput<"corrections.get-preview">; expect(await readFile(f.oldPath)).toEqual(f.bytes);
+    const confirming = await call("corrections.confirm", { previewId: p.id, requestKey: randomUUID(), filesComplete: true }) as CoreOutput<"corrections.confirm">; await expect.poll(async () => (await preparation(confirming.id)).state).toBe("READY");
+    const jobId = (await preparation(confirming.id)).operationId!; await expect.poll(async () => (await call("corrections.get", { id: jobId }) as CoreOutput<"corrections.get">).operation.state, { timeout: 10000 }).toBe("RECORDED"); const job = (await call("corrections.get", { id: jobId }) as CoreOutput<"corrections.get">).operation;
     const tasks = await call("tasks.list", {}) as CoreOutput<"tasks.list">; expect(tasks.items.find((task) => task.id === f.taskId)).toMatchObject({ status: "CORRECTED", correctedToId: job.newTaskId }); expect(tasks.items.find((task) => task.id === job.newTaskId)).toMatchObject({ status: "DONE", correctedFromId: f.taskId }); expect(await readFile(p.targetPath)).toEqual(f.bytes); expect(await readFile(f.original)).toEqual(f.bytes);
   });
   it.each(["before-history", "after-history"])("独立 Core 在 %s SIGKILL，恢复只补历史或清理，不重新移动已提交媒体", async (checkpoint) => {
     const f = await fixture(true), p = await f.preview({ targetId: f.targetGrant.id }), job = await f.corrections.confirm({ previewId: p.id, requestKey: randomUUID(), filesComplete: true }), config = join(f.path, "crash.json"), databasePath = join(f.path, "core.sqlite3");
-    await writeFile(config, JSON.stringify({ id: job.id, database: databasePath, checkpoint, native: nativeLaunch })); f.db.close();
+    await writeFile(config, JSON.stringify({ id: job.id, database: databasePath, checkpoint, native: nativeLaunch })); await f.corrections.close(); await f.pipeline.close(); await f.connections.close(); f.db.close();
     const child = spawn(process.execPath, [resolve("tools/desktop-files/correction-crash-child.mjs"), config], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["ignore", "pipe", "pipe"] }); let output = "", errors = "", timeout: ReturnType<typeof setTimeout> | undefined;
     const exited = new Promise<{ signal: string | null }>((done, fail) => { child.once("error", fail); child.once("exit", (_code, signal) => done({ signal })); }), reached = new Promise<void>((done) => { child.stdout.on("data", (bytes) => { output += bytes.toString(); if (output.includes("CHECKPOINT:" + checkpoint + "\n")) done(); }); }); child.stderr.on("data", (bytes) => { errors = (errors + bytes.toString()).slice(-8192); });
     try { await Promise.race([reached, exited.then(() => { throw new Error("检查点前子进程退出：" + errors); }), new Promise((_, fail) => { timeout = setTimeout(() => fail(new Error("检查点等待超时：" + errors)), 15000); })]); expect(child.kill("SIGKILL")).toBe(true); expect((await exited).signal).toBe("SIGKILL"); } finally { clearTimeout(timeout); if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); await exited; } }

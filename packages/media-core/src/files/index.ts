@@ -132,12 +132,13 @@ export class ManagedRoot {
     if (!info.isFile() || String(info.dev) !== this.grant.volume.observedDevice || info.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new CloudError("LOCAL_UNAVAILABLE");
     return localFileEvidenceSchema.parse({ volumeId: this.grant.volume.volumeId, inode: String(info.ino), birthtimeNs: String(info.birthtimeNs), modifiedNs: String(info.mtimeNs), size: Number(info.size), sha256 });
   }
-  private async hashWithSnapshot(path: string, remoteHash?: Extract<VersionEvidence, { kind: "hash" }>, signal?: AbortSignal): Promise<{ evidence: LocalFileEvidence; snapshot: NativeFileSnapshot }> {
+  private async hashWithSnapshot(path: string, remoteHash?: Extract<VersionEvidence, { kind: "hash" }>, signal?: AbortSignal, progress?: (read: number, total: number) => void): Promise<{ evidence: LocalFileEvidence; snapshot: NativeFileSnapshot }> {
     await this.check(); const handle = await open(path, constants.O_RDONLY | noFollow);
     try {
       const before = await handle.stat({ bigint: true }); this.evidence(before, "0".repeat(64));
       const digest = createHash("sha256"), upstream = remoteHash ? createHash(remoteHash.algorithm) : null, buffer = Buffer.allocUnsafe(1024 * 1024); let position = 0;
-      for (;;) { if (signal?.aborted) throw new CloudError("INTERRUPTED"); const { bytesRead } = await handle.read(buffer, 0, buffer.length, position); if (!bytesRead) break; digest.update(buffer.subarray(0, bytesRead)); upstream?.update(buffer.subarray(0, bytesRead)); position += bytesRead; }
+      progress?.(0, Number(before.size));
+      for (;;) { if (signal?.aborted) throw new CloudError("INTERRUPTED"); const { bytesRead } = await handle.read(buffer, 0, buffer.length, position); if (!bytesRead) break; digest.update(buffer.subarray(0, bytesRead)); upstream?.update(buffer.subarray(0, bytesRead)); position += bytesRead; progress?.(position, Number(before.size)); }
       const after = await handle.stat({ bigint: true });
       if (before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(position) !== after.size) throw new CloudError("CONFLICT");
       if (remoteHash && upstream!.digest("hex") !== remoteHash.value) throw new CloudError("REMOTE_CHANGED");
@@ -159,7 +160,7 @@ export class ManagedRoot {
     const names = this.validateRelocationPath(parts); await this.check();
     return join(await this.directory(names.slice(0, -1), false), names.at(-1)!);
   }
-  async inspectForRelocation(parts: readonly string[], signal?: AbortSignal) { return this.hashWithSnapshot(await this.relocationPath(parts), undefined, signal); }
+  async inspectForRelocation(parts: readonly string[], signal?: AbortSignal, progress?: (read: number, total: number) => void) { return this.hashWithSnapshot(await this.relocationPath(parts), undefined, signal, progress); }
   /** 恢复已发生的命名空间变更时，重新同步父目录并核对内容，不能仅凭文件存在补记。 */
   async confirmRelocation(parts: readonly string[], expected: LocalFileEvidence, signal?: AbortSignal) {
     const path = await this.relocationPath(parts); await this.syncDirectory(join(path, ".."));

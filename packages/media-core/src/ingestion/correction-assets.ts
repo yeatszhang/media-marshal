@@ -8,6 +8,7 @@ import type { MetadataWork } from "../domain/matching.js";
 import { ManagedRoot, ManagedRoots, sameVolumeRoot } from "../files/index.js";
 import { SourceRoot } from "../files/source-root.js";
 import type { MediaSelection } from "./coordinates.js";
+import type { PreparationProgress } from "./correction-preparations.js";
 
 export const correctionHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export interface CorrectionAsset { id: string; kind: "MAIN" | "ACCESSORY"; from: { grant: ManagedRootGrant; segments: string[] }; to: { grant: ManagedRootGrant; segments: string[] }; expected: LocalFileEvidence | null; action: "NONE" | "MOVE" | "COPY" | "KEEP"; reason: string | null }
@@ -39,9 +40,10 @@ export function correctionReceipt(database: CoreDatabase, roots: ManagedRoots, t
 }
 export function correctionMode(from: CorrectionAsset["from"], to: CorrectionAsset["to"]) { return from.grant.id === to.grant.id && JSON.stringify(from.segments) === JSON.stringify(to.segments) ? "NONE" as const : from.grant.volume.volumeId === to.grant.volume.volumeId ? "MOVE" as const : "COPY" as const; }
 export const correctionManifest = (files: CorrectionAsset[]) => correctionHash(files.map(({ id: _id, ...file }) => file));
-export async function collectCorrectionAssets(receipt: ReturnType<typeof correctionReceipt>, target: ManagedRoot, targetSegments: string[], include: boolean, signal?: AbortSignal) {
+export async function collectCorrectionAssets(receipt: ReturnType<typeof correctionReceipt>, target: ManagedRoot, targetSegments: string[], include: boolean, signal?: AbortSignal, progress?: (value: PreparationProgress) => void) {
   const from = receipt.root, main = receipt.plan.targetSegments;
-  const original = await from.inspectForRelocation(main, signal).then((value) => value.evidence).catch((error) => { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw correctionConflict(`已整理视频「${main.at(-1)}」当前缺失，请核对原目标或恢复原文件后重新预览；不会从下载来源补复制`); throw error; });
+  const inspect = (parts: string[]) => from.inspectForRelocation(parts, signal, progress && ((readBytes, totalBytes) => progress({ currentPath: join(from.grant.path, ...parts), readBytes, totalBytes })));
+  const original = await inspect(main).then((value) => value.evidence).catch((error) => { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw correctionConflict(`已整理视频「${main.at(-1)}」当前缺失，请核对原目标或恢复原文件后重新预览；不会从下载来源补复制`); throw error; });
   if (!equalEvidence(original, receipt.expected)) throw correctionConflict(`「${main.at(-1)}」与已整理收据不符，请核对原媒体文件；不会重新读取下载原件`);
   const files: CorrectionAsset[] = [{ id: randomUUID(), kind: "MAIN", from: { grant: from.grant, segments: main }, to: { grant: target.grant, segments: targetSegments }, expected: original, action: correctionMode({ grant: from.grant, segments: main }, { grant: target.grant, segments: targetSegments }), reason: null }], warnings: string[] = [];
   const base = (name: string) => name.slice(0, name.length - extname(name).length), sourceBase = base(main.at(-1)!), targetBase = base(targetSegments.at(-1)!), reader = await SourceRoot.open(from.grant);
@@ -51,7 +53,7 @@ export async function collectCorrectionAssets(receipt: ReturnType<typeof correct
   for (const asset of receipt.assets) entries.set(JSON.stringify(asset.segments), { segments: asset.segments, known: asset });
   for (const [, entry] of [...entries].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
     const name = entry.segments.at(-1)!, side = { grant: from.grant, segments: entry.segments }; let expected: LocalFileEvidence | null = null, reason: string | null = null;
-    try { expected = (await from.inspectForRelocation(entry.segments, signal)).evidence; if (entry.known?.expected && !equalEvidence(expected, entry.known.expected)) throw correctionConflict(`附属文件「${name}」与原收据不符，请先核对文件；未覆盖或删除`); }
+    try { expected = (await inspect(entry.segments)).evidence; if (entry.known?.expected && !equalEvidence(expected, entry.known.expected)) throw correctionConflict(`附属文件「${name}」与原收据不符，请先核对文件；未覆盖或删除`); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; reason = `历史附属文件「${name}」当前缺失，本次保留该历史，不从下载来源补复制`; }
     if (!reason && generic.test(name)) reason = `通用封面「${name}」留在原目录，不随单个视频移动`;
     if (!reason && (!associated.test(name) || !name.startsWith(sourceBase + "."))) reason = `历史附属文件「${name}」与当前视频不同名，保留原位`;
