@@ -239,6 +239,13 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
   await expect(window.getByLabel("扫描间隔", { exact: true })).toHaveCount(0); await expect(window.getByLabel("媒体类型", { exact: true })).toHaveCount(0);
   const behavior = window.getByRole("complementary", { name: "当前配置的执行方式" });
   await expect(behavior).toContainText("手动执行"); await expect(behavior).toContainText("仅保存到本地下载目录");
+  const filters = form.locator("details.source-filter-group"), extensions = form.getByLabel("扩展名过滤", { exact: true });
+  await expect(extensions).toBeHidden(); await filters.locator("summary").click(); await extensions.fill("mp4,mkv");
+  await form.getByLabel("精确文件名过滤", { exact: true }).fill("01.mp4"); await filters.locator("summary").click();
+  await expect(extensions).toBeHidden(); await expect(filters.locator("summary")).toContainText("已设置筛选");
+  await filters.locator("summary").click(); await expect(extensions).toHaveValue("mp4,mkv"); await extensions.fill(""); await form.getByLabel("精确文件名过滤", { exact: true }).fill(""); await filters.locator("summary").click();
+  expect(await behavior.evaluate((summary) => !!(summary.compareDocumentPosition(document.querySelector(".source-editor-footer")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  expect(await behavior.evaluate((summary) => !!(document.querySelector(".source-step:last-of-type")!.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await form.screenshot({ path: "test-results/desktop/source-form-cloud-download.png" });
   const periodic = window.getByRole("checkbox", { name: "定期检查网盘目录", exact: true }), organize = window.getByRole("checkbox", { name: "下载后整理到媒体库", exact: true });
   await periodic.focus(); await window.keyboard.press("Space"); await expect(periodic).toBeChecked(); await expect(window.getByLabel("扫描间隔", { exact: true })).toBeVisible();

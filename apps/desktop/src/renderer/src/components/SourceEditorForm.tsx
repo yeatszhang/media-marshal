@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Cloud, Folder, FolderOutput } from "lucide-react";
 import { useSourceRules } from "../source-draft-context";
@@ -12,6 +12,14 @@ function SourceStep({ number, title, description, children }: { number: number; 
     <header className="source-step-heading"><span className="source-step-number" aria-hidden="true">{number}</span><div><h3 id={id}>{title}</h3><p>{description}</p></div></header>
     <div className="source-step-content">{children}</div>
   </section>;
+}
+
+function DownloadFilters({ configured, children }: { configured: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(configured);
+  return <details className="source-filter-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary><strong>筛选下载内容 <span>可选</span></strong><small>{configured ? "已设置筛选，仅下载符合条件的文件" : "默认下载全部文件；需要限定格式或文件名时展开"}</small></summary>
+    <div className="source-filter-content"><p className="source-field-help">留空表示不过滤。两项都填写时，文件需要同时满足两个条件。</p>{children}</div>
+  </details>;
 }
 
 export function SourceEditorForm({ onClose }: { onClose(): void }) {
@@ -32,11 +40,6 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
       {editor.type === "cloud" && <li><span><Folder size={16} aria-hidden="true" />下载到本地</span><strong title={root?.path}>{root?.path || "选择下载目录"}</strong></li>}
       <li className={editor.type === "cloud" && !editor.organize ? "is-muted" : undefined}><span><FolderOutput size={16} aria-hidden="true" />{editor.type === "cloud" ? "可选：整理到媒体库" : "整理到媒体库"}</span><strong title={editor.type === "cloud" && !editor.organize ? undefined : editor.targetPath}>{editor.type === "cloud" && !editor.organize ? "未开启，仅保存下载文件" : editor.targetPath || "选择整理目标"}</strong></li>
     </ol>
-    {editor.type === "cloud" && <aside className="source-behavior-summary" aria-label="当前配置的执行方式" aria-live="polite">
-      <strong>当前配置会怎样运行</strong>
-      <dl><div><dt>何时下载</dt><dd>{editor.periodic ? `确认启用后立即扫描，之后每 ${editor.intervalSeconds < 3600 ? `${editor.intervalSeconds / 60} 分钟` : `${editor.intervalSeconds / 3600} 小时`} 检查一次；应用需保持运行。` : "手动执行：预览并确认后可执行一次，之后由你从来源列表再次执行。"}</dd></div>
-        <div><dt>下载完成后</dt><dd>{editor.organize ? "进入「待处理」识别作品；你确认整理预览后，才复制到媒体库。连接 Emby 后再核对收录。" : "仅保存到本地下载目录。开启下方「下载后整理到媒体库」，才会接入识别与整理。"}</dd></div></dl>
-    </aside>}
     {editor.archived && <p className="notice" role="status">来源已删除，以下配置仅供查看；请先从「已删除来源」恢复后再编辑。</p>}
     <fieldset disabled={busy || state.picker || editor.archived} className="source-rule-fields">
       <div className="form-grid source-basics"><label>来源名称<input aria-label="来源名称" ref={nameRef} value={editor.name} maxLength={100} onChange={(event) => model.change({ name: event.target.value })} placeholder="例如：追剧下载、电影整理" /></label><label>来源类型<select aria-label="来源类型" value={editor.type} disabled={editor.draftRevision > 0} onChange={(event) => model.change({ type: event.target.value as "cloud" | "local" })}><option value="cloud">网盘来源</option><option value="local">本地目录来源</option></select></label></div>
@@ -45,7 +48,7 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
           <div className="source-account-row"><label>网盘账号<select aria-label="网盘账号" value={editor.accountId} onChange={(event) => model.changeAccount(event.target.value)}><option value="">选择已连接账号</option>{state.accounts.map((value) => <option key={value.id} value={value.id}>{value.name}{value.status === "READY" ? "" : value.status === "RESELECT_REQUIRED" ? "（需重选范围）" : "（需检查连接）"}</option>)}</select></label><Link className="source-inline-link" to="/cloud?returnTo=sources">{account && account.status !== "READY" ? "检查或重新连接账号" : "连接／管理账号"}</Link></div>
           {!state.accounts.length && <p className="notice">还没有云端账号，请先连接夸克账号。当前来源草稿会保留。</p>}
           <div className="folder-field"><span>远端文件或目录</span><div><Cloud size={17} aria-hidden="true" /><span className="path" title={editor.remoteName}>{editor.remoteName || "尚未选择远端范围"}</span><Button data-source-remote="true" variant="outline" size="sm" disabled={!account?.rootRef || !["READY", "RESELECT_REQUIRED"].includes(account.status)} onClick={() => { void model.openPicker(); }}>选择远端范围</Button></div></div>
-          <div className="source-filter-group"><div><h4>筛选下载内容 <span>可选</span></h4><p className="source-field-help">留空表示不过滤。两项都填写时，文件需要同时满足两个条件。</p></div><div className="form-grid"><label>扩展名过滤<input aria-label="扩展名过滤" value={editor.extensions} onChange={(event) => model.change({ extensions: event.target.value })} placeholder="例如：mp4, mkv" /><small className="source-field-help">只下载这些格式，用逗号分隔。</small></label><label>精确文件名过滤<textarea aria-label="精确文件名过滤" rows={2} value={editor.names} onChange={(event) => model.change({ names: event.target.value })} placeholder={"例如：01.mp4\n02.mp4"} /><small className="source-field-help">每行一个完整文件名，包含扩展名。</small></label></div></div>
+          <DownloadFilters key={editor.id} configured={!!(editor.extensions.trim() || editor.names.trim())}><div className="form-grid"><label>扩展名过滤<input aria-label="扩展名过滤" value={editor.extensions} onChange={(event) => model.change({ extensions: event.target.value })} placeholder="例如：mp4, mkv" /><small className="source-field-help">只下载这些格式，用逗号分隔。</small></label><label>精确文件名过滤<textarea aria-label="精确文件名过滤" rows={2} value={editor.names} onChange={(event) => model.change({ names: event.target.value })} placeholder={"例如：01.mp4\n02.mp4"} /><small className="source-field-help">每行一个完整文件名，包含扩展名。</small></label></div></DownloadFilters>
         </SourceStep>
         <SourceStep number={2} title="选择本地下载位置" description="网盘文件先保存到这里。开启整理后，会再复制一份到媒体库。">
           <div className="source-directory-picker"><label>本地下载目录<select aria-label="本地下载目录" value={editor.downloadRootId} onChange={(event) => model.change({ downloadRootId: event.target.value })}><option value="">选择已授权下载目录</option>{state.roots.map((value) => <option key={value.id} value={value.id}>{value.path}{value.state === "AVAILABLE" ? "" : "（原磁盘不可用）"}</option>)}</select></label><Button variant="outline" onClick={() => { void model.choose("download"); }}><Folder size={15} aria-hidden="true" />选择下载目录</Button></div>
@@ -77,6 +80,11 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
           <p className="source-field-help">默认忽略隐藏项、常见临时文件、系统索引和 sample／samples 目录。自定义规则替换默认规则，文件名支持通配符，目录名以 / 结尾；关闭忽略也不会跳过文件就绪检查或接入应用私有暂存区。</p>
         </SourceStep>
       </>}
+      {editor.type === "cloud" && <aside className="source-behavior-summary" aria-label="当前配置的执行方式" aria-live="polite">
+        <strong>当前配置会怎样运行</strong>
+        <dl><div><dt>何时下载</dt><dd>{editor.periodic ? `确认启用后立即扫描，之后每 ${editor.intervalSeconds < 3600 ? `${editor.intervalSeconds / 60} 分钟` : `${editor.intervalSeconds / 3600} 小时`} 检查一次；应用需保持运行。` : "手动执行：预览并确认后可执行一次，之后由你从来源列表再次执行。"}</dd></div>
+          <div><dt>下载完成后</dt><dd>{editor.organize ? "进入「待处理」识别作品；你确认整理预览后，才复制到媒体库。连接 Emby 后再核对收录。" : "仅保存到本地下载目录。开启「下载后整理到媒体库」，才会接入识别与整理。"}</dd></div></dl>
+      </aside>}
       <div className="source-editor-footer"><p>「保存草稿」只保存填写内容。点击「预览配置」查看影响范围，确认后才会生效；现有来源在此之前继续使用原配置。</p><div className="form-actions"><Button variant="ghost" onClick={onClose}>取消编辑</Button><Button type="submit" variant="outline">保存草稿</Button><Button onClick={() => { void model.preview(); }}>{preview && preview.state !== "APPLIED" ? "重新预览" : "预览配置"}</Button></div></div>
     </fieldset>
     {editor.archived && <div className="form-actions"><Button variant="outline" onClick={onClose}>关闭配置查看</Button></div>}
