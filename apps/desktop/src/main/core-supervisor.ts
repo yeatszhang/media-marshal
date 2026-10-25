@@ -113,6 +113,7 @@ export class CoreSupervisor {
         "kind" in message &&
         message.kind === "ready"
       ) {
+        if (this.stopping || this.child !== child) { fail(); child.kill(); return; }
         if (
           !("protocolVersion" in message) ||
           message.protocolVersion !== PROTOCOL_VERSION
@@ -204,8 +205,8 @@ export class CoreSupervisor {
     try {
       await ready;
     } catch (error) {
-      this.state = "failed";
-      this.detail = "媒体核心不可用，请重试或检查诊断";
+      this.state = this.stopping ? "stopping" : "failed";
+      this.detail = this.stopping ? null : "媒体核心不可用，请重试或检查诊断";
       throw error;
     }
   }

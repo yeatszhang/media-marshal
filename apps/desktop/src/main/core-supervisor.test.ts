@@ -1,0 +1,142 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import type { EventEmitter } from "node:events";
+import type { CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
+import { PROTOCOL_VERSION } from "@media-marshal/contracts";
+
+interface TestChild extends EventEmitter {
+  kill: ReturnType<typeof vi.fn>;
+  postMessage: ReturnType<typeof vi.fn>;
+  alive: boolean;
+  killExits: boolean;
+  graceful: boolean;
+}
+interface TestPort extends EventEmitter { postMessage: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
+const harness = vi.hoisted(() => ({ children: [] as TestChild[], ports: [] as TestPort[], autoReady: true, fork: vi.fn() }));
+vi.mock("electron", async () => {
+  const { EventEmitter } = await import("node:events");
+  harness.fork.mockImplementation(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(), stderr: new EventEmitter(), alive: true, killExits: true, graceful: true,
+      kill: vi.fn(), postMessage: vi.fn(),
+    });
+    child.once("exit", () => { child.alive = false; });
+    child.kill.mockImplementation(() => { if (child.alive && child.killExits) child.emit("exit", 1); });
+    harness.children.push(child);
+    queueMicrotask(() => child.emit("spawn"));
+    return child;
+  });
+  return {
+    utilityProcess: { fork: harness.fork },
+    MessageChannelMain: class {
+      port1: TestPort;
+      port2 = {};
+      constructor() {
+        const child = harness.children.at(-1)!;
+        this.port1 = Object.assign(new EventEmitter(), { postMessage: vi.fn(), close: vi.fn(), start: vi.fn() });
+        const port = this.port1;
+        port.postMessage.mockImplementation((message) => {
+          if (message.kind === "shutdown" && child.alive && child.graceful) queueMicrotask(() => child.emit("exit", 0));
+        });
+        child.postMessage.mockImplementation((message) => {
+          if (message.kind === "initialize" && harness.autoReady) queueMicrotask(() => port.emit("message", { data: { kind: "ready", protocolVersion: PROTOCOL_VERSION } }));
+        });
+        harness.ports.push(port);
+      }
+    },
+  };
+});
+import { CoreSupervisor } from "./core-supervisor";
+
+const supervisors: CoreSupervisor[] = [];
+function fixture(bridge?: CoreHostBridge) {
+  const supervisor = new CoreSupervisor("/fixture/worker.js", "/fixture/profile", bridge);
+  supervisors.push(supervisor);
+  return supervisor;
+}
+beforeEach(() => { vi.useFakeTimers(); harness.autoReady = true; harness.fork.mockClear(); harness.children.length = 0; harness.ports.length = 0; });
+afterEach(async () => {
+  for (const supervisor of supervisors.splice(0)) {
+    const stopped = supervisor.stop();
+    for (const child of harness.children) if (child.alive) child.emit("exit", 0);
+    await stopped;
+  }
+  vi.useRealTimers();
+});
+
+describe("Core 生命周期与恢复栅栏", () => {
+  it("停止期间迟到握手不能恢复 ready，强杀确认退出后才允许显式恢复", async () => {
+    harness.autoReady = false;
+    const supervisor = fixture(); supervisor.onReady = vi.fn(async () => {});
+    const starting = expect(supervisor.start()).rejects.toMatchObject({ code: "CORE_UNAVAILABLE" });
+    await vi.waitFor(() => expect(harness.children).toHaveLength(1));
+    const child = harness.children[0]!; child.graceful = false; child.killExits = false;
+    const stopped = supervisor.stop();
+    harness.ports[0]!.emit("message", { data: { kind: "ready", protocolVersion: PROTOCOL_VERSION } });
+    await starting; expect(supervisor.onReady).not.toHaveBeenCalled(); expect(supervisor.state).toBe("stopping");
+    await vi.advanceTimersByTimeAsync(8000); expect(child.kill).toHaveBeenCalled();
+    child.emit("exit", 1); await stopped; await vi.advanceTimersByTimeAsync(60000);
+    expect(harness.fork).toHaveBeenCalledTimes(1);
+    harness.autoReady = true; await supervisor.restart();
+    expect(harness.fork).toHaveBeenCalledTimes(2); expect(supervisor.state).toBe("ready"); expect(supervisor.onReady).toHaveBeenCalledTimes(1);
+  });
+  it.each(["协议不符", "握手超时"])("%s 后确认旧核心退出前不启动第二个实例", async (mode) => {
+    harness.autoReady = false;
+    const supervisor = fixture(), starting = expect(supervisor.start()).rejects.toMatchObject({ code: mode === "握手超时" ? "TIMEOUT" : "CORE_UNAVAILABLE" });
+    await vi.waitFor(() => expect(harness.ports).toHaveLength(1));
+    const child = harness.children[0]!; child.killExits = false;
+    if (mode === "握手超时") await vi.advanceTimersByTimeAsync(15000);
+    else harness.ports[0]!.emit("message", { data: { kind: "ready", protocolVersion: PROTOCOL_VERSION + 1 } });
+    await starting;
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    await expect(supervisor.start()).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(harness.fork).toHaveBeenCalledTimes(1);
+    child.emit("exit", 1); harness.autoReady = true;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(harness.fork).toHaveBeenCalledTimes(2); expect(supervisor.state).toBe("ready");
+  });
+
+  it("崩溃立即中断等待的写请求，宿主回收完成后才恢复且不重放命令", async () => {
+    let release!: () => void;
+    const reaped = new Promise<void>((resolve) => { release = resolve; });
+    const bridge: CoreHostBridge = { generation: randomUUID(), attachCore: vi.fn(), receiveCore: vi.fn(() => false), detachCore: vi.fn(() => reaped) };
+    const supervisor = fixture(bridge); supervisor.onReady = vi.fn(async () => {}); await supervisor.start();
+    const port = harness.ports[0]!, pending = expect(supervisor.request("settings.save", { language: "zh-CN", embyUrl: "", tmdbProxy: "" })).rejects.toMatchObject({ code: "INTERRUPTED" });
+    const original = port.postMessage.mock.calls.find(([value]) => value.kind === "request")![0];
+    harness.children[0]!.emit("exit", 1); await pending;
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(harness.fork).toHaveBeenCalledTimes(1);
+    release(); await vi.advanceTimersByTimeAsync(1000);
+    expect(harness.fork).toHaveBeenCalledTimes(2); expect(supervisor.onReady).toHaveBeenCalledTimes(2);
+    port.emit("message", { data: { kind: "response", protocolVersion: PROTOCOL_VERSION, requestId: original.requestId, ok: true, result: {} } });
+    expect(harness.ports[1]!.postMessage.mock.calls.filter(([value]) => value.kind === "request")).toEqual([]);
+  });
+
+  it("自动恢复最多三次，达到上限保留失败状态，由显式重启重新开始", async () => {
+    const supervisor = fixture(); await supervisor.start();
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      harness.children.at(-1)!.emit("exit", 1); await vi.advanceTimersByTimeAsync(attempt * 1000);
+      expect(harness.fork).toHaveBeenCalledTimes(attempt + 1); expect(supervisor.state).toBe("ready");
+    }
+    harness.children.at(-1)!.emit("exit", 1); await vi.advanceTimersByTimeAsync(60000);
+    expect(harness.fork).toHaveBeenCalledTimes(4); expect(supervisor.state).toBe("failed");
+    await supervisor.restart(); expect(harness.fork).toHaveBeenCalledTimes(5); expect(supervisor.state).toBe("ready");
+  });
+
+  it("旧宿主停止结果不确定时阻断自动恢复", async () => {
+    const bridge: CoreHostBridge = { generation: randomUUID(), attachCore: vi.fn(), receiveCore: vi.fn(() => false), detachCore: vi.fn(async () => { throw new Error("停止证据缺失"); }) };
+    const supervisor = fixture(bridge); await supervisor.start(); harness.children[0]!.emit("exit", 1);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(harness.fork).toHaveBeenCalledTimes(1); expect(supervisor.state).toBe("failed"); expect(supervisor.detail).toContain("停止");
+  });
+
+  it("请求等待超时不撤销执行、不重发，迟到结果不占用后续请求", async () => {
+    const supervisor = fixture(); await supervisor.start(); const port = harness.ports[0]!;
+    const pending = expect(supervisor.request("settings.save", { language: "zh-CN", embyUrl: "", tmdbProxy: "" })).rejects.toMatchObject({ code: "TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(15000); await pending;
+    expect(port.postMessage.mock.calls.filter(([value]) => value.kind === "request")).toHaveLength(1);
+    const query = supervisor.request("sources.list", {}), request = port.postMessage.mock.calls.filter(([value]) => value.kind === "request").at(-1)![0];
+    port.emit("message", { data: { kind: "response", protocolVersion: PROTOCOL_VERSION, requestId: request.requestId, ok: true, result: [] } });
+    await expect(query).resolves.toEqual([]); expect(harness.fork).toHaveBeenCalledTimes(1);
+  });
+});
