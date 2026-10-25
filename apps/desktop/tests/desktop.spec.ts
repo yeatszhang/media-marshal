@@ -237,10 +237,13 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
   await expect(form.getByRole("region")).toHaveCount(4); await expect(window.getByLabel("文件处理流程")).toContainText(download);
   await expect(window.getByLabel("文件处理流程")).toContainText("未开启，仅保存下载文件");
   await expect(window.getByLabel("扫描间隔", { exact: true })).toHaveCount(0); await expect(window.getByLabel("媒体类型", { exact: true })).toHaveCount(0);
+  const behavior = window.getByRole("complementary", { name: "当前配置的执行方式" });
+  await expect(behavior).toContainText("手动执行"); await expect(behavior).toContainText("仅保存到本地下载目录");
   await form.screenshot({ path: "test-results/desktop/source-form-cloud-download.png" });
   const periodic = window.getByRole("checkbox", { name: "定期检查网盘目录", exact: true }), organize = window.getByRole("checkbox", { name: "下载后整理到媒体库", exact: true });
   await periodic.focus(); await window.keyboard.press("Space"); await expect(periodic).toBeChecked(); await expect(window.getByLabel("扫描间隔", { exact: true })).toBeVisible();
   await organize.locator("..").click(); await expect(organize).toBeChecked(); await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click();
+  await expect(behavior).toContainText("每 15 分钟"); await expect(behavior).toContainText("你确认整理预览后，才复制到媒体库");
   await expect(window.getByLabel("文件处理流程")).toContainText(target);
   for (const width of [1280, 920]) {
     await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 900), width);
@@ -253,6 +256,7 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
   }
   await form.screenshot({ path: "test-results/desktop/source-form-cloud-organize-minimum.png" });
   await window.getByLabel("来源类型", { exact: true }).selectOption("local"); await expect(form.getByRole("region")).toHaveCount(3);
+  await expect(behavior).toHaveCount(0);
   await expect(periodic).toHaveCount(0); await expect(organize).toHaveCount(0); await expect(window.getByRole("button", { name: "选择本地输入目录", exact: true })).toBeVisible();
   await form.screenshot({ path: "test-results/desktop/source-form-local-minimum.png" });
   expect(await window.evaluate(() => window.desktopApi.listSourceRules())).toEqual([]); expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 }); expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
@@ -1021,4 +1025,19 @@ test("服务地址和代理在页面提交前校验，非法配置不替换原�
   await proxy.fill("file:///invalid-proxy"); await save.click(); await expect(window.getByRole("alert").filter({ hasText: "TMDB 代理只支持" })).toBeVisible(); expect((await window.evaluate(() => window.desktopApi.getSettings())).tmdbProxy).toBe(original.tmdbProxy);
   await proxy.fill(""); await emby.fill("http://private-fixture-secret@localhost:8096"); await save.click(); const error = window.getByRole("alert").filter({ hasText: "Emby 地址只支持" }); await expect(error).toBeVisible(); await expect(error).not.toContainText("private-fixture-secret"); expect((await window.evaluate(() => window.desktopApi.getSettings())).embyUrl).toBe(original.embyUrl);
   await emby.fill(original.embyUrl); await proxy.fill("http://127.0.0.1:7890"); await save.click(); await expect(window.getByText("配置已保存", { exact: true })).toBeVisible(); await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); expect((await window.evaluate(() => window.desktopApi.getSettings())).tmdbProxy).toBe("http://127.0.0.1:7890");
+});
+
+test("来源 React 草稿跨账号页保留，完整重载只读回核心草稿而不重放配置或执行", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(60000);
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); const canonical = await realpath(directory), source = join(canonical, "React 来源 中文"), target = join(canonical, "独立媒体目标 中文"); await mkdir(source); await mkdir(target);
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [source, target]);
+  await window.getByRole("link", { name: "来源", exact: true }).click(); await window.getByRole("button", { name: "添加来源", exact: true }).click(); await window.getByLabel("来源名称", { exact: true }).fill("跨账号页保留的 React 草稿"); await window.getByLabel("扩展名过滤", { exact: true }).fill("mp4,mkv");
+  await window.getByRole("link", { name: "连接／管理账号", exact: true }).click(); await window.getByRole("button", { name: "返回来源草稿", exact: true }).click(); await expect(window.getByLabel("来源名称", { exact: true })).toHaveValue("跨账号页保留的 React 草稿"); await expect(window.getByLabel("扩展名过滤", { exact: true })).toHaveValue("mp4,mkv"); expect(await window.evaluate(() => window.desktopApi.listSourceRules())).toEqual([]);
+  await window.getByLabel("来源类型", { exact: true }).selectOption("local"); await window.getByLabel("来源名称", { exact: true }).fill("核心中保存的来源草稿"); await window.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click(); await window.getByRole("button", { name: "保存草稿", exact: true }).click();
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listSourceRules())).length).toBe(1); const saved = (await window.evaluate(() => window.desktopApi.listSourceRules()))[0]!; expect(saved).toMatchObject({ version: 0, draftRevision: 1, configuration: null });
+  await window.getByLabel("来源名称", { exact: true }).fill("完整重载不会恢复的未保存名称"); await window.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "设置", exact: true }).click(); await window.getByRole("link", { name: "来源", exact: true }).click(); await expect(window.getByLabel("来源名称", { exact: true })).toHaveValue("完整重载不会恢复的未保存名称");
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(window.getByLabel("来源名称", { exact: true })).toHaveCount(0); await expect(window.getByRole("article", { name: "来源 核心中保存的来源草稿", exact: true })).toBeVisible();
+  const after = await window.evaluate(() => window.desktopApi.listSourceRules()); expect(after).toHaveLength(1); expect(after[0]).toMatchObject({ id: saved.id, version: 0, draftRevision: 1, draft: { name: "核心中保存的来源草稿" } });
+  await window.getByRole("button", { name: "编辑并预览", exact: true }).click(); await expect(window.getByLabel("来源名称", { exact: true })).toHaveValue("核心中保存的来源草稿"); expect(await window.evaluate(() => window.desktopApi.listSources())).toEqual([]); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]); expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(0); expect((await window.evaluate(() => window.desktopApi.listDownloads({}))).total).toBe(0);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await window.getByRole("form", { name: "来源配置草稿", exact: true }).screenshot({ path: "test-results/desktop/source-react-draft-recovered.png" });
 });

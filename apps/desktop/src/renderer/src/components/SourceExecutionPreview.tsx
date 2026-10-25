@@ -1,13 +1,12 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { useService, useServiceState } from "@yeatz/app-framework/react";
-import { SourceRulesViewModel } from "../source-rules-model";
+import { useSourceRules } from "../source-draft-context";
 import { sourceSize } from "../source-format";
 import { ErrorNotice } from "./shared";
 import { Button } from "./ui/button";
 
 export function SourceExecutionPreview() {
-  const model = useService(SourceRulesViewModel), state = useServiceState(model, (value) => value), preview = state.executionPreview, ref = useRef<HTMLElement>(null), busy = !!state.pending;
+  const { model, state } = useSourceRules(), preview = state.executionPreview, ref = useRef<HTMLElement>(null), busy = !!state.pending;
   useEffect(() => { if (preview?.id) { ref.current?.scrollIntoView?.({ block: "nearest" }); ref.current?.focus(); } return () => { if (preview) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-source-execution-source="${preview.sourceId}"][data-source-execution-force="${preview.forceRedownload}"]`)?.focus()); }; }, [preview?.id]);
   if (!preview) return null;
   return <section ref={ref} tabIndex={-1} className="panel source-execution-preview" aria-label="来源执行预览" onKeyDown={(event) => { if (event.key === "Escape" && !busy) model.closeExecutionPreview(); }}>

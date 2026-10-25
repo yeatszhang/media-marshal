@@ -1,8 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { useService, useServiceState } from "@yeatz/app-framework/react";
 import { Cloud, Folder, FolderOutput } from "lucide-react";
-import { SourceRulesViewModel } from "../source-rules-model";
+import { useSourceRules } from "../source-draft-context";
 import { sourceClients, sourceSize } from "../source-format";
 import { ErrorNotice } from "./shared";
 import { Button } from "./ui/button";
@@ -16,7 +15,7 @@ function SourceStep({ number, title, description, children }: { number: number; 
 }
 
 export function SourceEditorForm({ onClose }: { onClose(): void }) {
-  const model = useService(SourceRulesViewModel), state = useServiceState(model, (value) => value), nameRef = useRef<HTMLInputElement>(null), editor = state.editor, busy = !!state.pending, preview = state.preview;
+  const { model, state } = useSourceRules(), nameRef = useRef<HTMLInputElement>(null), editor = state.editor, busy = !!state.pending, preview = state.preview;
   useEffect(() => { if (editor?.id) nameRef.current?.focus(); }, [editor?.id]);
   if (!editor) return null;
   const account = state.accounts.find((value) => value.id === editor.accountId), root = state.roots.find((value) => value.id === editor.downloadRootId);
@@ -33,6 +32,11 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
       {editor.type === "cloud" && <li><span><Folder size={16} aria-hidden="true" />下载到本地</span><strong title={root?.path}>{root?.path || "选择下载目录"}</strong></li>}
       <li className={editor.type === "cloud" && !editor.organize ? "is-muted" : undefined}><span><FolderOutput size={16} aria-hidden="true" />{editor.type === "cloud" ? "可选：整理到媒体库" : "整理到媒体库"}</span><strong title={editor.type === "cloud" && !editor.organize ? undefined : editor.targetPath}>{editor.type === "cloud" && !editor.organize ? "未开启，仅保存下载文件" : editor.targetPath || "选择整理目标"}</strong></li>
     </ol>
+    {editor.type === "cloud" && <aside className="source-behavior-summary" aria-label="当前配置的执行方式" aria-live="polite">
+      <strong>当前配置会怎样运行</strong>
+      <dl><div><dt>何时下载</dt><dd>{editor.periodic ? `确认启用后立即扫描，之后每 ${editor.intervalSeconds < 3600 ? `${editor.intervalSeconds / 60} 分钟` : `${editor.intervalSeconds / 3600} 小时`} 检查一次；应用需保持运行。` : "手动执行：预览并确认后可执行一次，之后由你从来源列表再次执行。"}</dd></div>
+        <div><dt>下载完成后</dt><dd>{editor.organize ? "进入「待处理」识别作品；你确认整理预览后，才复制到媒体库。连接 Emby 后再核对收录。" : "仅保存到本地下载目录。开启下方「下载后整理到媒体库」，才会接入识别与整理。"}</dd></div></dl>
+    </aside>}
     {editor.archived && <p className="notice" role="status">来源已删除，以下配置仅供查看；请先从「已删除来源」恢复后再编辑。</p>}
     <fieldset disabled={busy || state.picker || editor.archived} className="source-rule-fields">
       <div className="form-grid source-basics"><label>来源名称<input aria-label="来源名称" ref={nameRef} value={editor.name} maxLength={100} onChange={(event) => model.change({ name: event.target.value })} placeholder="例如：追剧下载、电影整理" /></label><label>来源类型<select aria-label="来源类型" value={editor.type} disabled={editor.draftRevision > 0} onChange={(event) => model.change({ type: event.target.value as "cloud" | "local" })}><option value="cloud">网盘来源</option><option value="local">本地目录来源</option></select></label></div>

@@ -69,6 +69,12 @@
 .source-flow li > strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; margin-top: 9px; font-size: 13px; line-height: 1.6; font-weight: 550; }
 .source-flow li.is-muted { background: #f7f8f9; border-color: var(--border); }
 .source-flow li.is-muted > span { color: var(--muted-foreground); }
+.source-behavior-summary { padding: 16px 18px; border: 1px solid var(--border); border-radius: 9px; background: var(--background); font-size: 13px; line-height: 1.7; }
+.source-behavior-summary > strong { display: block; margin-bottom: 10px; font-size: 13px; }
+.source-behavior-summary dl { display: grid; gap: 8px; margin: 0; }
+.source-behavior-summary dl > div { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 12px; }
+.source-behavior-summary dt { color: var(--muted-foreground); }
+.source-behavior-summary dd { margin: 0; overflow-wrap: anywhere; }
 .source-rule-fields input, .source-rule-fields select { margin-top: 0; }
 .source-rule-fields .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; }
 .source-basics { padding-bottom: 24px; }

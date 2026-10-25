@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useService, useServiceState } from "@yeatz/app-framework/react";
 import { Plus, Folder, RefreshCw } from "lucide-react";
 import type { SourceRule } from "@media-marshal/contracts";
-import { SourceRulesViewModel } from "../source-rules-model";
+import { useSourceRules } from "../source-draft-context";
 import { sourceClients, sourceDate, sourceRunLabels, sourceScanLabels } from "../source-format";
 import { SourceEditorForm } from "../components/SourceEditorForm";
 import { SourceRemotePicker } from "../components/SourceRemotePicker";
@@ -13,16 +12,16 @@ import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 
 export function Sources() {
-  const model = useService(SourceRulesViewModel), state = useServiceState(model, (value) => value), [query, setQuery] = useSearchParams();
-  const [page, setPage] = useState(1), addRef = useRef<HTMLButtonElement>(null), sourceId = query.get("source"), legacyJob = query.get("legacyJob"), busy = !!state.pending;
+  const { model, state } = useSourceRules(), [query, setQuery] = useSearchParams();
+  const [page, setPage] = useState(1), addRef = useRef<HTMLButtonElement>(null), sourceId = query.get("source"), legacyJob = query.get("legacyJob"), busy = state.hasPending;
   const [archivedPage, setArchivedPage] = useState(1), [lifecycle, setLifecycle] = useState<{ row: SourceRule; operation: "remove" | "restore" } | null>(null);
   useEffect(() => model.watch(), [model]);
   useEffect(() => { if (sourceId) void model.openSource(sourceId); }, [model, sourceId]);
   useEffect(() => { if (!sourceId && legacyJob) void model.openLegacy("download-job", legacyJob); }, [model, sourceId, legacyJob]);
   const close = () => { model.closeEditor(); setQuery({}); requestAnimationFrame(() => { if (!document.querySelector("dialog[open]")) addRef.current?.focus(); }); };
   const open = (row: SourceRule) => { if (sourceId === row.id) void model.openSource(row.id); else setQuery({ source: row.id }); };
-  const pages = Math.max(1, Math.ceil(state.items.length / 25)), visiblePage = Math.min(page, pages);
-  const archivePages = Math.max(1, Math.ceil(state.archived.length / 25)), visibleArchivePage = Math.min(archivedPage, archivePages);
+  const pages = Math.max(1, Math.ceil(state.sourceCount / 25)), visiblePage = Math.min(page, pages);
+  const archivePages = Math.max(1, Math.ceil(state.archivedCount / 25)), visibleArchivePage = Math.min(archivedPage, archivePages);
   const requestLifecycle = (row: SourceRule, operation: "remove" | "restore") => { if (model.prepareLifecycle(row)) setLifecycle({ row, operation }); };
   return <>
     <Header title="来源配置" description="把网盘内容下载到本地，或整理已有本地文件。每个来源独立设置下载方式和媒体库目标。">

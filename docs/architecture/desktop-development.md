@@ -51,6 +51,8 @@ Mac 的 `desktop:build` 及 `beforePack` 准备 Node-API 8 安全修正组件，
 
 legacy 装饰器由 TypeScript 统一转换，参数使用显式 `@inject(Token)`。Vite 与 Vitest 共用转换插件，避免编译器默认装饰器语义不同。不得使用框架的深层源码入口或全局命令容器。
 
+来源表单草稿由路由上层 React Provider 持有，来源 ViewModel 只保存核心 DTO、操作反馈及 computed 投影。使用公开 `useService`／`useServiceState` 读取；框架 computed 为不可枚举 getter，组合组件草稿时显式投影，不能用对象展开假设它们会被复制。页面卸载释放订阅和轮询，根卸载解除草稿绑定并使旧查询失效；不停止组件树外共享的 Application。来源草稿迁移已完成组件与实际窗口验证，7.7 的设置查询代际和受控重载清理仍单独完成，不能用普通窗口重载代替其验收。
+
 ## 运行与数据
 
 页面使用 `marshal://app` 协议。Main 校验顶层 frame、来源、动作和参数；目录保存还要求通过原生目录对话框取得授权。Core 再次核对真实路径、目录关系与权限。Main 与 Renderer 不打开 SQLite。Main/Core 通信使用私有 MessagePort，端口断开后 Core 安全退出；媒体业务不开放 HTTP/WS 服务。新增受管网盘组件的授权回环接口及凭据副本边界见仓库中的 `openspec/changes/add-local-desktop-emby-ingestion/design.md`，尚未验收的能力不视为当前可用功能。

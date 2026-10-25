@@ -1,0 +1,89 @@
+{
+  "capturedAt": "2026-10-25T21:03:21.058699+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "schema": 24,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "e1a734313a6a7e3aae3759c1e1fea994630941743d96b98c9345f945b2363f41",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/renderer/src/App.tsx": "81315079761bac728fcf3ac9931304f13428511901f9ee85af23aa6e9f27ebb4",
+    "apps/desktop/src/renderer/src/source-draft-context.tsx": "c9e45f6cda3095bd3feff44952475b757e33ac082bac9cc3ff8c6c415559636b",
+    "apps/desktop/src/renderer/src/source-rules-model.ts": "d571dd0d13d0d0150fd9a3ffb8a394bf54a20d8e49ecb8380f3682ad79d8758d",
+    "apps/desktop/src/renderer/src/source-rules.test.tsx": "b81b42756b9963ec182670ebe64db34cba73af995addb03363f9a203bd15d100",
+    "apps/desktop/src/renderer/src/components/SourceEditorForm.tsx": "d39e962d35936a8622037996a640411347f8bb557c76cf45bd67241de0f23145",
+    "apps/desktop/src/renderer/src/components/SourceExecutionPreview.tsx": "26598ce27a6e2388ae62b4e804be262e6637476f5c6a63c241430e958c719db8",
+    "apps/desktop/src/renderer/src/components/SourceLifecycleDialog.tsx": "ebce9ae4ae694e1d79dd6935299a3ceb9f4862b346df56145d2ff7e5331acf4b",
+    "apps/desktop/src/renderer/src/components/SourceRemotePicker.tsx": "0038ed64b095d803c6d25b1afc3eb56cf2b5091dd77f13f79863dedb4f208b3a",
+    "apps/desktop/src/renderer/src/pages/Sources.tsx": "b8277d7cd517d196311f3313332b80aff58517174b9428040940974c65fb6437",
+    "apps/desktop/src/renderer/src/pages/Subscriptions.tsx": "39247815569fd3349d3b9c63f7cee0723cd67b2e1f7ccf5a2b3bd94393a7c1e2",
+    "apps/desktop/src/renderer/src/styles.css": "70fa02aea89811a4370acb34d15091eaa2938732ca36f78df9a9cad7cd5c83d8",
+    "apps/desktop/tests/desktop.spec.ts": "789dfb66f5650ceaf602836d62d029cc4134c6ac844a05e9ac1b3da57f9ae7f9"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 765,
+      "skipped": 13,
+      "filesPassed": 75,
+      "filesSkipped": 3
+    },
+    "targetedRendererTests": 21,
+    "typecheck": true,
+    "boundaries": true,
+    "artifactWhitelist": true,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "packagedUiWindows": 5
+  },
+  "assertions": {
+    "draftOwnedOnlyByReactProvider": true,
+    "draftRetainedAcrossAccountAndSettingsRoutes": true,
+    "computedCountSelectorIgnoresLocalEdits": true,
+    "lastWatcherReleasesPolling": true,
+    "unmountDoesNotStopSharedApplication": true,
+    "oldRootResponseCannotReplaceNewDtosOrFlight": true,
+    "rootRemountRestoresSavedDtoOnly": true,
+    "reloadDoesNotReplayConfigureApplyExecute": true,
+    "unmountDuringSaveKeepsCoreResultWithoutStartingPreview": true,
+    "behaviorSummaryTracksPeriodicAndOrganizationOptions": true,
+    "singleFileCannotEnablePeriodicScan": true,
+    "optionalFieldsShownOnlyWhenEnabled": true,
+    "windowWidthsChecked": [
+      1280,
+      920
+    ],
+    "horizontalOverflow": false,
+    "checkboxWidthBetween16And20": true,
+    "checkboxTitleGapBetween8And16": true,
+    "legacySourceIdentityAndLifecycleRetained": true
+  },
+  "screenshots": {
+    "docs/public/desktop/source-form-cloud-download.png": "e06f377e88c05d131c3e8efb0c275f705d28ced04740d315a2ae8f500551e4ee",
+    "docs/public/desktop/source-form-cloud-organize-minimum.png": "4849200e0fd738916b40f01001acb4a637f34680d32f723ad03b790894a8fabc",
+    "docs/public/desktop/source-form-local-minimum.png": "3ded2622753cf5fe45adf0fdac27c8a4716fb87bf4cb95eeb576d92f4fc1535a"
+  },
+  "fixtureBoundaries": {
+    "directories": "独立临时应用数据和输入／目标目录，未操作个人媒体或凭据",
+    "nativeDialogs": "系统目录选择器为受控替身；验证固定授权桥和真实 Core／SQLite，不代表 OS 对话框实测",
+    "network": "未连接个人网盘、TMDB 或 Emby，未发起真实下载或媒体整理",
+    "reload": "完整 Renderer reload 与 React 根卸载分别验证；未实现受控重载等待清理的宿主握手",
+    "notCovered": [
+      "7.7 设置查询代际和受控重载清理",
+      "真实原生目录对话框",
+      "Mac Intel 运行",
+      "完整安装与卸载矩阵",
+      "Developer ID 签名与公证",
+      "全部 test:packaged 矩阵"
+    ]
+  },
+  "openSpec": {
+    "complete": 92,
+    "total": 109,
+    "task7.7Complete": false,
+    "note": "来源草稿及表单阶段完成，完整 7.7 保持未勾选"
+  }
+}

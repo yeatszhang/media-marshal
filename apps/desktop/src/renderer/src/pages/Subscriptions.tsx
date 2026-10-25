@@ -1,11 +1,10 @@
 import { useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useService } from "@yeatz/app-framework/react";
-import { SourceRulesViewModel } from "../source-rules-model";
+import { useSourceRules } from "../source-draft-context";
 
 /** 保留旧链接定位，所有配置编辑均进入来源页。 */
 export function Subscriptions() {
-  const model = useService(SourceRulesViewModel), navigate = useNavigate(), { id } = useParams(), [query] = useSearchParams(), legacyId = id ?? query.get("id");
+  const { model } = useSourceRules(), navigate = useNavigate(), { id } = useParams(), [query] = useSearchParams(), legacyId = id ?? query.get("id");
   useEffect(() => {
     let active = true;
     const redirect = async () => {

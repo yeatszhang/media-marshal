@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { ContainerProvider } from "@yeatz/app-framework/react";
+import { ContainerProvider, useService, useServiceState } from "@yeatz/app-framework/react";
 import { sourceConfigurationSchema, type DesktopApi, type SourceRule, type SourceRulePreview, type SourceExecutionPreview, type CloudAccount, type RemoteEntry, type SourceRun } from "@media-marshal/contracts";
 import { createRendererApplication } from "./services";
+import { SourceDraftProvider } from "./source-draft-context";
 import { SourceRulesViewModel } from "./source-rules-model";
 import { Sources } from "./pages/Sources";
 import { AccountConnections } from "./pages/AccountConnections";
@@ -75,10 +76,14 @@ function memoryApi() {
 async function mount(overrides: Partial<DesktopApi> = {}, path = "/sources", setup?: (fixture: ReturnType<typeof memoryApi>) => void) {
   await i18nReady; const f = memoryApi(); setup?.(f);
   const api = { ...f.api, ...overrides } as unknown as DesktopApi, app = createRendererApplication(api); await app.start();
-  const element = document.createElement("div"); document.body.append(element); const root = createRoot(element);
-  await act(async () => { root.render(<StrictMode><MemoryRouter initialEntries={[path]}><ContainerProvider value={app.container}><Routes><Route path="/sources" element={<Sources />} /><Route path="/cloud" element={<AccountConnections />} /><Route path="/subscriptions/:id" element={<Subscriptions />} /><Route path="/subscriptions" element={<Subscriptions />} /></Routes></ContainerProvider></MemoryRouter></StrictMode>); });
-  cleanup.push(async () => { await act(async () => root.unmount()); await app.stop(); });
-  return { ...f, api, app, element, model: app.container.get(SourceRulesViewModel) };
+  const element = document.createElement("div"); document.body.append(element); let root = createRoot(element), mounted = true, projectionRenders = 0;
+  function SourceCountProbe() { const model = useService(SourceRulesViewModel), count = useServiceState(model, (state) => state.sourceCount); projectionRenders++; return <span data-source-count>{count}</span>; }
+  const render = async () => { await act(async () => { root.render(<StrictMode><MemoryRouter initialEntries={[path]}><ContainerProvider value={app.container}><SourceDraftProvider><SourceCountProbe /><Routes><Route path="/sources" element={<Sources />} /><Route path="/cloud" element={<AccountConnections />} /><Route path="/subscriptions/:id" element={<Subscriptions />} /><Route path="/subscriptions" element={<Subscriptions />} /></Routes></SourceDraftProvider></ContainerProvider></MemoryRouter></StrictMode>); }); };
+  await render();
+  const unmount = async () => { if (mounted) { mounted = false; await act(async () => root.unmount()); } };
+  const remount = async () => { await unmount(); root = createRoot(element); mounted = true; await render(); };
+  cleanup.push(async () => { await unmount(); await app.stop(); });
+  return { ...f, api, app, element, model: app.container.get(SourceRulesViewModel), unmount, remount, projectionRenders: () => projectionRenders };
 }
 const button = (name: string) => { const found = [...document.querySelectorAll<HTMLButtonElement>("button")].find((value) => value.textContent?.trim() === name); expect(found, name).toBeTruthy(); return found!; };
 async function click(name: string) { await act(async () => button(name).click()); }
@@ -92,6 +97,28 @@ async function selectRemote(name: string) { await click("选择远端范围"); a
 async function cloudDraft(f: Awaited<ReturnType<typeof mount>>) { await click("添加来源"); await fill("来源名称", "我的下载来源"); await selectRemote(f.directory.name); await click("选择下载目录"); }
 
 describe("统一来源页、连接返回和确认边界", () => {
+  it("编辑仅保留在 React，框架快照没有表单字段，computed 选择订阅忽略草稿和错误反馈更新", async () => {
+    const f = await mount(); await cloudDraft(f); const renders = f.projectionRenders();
+    await fill("来源名称", "尚未提交的 React 草稿"); await fill("扩展名过滤", "mp4,mkv");
+    for (const key of ["editor", "dirty", "picker", "trail", "entries", "browserError"]) expect(f.model.state).not.toHaveProperty(key);
+    expect(f.model.view.editor?.name).toBe("尚未提交的 React 草稿"); expect(f.model.state.sourceCount).toBe(0); expect(f.projectionRenders()).toBe(renders); expect(f.api.configureSourceRule).not.toHaveBeenCalled();
+    await click("保存草稿"); expect(f.model.state.sourceCount).toBe(1); expect(f.model.state.hasPending).toBe(false); expect(f.projectionRenders()).toBeGreaterThan(renders); expect(f.element.querySelector("[data-source-count]")?.textContent).toBe("1");
+  });
+  it("移除 React 根只释放页面轮询，重挂载从核心读回保存草稿且不重放写命令", async () => {
+    vi.useFakeTimers(); const f = await mount(); await cloudDraft(f); await click("保存草稿"); const old = [...f.rows.values()][0]!;
+    await fill("来源名称", "只在组件里的未保存名称"); await f.unmount(); expect(f.model.view.editor).toBeNull(); expect(f.app.state).toBe("running"); const reads = vi.mocked(f.api.listSourceRules).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10000); expect(vi.mocked(f.api.listSourceRules).mock.calls.length).toBe(reads);
+    const draft = sourceConfigurationSchema.parse({ ...old.draft, name: "核心读回的已保存名称" }); f.rows.set(old.id, { ...old, draft }); await f.remount(); expect(f.element.textContent).toContain("核心读回的已保存名称"); expect(f.model.view.editor).toBeNull();
+    await act(async () => { await f.model.openSource(old.id); }); expect(field("来源名称").value).toBe("核心读回的已保存名称"); expect(f.api.configureSourceRule).toHaveBeenCalledTimes(1); expect(f.api.applySourceRule).not.toHaveBeenCalled(); expect(f.api.executeSourcePreview).not.toHaveBeenCalled();
+  });
+  it("旧根查询迟到不覆盖新核心 DTO，也不能清除新查询的合并句柄", async () => {
+    vi.useFakeTimers(); const pending: ((rows: SourceRule[]) => void)[] = [], listSourceRules = vi.fn(() => new Promise<SourceRule[]>((done) => pending.push(done))), f = await mount({ listSourceRules }); expect(pending).toHaveLength(2);
+    const configuration = sourceConfigurationSchema.parse({ type: "cloud", name: "旧核心名称", accountId: f.account.id, remoteRef: f.directory.ref, downloadRootId: f.root.id });
+    const old: SourceRule = { id: crypto.randomUUID(), type: "cloud", version: 1, draftRevision: 1, draft: configuration, configuration, paused: false, reviewRequired: false, localSourceId: null, subscriptionId: null, ingestionSourceId: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, current: SourceRule = { ...old, draft: { ...configuration, name: "新核心名称" }, configuration: { ...configuration, name: "新核心名称" } };
+    await f.remount(); expect(pending).toHaveLength(4); await act(async () => pending[3]!([current])); expect(f.model.state.items[0]?.draft.name).toBe("新核心名称");
+    let query!: Promise<void>; await act(async () => { query = f.model.refresh(); }); expect(pending).toHaveLength(5); await act(async () => { for (const done of pending.slice(0, 3)) done([old]); }); expect(f.model.state.items[0]?.draft.name).toBe("新核心名称"); expect(f.model.refresh()).toBe(query); expect(listSourceRules).toHaveBeenCalledTimes(5);
+    await act(async () => { pending[4]!([current]); await query; }); expect(f.model.state.items[0]?.draft.name).toBe("新核心名称"); expect(f.api.configureSourceRule).not.toHaveBeenCalled(); expect(f.api.applySourceRule).not.toHaveBeenCalled();
+  });
   it("删除须明确确认，取消不写；保留配置只读可关闭，恢复保持暂停并传新生命周期", async () => {
     const f = await mount(); await cloudDraft(f); await click("保存草稿"); const row = [...f.rows.values()][0]!; await click("取消编辑");
     expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("删除来源…"); expect(document.querySelector("dialog[open]")).not.toBeNull(); await act(async () => { await new Promise(requestAnimationFrame); }); expect(document.activeElement?.textContent).toBe("取消");
@@ -189,7 +216,7 @@ describe("统一来源页、连接返回和确认边界", () => {
   });
   it("浏览器取消不改范围，长中文、未知总量和分页失败保留已有条目，文件不启用周期", async () => {
     const f = await mount(); await cloudDraft(f); await checkbox("定期检查网盘目录");
-    await click("选择远端范围"); await click("取消选择远端范围"); expect(f.model.state.editor?.remoteRef).toBe(f.directory.ref);
+    await click("选择远端范围"); await click("取消选择远端范围"); expect(f.model.view.editor?.remoteRef).toBe(f.directory.ref);
     let finish!: (value: Awaited<ReturnType<DesktopApi["listRemote"]>>) => void;
     vi.mocked(f.api.listRemote).mockImplementationOnce(() => new Promise((done) => { finish = done; })).mockRejectedValueOnce(new Error("网络暂不可用"));
     await click("选择远端范围"); expect(f.element.textContent).toContain("正在读取目录");
@@ -197,7 +224,18 @@ describe("统一来源页、连接返回和确认边界", () => {
     expect(f.element.textContent).toContain("总数未知"); expect(document.querySelector(`[title="${f.file.name}"]`)).toBeTruthy();
     await click("加载更多"); expect(f.element.textContent).toContain("网络暂不可用"); expect(document.querySelectorAll("tbody tr")).toHaveLength(1);
     await act(async () => document.querySelector<HTMLButtonElement>(`button[aria-label="选择范围 ${f.file.name}"]`)!.click());
-    expect((field("定期检查网盘目录") as HTMLInputElement).checked).toBe(false); expect(field("定期检查网盘目录").disabled).toBe(true); expect(f.model.state.editor?.remoteType).toBe("file");
+    expect((field("定期检查网盘目录") as HTMLInputElement).checked).toBe(false); expect(field("定期检查网盘目录").disabled).toBe(true); expect(f.model.view.editor?.remoteType).toBe("file");
+  });
+  it("React 根卸载后保留已提交的草稿，不再发起后续预览", async () => {
+    const f = await mount(); await cloudDraft(f);
+    const configure = vi.mocked(f.api.configureSourceRule).getMockImplementation()!;
+    let release!: () => void; const gate = new Promise<void>((done) => { release = done; });
+    vi.mocked(f.api.configureSourceRule).mockImplementationOnce(async (input) => { const row = await configure(input); await gate; return row; });
+    await click("预览配置"); expect(f.api.configureSourceRule).toHaveBeenCalledOnce(); expect(f.rows.size).toBe(1);
+    await f.unmount(); await act(async () => { release(); await gate; });
+    expect(f.app.state).toBe("running"); expect(f.api.previewSourceRule).not.toHaveBeenCalled();
+    expect(f.api.applySourceRule).not.toHaveBeenCalled(); expect(f.api.executeSourcePreview).not.toHaveBeenCalled();
+    expect([...f.rows.values()][0]).toMatchObject({ version: 0, draftRevision: 1, configuration: null });
   });
   it("预览失败显式重试复用请求标识，刷新和表单重挂载不重放创建", async () => {
     const f = await mount(); await cloudDraft(f); vi.mocked(f.api.previewSourceRule).mockRejectedValueOnce(new Error("暂时断开"));

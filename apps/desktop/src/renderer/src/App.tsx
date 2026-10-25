@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
+import { SourceDraftProvider } from "./source-draft-context";
 import { RuntimeViewModel, DesktopClient } from "./services";
 import { Button, cn } from "./components/ui/button";
 import { ErrorNotice, Empty } from "./components/shared";
@@ -162,8 +163,8 @@ function Shell() {
 }
 export function App() {
   return (
-    <HashRouter>
+    <SourceDraftProvider><HashRouter>
       <Shell />
-    </HashRouter>
+    </HashRouter></SourceDraftProvider>
   );
 }

@@ -1,12 +1,11 @@
 import { useEffect, useId, useRef } from "react";
-import { useService, useServiceState } from "@yeatz/app-framework/react";
 import type { SourceRule } from "@media-marshal/contracts";
-import { SourceRulesViewModel } from "../source-rules-model";
+import { useSourceRules } from "../source-draft-context";
 import { ErrorNotice } from "./shared";
 import { Button } from "./ui/button";
 
 export function SourceLifecycleDialog({ row, operation, onClose }: { row: SourceRule; operation: "remove" | "restore"; onClose(): void }) {
-  const model = useService(SourceRulesViewModel), state = useServiceState(model, (value) => value), dialog = useRef<HTMLDialogElement>(null), cancel = useRef<HTMLButtonElement>(null), title = useId(), description = useId();
+  const { model, state } = useSourceRules(), dialog = useRef<HTMLDialogElement>(null), cancel = useRef<HTMLButtonElement>(null), title = useId(), description = useId();
   const removing = operation === "remove", busy = !!state.pending, configuration = row.configuration ?? row.draft;
   useEffect(() => {
     const original = document.activeElement, element = dialog.current!;

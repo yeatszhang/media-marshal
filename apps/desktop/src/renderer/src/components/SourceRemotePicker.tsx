@@ -1,13 +1,12 @@
 import { useEffect, useRef } from "react";
-import { useService, useServiceState } from "@yeatz/app-framework/react";
 import { ChevronRight, File, Folder } from "lucide-react";
-import { SourceRulesViewModel } from "../source-rules-model";
+import { useSourceRules } from "../source-draft-context";
 import { sourceSize } from "../source-format";
 import { ErrorNotice } from "./shared";
 import { Button } from "./ui/button";
 
 export function SourceRemotePicker() {
-  const model = useService(SourceRulesViewModel), state = useServiceState(model, (value) => value), ref = useRef<HTMLElement>(null);
+  const { model, state } = useSourceRules(), ref = useRef<HTMLElement>(null);
   useEffect(() => { ref.current?.querySelector<HTMLButtonElement>("button")?.focus(); return () => { requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[data-source-remote="true"]')?.focus()); }; }, []);
   return <section className="panel cloud-browser source-remote-picker" aria-label="选择远端文件或目录" ref={ref} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); model.closePicker(); } }}>
     <div className="cloud-browser-toolbar"><h2>选择远端文件或目录</h2><Button variant="ghost" onClick={() => model.closePicker()}>取消选择远端范围</Button></div>
