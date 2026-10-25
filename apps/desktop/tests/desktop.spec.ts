@@ -513,6 +513,40 @@ db.close();
   expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 36 });
   expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 });
 });
+test("候选季集预检经固定 IPC 显示并在重载和 Core 重启后保留，未确认不执行", async () => {
+  const initial = await application.firstWindow(); await expect(initial.getByText("核心已连接", { exact: true })).toBeVisible(); await application.close();
+  const profile = join(directory, "episode-check-data"), seed = join(directory, "seed-episode-check.mjs");
+  // 此窗口用例只准备持久候选证据；真实 TMDB 响应及来源暂停竞态由 Core 集成测试覆盖。
+  await writeFile(seed, `
+import { CoreDatabase } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/infrastructure/database.js")).href)};
+import { normalizeParse } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/domain/media.js")).href)};
+import { randomUUID } from 'node:crypto'; import { mkdir,writeFile,lstat } from 'node:fs/promises'; import { join } from 'node:path';
+const profile=process.argv[2], sourcePath=join(profile,'预检来源 中文'), targetPath=join(profile,'独立媒体库'); await mkdir(sourcePath,{recursive:true}); await mkdir(targetPath);
+const db=await CoreDatabase.open(join(profile,'desktop.sqlite3')), sql=db.connection, source=randomUUID(), task=randomUUID(), candidate=randomUUID(), stamp=new Date().toISOString(), name='待核对作品.S03E26-E28.mkv', path=join(sourcePath,name); await writeFile(path,'隔离预检原片');
+const info=await lstat(path,{bigint:true}), snapshot={device:String(info.dev),inode:String(info.ino),birthtimeNs:String(info.birthtimeNs),modifiedNs:String(info.mtimeNs),changedNs:String(info.ctimeNs),size:Number(info.size)};
+sql.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,paused,created_at) VALUES(?,'预检夹具','custom',?,?,'AUTO','COPY',1,?)").run(source,sourcePath,targetPath,stamp);
+sql.prepare("INSERT INTO media_task(id,source_id,source_path,title,status,parsed_json,created_at,updated_at) VALUES(?,?,?,'待核对作品','AWAITING_CONFIRMATION',?,?,?)").run(task,source,path,JSON.stringify(normalizeParse({title:'待核对作品',type:'episode',season:3,episode:[26,27,28]},name)),stamp,stamp);
+sql.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,attribute_key,is_current,snapshot_json,state,task_id,created_at,updated_at) VALUES(?,?,?,?,?,1,?,'QUEUED',?,?,?)").run(candidate,source,JSON.stringify([name]),task,task,JSON.stringify(snapshot),task,stamp,stamp);
+for(const [id,episodeCheck] of [[7,{state:'VALID',season:1,episode:26,episodeEnd:28,seasonChanged:true}],[8,{state:'NEEDS_REVIEW',reason:'多个正片季包含全部集号，无法唯一映射；请核对'}],[9,undefined]]) sql.prepare('INSERT INTO task_candidate VALUES(?,?,?,?)').run(randomUUID(),task,JSON.stringify({tmdbId:id,mediaType:'TV_SHOW',title:'候选剧集 '+id,originalTitle:null,year:2026,score:{confidence:1-id/100,titleScore:1,yearScore:1},evidence:'filename',episodeCheck}),1-id/100);
+db.close();
+`);
+  await new Promise<void>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [seed, profile], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (error) => error ? fail(error) : done()));
+  const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${profile}`], env });
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const inspect = async () => { await window.getByRole("link", { name: "待处理", exact: true }).click(); await window.locator(".ingestion-candidates tbody tr").getByRole("button").click(); await expect(window.locator(".recognition-matches")).toContainText("季集预检：S1 E26–28（按真实分集唯一换季）"); await expect(window.locator(".recognition-matches")).toContainText("季集待核对：多个正片季"); await expect(window.locator(".recognition-matches")).toContainText("季集尚未预检"); };
+  await inspect(); await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await window.locator(".recognition-matches").screenshot({ path: "test-results/desktop/episode-candidate-check-minimum.png" });
+  await window.locator(".recognition-matches article").first().getByRole("button").click(); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
+  const tasks = await window.evaluate(() => window.desktopApi.listTasks({})), taskId = tasks.items[0]!.id, before = await window.evaluate((id) => window.desktopApi.getIngestionTask(id), taskId);
+  expect(before.parsed).toMatchObject({ season: 3, episode: 26, episodeEnd: 28 });
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await inspect();
+  await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  expect((await window.evaluate((id) => window.desktopApi.getIngestionTask(id), taskId)).matches).toEqual(before.matches);
+  expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]); expect(await readdir(join(profile, "独立媒体库"))).toEqual([]); expect(await readFile(before.sourcePath!, "utf8")).toBe("隔离预检原片");
+});
+
 test("单条与批量识别字段通过真实 IPC 预览保存，重载和 Core 重启不创建文件操作", async () => {
   test.skip(!!process.env.MARSHAL_EXECUTABLE, "识别字段夹具使用当前工作区构建");
   const initial = await application.firstWindow(); await expect(initial.getByText("核心已连接", { exact: true })).toBeVisible(); await application.close();

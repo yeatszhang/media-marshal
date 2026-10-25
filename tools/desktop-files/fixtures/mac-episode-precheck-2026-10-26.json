@@ -1,0 +1,64 @@
+{
+  "capturedAt": "2026-10-25T22:52:31.494784+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "appVersion": "0.2.1",
+  "schema": 26,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "67e259584d522f4d1c275727409906ac6630dedb0c86bea95a05d704ae9d8e8c",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/main/cloud/downloads.test.ts": "519c2f2c9866e771609f060c637caf4a25f8c4007a6b1d1717d455b7e100276b",
+    "apps/desktop/src/renderer/src/ingestion-review.test.tsx": "8a92d7977464a45bdf24c605c79497f96240cbadab069e45f621ad8382a6445b",
+    "apps/desktop/src/renderer/src/pages/Ingestion.tsx": "2279dc3c2ed39e2400bab7e0f8c0d73102a8d27699525a8c8bdcd6d4de6ccccd",
+    "apps/desktop/tests/desktop.spec.ts": "0e8e8350af013433a4a718658254a88635c02c9507e16f36848e7f1a913029e9",
+    "packages/contracts/src/contracts.test.ts": "c2376848caf3c8e7c424885625a8b53a220f11a33f9b648ffced6e6421eec7fa",
+    "packages/contracts/src/ingestion.ts": "7da277f5f9ce5fa2c14c72260f662e9ee78730b8b5580378e87a21a79423cdee",
+    "packages/media-core/src/domain/matching.ts": "d937204603c852e85d563b3a541eee67e31475fce52751e897b7230f80a464dc",
+    "packages/media-core/src/ingestion/corrections.test.ts": "b8e588cef951c6310e6587449ec66c1750e42861db8985d46f6dcddc4e8a7ca2",
+    "packages/media-core/src/ingestion/corrections.ts": "6ed6852e03568aaeda7cc9d3ff29d14b62b31b153a59a6ec6cc10d0240a4da01",
+    "packages/media-core/src/ingestion/pipeline.test.ts": "e57977b0c9cfad2e5a0cbb15a9be1b8f7ff7f306eb51f9366c5393687e1ffa54",
+    "packages/media-core/src/ingestion/pipeline.ts": "22944a542d3c71a84cde83f4a2985f933bcbf48c76a4354e7777b83e23b48d93",
+    "packages/media-core/src/ingestion/selection-validation.ts": "7492045977aaab5ea21e652810b3e5cb98fb9136a1d492584f722e6baf3a6e3b"
+  },
+  "screenshots": {
+    "docs/public/desktop/episode-candidate-check-minimum.png": "2532c4fa65da5489a9f7a193bc14f310852f2360b5035393d4269a2790d0280e"
+  },
+  "checks": {
+    "fullTestsPassed": 839,
+    "fullTestsSkipped": 13,
+    "testFilesPassed": 82,
+    "testFilesSkipped": 3,
+    "devWindowTests": 3,
+    "packagedWindowTests": 3,
+    "artifactEntries": 9534,
+    "typecheck": true,
+    "boundaries": true,
+    "docsBuild": true,
+    "openspecStrict": true,
+    "artifactWhitelist": true
+  },
+  "assertions": [
+    "后台识别首项、人工整理和修正调用相同的作品、真实分集、唯一季映射及现有占用校验。",
+    "首选候选预检结果按作品持久保存；不修改解析季号、置信度或其他候选，不自动创建 COPY。",
+    "特殊集不换成正片，连续合并集逐集存在；跨季歧义及必要请求失败保持待核对。",
+    "预检整体十五秒截止；来源暂停取消在途读取，迟到结果不发布，恢复后沿原任务重新观察。",
+    "预检通过后，人工整理预览仍重新校验；旧 JSON 候选与未预检候选仍可读取。",
+    "920 像素窗口展示三种提示且无横向溢出；重载和 Core 重启保留相同匹配与解析字段，媒体库为空、原视频内容保留。",
+    "原生修正的固定 IPC、文件操作和历史事务以及来源表单布局在最终目录包回归通过。"
+  ],
+  "testPreparationHistory": [
+    "功能新增后首轮全量 838 passed／13 skipped；增加整体期限用例后两轮全量分别遇到一项、两项既有共享来源用例的观察／权限准备失败。",
+    "既有文件单独全跑 53 passed／1 skipped。测试准备改为等待下载执行收尾、排空在途扫描后注入故障，策略用例沿受控双时钟推进至两个视频真实就绪。",
+    "一次定向准备修正曾因关闭下载服务同时关闭后续预览而失败；需继续预览的用例改为 quiesce 并等待执行所有者无活动工作。",
+    "最终以正常并发重新运行全部测试，839 passed／13 skipped；临时诊断已移除。"
+  ],
+  "boundaries": [
+    "窗口候选由隔离 SQLite 夹具准备，只证明展示与固定 IPC 恢复；Core 使用本地 HTTP 固定响应，不代表真实 TMDB、Emby 或网盘联调。",
+    "没有访问或修改个人媒体、凭据、网盘限速或系统登录项。",
+    "未签名 arm64 目录包，不替代 Intel、DMG 安装、原生 OS 行为、Developer ID 或公证验收。",
+    "3.4 与 7.3 保持未完成；候选预检不是完整自动整理执行链。"
+  ]
+}

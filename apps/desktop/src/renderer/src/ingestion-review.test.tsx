@@ -24,6 +24,17 @@ const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement
 async function click(text: string) { expect(button(text), text).toBeTruthy(); await act(async () => button(text).click()); }
 async function preview() { await click("选择此作品"); await click("预览 COPY 计划"); }
 describe("单条整理与分组草稿的确认边界", () => {
+  it("季集预检与待核对原因按候选展示，选作品仍不自动生成或确认 COPY", async () => {
+    const f = await mount();
+    f.api.getIngestionTask.mockResolvedValue({ ...f.task, parsed: { ...f.task.parsed!, type: "TV_SHOW", season: 3, episode: 26, episodeEnd: 28 }, matches: [
+      { ...f.task.matches[0]!, mediaType: "TV_SHOW", episodeCheck: { state: "VALID", season: 1, episode: 26, episodeEnd: 28, seasonChanged: true } },
+      { ...f.task.matches[0]!, tmdbId: 8, mediaType: "TV_SHOW", episodeCheck: { state: "NEEDS_REVIEW", reason: "多个正片季包含全部集号，无法唯一映射" } },
+      { ...f.task.matches[0]!, tmdbId: 9, mediaType: "TV_SHOW" },
+    ] }); await f.remount();
+    expect(f.element.textContent).toContain("季集预检：S1 E26–28（按真实分集唯一换季）");
+    expect(f.element.textContent).toContain("整理预览仍会重新校验"); expect(f.element.textContent).toContain("季集待核对：多个正片季"); expect(f.element.textContent).toContain("季集尚未预检");
+    await click("选择此作品"); expect(f.api.previewOrganize).not.toHaveBeenCalled(); expect(f.api.confirmOrganize).not.toHaveBeenCalled();
+  });
   it("离页释放待处理轮询，共享应用保留；重新挂载只恢复核心 DTO，不重放识别或 COPY", async () => {
     const f = await mount(); expect(f.element.textContent).toContain("正确影片"); await f.unmount(); const reads = f.api.listIngestionCandidates.mock.calls.length;
     await vi.advanceTimersByTimeAsync(10000); expect(f.api.listIngestionCandidates).toHaveBeenCalledTimes(reads); expect(f.app.state).toBe("running");

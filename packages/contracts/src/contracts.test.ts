@@ -162,3 +162,15 @@ describe("受限进程契约", () => {
     expect(JSON.stringify(error)).not.toMatch(/private|secret/);
   });
 });
+
+// 季集预检只作为候选证据，旧记录可以不含该字段。
+describe("识别候选的季集预检契约", () => {
+  it("允许旧候选并拒绝把未知状态、负季号或远端原始字段当作通过证据", async () => {
+    const { matchSchema } = await import("./ingestion");
+    const match = { tmdbId: 1, mediaType: "TV_SHOW", title: "作品", originalTitle: null, year: 2026, confidence: 0.8, evidence: "filename", explanation: "核对作品" };
+    expect(matchSchema.safeParse(match).success).toBe(true);
+    expect(matchSchema.safeParse({ ...match, episodeCheck: { state: "VALID", season: 0, episode: 1, episodeEnd: null, seasonChanged: false } }).success).toBe(true);
+    expect(matchSchema.safeParse({ ...match, episodeCheck: { state: "NEEDS_REVIEW", reason: "请核对分集" } }).success).toBe(true);
+    for (const episodeCheck of [{ state: "VALID", season: 1, episode: 26, episodeEnd: 25, seasonChanged: false }, { state: "AUTO_APPROVED" }, { state: "VALID", season: -1, episode: 1, episodeEnd: null, seasonChanged: false }, { state: "NEEDS_REVIEW", reason: "请重试", raw: "private" }]) expect(matchSchema.safeParse({ ...match, episodeCheck }).success).toBe(false);
+  });
+});

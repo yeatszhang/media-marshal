@@ -4,7 +4,7 @@ import { DesktopError, publicError, correctionActions, selectionSchema, type Cor
 import { localFileEvidenceSchema, managedRootGrantSchema } from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { MediaConnections } from "../application/media-connections.js";
-import { reconcileEpisodes, assertUniqueEpisodes } from "../domain/media.js";
+import { assertUniqueEpisodes } from "../domain/media.js";
 import { templatePath } from "../domain/template.js";
 import { titleInitial } from "../domain/title-initial.js";
 import { ManagedRoot, assertSpaceBudget, sameVolumeRoot } from "../files/index.js";
@@ -13,6 +13,7 @@ import type { NativeRenameApi } from "../files/native-rename.js";
 import type { IngestionPipeline } from "./pipeline.js";
 import { assertMediaCoordinates } from "./coordinates.js";
 import { previewFailure } from "./preview-errors.js";
+import { validateMediaSelection } from "./selection-validation.js";
 import { CorrectionBatches, type BatchConfirmationMember } from "./correction-batches.js";
 import { CorrectionPreparations, type PreparationProgress } from "./correction-preparations.js";
 import { correctionConflict, correctionHash, correctionManifest, correctionReceipt, correctionTask, collectCorrectionAssets, assertCorrectionTarget, type CorrectionPlan, type CorrectionAsset } from "./correction-assets.js";
@@ -101,10 +102,8 @@ export class Corrections {
     if (previous) { if (previous.input_hash !== hash) throw correctionConflict("预览请求键已用于不同修正内容"); return this.getPreview(previous.id); }
     return this.ingestion.withCorrectionLease(input.taskId, async () => {
       if (this.active(input.taskId)) throw correctionConflict("此文件已有活动修正，请查看原作业，不重复创建计划");
-      const receipt = correctionReceipt(this.database, this.ingestion.targets, input.taskId), connectionVersion = this.connections.version, target = this.target(input.targetId ?? receipt.root.grant.id), selection = selectionSchema.parse(input.selection);
-      const metadata = await this.connections.tmdb.detail(selection.tmdbId, selection.mediaType, signal); let episodeTitle: string | null = null;
-      if (selection.mediaType === "TV_SHOW") { if (selection.season === null || selection.episode === null) throw correctionConflict("剧集修正需要明确季号和集号"); const checked = await reconcileEpisodes({ season: selection.season, episode: selection.episode, episodeEnd: selection.episodeEnd }, metadata.seasons, (season) => this.connections.tmdb.episodes(selection.tmdbId, season, signal)); Object.assign(selection, { season: checked.season, episode: checked.episode, episodeEnd: checked.episodeEnd }); episodeTitle = checked.episodeTitle; } else Object.assign(selection, { season: null, episode: null, episodeEnd: null });
-      assertMediaCoordinates(this.database, selection, input.taskId, receipt.plan.targetSegments.at(-1)!);
+      const receipt = correctionReceipt(this.database, this.ingestion.targets, input.taskId), connectionVersion = this.connections.version, target = this.target(input.targetId ?? receipt.root.grant.id);
+      const { selection, metadata, episodeTitle } = await validateMediaSelection(this.database, this.connections.tmdb, input.selection, { taskId: input.taskId, fileName: receipt.plan.targetSegments.at(-1)!, signal });
       const parsed = receipt.plan.parsed, variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(receipt.plan.targetSegments.at(-1)!).slice(1) };
       const template = input.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}"), segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments);
       const assets = await collectCorrectionAssets(receipt, target, segments, input.includeAccessories !== false, signal, progress), plan: CorrectionPlan = { taskId: input.taskId, originalContext: receipt.context, previewGeneration: this.previewGeneration, connectionVersion, target: target.grant, targetSegments: segments, template, selection, metadata, parsed, includeAccessories: input.includeAccessories !== false, ...assets };

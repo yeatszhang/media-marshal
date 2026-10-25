@@ -1,11 +1,12 @@
 import { RecognitionError, type ParsedMedia } from "./media.js";
+import type { EpisodeCheck } from "@media-marshal/contracts";
 
 export type QueryType = "LOCALIZED" | "ORIGINAL" | "COMBINED" | "GUESSIT";
 export interface TitleQuery { query: string; type: QueryType; weight: number }
 export interface SearchPlan { originalFilename: string; guessitTitle: string | null; titleRegion: string | null; queries: TitleQuery[] }
 export interface MetadataWork { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; title: string; originalTitle: string | null; year: number | null; overview?: string; genres?: string[]; country?: string | null }
 export interface MatchScore { confidence: number; bestQuery: string | null; queryType: QueryType | null; titleScore: number; yearScore: number; mediaTypeScore: number; structureBonus: number }
-export interface MediaMatch extends MetadataWork { score: MatchScore; evidence: "filename" | "parent" | "both" | "manual"; filenameConfidence?: number; parentConfidence?: number; parentOnlyCapped?: boolean }
+export interface MediaMatch extends MetadataWork { score: MatchScore; evidence: "filename" | "parent" | "both" | "manual"; filenameConfidence?: number; parentConfidence?: number; parentOnlyCapped?: boolean; episodeCheck?: EpisodeCheck }
 const hasHan = (value: string) => /\p{Script=Han}/u.test(value), hasAscii = (value: string | null) => /[A-Za-z]/.test(value ?? "");
 const normalize = (value: string | null | undefined): string | null => value?.replace(/[._]+/g, " ").replace(/[\[\]【】()（）]/g, " ").replace(/\s+/g, " ").trim() || null;
 const trim = (value: string) => value.replace(/^[\s._-]+|[\s._-]+$/g, "");

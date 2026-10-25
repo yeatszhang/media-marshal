@@ -14,7 +14,7 @@ import { ManagedRoot, ManagedRoots, pathsOverlap, sameVolumeRoot, assertSpaceBud
 import type { ManagedIngestionSink } from "../cloud/outbox.js";
 import type { MediaConnections } from "../application/media-connections.js";
 import { mergeParentEvidence, parentContext, searchMatches, type MediaMatch, type MetadataWork } from "../domain/matching.js";
-import { reconcileEpisodes, resolveSeason, RecognitionError, type ParsedMedia } from "../domain/media.js";
+import { resolveSeason, RecognitionError, type ParsedMedia } from "../domain/media.js";
 import { MediaNetworkError } from "../infrastructure/json-http.js";
 import { templatePath } from "../domain/template.js";
 import { titleInitial } from "../domain/title-initial.js";
@@ -29,6 +29,7 @@ import { OrganizeBatches, type BatchManifest } from "./organize-batches.js";
 import { assertMediaCoordinates } from "./coordinates.js";
 import { assertCorrectionTarget } from "./correction-assets.js";
 import { previewFailure } from "./preview-errors.js";
+import { validateMediaSelection } from "./selection-validation.js";
 
 type Authorization = PrivateCoreInput<"media.sources.authorize">;
 interface SourceRow { source_id: string; mode: "local" | "managed"; download_root_id: string | null; source_grant_json: string; target_root_id: string; source_version: number; available: number; paused: number; version: number; source_path: string; target_path: string; media_type: "AUTO" | "MOVIE" | "TV_SHOW"; policy_key?: string }
@@ -780,9 +781,9 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const row = this.database.connection.prepare("SELECT t.*,c.id AS candidate_id,c.reason FROM media_task t JOIN ingestion_candidate c ON c.task_id=t.id WHERE t.id=?").get(taskId) as { id: string; candidate_id: string; source_path: string; status: string; parsed_json: string | null; reason: string | null } | undefined;
     if (!row) throw conflict("任务不存在");
     const parsed = row.parsed_json ? JSON.parse(row.parsed_json) as ParsedMedia : null;
-    const matches = this.database.connection.prepare("SELECT metadata_json FROM task_candidate WHERE task_id=? ORDER BY confidence DESC,id LIMIT 100").all(taskId) as { metadata_json: string }[];
+    const matches = this.database.connection.prepare("SELECT metadata_json FROM task_candidate WHERE task_id=? ORDER BY confidence DESC,json_extract(metadata_json,'$.mediaType'),json_extract(metadata_json,'$.tmdbId'),id LIMIT 100").all(taskId) as { metadata_json: string }[];
     const accessories = (this.database.connection.prepare("SELECT a.* FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id WHERE o.task_id=? ORDER BY a.id LIMIT 100").all(taskId) as (OperationRow & { failure_code: string | null })[]).map((asset) => { const plan = JSON.parse(asset.plan_json) as Plan; return { id: asset.id, sourcePath: join(plan.source.path, ...plan.sourceSegments), targetPath: join(plan.target.path, ...plan.targetSegments), state: asset.phase as NonNullable<CoreOutput<"ingestion.task">["accessories"]>[number]["state"], failure: asset.failure_code }; });
-    return { taskId, candidateId: row.candidate_id, sourcePath: row.source_path, revision: this.recognitionEdits.revision(taskId), matchesStale: this.recognitionEdits.matchesStale(taskId), state: row.status, parsed: parsed ? { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, episodeEnd: parsed.episodeEnd, type: parsed.type } : null, matches: matches.map((entry) => { const match = JSON.parse(entry.metadata_json) as MediaMatch; return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, explanation: match.evidence === "manual" ? "根据已保存的人工识别字段重新匹配，请核对作品" : match.parentOnlyCapped ? "父目录证据不足，仅供人工选择" : `名称 ${Math.round(match.score.titleScore * 100)}%，年份 ${Math.round(match.score.yearScore * 100)}%，${match.evidence === "both" ? "父目录与名称一致" : "请核对作品"}` }; }), failure: row.reason, accessories };
+    return { taskId, candidateId: row.candidate_id, sourcePath: row.source_path, revision: this.recognitionEdits.revision(taskId), matchesStale: this.recognitionEdits.matchesStale(taskId), state: row.status, parsed: parsed ? { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, episodeEnd: parsed.episodeEnd, type: parsed.type } : null, matches: matches.map((entry) => { const match = JSON.parse(entry.metadata_json) as MediaMatch; return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, episodeCheck: match.episodeCheck, explanation: match.evidence === "manual" ? "根据已保存的人工识别字段重新匹配，请核对作品" : match.parentOnlyCapped ? "父目录证据不足，仅供人工选择" : `名称 ${Math.round(match.score.titleScore * 100)}%，年份 ${Math.round(match.score.yearScore * 100)}%，${match.evidence === "both" ? "父目录与名称一致" : "请核对作品"}` }; }), failure: row.reason, accessories };
   }
   private async identify(row: CandidateRow, signal: AbortSignal) {
     this.assertCandidateCurrent(row);
@@ -796,6 +797,20 @@ export class IngestionPipeline implements ManagedIngestionSink {
     let matches = await searchMatches(parsed, this.connections.tmdb, signal, !!edited);
     const parent = relative.slice(0, -1).reverse().map((part) => parentContext(part, parsed)).find(Boolean);
     if (parent && !edited) { const context = await parser!.parse(parent.folderName, signal); context.type = parsed.type; context.season = parsed.season; matches = mergeParentEvidence(matches, await searchMatches(context, this.connections.tmdb, signal)); }
+    // 只预检排序首项，不据此选择作品或提升置信度；其他候选在人工预览时校验。
+    matches.sort((a, b) => b.score.confidence - a.score.confidence || (a.mediaType < b.mediaType ? -1 : a.mediaType > b.mediaType ? 1 : 0) || a.tmdbId - b.tmdbId);
+    const first = matches[0];
+    if (first?.mediaType === "TV_SHOW") {
+      const deadline = new AbortController(), timeout = setTimeout(() => deadline.abort(), 15000);
+      try {
+        const checked = await validateMediaSelection(this.database, this.connections.tmdb, { tmdbId: first.tmdbId, mediaType: first.mediaType, season: parsed.season, episode: parsed.episode, episodeEnd: parsed.episodeEnd }, { taskId: row.task_id!, fileName: relative.at(-1)!, signal: AbortSignal.any([signal, deadline.signal]) });
+        first.episodeCheck = { state: "VALID", season: checked.selection.season!, episode: checked.selection.episode!, episodeEnd: checked.selection.episodeEnd, seasonChanged: checked.seasonChanged };
+      } catch (error) {
+        signal.throwIfAborted();
+        const failure = previewFailure(error);
+        first.episodeCheck = { state: "NEEDS_REVIEW", reason: deadline.signal.aborted ? "季集预检超时，请核对网络后在整理预览中重新校验" : failure instanceof DesktopError ? failure.message.slice(0, 500) : "首选候选的季集校验未完成，请核对 TMDB 信息后重新预览" };
+      } finally { clearTimeout(timeout); }
+    }
     if (signal.aborted || recognitionRevision !== this.recognitionEdits.revision(row.task_id!) || connectionVersion !== this.connections.version || this.candidateSource(row).version !== source.version) throw conflict();
     this.assertCandidateCurrent(row);
     db.transaction(() => {
@@ -856,14 +871,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const source = this.candidateSource(row), sourceLifecycles = this.previewScope(row), target = this.targetFor(source, input.selection.mediaType), connectionVersion = this.connections.version;
     const parsedRow = db.prepare("SELECT parsed_json FROM media_task WHERE id=?").get(input.taskId) as { parsed_json: string | null };
     if (!parsedRow.parsed_json) throw conflict("请先完成名称识别");
-    const parsed = JSON.parse(parsedRow.parsed_json) as ParsedMedia, selection = { ...input.selection, season: input.selection.season ?? null, episode: input.selection.episode ?? null, episodeEnd: input.selection.episodeEnd ?? null };
-    const metadata = await this.connections.tmdb.detail(selection.tmdbId, selection.mediaType); let episodeTitle: string | null = null;
-    if (selection.mediaType === "TV_SHOW") {
-      if (selection.season === null || selection.episode === null) throw conflict("请补齐 TMDB 季集坐标");
-      const checked = await reconcileEpisodes({ season: selection.season, episode: selection.episode, episodeEnd: selection.episodeEnd }, metadata.seasons, (season) => this.connections.tmdb.episodes(selection.tmdbId, season));
-      Object.assign(selection, { season: checked.season, episode: checked.episode, episodeEnd: checked.episodeEnd }); episodeTitle = checked.episodeTitle;
-    } else Object.assign(selection, { season: null, episode: null, episodeEnd: null });
-    this.assertCoordinates(selection, row.id);
+    const parsed = JSON.parse(parsedRow.parsed_json) as ParsedMedia;
+    const { selection, metadata, episodeTitle } = await validateMediaSelection(this.database, this.connections.tmdb, input.selection, { taskId: input.taskId, fileName: (JSON.parse(row.relative_json) as string[]).at(-1)! });
     const variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(parsed.originalFilename).slice(1) };
     const template = input.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}");
     const segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments); assertCorrectionTarget(this.database, target, segments, input.taskId); await target.assertVacant(segments); await target.check();

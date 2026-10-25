@@ -29,17 +29,20 @@ async function grant(path: string, id = randomUUID()): Promise<ManagedRootGrant>
   const info = await lstat(path, { bigint: true }), volume = await statfs(path, { bigint: true });
   return { id, path, volume: { volumeId: randomUUID(), rootInode: String(info.ino), rootBirthtimeNs: String(info.birthtimeNs), observedDevice: String(info.dev), fsTypeCode: String(volume.type), fsType: "test-real-local", caseSensitive: process.platform !== "win32", unicodeEquivalent: true, pathMaxBytes: 4096 } };
 }
-async function fixture(options: { ignoredFilePatterns?: string[] | null; watchFiles?: typeof watch } = {}) {
+async function fixture(options: { ignoredFilePatterns?: string[] | null; watchFiles?: typeof watch; tv?: { season: number; episode: number; episodeEnd?: number; episodes: Record<number, number[] | "failed">; extraMatch?: boolean } } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "marshal-整理 test-"))); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const source = join(directory, "来源"), target = join(directory, "媒体库"); await mkdir(source); await mkdir(target);
   const db = await CoreDatabase.open(join(directory, "core.sqlite3")); cleanup.push(() => db.close());
   let clock = Date.now(), monotonic = 0, calls = 0;
   const server = http.createServer((req, res) => { calls++; const url = new URL(req.url!, "http://localhost"); res.setHeader("Content-Type", "application/json");
     const movie = { id: 1, title: "测试电影", original_title: "Test Movie", release_date: "2026-01-01" };
+    if (options.tv && url.pathname.startsWith("/search/")) { res.end(JSON.stringify({ results: [{ id: 1, name: "测试剧集", first_air_date: "2026-01-01" }, ...(options.tv.extraMatch ? [{ id: 2, name: "另一部剧", first_air_date: "2026-01-01" }] : [])] })); return; }
+    if (options.tv && url.pathname === "/tv/1") { res.end(JSON.stringify({ id: 1, name: "测试剧集", first_air_date: "2026-01-01", seasons: Object.keys(options.tv.episodes).map(Number).map((season_number) => ({ season_number })) })); return; }
+    if (options.tv && url.pathname.startsWith("/tv/1/season/")) { const season = Number(url.pathname.split("/").at(-1)), episodes = options.tv.episodes[season]; if (episodes === "failed") res.writeHead(500).end('{"private":"fixture-secret-response"}'); else res.end(JSON.stringify({ episodes: (episodes ?? []).map((episode_number) => ({ season_number: season, episode_number, name: "分集" + episode_number })) })); return; }
     if (url.pathname.startsWith("/search/")) res.end(JSON.stringify({ results: [movie] })); else if (url.pathname === "/movie/1") res.end(JSON.stringify(movie)); else res.writeHead(404).end("{}");
   }); await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)); cleanup.push(() => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }));
   const connections = new MediaConnections(db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" }), { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` }); cleanup.push(() => connections.close()); connections.install({ tmdb: "fixture-tmdb-secret", emby: null });
-  const parser = { ready: true, start: async () => {}, close: async () => {}, parse: async (name: string, _signal?: AbortSignal) => normalizeParse({ title: "测试电影", year: 2026, type: "movie" }, name) };
+  const parser = { ready: true, start: async () => {}, close: async () => {}, parse: async (name: string, _signal?: AbortSignal) => normalizeParse(options.tv ? { title: "测试剧集", year: 2026, type: "episode", season: options.tv.season, episode: options.tv.episodeEnd === undefined ? options.tv.episode : Array.from({ length: options.tv.episodeEnd - options.tv.episode + 1 }, (_, index) => options.tv!.episode + index) } : { title: "测试电影", year: 2026, type: "movie" }, name) };
   const pipeline = new IngestionPipeline(db, () => parser, connections, () => clock, () => monotonic, options.watchFiles); cleanup.push(() => pipeline.close());
   const sourceId = randomUUID(), sourceGrant = await grant(source), targetGrant = await grant(target);
   db.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'测试来源','custom',?,?,'AUTO','COPY',?)").run(sourceId, source, target, new Date(clock).toISOString());
@@ -55,6 +58,78 @@ async function fixture(options: { ignoredFilePatterns?: string[] | null; watchFi
   const preview = async () => { const candidate = await ready(); const task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick(); return pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" } }); };
   return { directory, source, target, db, pipeline, sourceId, sourceGrant, targetGrant, connections, parser, file, bytes, advance, ready, preview, calls: () => calls, jump(ms: number) { monotonic += ms; clock += ms; }, wallJump(ms: number) { clock += ms; } };
 }
+describe("首选剧集候选的真实季集预检", () => {
+  it("唯一换季按候选持久保存，原解析及其他候选不被改写，人工预览再次校验", async () => {
+    const f = await fixture({ tv: { season: 3, episode: 26, episodeEnd: 28, episodes: { 1: [26, 27, 28] }, extraMatch: true } }), candidate = await f.ready();
+    const { taskId } = await f.pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    const task = f.pipeline.task(taskId);
+    expect(task).toMatchObject({ state: "AWAITING_CONFIRMATION", parsed: { season: 3, episode: 26, episodeEnd: 28 }, matches: [{ tmdbId: 1, episodeCheck: { state: "VALID", season: 1, episode: 26, episodeEnd: 28, seasonChanged: true } }, { tmdbId: 2 }] });
+    expect(task.matches[1]!.episodeCheck).toBeUndefined(); expect(task.failure).toBeNull();
+    const preview = await f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "TV_SHOW", season: 3, episode: 26, episodeEnd: 28 }, includeAccessories: false });
+    expect(preview).toMatchObject({ season: 1, episode: 26, episodeEnd: 28 });
+    vi.spyOn(f.connections.tmdb, "episodes").mockResolvedValue([{ season: 1, episode: 26, title: null }, { season: 1, episode: 28, title: null }]);
+    await expect(f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "TV_SHOW", season: 3, episode: 26, episodeEnd: 28 }, includeAccessories: false })).rejects.toThrow("没有唯一正片季");
+    expect(f.pipeline.task(taskId).matches[0]!.episodeCheck).toEqual(task.matches[0]!.episodeCheck);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(await readFile(f.file)).toEqual(f.bytes);
+  });
+  it.each([
+    { label: "合并集缺集", season: 2, episodes: { 1: [26, 28] }, message: "没有唯一正片季" },
+    { label: "跨季歧义", season: 3, episodes: { 1: [26, 27, 28], 2: [26, 27, 28] }, message: "多个正片季" },
+    { label: "特别篇不映射正片", season: 0, episodes: { 1: [26, 27, 28] }, message: "没有唯一正片季" },
+    { label: "必要分集请求失败", season: 3, episodes: { 1: [26, 27, 28], 2: "failed" as const }, message: "分集列表获取失败" },
+  ])("$label 保留匹配与待确认状态，人工预览采用相同阻断", async ({ season, episodes, message }) => {
+    const f = await fixture({ tv: { season, episode: 26, episodeEnd: 28, episodes } }), candidate = await f.ready();
+    const { taskId } = await f.pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    const task = f.pipeline.task(taskId);
+    expect(task).toMatchObject({ state: "AWAITING_CONFIRMATION", matches: [{ tmdbId: 1, episodeCheck: { state: "NEEDS_REVIEW", reason: expect.stringContaining(message) } }] });
+    expect(JSON.stringify(task)).not.toContain("fixture-secret-response");
+    await expect(f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "TV_SHOW", season, episode: 26, episodeEnd: 28 }, includeAccessories: false })).rejects.toThrow(message);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_preview").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+    expect(await readFile(f.file)).toEqual(f.bytes);
+  });
+  it("预检整体十五秒截止后保留作品匹配，终止分集请求而不把超时解释为通过", async () => {
+    const f = await fixture({ tv: { season: 1, episode: 26, episodes: { 1: [26] } } }), candidate = await f.ready();
+    vi.spyOn(f.connections.tmdb, "search").mockResolvedValue([{ tmdbId: 1, mediaType: "TV_SHOW", title: "测试剧集", originalTitle: null, year: 2026 }]);
+    vi.spyOn(f.connections.tmdb, "detail").mockResolvedValue({ tmdbId: 1, mediaType: "TV_SHOW", title: "测试剧集", originalTitle: null, year: 2026, seasons: [1] });
+    let requestSignal: AbortSignal | undefined;
+    const episodes = vi.spyOn(f.connections.tmdb, "episodes").mockImplementation(async (_id, _season, signal) => { requestSignal = signal; return new Promise((_done, fail) => signal!.addEventListener("abort", () => fail(new Error("受控超时原始错误")), { once: true })); });
+    vi.useFakeTimers(); const { taskId } = await f.pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() });
+    await vi.waitFor(() => expect(episodes).toHaveBeenCalled()); await vi.advanceTimersByTimeAsync(15000); await f.pipeline.tick();
+    expect(requestSignal?.aborted).toBe(true); expect(f.pipeline.task(taskId)).toMatchObject({ state: "AWAITING_CONFIRMATION", matches: [{ episodeCheck: { state: "NEEDS_REVIEW", reason: expect.stringContaining("预检超时") } }] });
+    expect(JSON.stringify(f.pipeline.task(taskId))).not.toContain("受控超时原始错误"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
+  it("分集读取期间暂停来源，不发布迟到预检；恢复观察后继续原任务", async () => {
+    const f = await fixture({ tv: { season: 1, episode: 26, episodes: { 1: [26] } } }), candidate = await f.ready();
+    let release!: () => void; const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const episodes = vi.spyOn(f.connections.tmdb, "episodes").mockImplementation(async () => { await waiting; return [{ season: 1, episode: 26, title: "迟到分集" }]; });
+    const { taskId } = await f.pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() });
+    try { await vi.waitFor(() => expect(episodes).toHaveBeenCalled()); f.db.connection.prepare("UPDATE desktop_source SET paused=1 WHERE id=?").run(f.sourceId); f.pipeline.sourceChanged(f.sourceId); }
+    finally { release(); }
+    await f.pipeline.tick(); expect(f.pipeline.task(taskId)).toMatchObject({ state: "PENDING", matches: [], parsed: null });
+    f.db.connection.prepare("UPDATE desktop_source SET paused=0 WHERE id=?").run(f.sourceId); f.pipeline.sourceChanged(f.sourceId); await f.pipeline.scan(f.sourceId); await f.advance(); await f.pipeline.tick();
+    expect(f.pipeline.task(taskId)).toMatchObject({ state: "AWAITING_CONFIRMATION", matches: [{ episodeCheck: { state: "VALID", season: 1, episode: 26 } }] });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
+  it("已整理坐标占用同样阻断首选候选，识别不新建文件操作", async () => {
+    const f = await fixture({ tv: { season: 1, episode: 26, episodes: { 1: [26] } } }), candidate = await f.ready();
+    const first = await f.pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    const preview = await f.pipeline.preview({ taskId: first.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "TV_SHOW", season: 1, episode: 26 }, includeAccessories: false });
+    await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    await writeFile(join(f.source, "重复坐标.mkv"), f.bytes); await f.pipeline.scan(f.sourceId); await f.advance();
+    const second = f.pipeline.list({ sourceId: f.sourceId }).items.find((row) => row.relativePath === "重复坐标.mkv")!;
+    const { taskId } = await f.pipeline.recognize({ candidateId: second.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    expect(f.pipeline.task(taskId)).toMatchObject({ state: "AWAITING_CONFIRMATION", matches: [{ episodeCheck: { state: "NEEDS_REVIEW", reason: expect.stringContaining("重复或重叠") } }] });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 }); expect(await readFile(f.file)).toEqual(f.bytes);
+  });
+  it("特殊集使用真实 S0，缺集号不请求详情且不丢失作品匹配", async () => {
+    const f = await fixture({ tv: { season: 0, episode: 26, episodes: { 0: [26], 1: [26] } } }), candidate = await f.ready();
+    const { taskId } = await f.pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    expect(f.pipeline.task(taskId).matches[0]!.episodeCheck).toEqual({ state: "VALID", season: 0, episode: 26, episodeEnd: null, seasonChanged: false });
+    vi.spyOn(f.parser, "parse").mockImplementation(async (name) => normalizeParse({ title: "测试剧集", type: "episode", season: 0 }, name));
+    const detail = vi.spyOn(f.connections.tmdb, "detail"); await f.pipeline.retry(taskId); await f.pipeline.tick();
+    expect(f.pipeline.task(taskId)).toMatchObject({ state: "AWAITING_CONFIRMATION", matches: [{ episodeCheck: { state: "NEEDS_REVIEW", reason: expect.stringContaining("补齐") } }] }); expect(detail).not.toHaveBeenCalled();
+  });
+});
 describe("目录批量识别与实际文件边界", () => {
   it("暂停时保留批次等待，恢复后重新稳定再提交原候选，识别不创建 COPY", async () => {
     const f = await fixture(), candidate = await f.ready(), job = f.pipeline.recognitionBatches.create({ candidateIds: [candidate.id], requestKey: randomUUID() });

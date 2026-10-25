@@ -13,6 +13,7 @@ import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
 import type { CoreOutput } from "@media-marshal/contracts";
 import { createMediaApplication } from "../modules/application";
 import { CoreDatabase } from "../infrastructure/database";
+import { MediaNetworkError } from "../infrastructure/json-http";
 import { MediaConnections } from "../application/media-connections";
 import { normalizeParse } from "../domain/media";
 import { IngestionPipeline } from "./pipeline";
@@ -123,6 +124,25 @@ describe.skipIf(process.platform !== "darwin")("单条修正的预览、文件�
   it("原路径不变也生成历史链，后续修正读取最新收据并释放旧坐标与位置", async () => {
     const f = await fixture(), relative = f.oldPath.slice(f.old.length + 1), preview = await f.preview({ template: relative }); expect(preview.files[0]!.action).toBe("NONE"); const inode = (await lstat(f.oldPath)).ino, first = await f.corrections.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true }); await f.corrections.tick(); expect((await lstat(f.oldPath)).ino).toBe(inode);
     const next = await f.corrections.preview({ taskId: first.newTaskId, requestKey: randomUUID(), selection: { tmdbId: 3, mediaType: "MOVIE" }, template: relative }), second = await f.corrections.confirm({ previewId: next.id, requestKey: randomUUID(), filesComplete: true }); await f.corrections.tick(); expect(f.corrections.details({ id: second.id }).operation.state).toBe("RECORDED"); expect(f.corrections.describe({ taskId: first.newTaskId })).toMatchObject({ status: "CORRECTED", previousTaskId: f.taskId, nextTaskId: second.newTaskId }); expect((await lstat(f.oldPath)).ino).toBe(inode); expect(f.corrections.describe({ taskId: first.newTaskId }).latestOperation?.id).toBe(second.id); expect(f.corrections.describe({ taskId: second.newTaskId }).latestOperation?.id).toBe(second.id);
+  });
+  it.each([
+    { label: "合并集缺集", season: 3, lists: { 1: [26, 28] }, message: "没有唯一正片季" },
+    { label: "跨季歧义", season: 3, lists: { 1: [26, 27, 28], 2: [26, 27, 28] }, message: "多个正片季" },
+    { label: "特别篇不映射正片", season: 0, lists: { 1: [26, 27, 28] }, message: "没有唯一正片季" },
+    { label: "必要请求失败", season: 3, lists: { 1: [26, 27, 28], 2: "failed" as const }, message: "分集列表获取失败" },
+  ])("修正入口共享季集校验：$label，不创建修正或移动", async ({ season, lists, message }) => {
+    const f = await fixture();
+    vi.spyOn(f.connections.tmdb, "detail").mockResolvedValue({ tmdbId: 10, mediaType: "TV_SHOW", title: "新剧集", originalTitle: null, year: 2026, seasons: Object.keys(lists).map(Number) });
+    vi.spyOn(f.connections.tmdb, "episodes").mockImplementation(async (_id, number) => { const entries = (lists as Record<number, number[] | "failed">)[number]; if (entries === "failed") throw new MediaNetworkError("NETWORK_UNAVAILABLE"); return (entries ?? []).map((episode) => ({ season: number, episode, title: null })); });
+    await expect(f.preview({ selection: { tmdbId: 10, mediaType: "TV_SHOW", season, episode: 26, episodeEnd: 28 } })).rejects.toThrow(message);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_correction_preview").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_file_relocation").get()).toEqual({ n: 0 }); expect(await readFile(f.oldPath)).toEqual(f.bytes);
+  });
+  it("修正唯一换季保留实际绝对集号和合并范围", async () => {
+    const f = await fixture();
+    vi.spyOn(f.connections.tmdb, "detail").mockResolvedValue({ tmdbId: 10, mediaType: "TV_SHOW", title: "新剧集", originalTitle: null, year: 2026, seasons: [1] });
+    vi.spyOn(f.connections.tmdb, "episodes").mockResolvedValue([26, 27, 28].map((episode) => ({ season: 1, episode, title: null })));
+    expect(await f.preview({ selection: { tmdbId: 10, mediaType: "TV_SHOW", season: 3, episode: 26, episodeEnd: 28 } })).toMatchObject({ selection: { tmdbId: 10, season: 1, episode: 26, episodeEnd: 28 } });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_file_relocation").get()).toEqual({ n: 0 }); expect(await readFile(f.oldPath)).toEqual(f.bytes);
   });
   it("修正使用真实分集清单，缺失集或重复坐标不能进入文件执行", async () => {
     const f = await fixture(); await expect(f.preview({ selection: { tmdbId: 10, mediaType: "TV_SHOW", season: 1, episode: 2, episodeEnd: 4 } })).rejects.toThrow(); const p = await f.preview({ selection: { tmdbId: 10, mediaType: "TV_SHOW", season: 1, episode: 1 } }), job = await f.corrections.confirm({ previewId: p.id, requestKey: randomUUID(), filesComplete: true }); await f.corrections.tick(); expect(f.corrections.describe({ taskId: job.newTaskId }).selection).toMatchObject({ tmdbId: 10, mediaType: "TV_SHOW", season: 1, episode: 1 }); expect(await readFile(f.original)).toEqual(f.bytes);
