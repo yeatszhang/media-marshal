@@ -11,7 +11,7 @@ export function SourceLifecycleDialog({ row, operation, onClose }: { row: Source
   useEffect(() => {
     const original = document.activeElement, element = dialog.current!;
     element.showModal(); cancel.current?.focus();
-    return () => { element.close(); requestAnimationFrame(() => { if (original instanceof HTMLElement && original.isConnected) original.focus(); else document.querySelector<HTMLButtonElement>("[data-source-add]")?.focus(); }); };
+    return () => { element.close(); requestAnimationFrame(() => { if (document.querySelector("dialog[open]")) return; if (original instanceof HTMLElement && original.isConnected) original.focus(); else document.querySelector<HTMLButtonElement>("[data-source-add]")?.focus(); }); };
   }, []);
   return <dialog ref={dialog} className="source-lifecycle-dialog" aria-labelledby={title} aria-describedby={description} onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
     <form onSubmit={(event) => { event.preventDefault(); void model.lifecycle(row, operation).then((saved) => { if (saved) onClose(); }); }}>

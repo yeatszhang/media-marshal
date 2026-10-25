@@ -94,7 +94,7 @@ async function cloudDraft(f: Awaited<ReturnType<typeof mount>>) { await click("�
 describe("统一来源页、连接返回和确认边界", () => {
   it("删除须明确确认，取消不写；保留配置只读可关闭，恢复保持暂停并传新生命周期", async () => {
     const f = await mount(); await cloudDraft(f); await click("保存草稿"); const row = [...f.rows.values()][0]!; await click("取消编辑");
-    expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("删除来源…"); expect(document.querySelector("dialog[open]")).not.toBeNull(); expect(document.activeElement?.textContent).toBe("取消");
+    expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("删除来源…"); expect(document.querySelector("dialog[open]")).not.toBeNull(); await act(async () => { await new Promise(requestAnimationFrame); }); expect(document.activeElement?.textContent).toBe("取消");
     await click("取消"); expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("删除来源…"); await click("确认删除来源");
     expect(f.api.removeSourceRule).toHaveBeenCalledWith(expect.objectContaining({ id: row.id, expectedLifecycleRevision: 0, expectedDraftRevision: 1 })); expect(f.element.textContent).toContain("已删除来源（1）");
     f.api.statRemote.mockClear(); await act(async () => { await f.model.openSource(row.id); }); expect(field("来源名称").closest("fieldset")?.disabled).toBe(true); await click("关闭配置查看");

@@ -19,7 +19,7 @@ export function Sources() {
   useEffect(() => model.watch(), [model]);
   useEffect(() => { if (sourceId) void model.openSource(sourceId); }, [model, sourceId]);
   useEffect(() => { if (!sourceId && legacyJob) void model.openLegacy("download-job", legacyJob); }, [model, sourceId, legacyJob]);
-  const close = () => { model.closeEditor(); setQuery({}); requestAnimationFrame(() => addRef.current?.focus()); };
+  const close = () => { model.closeEditor(); setQuery({}); requestAnimationFrame(() => { if (!document.querySelector("dialog[open]")) addRef.current?.focus(); }); };
   const open = (row: SourceRule) => { if (sourceId === row.id) void model.openSource(row.id); else setQuery({ source: row.id }); };
   const pages = Math.max(1, Math.ceil(state.items.length / 25)), visiblePage = Math.min(page, pages);
   const archivePages = Math.max(1, Math.ceil(state.archived.length / 25)), visibleArchivePage = Math.min(archivedPage, archivePages);
