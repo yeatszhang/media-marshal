@@ -313,12 +313,12 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='SCANNING'").get()).toEqual({ n: 0 });
     expect(rules.get(source.id)?.paused).toBe(true);
     rules.control({ id: source.id, expectedVersion: 1, operation: "resume", requestKey: randomUUID() });
-    await expect.poll(() => (f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='SCANNING'").get() as { n: number }).n).toBe(1);
+    await expect.poll(() => (f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='SCANNING'").get() as { n: number }).n, { timeout: 5000 }).toBe(1);
     const scan = { id: source.id, expectedVersion: 1, operation: "scan" as const, requestKey: randomUUID() };
     rules.control(scan); rules.control(scan); rules.control({ ...scan, requestKey: randomUUID() });
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='SCANNING'").get()).toEqual({ n: 1 });
-    await expect.poll(() => (f.db.connection.prepare("SELECT count(*) AS n FROM download_job").get() as { n: number }).n).toBe(1);
-    expect(f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='COMPLETE'").get()).toEqual({ n: 1 });
+    // 枚举和确认需要跨多个 500ms 调度周期，等待完整记账，避免全量并发检查中的瞬时状态。
+    await expect.poll(() => ({ jobs: (f.db.connection.prepare("SELECT count(*) AS n FROM download_job").get() as { n: number }).n, complete: (f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='COMPLETE'").get() as { n: number }).n }), { timeout: 5000 }).toEqual({ jobs: 1, complete: 1 });
   });
   it("共享根按需求区分只下载与整理，相同策略和 outbox 重投及补扫复用唯一候选", async () => {
     const f = await setup(new Map([["整理/电影.mp4", Buffer.from("整理内容")], ["仅下载/电影.mp4", Buffer.from("仅下载内容")]]));
