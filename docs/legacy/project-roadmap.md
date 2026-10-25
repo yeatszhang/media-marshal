@@ -1,11 +1,12 @@
 ---
-description: Media Marshal 项目路线图与阶段规划 — PM 维护，当前需求状态见 requirements-status.mdc
-alwaysApply: false
+search: false
 ---
+
+> 旧 Java/Vue/Docker 工程历史快照，迁移于 2026-10-25。下文“当前”、完成状态、维护要求和待办均保留原记录口径，不作为当前桌面客户端的指令、进度或接口依据。新工作使用 OpenSpec；旧路径和 `.mdc` 文件名仅用于历史追溯。参见[旧工程资料索引](./index.md)。
 
 # Media Marshal 项目路线图
 
-> 本文件负责阶段顺序、优先级和进入条件。具体需求与验收条件见 [requirements-status.mdc](requirements-status.mdc)，设计结论见 [design-decisions.mdc](design-decisions.mdc)，落地证据见 [implementation-log.mdc](implementation-log.mdc)。
+> 本文件负责阶段顺序、优先级和进入条件。具体需求与验收条件见 [requirements-status.mdc](requirements-status.md)，设计结论见 [design-decisions.mdc](design-decisions.md)，落地证据见 [implementation-log.mdc](implementation-log.md)。
 
 ## 当前阶段（2026-09-05）
 

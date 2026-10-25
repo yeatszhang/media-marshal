@@ -1,7 +1,8 @@
 ---
-description: 实际生效的 REST API 契约 — 后端 Agent 实现接口后更新，前端 Agent 开发前必读
-alwaysApply: false
+search: false
 ---
+
+> 旧 Java/Vue/Docker 工程历史快照，迁移于 2026-10-25。下文“当前”、完成状态、维护要求和待办均保留原记录口径，不作为当前桌面客户端的指令、进度或接口依据。新工作使用 OpenSpec；旧路径和 `.mdc` 文件名仅用于历史追溯。参见[旧工程资料索引](./index.md)。
 
 # Media Marshal API 契约
 

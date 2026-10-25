@@ -1,7 +1,8 @@
 ---
-description: 当前需求状态与待办验收清单 — 按代码、接口和实现日志核对，PM 维护
-alwaysApply: false
+search: false
 ---
+
+> 旧 Java/Vue/Docker 工程历史快照，迁移于 2026-10-25。下文“当前”、完成状态、维护要求和待办均保留原记录口径，不作为当前桌面客户端的指令、进度或接口依据。新工作使用 OpenSpec；旧路径和 `.mdc` 文件名仅用于历史追溯。参见[旧工程资料索引](./index.md)。
 
 # Media Marshal 当前需求状态
 
@@ -15,11 +16,11 @@ alwaysApply: false
 | 文档 | 职责 |
 |---|---|
 | 本文件 | 当前能力、差距、需求编号、验收条件与待决策问题 |
-| [project-roadmap.mdc](project-roadmap.mdc) | 阶段顺序、依赖与进入条件 |
-| [design-decisions.mdc](design-decisions.mdc) | 已讨论的设计结论、非目标及被后续决策取代的历史 |
-| [api-contracts.mdc](api-contracts.mdc) | 实际生效的接口；不提前写入规划接口 |
-| [implementation-log.mdc](implementation-log.mdc) | 实现与验证证据，追加维护；旧条目中的“下一步”不是当前待办 |
-| [README](../../README.md)、`docs/` | 当前用户可用能力、操作说明和限制 |
+| [project-roadmap.mdc](project-roadmap.md) | 阶段顺序、依赖与进入条件 |
+| [design-decisions.mdc](design-decisions.md) | 已讨论的设计结论、非目标及被后续决策取代的历史 |
+| [api-contracts.mdc](api-contracts.md) | 实际生效的接口；不提前写入规划接口 |
+| [implementation-log.mdc](implementation-log.md) | 实现与验证证据，追加维护；旧条目中的“下一步”不是当前待办 |
+| [项目介绍](../index.md)、`docs/` | 当前用户可用能力、操作说明和限制 |
 
 状态统一为：**已实现**、**部分实现**、**待开发**、**待验证**、**候选需求**。已实现不等于已完成发行验收；测试文件存在、历史测试通过、本轮验证通过分别记录。新增需求是本轮建议，未形成 ADR 的架构和交互细节不视为已定稿。
 

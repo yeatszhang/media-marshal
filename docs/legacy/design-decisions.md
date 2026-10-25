@@ -1,14 +1,15 @@
 ---
-description: 架构决策记录（ADR）— 由 PM 维护，开发 Agent 必读
-alwaysApply: true
+search: false
 ---
+
+> 旧 Java/Vue/Docker 工程历史快照，迁移于 2026-10-25。下文“当前”、完成状态、维护要求和待办均保留原记录口径，不作为当前桌面客户端的指令、进度或接口依据。新工作使用 OpenSpec；旧路径和 `.mdc` 文件名仅用于历史追溯。参见[旧工程资料索引](./index.md)。
 
 # Media Marshal 架构决策记录
 
 > 本文件由 PM 角色维护，记录每次讨论形成的设计结论。
 > 开发 Agent 在实现功能前必须先读本文件，确保实现与决策一致。
 > 每条决策标注状态：✅ 已落地 | 🟡 部分落地 / 仍有验收缺口 | 📋 已定稿待开发 | 🔄 讨论中 | ⏳ 待讨论
-> 当前需求状态统一见 [requirements-status.mdc](requirements-status.mdc)，阶段顺序见 [project-roadmap.mdc](project-roadmap.mdc)。代码落地不等于正式发行验收通过。
+> 当前需求状态统一见 [requirements-status.mdc](requirements-status.md)，阶段顺序见 [project-roadmap.mdc](project-roadmap.md)。代码落地不等于正式发行验收通过。
 
 ## 当前阅读指引（2026-09-05）
 
@@ -6294,7 +6295,7 @@ Dashboard 不应在每一条 WebSocket 更新后重复发起全量刷新；批�
 
 ### 当前跟踪方式（2026-09-05）
 
-已落地的 ADR-027/028/029 不再保留待开发条目。ADR-030 核心链路已实现，残余恢复能力独立跟踪。当前需求、证据和验收统一见 [requirements-status.mdc](requirements-status.mdc)：
+已落地的 ADR-027/028/029 不再保留待开发条目。ADR-030 核心链路已实现，残余恢复能力独立跟踪。当前需求、证据和验收统一见 [requirements-status.mdc](requirements-status.md)：
 
 | 跟踪项 | 状态与入口 |
 |---|---|
