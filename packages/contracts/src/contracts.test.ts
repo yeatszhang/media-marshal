@@ -1,3 +1,4 @@
+import { coreRequestCancellationSchema } from "./internal/core";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
@@ -21,6 +22,12 @@ const request = (action = "runtime.get", payload: unknown = {}) => ({
   payload,
 });
 describe("受限进程契约", () => {
+  it("请求取消仅是私有严格收据，不能伪装成业务命令或携带执行参数", () => {
+    const value = { kind: "core.request.cancel", protocolVersion: 1, requestId: randomUUID(), reason: "TIMEOUT" };
+    expect(coreRequestCancellationSchema.parse(value)).toEqual(value);
+    for (const extra of [{ reason: "ROLLBACK" }, { protocolVersion: 2 }, { requestId: "任意请求" }, { action: "shell.exec" }, { payload: {} }, { path: "/任意文件" }]) expect(coreRequestCancellationSchema.safeParse({ ...value, ...extra }).success).toBe(false);
+    expect(() => parseCoreRequest(value)).toThrow(); expect(() => parseCoreRequest(request("core.request.cancel", { requestId: value.requestId }))).toThrow();
+  });
   it("目录健康只接受有界且唯一的来源版本，不接受任意目录、授权或自动开关", () => {
     const item = { id: randomUUID(), expectedVersion: 1, expectedLifecycleRevision: 0 }, input = { items: [item] };
     expect(parseCoreRequest(request("source-rules.local-health", input))).toMatchObject({ payload: { items: [item], force: false } });

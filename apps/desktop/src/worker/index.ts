@@ -6,7 +6,7 @@ import {
   parseCoreRequest,
   publicError,
 } from "@media-marshal/contracts";
-import { privateCoreRequestSchema } from "@media-marshal/contracts/internal/core";
+import { coreRequestCancellationSchema, privateCoreRequestSchema } from "@media-marshal/contracts/internal/core";
 import { z } from "zod";
 import { RestrictedHostClient } from "@media-marshal/contracts/internal/rpc";
 import { nativeFileLaunchSchema, parserLaunchSchema } from "@media-marshal/contracts/internal";
@@ -57,6 +57,11 @@ process.parentPort.once("message", (event) => {
     if (message.data?.kind === "sidecar.lost" && message.data.hostGeneration === hostGeneration) { hostOnline = false; host.invalidate(); runtime.invalidateCloudRuntime(); return; }
     if (message.data?.kind === "shutdown") {
       void shutdown();
+      return;
+    }
+    if (message.data?.kind === "core.request.cancel") {
+      const parsed = coreRequestCancellationSchema.safeParse(message.data);
+      if (parsed.success) runtime.cancelRequest(parsed.data);
       return;
     }
     if (message.data?.kind === "core.private.request") {

@@ -67,6 +67,18 @@ Electron 的 [before-input-event](https://www.electronjs.org/docs/latest/api/web
 
 2026-10-26 本阶段全量 784 passed／13 skipped，类型、边界及框架来源检查通过。当前构建的两项窗口检查验证任务分页／筛选与识别字段 DTO 在 Core 重启及界面重载后恢复，不创建新文件作业；最终 arm64 未签名目录包另通过六项窗口检查，覆盖两类受控刷新、强杀 Renderer 恢复、主窗口销毁重建、同一 Core PID、草稿版本与作业数不变，以及设置草稿、来源表单、沙盒与运行偏好。React 根卸载及延迟清理、启动交错、扫码取消、旧请求、frame／nonce、失败和超时使用定向测试核对。源码、ASAR、截图及范围映射见 `tools/desktop-files/fixtures/mac-renderer-lifecycle-2026-10-26.json`；[实际已保存草稿恢复截图](/desktop/renderer-source-dto-restored.png)对应从 Core 读回的表单。7.7 据此完成；Intel、正式签名、完整 OS 安装与原生菜单验收仍由各自任务记录。
 
+## 请求等待与执行所有权
+
+固定公共动作先按 contracts 校验，再映射到已注册的 `media.<action>` CommandService。框架的 `{ timeout: 0 }` 只用于静态命令查找；真正的执行等待由 Core 的 `RequestExecutions` 管理，默认十五秒，最多同时持有六十四项公共／私有执行。同一正在执行的请求 ID 不能再次进入。参数和未知动作在取得执行名额前即失败。
+
+Main 的等待期限或内部 `AbortSignal` 结束时，通过本次请求的原 MessagePort 发送严格的 `core.request.cancel` 收据，只包含协议版本、请求 ID 和 `TIMEOUT`／`INTERRUPTED` 原因。Worker 验证后结束对应请求的等待；Renderer 的业务 API 不接受该收据，不提供任意 action、channel 或通用取消入口。发送前取消不会发出原动作；正常响应、超时、取消及核心退出均清理 Main 定时器和信号监听。
+
+结束等待不会取消持久化的下载、识别、COPY 或修正作业，也不会回滚已保存配置。底层请求尚未完成时仍占用 Core 执行名额，迟到成功或失败只完成资源回收，不再次返回页面结果；作业状态继续由原业务服务保存。独立业务取消沿各自受限动作和安全点处理。退出先停止接入和等待，再协调业务所有者、排空真实在途执行，最后停止 Application 并关闭 SQLite；不能只等待已提前结束的页面响应 Promise。同步 SQLite 或原生调用无法被 JavaScript 定时器抢占，宿主最终退出期限仍负责强杀与后续恢复。
+
+此阶段补齐请求期限与取消协议。长文件工作的持久作业接口和调度继续由下载、内容复核、识别批次、整理批次及修正服务持有。手动 `ingestion.scan` 仍等待目录枚举并返回数量，尚未转换为可查询的持久扫描作业；任务 2.9 保持未完成，下一步需覆盖该长枚举入口，不能以请求超时代替作业调度。
+
+2026-10-26 请求等待阶段：全量 807 passed／13 skipped，定向 48 项通过；类型、边界、文档与 OpenSpec 严格检查通过。真实 Utility Process 使用隔离数据库及受控延迟的宿主 RPC，验证非法取消收据被忽略、合法收据立即结束等待、原工作继续占用并发范围、迟到结果不重复返回、实际十五秒执行期限和原授权作业 ID 保留。最终 arm64 未签名目录包通过该用例、受控重载和升级备份恢复共三项检查。宿主响应为测试替身，未访问个人账号或媒体，不作为真实网盘网络故障及安装态矩阵的证据。源码、ASAR 和端口结果见 `tools/desktop-files/fixtures/mac-request-executions-2026-10-26.json`。
+
 ## 运行与数据
 
 页面使用 `marshal://app` 协议。Main 校验顶层 frame、来源、动作和参数；目录保存还要求通过原生目录对话框取得授权。Core 再次核对真实路径、目录关系与权限。Main 与 Renderer 不打开 SQLite。Main/Core 通信使用私有 MessagePort，端口断开后 Core 安全退出；媒体业务不开放 HTTP/WS 服务。新增受管网盘组件的授权回环接口及凭据副本边界见仓库中的 `openspec/changes/add-local-desktop-emby-ingestion/design.md`，尚未验收的能力不视为当前可用功能。

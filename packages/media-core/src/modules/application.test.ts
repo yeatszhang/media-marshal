@@ -10,6 +10,7 @@ import { CoreDatabase, SCHEMA_VERSION } from "../infrastructure/database";
 import { DatabaseToken } from "../application/core-service";
 import { RestrictedHostClient } from "@media-marshal/contracts/internal/rpc";
 const directories: string[] = [];
+const releaseGates: (() => void)[] = [];
 const running: ReturnType<typeof createMediaApplication>[] = [];
 const message = (action: string, payload: unknown = {}) => ({
   kind: "request",
@@ -27,6 +28,7 @@ async function create() {
   return { runtime, directory };
 }
 afterEach(async () => {
+  for (const release of releaseGates.splice(0)) release();
   vi.restoreAllMocks();
   await Promise.allSettled(running.splice(0).map((app) => app.stop()));
   await Promise.all(
@@ -36,6 +38,33 @@ afterEach(async () => {
   );
 });
 describe("框架组装与核心消息", () => {
+  it.each(["TIMEOUT", "INTERRUPTED"] as const)("%s 收据结束请求等待，已落库草稿保留且同请求键不重复执行", async (reason) => {
+    const { runtime } = await create(), db = runtime.app.container.get(DatabaseToken).connection;
+    let release!: () => void, entered!: () => void; const gate = new Promise<void>((done) => { release = done; }), started = new Promise<void>((done) => { entered = done; }); releaseGates.push(release);
+    const original = runtime.app.commands.executeWithOptions.bind(runtime.app.commands);
+    const execute = vi.spyOn(runtime.app.commands, "executeWithOptions").mockImplementationOnce(async (...args) => { const result = await original(...args); entered(); await gate; return result; });
+    const request = message("source-rules.configure", { id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: randomUUID(), configuration: { type: "local", name: "取消等待保留原草稿", client: "custom", sourcePath: "/fixture/input", organization: { targetPath: "/fixture/target" } } });
+    const response = expect(runtime.dispatch(request)).rejects.toMatchObject({ code: reason }); await started;
+    runtime.cancelRequest({ kind: "core.request.cancel", protocolVersion: 1, requestId: request.requestId, reason }); await response;
+    expect(db.prepare("SELECT version,draft_revision FROM source_rule").get()).toEqual({ version: 0, draft_revision: 1 });
+    await expect(runtime.dispatch(request)).rejects.toMatchObject({ code: "CONFLICT" }); expect(execute).toHaveBeenCalledTimes(1);
+    release(); await expect.poll(async () => { try { return await runtime.dispatch(request); } catch { return null; } }).toMatchObject({ version: 0, draftRevision: 1 });
+    expect(db.prepare("SELECT count(*) AS n FROM source_rule_command").get()).toEqual({ n: 1 }); expect(db.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+    expect(() => runtime.cancelRequest({ kind: "core.request.cancel", protocolVersion: 1, requestId: request.requestId, reason, action: "shell.exec" })).toThrow();
+  });
+  it("Core 自己执行十五秒期限，停止等待后退出仍等原执行完成再关闭 SQLite", async () => {
+    const { runtime } = await create(), db = runtime.app.container.get(DatabaseToken).connection;
+    let release!: () => void, entered!: () => void; const gate = new Promise<void>((done) => { release = done; }), started = new Promise<void>((done) => { entered = done; }); releaseGates.push(release);
+    const original = runtime.app.commands.executeWithOptions.bind(runtime.app.commands);
+    vi.spyOn(runtime.app.commands, "executeWithOptions").mockImplementationOnce(async (...args) => { const result = await original(...args); entered(); await gate; expect(db.open).toBe(true); return result; });
+    vi.useFakeTimers();
+    try {
+      const response = expect(runtime.dispatch(message("settings.save", { language: "en", embyUrl: "", tmdbProxy: "" }))).rejects.toMatchObject({ code: "TIMEOUT" }); await started;
+      await vi.advanceTimersByTimeAsync(15000); await response; expect(JSON.parse((db.prepare("SELECT value FROM app_setting WHERE key='desktop.preferences'").get() as { value: string }).value)).toMatchObject({ language: "en" });
+      let stopped = false; const stopping = runtime.stop().then(() => { stopped = true; }); await Promise.resolve(); expect(stopped).toBe(false); expect(db.open).toBe(true);
+      release(); await stopping; expect(db.open).toBe(false);
+    } finally { release(); vi.useRealTimers(); }
+  });
   it("唤醒观察重置只在私有通道开放，待确认候选重新观察而已处理记录保持", async () => {
     const { runtime } = await create(), db = runtime.app.container.get(DatabaseToken).connection;
     const source = randomUUID(), stamp = new Date().toISOString();

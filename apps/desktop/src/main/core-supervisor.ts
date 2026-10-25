@@ -26,7 +26,7 @@ import type { NativeFileLaunch, ParserLaunch } from "@media-marshal/contracts/in
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
-  timer: ReturnType<typeof setTimeout>;
+  cleanup: () => void;
 }
 export class CoreSupervisor {
   private child?: UtilityProcess;
@@ -143,7 +143,7 @@ export class CoreSupervisor {
       if (privateResponse.success) {
         const response = privateResponse.data, pending = this.pending.get(response.requestId);
         if (!pending) return;
-        clearTimeout(pending.timer); this.pending.delete(response.requestId);
+        pending.cleanup(); this.pending.delete(response.requestId);
         if (response.ok) pending.resolve(response.result);
         else {
           const code = cloudErrorCodeSchema.safeParse(response.error.code);
@@ -157,7 +157,7 @@ export class CoreSupervisor {
       const response = parsed.data,
         pending = this.pending.get(response.requestId);
       if (!pending) return;
-      clearTimeout(pending.timer);
+      pending.cleanup();
       this.pending.delete(response.requestId);
       if (response.ok) pending.resolve(response.result);
       else
@@ -178,7 +178,7 @@ export class CoreSupervisor {
         fail();
         port1.close();
         for (const pending of this.pending.values()) {
-          clearTimeout(pending.timer);
+          pending.cleanup();
           pending.reject(
             new DesktopError(
               "INTERRUPTED",
@@ -229,6 +229,7 @@ export class CoreSupervisor {
   async request<K extends CoreAction>(
     action: K,
     payload: CoreInput<K>,
+    signal?: AbortSignal,
   ): Promise<CoreOutput<K>> {
     if (this.state !== "ready" || !this.port)
       throw new DesktopError("CORE_UNAVAILABLE", "媒体核心尚未就绪", true);
@@ -244,27 +245,28 @@ export class CoreSupervisor {
       payload: input,
     };
     checkMessageSize(message);
-    const result = await new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(
-          new DesktopError(
-            "TIMEOUT",
-            "请求等待超时，请查询状态，不要重复提交",
-            true,
-          ),
-        );
-      }, 15000);
-      this.pending.set(requestId, { resolve, reject, timer });
-      try {
-        this.port!.postMessage(message);
-      } catch {
-        clearTimeout(timer);
-        this.pending.delete(requestId);
-        reject(new DesktopError("INTERRUPTED", "核心通信已中断", true));
-      }
-    });
+    const result = await this.waitForResponse(message, signal);
     return coreActions[action].output.parse(result) as CoreOutput<K>;
+  }
+  private waitForResponse(message: { kind: string; requestId: string }, signal?: AbortSignal): Promise<unknown> {
+    const port = this.port!, requestId = message.requestId;
+    const failure = (code: "TIMEOUT" | "INTERRUPTED", detail: string) => message.kind === "core.private.request" ? new CloudError(code) : new DesktopError(code, detail, true);
+    if (signal?.aborted) return Promise.reject(failure("INTERRUPTED", "请求尚未发送，等待已取消"));
+    return new Promise((resolve, reject) => {
+      const endWait = (reason: "TIMEOUT" | "INTERRUPTED") => {
+        if (this.pending.get(requestId) !== entry) return;
+        this.pending.delete(requestId); entry.cleanup();
+        // 使用原端口取消原请求等待，不把业务作业取消或重新发送到新核心。
+        try { port.postMessage({ kind: "core.request.cancel", protocolVersion: PROTOCOL_VERSION, requestId, reason }); } catch {}
+        reject(failure(reason, reason === "TIMEOUT" ? "请求等待超时；已接收的作业可能继续，请查询原状态，不要重复提交" : "已停止等待；已接收的作业可能继续，请查询原状态"));
+      };
+      const abort = () => endWait("INTERRUPTED"), timer = setTimeout(() => endWait("TIMEOUT"), 15000);
+      const entry: Pending = { resolve, reject, cleanup: () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); } };
+      this.pending.set(requestId, entry); signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
+      try { port.postMessage(message); }
+      catch { entry.cleanup(); this.pending.delete(requestId); reject(failure("INTERRUPTED", "核心通信已中断，请查询原状态")); }
+    });
   }
   async restart(): Promise<void> {
     const epoch = this.stopEpoch + 1;
@@ -274,17 +276,12 @@ export class CoreSupervisor {
     this.attempts = 0;
     await this.start();
   }
-  async requestPrivate<K extends PrivateCoreAction>(action: K, payload: PrivateCoreInput<K>): Promise<PrivateCoreOutput<K>> {
+  async requestPrivate<K extends PrivateCoreAction>(action: K, payload: PrivateCoreInput<K>, signal?: AbortSignal): Promise<PrivateCoreOutput<K>> {
     if (this.state !== "ready" || !this.port) throw new CloudError("COMPONENT_UNAVAILABLE");
     if (this.pending.size >= 64) throw new CloudError("CONFLICT");
     const requestId = randomUUID(), message = { kind: "core.private.request", requestId, action, payload: privateCoreActions[action].input.parse(payload) };
     checkMessageSize(message);
-    const result = await new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(requestId); reject(new CloudError("TIMEOUT")); }, 15000);
-      this.pending.set(requestId, { resolve, reject, timer });
-      try { this.port!.postMessage(message); }
-      catch { clearTimeout(timer); this.pending.delete(requestId); reject(new CloudError("INTERRUPTED")); }
-    });
+    const result = await this.waitForResponse(message, signal);
     return privateCoreActions[action].output.parse(result) as PrivateCoreOutput<K>;
   }
   async stop(): Promise<void> {

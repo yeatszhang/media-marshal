@@ -11,6 +11,7 @@ import {
   type CoreInput,
   type CoreOutput,
 } from "@media-marshal/contracts";
+import { RequestExecutions } from "../application/request-executions.js";
 import { CoreDatabase } from "../infrastructure/database.js";
 import { CoreService, DatabaseToken, ComponentsToken } from "../application/core-service.js";
 import type { CoreHostGateway } from "@media-marshal/contracts/internal/rpc";
@@ -18,7 +19,7 @@ import { CloudHostToken, unavailableHost } from "../cloud/host-gateway.js";
 import { CloudRepository } from "../cloud/repository.js";
 import { RemoteCatalog } from "../cloud/catalog.js";
 import { CloudAccounts } from "../cloud/accounts.js";
-import { privateCoreActions, privateCoreRequestSchema } from "@media-marshal/contracts/internal/core";
+import { coreRequestCancellationSchema, privateCoreActions, privateCoreRequestSchema } from "@media-marshal/contracts/internal/core";
 import { CloudRoots } from "../cloud/roots.js";
 import { managedRootGrantSchema } from "@media-marshal/contracts/internal";
 import { CloudDownloads } from "../cloud/downloads.js";
@@ -330,10 +331,10 @@ export function createMediaApplication(
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],
   });
-  const active = new Set<Promise<unknown>>();
+  const requests = new RequestExecutions();
   function quiesceOwners() {
     if (quiescence) return quiescence;
-    accepting = false;
+    accepting = false; requests.quiesce();
     sourceRules?.quiesce(); downloads?.quiesce();
     if (app.state === "running") app.container.get(CoreService).quiesce();
     connections?.close();
@@ -344,50 +345,51 @@ export function createMediaApplication(
   }
   return {
     app,
+    cancelRequest(value: unknown) { const cancellation = coreRequestCancellationSchema.parse(value); requests.cancel(cancellation.requestId, cancellation.reason); },
     invalidateCloudRuntime() { accounts?.invalidateRuntime(); },
     confirmCloudWritersStopped(hostGeneration: string) { downloads?.writersReaped(hostGeneration); },
     async dispatchPrivate(value: unknown) {
       if (!accepting || app.state !== "running") throw new DesktopError("INTERRUPTED", "核心正在停止", true);
       const request = privateCoreRequestSchema.parse(value);
       const payload = privateCoreActions[request.action].input.parse(request.payload);
-      const task = (async () => {
-        if (request.action === "media.observations.reset") { ingestion.resetObservations(); return {}; }
-        if (request.action === "desktop.state.reconcile-restored") { ingestion.reconcileRestored(); corrections.reconcileRestored(); downloads.reconcileRestored(); return {}; }
-        if (request.action === "source-rules.apply") { const input = privateCoreActions["source-rules.apply"].input.parse(payload); return sourceRules.apply({ previewId: input.previewId, requestKey: input.requestKey, runOnce: input.runOnce }, input.grants); }
-        if (request.action === "media.targets.find") return ingestion.targetGrant((payload as { path: string }).path);
-        if (request.action === "media.targets.bootstrap") return ingestion.targetBootstrap();
-        if (request.action === "media.targets.authorize") return ingestion.authorizeTarget(privateCoreActions["media.targets.authorize"].input.parse(payload));
-        if (request.action === "media.sources.authorize-managed") return ingestion.authorizeManagedSource(privateCoreActions["media.sources.authorize-managed"].input.parse(payload));
-        if (request.action === "media.credentials.install") return connections.install(privateCoreActions["media.credentials.install"].input.parse(payload));
-        if (request.action === "media.sources.bootstrap") return ingestion.bootstrap();
-        if (request.action === "media.sources.authorize") return ingestion.authorize(privateCoreActions["media.sources.authorize"].input.parse(payload));
-        if (request.action === "media.sources.configure-managed") return ingestion.configureManaged(privateCoreActions["media.sources.configure-managed"].input.parse(payload));
-        if (request.action === "media.library.bootstrap") return ingestion.libraryBootstrap();
-        if (request.action === "media.library.authorize") { const input = privateCoreActions["media.library.authorize"].input.parse(payload), previous = ingestion.libraryBootstrap().find((row) => row.mediaType === input.mediaType); const result = await ingestion.authorizeLibrary(input); if (previous && previous.target.id !== input.target.id) delivery.invalidate(); return result; }
-        if (request.action === "media.emby.open-url") return delivery.openUrl((payload as { taskId: string }).taskId);
-        if (request.action === "cloud.downloads.reconcile-restored") { downloads.reconcileRestored(); return {}; }
-        if (request.action === "cloud.downloads.quiesce") { downloads.quiesce(); return {}; }
-        if (request.action === "cloud.account.writers-stopped") { await downloads.accountWritersStopped((payload as { accountId: string }).accountId); return {}; }
-        if (request.action === "cloud.runtime.wake") { ingestion.resetObservations(); sourceRules.synchronize(); await downloads.wake(); await subscriptions.wake((payload as { hostGeneration: string }).hostGeneration); return {}; }
-        if (request.action === "cloud.authorization.finish") {
-          const input = privateCoreActions["cloud.authorization.finish"].input.parse(payload), validator = new CloudBindingValidator(app.container.get(DatabaseToken), options.host ?? unavailableHost);
-          const wasRunning = !!app.container.get(DatabaseToken).connection.prepare("SELECT 1 FROM cloud_authorization WHERE id=? AND state='RUNNING'").get(input.jobId);
-          let mapping;
-          try { mapping = await validator.validate(input); }
-          catch (error) { input.failure = cloudFailure(error instanceof CloudError ? error : new CloudError("COMPONENT_UNAVAILABLE")); }
-          const result = accounts.finish(input, mapping);
-          if (wasRunning && result.state === "SUCCEEDED") { downloads.retireAccountPlans(result.accountId); await downloads.wake(); }
-          return result;
-        }
-        if (request.action === "cloud.roots.bootstrap") return roots.bootstrap();
-        if (request.action === "cloud.roots.authorize") return roots.authorize(managedRootGrantSchema.parse(payload));
-        if (request.action === "cloud.roots.unavailable") return roots.unavailable((payload as { id: string }).id);
-        if (request.action === "cloud.downloads.completed-root") return downloads.completedRoot((payload as { jobId: string }).jobId);
-        return accounts.dispatch(request.action, payload as never);
-      })();
-      active.add(task);
-      try { return privateCoreActions[request.action].output.parse(await task); }
-      finally { active.delete(task); }
+      return requests.run(request.requestId, async () => {
+        const task = (async () => {
+          if (request.action === "media.observations.reset") { ingestion.resetObservations(); return {}; }
+          if (request.action === "desktop.state.reconcile-restored") { ingestion.reconcileRestored(); corrections.reconcileRestored(); downloads.reconcileRestored(); return {}; }
+          if (request.action === "source-rules.apply") { const input = privateCoreActions["source-rules.apply"].input.parse(payload); return sourceRules.apply({ previewId: input.previewId, requestKey: input.requestKey, runOnce: input.runOnce }, input.grants); }
+          if (request.action === "media.targets.find") return ingestion.targetGrant((payload as { path: string }).path);
+          if (request.action === "media.targets.bootstrap") return ingestion.targetBootstrap();
+          if (request.action === "media.targets.authorize") return ingestion.authorizeTarget(privateCoreActions["media.targets.authorize"].input.parse(payload));
+          if (request.action === "media.sources.authorize-managed") return ingestion.authorizeManagedSource(privateCoreActions["media.sources.authorize-managed"].input.parse(payload));
+          if (request.action === "media.credentials.install") return connections.install(privateCoreActions["media.credentials.install"].input.parse(payload));
+          if (request.action === "media.sources.bootstrap") return ingestion.bootstrap();
+          if (request.action === "media.sources.authorize") return ingestion.authorize(privateCoreActions["media.sources.authorize"].input.parse(payload));
+          if (request.action === "media.sources.configure-managed") return ingestion.configureManaged(privateCoreActions["media.sources.configure-managed"].input.parse(payload));
+          if (request.action === "media.library.bootstrap") return ingestion.libraryBootstrap();
+          if (request.action === "media.library.authorize") { const input = privateCoreActions["media.library.authorize"].input.parse(payload), previous = ingestion.libraryBootstrap().find((row) => row.mediaType === input.mediaType); const result = await ingestion.authorizeLibrary(input); if (previous && previous.target.id !== input.target.id) delivery.invalidate(); return result; }
+          if (request.action === "media.emby.open-url") return delivery.openUrl((payload as { taskId: string }).taskId);
+          if (request.action === "cloud.downloads.reconcile-restored") { downloads.reconcileRestored(); return {}; }
+          if (request.action === "cloud.downloads.quiesce") { downloads.quiesce(); return {}; }
+          if (request.action === "cloud.account.writers-stopped") { await downloads.accountWritersStopped((payload as { accountId: string }).accountId); return {}; }
+          if (request.action === "cloud.runtime.wake") { ingestion.resetObservations(); sourceRules.synchronize(); await downloads.wake(); await subscriptions.wake((payload as { hostGeneration: string }).hostGeneration); return {}; }
+          if (request.action === "cloud.authorization.finish") {
+            const input = privateCoreActions["cloud.authorization.finish"].input.parse(payload), validator = new CloudBindingValidator(app.container.get(DatabaseToken), options.host ?? unavailableHost);
+            const wasRunning = !!app.container.get(DatabaseToken).connection.prepare("SELECT 1 FROM cloud_authorization WHERE id=? AND state='RUNNING'").get(input.jobId);
+            let mapping;
+            try { mapping = await validator.validate(input); }
+            catch (error) { input.failure = cloudFailure(error instanceof CloudError ? error : new CloudError("COMPONENT_UNAVAILABLE")); }
+            const result = accounts.finish(input, mapping);
+            if (wasRunning && result.state === "SUCCEEDED") { downloads.retireAccountPlans(result.accountId); await downloads.wake(); }
+            return result;
+          }
+          if (request.action === "cloud.roots.bootstrap") return roots.bootstrap();
+          if (request.action === "cloud.roots.authorize") return roots.authorize(managedRootGrantSchema.parse(payload));
+          if (request.action === "cloud.roots.unavailable") return roots.unavailable((payload as { id: string }).id);
+          if (request.action === "cloud.downloads.completed-root") return downloads.completedRoot((payload as { jobId: string }).jobId);
+          return accounts.dispatch(request.action, payload as never);
+        })();
+        return privateCoreActions[request.action].output.parse(await task);
+      });
     },
     async dispatch(value: unknown): Promise<unknown> {
       if (!accepting || app.state !== "running")
@@ -399,24 +401,21 @@ export function createMediaApplication(
         options: { timeout: number },
         payload: unknown,
       ) => Promise<unknown>;
-      const task = execute(
-        `media.${request.action}`,
-        { timeout: 0 },
-        request.payload,
-      );
-      active.add(task);
-      try {
+      return requests.run(request.requestId, async () => {
+        const task = execute(
+          `media.${request.action}`,
+          { timeout: 0 },
+          request.payload,
+        );
         return coreActions[request.action].output.parse(await task);
-      } finally {
-        active.delete(task);
-      }
+      });
     },
     stop(): Promise<void> {
       if (stopFlight) return stopFlight;
       const settling = quiesceOwners();
       stopFlight = (async () => {
         const results = await settling;
-        await Promise.allSettled([...active]);
+        await requests.drain();
         try { await app.stop(); }
         catch (error) { results.push({ status: "rejected", reason: error }); }
         const errors = results.filter((row): row is PromiseRejectedResult => row.status === "rejected").map((row) => row.reason);

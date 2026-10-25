@@ -132,6 +132,25 @@ describe("Core 生命周期与恢复栅栏", () => {
     expect(harness.ports[1]!.postMessage.mock.calls.filter(([value]) => value.kind === "request")).toEqual([]);
   });
 
+  it.each(["公共", "私有"])("%s请求执行等待超时向原核心发送严格取消收据，不重放原动作", async (kind) => {
+    const supervisor = fixture(); await supervisor.start(); const port = harness.ports[0]!;
+    const response = expect(kind === "公共" ? supervisor.request("settings.save", { language: "zh-CN", embyUrl: "", tmdbProxy: "" }) : supervisor.requestPrivate("media.observations.reset", {})).rejects.toMatchObject({ code: "TIMEOUT" });
+    const request = port.postMessage.mock.calls.find(([value]) => ["request", "core.private.request"].includes(value.kind))![0];
+    await vi.advanceTimersByTimeAsync(15000); await response;
+    expect(port.postMessage.mock.calls.filter(([value]) => value.kind === "core.request.cancel").map(([value]) => value)).toEqual([{ kind: "core.request.cancel", protocolVersion: PROTOCOL_VERSION, requestId: request.requestId, reason: "TIMEOUT" }]);
+    port.emit("message", { data: kind === "公共" ? { kind: "response", protocolVersion: PROTOCOL_VERSION, requestId: request.requestId, ok: true, result: {} } : { kind: "core.private.response", requestId: request.requestId, ok: true, result: {} } });
+    expect(port.postMessage.mock.calls.filter(([value]) => ["request", "core.private.request"].includes(value.kind))).toHaveLength(1);
+  });
+  it("取消仅对应原等待，发送前取消不发消息，成功和核心中断均解除信号监听", async () => {
+    const supervisor = fixture(); await supervisor.start(); const port = harness.ports[0]!, before = new AbortController(); before.abort();
+    await expect(supervisor.request("settings.get", {}, before.signal)).rejects.toMatchObject({ code: "INTERRUPTED" }); expect(port.postMessage.mock.calls.filter(([value]) => value.kind === "request")).toHaveLength(0);
+    const controller = new AbortController(), response = expect(supervisor.requestPrivate("media.observations.reset", {}, controller.signal)).rejects.toMatchObject({ code: "INTERRUPTED" }); controller.abort(); await response;
+    const successful = new AbortController(), result = supervisor.request("settings.get", {}, successful.signal), request = port.postMessage.mock.calls.filter(([value]) => value.kind === "request").at(-1)![0];
+    port.emit("message", { data: { kind: "response", protocolVersion: PROTOCOL_VERSION, requestId: request.requestId, ok: true, result: { language: "zh-CN", embyUrl: "", tmdbProxy: "" } } }); await result; successful.abort();
+    const interrupted = new AbortController(), pending = expect(supervisor.request("settings.get", {}, interrupted.signal)).rejects.toMatchObject({ code: "INTERRUPTED" }); harness.children[0]!.emit("exit", 1); await pending; interrupted.abort();
+    expect(port.postMessage.mock.calls.filter(([value]) => value.kind === "core.request.cancel")).toHaveLength(1);
+  });
+
   it("自动恢复最多三次，达到上限保留失败状态，由显式重启重新开始", async () => {
     const supervisor = fixture(); await supervisor.start();
     for (let attempt = 1; attempt <= 3; attempt++) {

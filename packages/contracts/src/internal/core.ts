@@ -2,7 +2,7 @@ import { z } from "zod";
 import { cloudAuthorizationSchema, cloudFailureSchema, driveCapabilitiesSchema } from "../cloud/index.js";
 import { bindingRefSchema, implementationIdSchema, managedRootGrantSchema, remoteLocatorSchema } from "./index.js";
 import { sourceRuleApplySchema, sourceRuleSchema } from "../source-rules.js";
-import { rpcErrorSchema } from "../index.js";
+import { PROTOCOL_VERSION, rpcErrorSchema } from "../index.js";
 
 export const CORE_DATA_SCHEMA_VERSION = 25;
 const id = z.uuid(), empty = z.strictObject({});
@@ -55,3 +55,9 @@ export const privateCoreResponseSchema = z.discriminatedUnion("ok", [
   z.strictObject({ kind: z.literal("core.private.response"), requestId: id, ok: z.literal(true), result: z.unknown() }),
   z.strictObject({ kind: z.literal("core.private.response"), requestId: id, ok: z.literal(false), error: rpcErrorSchema }),
 ]);
+
+/** 仅 Main/Core 私有端口使用；停止等待不代表撤销持久作业。 */
+export const coreRequestCancellationSchema = z.strictObject({
+  kind: z.literal("core.request.cancel"), protocolVersion: z.literal(PROTOCOL_VERSION), requestId: id,
+  reason: z.enum(["TIMEOUT", "INTERRUPTED"]),
+});

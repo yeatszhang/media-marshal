@@ -1139,3 +1139,62 @@ test("本地来源健康区分原目录替换和权限，暂停中只检查，�
   expect((await window.evaluate(() => window.desktopApi.listIngestionCandidates({}))).total).toBe(0); expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(0); expect((await window.evaluate(() => window.desktopApi.listDownloads({}))).total).toBe(0); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
   expect(await readFile(note, "utf8")).toBe("健康检查保留本地文件，不创建识别或整理作业"); expect((await stat(note)).ino).toBe(inode); expect((await readdir(target)).filter((entry) => entry !== ".media-marshal")).toEqual([]);
 });
+
+test("真实 Utility Core 区分请求取消与后台工作，严格私有收据和执行期限均生效", async () => {
+  test.setTimeout(60000);
+  const profile = join(directory, "请求隔离核心"); await mkdir(profile);
+  const evidence = await application.evaluate(async ({ app, utilityProcess, MessageChannelMain }, profile) => {
+    const { join } = process.getBuiltinModule("node:path"), { randomUUID } = process.getBuiltinModule("node:crypto");
+    const child = utilityProcess.fork(join(app.getAppPath(), "out/main/worker.js"), [], { serviceName: "Media Marshal Request Boundary Test", stdio: "pipe" });
+    child.stdout?.on("data", () => {}); child.stderr?.on("data", () => {});
+    const { port1, port2 } = new MessageChannelMain(), pending = new Map<string, (value: any) => void>(), counts = new Map<string, number>();
+    let stage = "等待核心就绪", childError = "";
+    child.stderr?.on("data", (data) => { childError = (childError + data.toString()).slice(-1000); });
+    let ready!: () => void, notifyHost: ((value: any) => void) | undefined, automaticReply = false, hostCalls = 0;
+    const started = new Promise<void>((done) => { ready = done; }), exited = new Promise<number>((done) => child.once("exit", done));
+    const replyHost = (message: any) => port1.postMessage({ kind: "host.response", protocolVersion: 1, requestId: message.requestId, context: message.context, ok: true, result: { entries: [], nextCursor: null, total: 0, complete: true } });
+    port1.on("message", ({ data }) => {
+      if (data.kind === "ready") { ready(); return; }
+      if (data.kind === "host.request") { if (data.action !== "provider.list") throw new Error("非预期测试宿主动作"); hostCalls++; notifyHost?.(data); notifyHost = undefined; if (automaticReply) replyHost(data); return; }
+      if (["response", "core.private.response"].includes(data.kind)) { counts.set(data.requestId, (counts.get(data.requestId) ?? 0) + 1); pending.get(data.requestId)?.(data); pending.delete(data.requestId); }
+    }); port1.start();
+    const call = (kind: string, action: string, payload: unknown = {}) => {
+      const requestId = randomUUID(), promise = new Promise<any>((done) => pending.set(requestId, done));
+      port1.postMessage({ kind, ...(kind === "request" ? { protocolVersion: 1 } : {}), requestId, action, payload }); return { requestId, promise };
+    };
+    child.once("spawn", () => child.postMessage({ kind: "initialize", protocolVersion: 1, databasePath: join(profile, "desktop.sqlite3"), coreGeneration: randomUUID(), hostGeneration: randomUUID() }, [port2]));
+    const heartbeat = setInterval(() => { try { port1.postMessage({ kind: "core.heartbeat", protocolVersion: 1 }); } catch {} }, 500);
+    let deadline: ReturnType<typeof setTimeout> | undefined, result: any;
+    try {
+      result = await Promise.race([(async () => {
+        await Promise.race([started, exited.then((code) => { throw new Error("测试核心启动前退出：" + code + "；" + childError); })]); stage = "创建授权作业";
+        const key = randomUUID(), prepared = await call("core.private.request", "cloud.authorization.begin", { name: "隔离请求验收", requestKey: key, implementationId: "test.request-boundary" }).promise;
+        if (!prepared.ok) throw new Error("隔离授权作业创建失败");
+        stage = "完成授权作业"; const finished = await call("core.private.request", "cloud.authorization.finish", { jobId: prepared.result.job.id, failure: null, capabilities: { authorizationMethods: ["cookie"], accountIdentity: "unavailable", objectIdentity: "path", reliableRevision: false, hashAlgorithms: [], rangeRead: "unknown", sourceKinds: ["webdav"] }, identityKey: null }).promise;
+        if (!finished.ok) throw new Error("隔离授权作业完成失败");
+        stage = "查询账号"; const accounts = await call("request", "cloud.accounts.list").promise, root = accounts.result[0], payload = { accountId: root.id, parentRef: root.rootRef };
+        stage = "等待受控宿主调用：" + JSON.stringify(root);
+        const hostWaiting = new Promise<any>((done) => { notifyHost = done; }), first = call("request", "cloud.remote.list", payload), hostRequest = await Promise.race([hostWaiting, first.promise.then((response) => { throw new Error("未进入受控宿主：" + JSON.stringify(response)); })]); stage = "验证取消收据";
+        port1.postMessage({ kind: "core.request.cancel", protocolVersion: 1, requestId: first.requestId, reason: "INTERRUPTED", action: "shell.exec" });
+        await call("request", "settings.get").promise;
+        const malformedIgnored = pending.has(first.requestId);
+        port1.postMessage({ kind: "core.request.cancel", protocolVersion: 1, requestId: first.requestId, reason: "INTERRUPTED" });
+        const canceled = await first.promise, stillOwned = await call("request", "cloud.remote.list", payload).promise;
+        replyHost(hostRequest); await call("request", "settings.get").promise;
+        stage = "验证底层恢复"; automaticReply = true; const restored = await call("request", "cloud.remote.list", payload).promise;
+        stage = "验证执行期限"; automaticReply = false; const expired = await call("request", "cloud.remote.list", payload).promise;
+        const job = await call("request", "cloud.authorizations.get", { requestKey: key }).promise;
+        const alive = await call("request", "runtime.get").promise;
+        return { malformedIgnored, canceled: canceled.error?.code, stillOwned: stillOwned.error?.code, restored: restored.result, expired: expired.error, firstResponses: counts.get(first.requestId), hostCalls, sameJob: job.result?.id === prepared.result.job.id, jobState: job.result?.state, coreAlive: alive.ok };
+      })(), new Promise<never>((_, fail) => { deadline = setTimeout(() => fail(new Error("受控请求验收超时：" + stage + "；" + childError)), 35000); })]);
+    } finally {
+      clearTimeout(deadline); clearInterval(heartbeat); port1.postMessage({ kind: "shutdown", protocolVersion: 1 });
+      const kill = setTimeout(() => child.kill(), 8000); try { const code = await exited; if (result) result.exitCode = code; } finally { clearTimeout(kill); port1.close(); }
+    }
+    return result;
+  }, profile);
+  expect(evidence).toMatchObject({ malformedIgnored: true, canceled: "INTERRUPTED", stillOwned: "CONFLICT", restored: { items: [], complete: true, total: 0 }, expired: { code: "TIMEOUT" }, firstResponses: 1, hostCalls: 3, sameJob: true, jobState: "SUCCEEDED", coreAlive: true, exitCode: 0 });
+  expect(evidence.expired.message).toContain("请求执行等待超时");
+  await writeFile("test-results/desktop/request-boundary-evidence.json", JSON.stringify(evidence, null, 2) + "\n");
+  const window = await application.firstWindow(); expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 }); expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
+});
