@@ -78,11 +78,11 @@
     "tasks": 1,
     "downloadJobs": 2,
     "fileState": "DONE",
-    "deliveryState": "NEEDS_ATTENTION",
-    "embyVersion": 3,
-    "embyCurrentlyVerified": false,
+    "deliveryState": "COLLECTED",
+    "embyVersion": 4,
+    "embyCurrentlyVerified": true,
     "bindings": 2,
-    "localCredentialIssueVisible": true,
+    "localCredentialIssueVisible": false,
     "sourceBytes": 392608240,
     "targetBytes": 392608240,
     "targetInodePreserved": true,
@@ -103,9 +103,33 @@
     }
   },
   "limitations": [
-    "真实配置既有 TMDB／Emby 密文及所核对旧备份暂时无法解密，等待用户在客户端重新保存；没有宣称当前 Emby 已重新验证。",
+    "原有 TMDB／Emby 密文曾无法解密，用户在客户端重存后已通过整应用重启及 Emby 收录复核；旧密文失效原因尚未确定。",
     "独立新配置的跨进程加密测试通过，旧密文失效原因尚未确定；未签名开发构建不能证明正式签名连续性。",
     "实际配置迁移和状态核对发生于本轮 v15 开发构建过程；最终构建的窗口验收使用隔离用户目录。",
     "原生确认对话框在 Electron 用例中为受控替身，缺盘为授权不可用；没有以此代替物理拔盘、其他 Mac 架构或安装态验收。"
-  ]
+  ],
+  "credentialRepair": {
+    "previousFailureRecorded": true,
+    "userResavedInClient": true,
+    "wholeApplicationRestart": {
+      "schema": 15,
+      "core": "ready",
+      "credentialIssueVisible": false,
+      "connectionVersion": 4,
+      "verified": true,
+      "bindings": 2,
+      "sourceVersion": 2,
+      "sourcePaused": true,
+      "tasks": 1,
+      "fileState": "DONE",
+      "deliveryState": "COLLECTED",
+      "downloadJobs": 2,
+      "sourceBytes": 392608240,
+      "targetBytes": 392608240,
+      "targetInodePreserved": true,
+      "wholeApplicationRestartVerified": true,
+      "startupMarkerCleared": true
+    },
+    "codeCommit": "4e5a18b3cf1908595da28b8d107c55a6c3665ccc"
+  }
 }
