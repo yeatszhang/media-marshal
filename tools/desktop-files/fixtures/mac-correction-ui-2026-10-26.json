@@ -1,0 +1,64 @@
+{
+  "capturedAt": "2026-10-25T18:54:40.806292+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "schema": 23,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "7362f32ed6aac0412adc93933326a0a55419dc402e13ef3117b439b69e917226",
+  "nativeManifestSha256": "f549aa8f29d77ad183ff292364970130a31092675ae231e45d4fdb01a20d38c2",
+  "source": {
+    "apps/desktop/src/renderer/src/pages/Corrections.tsx": "946eac63c4a512f8e3c5707a58d1b14a6845306ddcba248f3261c1654675321a",
+    "apps/desktop/src/renderer/src/corrections-model.ts": "a6d6cfad9dc32acdcb989201a236fc2f815d4867909dd23ae66ffc8b15894c57",
+    "packages/media-core/src/ingestion/corrections.ts": "fc116a1dd920efa89cd998c8c77a533025c819f632cd6b7709cea3939b2b8f07",
+    "packages/media-core/src/files/relocations.ts": "73a82b180b05e61ebba1161beaa8846d87c62fa1252102df50795f052cc501d9"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 706,
+      "skipped": 13
+    },
+    "finalComponents": {
+      "passed": 14
+    },
+    "developmentWindows": 4,
+    "packagedWindows": 4,
+    "artifactWhitelist": true,
+    "typecheck": true,
+    "boundaries": true,
+    "docsBuild": true,
+    "finalPackagedLayoutWindows": 2
+  },
+  "assertions": {
+    "editingInvalidatesPreview": true,
+    "restoredPreviewRestoresParameters": true,
+    "coreRestartExpiresUnconfirmedPreview": true,
+    "explicitCompleteFileListConfirmation": true,
+    "subtitleConflictDoesNotOverwriteForeignFile": true,
+    "coreRestartPreservesFailedOperation": true,
+    "retryRetainsOperationAndNewTaskIds": true,
+    "completedVideoInodePreservedOnRetry": true,
+    "downloadOriginalPreserved": true,
+    "oldAndNewHistoryNavigation": true,
+    "minimumWindowHorizontalOverflow": false,
+    "minimumWindowHeaderLinkFullyInsideViewport": true
+  },
+  "screenshots": {
+    "correction-preview-minimum.png": "fab6f9756fd94f5b9854a188af5c3c8ef9d756833a2aae3f105f7ebce2aa7350",
+    "correction-subtitle-conflict-minimum.png": "6bf8fd88ddc5ff44812f45611aa728ed62253f05ba67b10924bf1c4a7becd1a2",
+    "correction-recovered-minimum.png": "9ae2227762cea34bda7ce092ea4cb9a0e31a7ffa31e1508c406affd19a1652f6"
+  },
+  "fixtureLimits": [
+    "目录选择为受控对话框替身，目录与卷探测为实际 Main 实现",
+    "已完成原始 COPY 使用隔离就绪时钟及离线元数据夹具",
+    "未替代官方客户端下载行为、播放或真实 Emby 收录验证"
+  ],
+  "notVerified": [
+    "同季／同剧批量修正",
+    "Intel 运行",
+    "完整安装故障矩阵",
+    "Developer ID 与公证"
+  ]
+}

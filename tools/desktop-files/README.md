@@ -2,7 +2,7 @@
 
 本目录提供 `renameatx_np(..., RENAME_EXCL)` 的 Node-API 8 绑定，作为后续单条／批量修正的底层能力。Apple 将独占改名定义为文件系统能力，不能从普通 `rename` 或词法预检推断支持：[Apple 文档](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsexclusiverenaming)。Node-API 的接口版本与 Electron 的普通 C++ 模块 ABI 分开，实际可加载性仍须按目标运行验证：[Node-API 文档](https://nodejs.org/api/n-api.html)。
 
-当前已接入 Main 私有资源定位、Utility Process 与固定 Preload 方法，并进入 Mac 按架构准备和打包资源。Core 修正的文件计划、历史及 Emby 编排见下文；修正页面、批量作业和正式签名仍待完成，任务 5.6／5.7 保持未勾选。
+当前已接入 Main 私有资源定位、Utility Process 与固定 Preload 方法，并进入 Mac 按架构准备和打包资源。Core 修正的文件计划、历史及 Emby 编排见下文；单条修正页面、历史及逐文件修复／重试已接通并在 arm64 开发构建及目录包验证，任务 5.6 已完成；批量作业 5.7 和正式签名仍待完成。
 
 ## 构建与验证
 
@@ -53,7 +53,7 @@ Core 的 `files/native-rename.ts` 校验 Main 私有启动参数指定的 manife
 
 ## 文件日志组件验证
 
-schema v21 的 `FileRelocations` 已在内部组件层连接上述原语，冻结逐文件计划、执行同卷隔离／改名或 COPY／发布／旧目标回收，并在历史记账前保留位置占用和暂存锚点。它不自行建立业务历史或 Emby 交付；schema v22 的上层 `Corrections` 已接入 Core 命令、历史和交付事务，客户端修正页面仍待接入；资源和宿主接线的验证见下文。
+schema v21 的 `FileRelocations` 已在内部组件层连接上述原语，冻结逐文件计划、执行同卷隔离／改名或 COPY／发布／旧目标回收，并在历史记账前保留位置占用和暂存锚点。它不自行建立业务历史或 Emby 交付；schema v22 的上层 `Corrections` 已接入 Core 命令、历史和交付事务，单条修正页面已接通，资源和宿主接线的验证见下文。
 
 ```sh
 npm run build -w @media-marshal/contracts
@@ -65,9 +65,9 @@ ELECTRON_RUN_AS_NODE=1 node_modules/.bin/electron tools/desktop-files/check-relo
 日志测试的六个独立进程检查点使用 `relocation-crash-child.mjs`，父测试只对自己启动并已到达检查点的进程发 SIGKILL，核对退出后才打开原库恢复。单元 COPY 分支使用不同授权卷身份，真实跨设备另由 HFS+ 自有映像工具验证 APFS → HFS+、HFS+ → APFS 和 HFS+ 本卷改名；双向 COPY 都核对新文件后才回收旧媒体，并保留下载原件。工具先关闭所属资源，核对映像与设备归属后卸载，未确认卸载时保留目录而不递归删除。脱敏结果为 `fixtures/mac-relocation-journal-2026-10-26.json`，不代替修正界面、附属文件、批量历史或签名安装验收。
 
 
-schema v22 的上层业务测试为 `npm test -- packages/media-core/src/ingestion/corrections.test.ts`。`correction-crash-child.mjs` 仅用于该测试的两个独立进程检查点：父测试核对检查点后 SIGKILL，重建不恢复下载来源、不注入个人凭据，只按已确认媒体目标计划补历史或清理。Core 的私有启动参数可传入经完整性校验的原语；Main／worker 已传递经验证的私有资源；这些底层检查不替代客户端页面验收。
+schema v22 的上层业务测试为 `npm test -- packages/media-core/src/ingestion/corrections.test.ts`。`correction-crash-child.mjs` 仅用于该测试的两个独立进程检查点：父测试核对检查点后 SIGKILL，重建不恢复下载来源、不注入个人凭据，只按已确认媒体目标计划补历史或清理。Core 的私有启动参数可传入经完整性校验的原语；Main／worker 已传递经验证的私有资源；这些底层检查与后续页面验收分别记录。
 
-大文件核验：schema v23 将公开预览／确认动作改为先返回持久核验编号，`corrections.preparation` 查询当前文件读取进度，`corrections.cancel-preparation` 传递取消信号；Core 内部仍可直接等待核验方法，测试不会以该内部方法冒充 IPC 立即返回。核验队列、请求合并、取消、停止及恢复收据测试位于 `packages/media-core/src/ingestion/correction-preparations.test.ts`。修正页面仍待完成。
+大文件核验：schema v23 将公开预览／确认动作改为先返回持久核验编号，`corrections.preparation` 查询当前文件读取进度，`corrections.cancel-preparation` 传递取消信号；Core 内部仍可直接等待核验方法，测试不会以该内部方法冒充 IPC 立即返回。核验队列、请求合并、取消、停止及恢复收据测试位于 `packages/media-core/src/ingestion/correction-preparations.test.ts`。单条页面已接通，普通剧集批量修正仍待完成。
 
 ## 宿主、目录包与完整性核验
 
@@ -84,4 +84,6 @@ npm run test:desktop -- --grep '修正原生组件经 Main|真实窗口、核心
 
 实际打包窗口使用 `MARSHAL_APP_PATH` 指向目录包可执行文件并设置 `MARSHAL_EXECUTABLE=1`。2026-10-26 在 macOS 26.5.2／arm64 验证开发构建和 arm64 目录包各两项检查：经真实 Main 授权、Utility Process 和 Preload 完成视频／字幕改名、历史及重启查询，保留原下载文件和 inode。`seed-host-correction.mjs` 仅在隔离 Main 退出后，沿原生授权准备真实 COPY 收据与离线元数据；受控时钟和目录对话框替身不作为真实客户端就绪或 OS 对话框验收。
 
-`check-packaged-native.mjs` 复制自有目录包，在中文／空格路径与最小 PATH 下启动；先核对正常组件，再同时改写副本的外部模块和清单，验证 ASAR 可信摘要仍阻止加载，普通核心和 parser 保持可用，不产生修正作业。原目录包不改写，退出后移除副本。脱敏摘要见 `fixtures/mac-native-host-2026-10-26.json`。x64 当前仅交叉编译和 Mach-O 检查，未声明 Intel 运行；修正页面、完整故障矩阵和正式发行仍未完成。
+`check-packaged-native.mjs` 复制自有目录包，在中文／空格路径与最小 PATH 下启动；先核对正常组件，再同时改写副本的外部模块和清单，验证 ASAR 可信摘要仍阻止加载，普通核心和 parser 保持可用，不产生修正作业。原目录包不改写，退出后移除副本。脱敏摘要见 `fixtures/mac-native-host-2026-10-26.json`。x64 当前仅交叉编译和 Mach-O 检查，未声明 Intel 运行；同季／同剧批量修正、完整故障矩阵和正式发行仍未完成。
+
+单条页面验证：`npm run test:desktop -- --grep '单条修正页面'`。当前 arm64 开发构建和目录包完成预览恢复／过期重做、显式完整确认、历史导航，以及字幕目标冲突后的同作业重试。下载原件和已完成主文件 inode 保留；构建及截图摘要见 `fixtures/mac-correction-ui-2026-10-26.json`，操作步骤见 `docs/product/desktop-corrections.md`。

@@ -20,6 +20,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
         title={t(review ? "review" : "tasks")}
         description={t(review ? "reviewHelp" : "tasksHelp")}
       >
+        {!review && <Link className="correction-header-link" to="/corrections">修正记录</Link>}
         <Button
           variant="outline"
           onClick={() => {
@@ -61,7 +62,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
                     </td>
                     <td>{t(task.status)}</td>
                     <td>{t(task.deliveryStatus)}</td>
-                    <td><div className="download-controls"><Button variant="outline" size="sm" onClick={() => navigate("/review", { state: { taskId: task.id } })}>{t("ingestion.inspect")}</Button>{task.status === "DONE" && (task.deliveryStatus === "COLLECTED" ? <Button variant="outline" size="sm" disabled={busy.includes(task.id)} onClick={() => { void model.delivery(task.id, true); }}>{t("ingestion.openEmby")}</Button> : <Button variant="outline" size="sm" disabled={busy.includes(task.id)} onClick={() => { void model.delivery(task.id); }}>{t("ingestion.deliveryRetry")}</Button>)}</div></td>
+                    <td><div className="download-controls">{task.status === "DONE" || task.status === "CORRECTED" || task.correctedFromId || task.activeCorrectionId ? <Button variant="outline" size="sm" onClick={() => navigate(`/tasks/${task.id}/correction`)}>{task.activeCorrectionId ? "查看修正进度" : task.status === "CORRECTED" ? "查看修正历史" : task.status === "DONE" ? "修正" : "查看修正作业"}</Button> : <Button variant="outline" size="sm" onClick={() => navigate("/review", { state: { taskId: task.id } })}>{t("ingestion.inspect")}</Button>}{task.status === "DONE" && !task.correctedFromId && !task.activeCorrectionId && <Button variant="outline" size="sm" onClick={() => navigate("/review", { state: { taskId: task.id } })}>整理详情</Button>}{task.status === "DONE" && !task.activeCorrectionId && (task.deliveryStatus === "COLLECTED" ? <Button variant="outline" size="sm" disabled={busy.includes(task.id)} onClick={() => { void model.delivery(task.id, true); }}>{t("ingestion.openEmby")}</Button> : <Button variant="outline" size="sm" disabled={busy.includes(task.id)} onClick={() => { void model.delivery(task.id); }}>{t("ingestion.deliveryRetry")}</Button>)}</div></td>
                   </tr>
                 ))}
               </tbody>

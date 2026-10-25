@@ -22,6 +22,7 @@ import { ErrorNotice, Empty } from "./components/shared";
 import { Overview } from "./pages/Overview";
 import { Sources } from "./pages/Sources";
 import { Tasks } from "./pages/Tasks";
+import { CorrectionPage, CorrectionJobsPage } from "./pages/Corrections";
 import { Ingestion } from "./pages/Ingestion";
 import { SettingsPage } from "./pages/SettingsPage";
 import { CloudDrives } from "./pages/CloudDrives";
@@ -120,6 +121,8 @@ function Shell() {
               <Route path="/subscriptions" element={<Subscriptions />} />
               <Route path="/subscriptions/:id" element={<Subscriptions />} />
               <Route path="/tasks" element={<Tasks />} />
+              <Route path="/tasks/:taskId/correction" element={<CorrectionPage />} />
+              <Route path="/corrections" element={<CorrectionJobsPage />} />
               <Route path="/review" element={<Ingestion />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Routes>

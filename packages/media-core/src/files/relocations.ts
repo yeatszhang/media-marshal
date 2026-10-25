@@ -15,6 +15,9 @@ type Phase = "PENDING" | "COPYING" | "VERIFIED" | "QUARANTINED" | "PUBLISHED" | 
 export interface RelocationRow { id: string; item_id: string; ordinal: number; plan_json: string; phase: Phase; resume_phase: Phase | null; attempt_id: string | null; stage_evidence_json: string | null; evidence_json: string | null; recorded: number; failure_code: string | null; failure: string | null; waiting_reason: string | null; next_attempt_at: number }
 const sameEvidence = (a: LocalFileEvidence, b: LocalFileEvidence) => a.volumeId === b.volumeId && a.inode === b.inode && a.birthtimeNs === b.birthtimeNs && a.modifiedNs === b.modifiedNs && a.size === b.size && a.sha256 === b.sha256;
 const conflict = () => new DesktopError("CONFLICT", "修正文件的原位置、隔离位置或新位置与计划不符，已保留现存文件；请核对逐项记录后重试");
+class NewTargetConflict extends DesktopError {
+  constructor() { super("CONFLICT", "新位置被不属于本次执行的文件或目录占用，或在核对时发生变化；现存文件未覆盖，请核对新位置，将不明文件移至其他位置保留后重试"); }
+}
 const stamp = (now: () => number) => new Date(now()).toISOString();
 
 /** 只执行已持久化的媒体目标文件计划；不读取下载来源，也不自行创建任务历史或 Emby 交付。 */
@@ -68,6 +71,7 @@ export class FileRelocations {
     throw conflict();
   }
   private evidence(json: string | null) { if (!json) throw conflict(); return localFileEvidenceSchema.parse(JSON.parse(json)); }
+  private async checkNewTarget<T>(work: () => Promise<T>): Promise<T> { try { return await work(); } catch (error) { if ((error as { code?: string }).code === "CONFLICT") throw new NewTargetConflict(); throw error; } }
   private async confirmFinal(row: RelocationRow, plan: RelocationPlan, target: ManagedRoot, signal?: AbortSignal) {
     const expected = this.evidence(row.evidence_json);
     try { return await target.confirmRelocation(plan.to.segments, expected, signal); }
@@ -87,21 +91,21 @@ export class FileRelocations {
     if (row.phase === "PENDING") {
       const source = await this.probe(from, plan.from.segments, plan.expected, signal), isolated = await this.probe(from, quarantine, plan.expected, signal);
       if (plan.mode === "COPY") {
-        if (!source || isolated) throw conflict(); await to.assertVacant(plan.to.segments); assertSpaceBudget(await to.check(), plan.expected.size); this.advance(row.id, "COPYING", { attempt: randomUUID() }); return;
+        if (!source || isolated) throw conflict(); await this.checkNewTarget(() => to.assertVacant(plan.to.segments)); assertSpaceBudget(await to.check(), plan.expected.size); this.advance(row.id, "COPYING", { attempt: randomUUID() }); return;
       }
       if (source && isolated || !source && !isolated) throw conflict();
       if (source) {
         // 大小写不敏感卷的目标仍指向旧目录项；先隔离旧项，再让独占发布检查真实占用。
         const alias = from.grant.id === to.grant.id && from.slotKey(plan.from.segments) === to.slotKey(plan.to.segments);
-        if (!alias && await this.probe(to, plan.to.segments, plan.expected, signal)) throw conflict();
+        if (!alias && await this.checkNewTarget(() => this.probe(to, plan.to.segments, plan.expected, signal))) throw new NewTargetConflict();
         if (!this.mayRun()) throw new CloudError("INTERRUPTED"); this.renamed(await from.renameForRelocation(plan.from.segments, from, quarantine, source.snapshot, this.native, signal));
       }
       // 已收到原生独占改名回执即可记隔离阶段；发布前仍会完整核验隔离文件。
       if (!source) await from.confirmRelocation(quarantine, plan.expected, signal); this.advance(row.id, "QUARANTINED"); return;
     }
     if (row.phase === "QUARANTINED") {
-      const isolated = await this.probe(from, quarantine, plan.expected, signal), target = await this.probe(to, plan.to.segments, plan.expected, signal);
-      if (isolated && target || !isolated && !target) throw conflict();
+      const isolated = await this.probe(from, quarantine, plan.expected, signal), target = await this.checkNewTarget(() => this.probe(to, plan.to.segments, plan.expected, signal));
+      if (isolated && target) throw new NewTargetConflict(); if (!isolated && !target) throw conflict();
       if (isolated) { if (!this.mayRun()) throw new CloudError("INTERRUPTED"); this.renamed(await from.renameForRelocation(quarantine, to, plan.to.segments, isolated.snapshot, this.native, signal)); }
       const evidence = isolated ? isolated.evidence : await to.confirmRelocation(plan.to.segments, plan.expected, signal); this.advance(row.id, "PUBLISHED", { evidence }); return;
     }
@@ -147,7 +151,7 @@ export class FileRelocations {
     const code = error && typeof error === "object" && "code" in error ? String(error.code) : "CONFLICT", waiting = ["LOCAL_UNAVAILABLE", "INTERRUPTED", "BUSY", "ENOSPC", "EACCES", "EPERM", "EROFS", "EIO", "ENODEV", "ENXIO", "ESTALE"].includes(code);
     const plan = planSchema.parse(JSON.parse(this.get(id).plan_json)), object = `修正文件「${plan.from.segments.at(-1)}」：`;
     const reason = code === "INTERRUPTED" ? "操作已暂停或服务正在停止；现存文件已保留，恢复整理后从原阶段继续" : code === "BUSY" ? "文件操作等待数已达上限，请等待在途操作完成后重试" : code === "ENOSPC" ? "媒体目标磁盘空间不足，请释放空间后从原步骤重试" : ["EACCES", "EPERM", "EROFS"].includes(code) ? "媒体目标目录不可写，请恢复读写权限或解除只读状态后重试" : waiting ? "原媒体目标磁盘或目录当前不可用，请连接原盘、恢复原目录授权后重试" : code === "UNSUPPORTED_CAPABILITY" ? "文件系统不支持原计划的安全操作，现存文件已保留，请使用兼容目标核对原作业；更换目标必须重新预览" : "文件位置或内容与原计划不符，现存文件已保留，请核对原位置、私有隔离位置与新位置后重试";
-    const failure = object + reason;
+    const failure = object + (error instanceof NewTargetConflict ? error.message : reason);
     this.database.connection.prepare("UPDATE media_file_relocation SET resume_phase=CASE WHEN ? THEN NULL ELSE phase END,phase=CASE WHEN ? THEN phase ELSE 'NEEDS_ATTENTION' END,failure_code=?,failure=?,waiting_reason=?,next_attempt_at=?,updated_at=? WHERE id=?").run(Number(waiting), Number(waiting), waiting ? code === "INTERRUPTED" ? code : "LOCAL_UNAVAILABLE" : code === "UNSUPPORTED_CAPABILITY" ? code : "CONFLICT", waiting ? null : failure, waiting ? failure : null, waiting ? this.now() + 5000 : 0, stamp(this.now), id);
   }
   run(id: string, signal?: AbortSignal): Promise<RelocationRow> {

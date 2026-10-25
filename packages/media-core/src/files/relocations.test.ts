@@ -49,7 +49,7 @@ describe.skipIf(process.platform !== "darwin")("持久修正文件步骤（真�
   });
   it("目标抢占时保留两个文件，修复后只沿原步骤重试", async () => {
     const f = await fixture(); await mkdir(join(f.toPath, "修正作品")); await writeFile(join(f.toPath, ...f.input.to.segments), "外部文件不能覆盖"); const row = f.engine.plan(f.input);
-    expect(await f.engine.run(row.id)).toMatchObject({ phase: "NEEDS_ATTENTION", resume_phase: "PENDING", failure_code: "CONFLICT" }); expect(await readFile(join(f.fromPath, "原视频.mkv"))).toEqual(f.bytes); expect(await readFile(join(f.toPath, ...f.input.to.segments), "utf8")).toBe("外部文件不能覆盖");
+    expect(await f.engine.run(row.id)).toMatchObject({ phase: "NEEDS_ATTENTION", resume_phase: "PENDING", failure_code: "CONFLICT", failure: expect.stringContaining("新位置被不属于本次执行的文件或目录占用") }); expect(await readFile(join(f.fromPath, "原视频.mkv"))).toEqual(f.bytes); expect(await readFile(join(f.toPath, ...f.input.to.segments), "utf8")).toBe("外部文件不能覆盖");
     await rename(join(f.toPath, ...f.input.to.segments), join(f.toPath, "外部文件保留.mkv")); f.engine.retry(row.id); expect(await f.engine.run(row.id)).toMatchObject({ phase: "DONE" }); expect(await readFile(join(f.toPath, "外部文件保留.mkv"), "utf8")).toBe("外部文件不能覆盖");
   });
   it("原路径不变仍产生完成收据，只有大小写变化则经过私有隔离", async () => {

@@ -12,7 +12,7 @@ import type { PreparationProgress } from "./correction-preparations.js";
 
 export const correctionHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export interface CorrectionAsset { id: string; kind: "MAIN" | "ACCESSORY"; from: { grant: ManagedRootGrant; segments: string[] }; to: { grant: ManagedRootGrant; segments: string[] }; expected: LocalFileEvidence | null; action: "NONE" | "MOVE" | "COPY" | "KEEP"; reason: string | null }
-export interface CorrectionPlan { taskId: string; originalContext: string; connectionVersion: number; previewGeneration: string; target: ManagedRootGrant; targetSegments: string[]; selection: MediaSelection; metadata: MetadataWork; parsed: ParsedMedia; files: CorrectionAsset[]; warnings: string[]; includeAccessories: boolean }
+export interface CorrectionPlan { taskId: string; originalContext: string; connectionVersion: number; previewGeneration: string; target: ManagedRootGrant; targetSegments: string[]; template?: string; selection: MediaSelection; metadata: MetadataWork; parsed: ParsedMedia; files: CorrectionAsset[]; warnings: string[]; includeAccessories: boolean }
 interface Task { id: string; source_id: string; source_path: string; status: string; target_path: string | null; title: string | null; parsed_json: string | null; metadata_json: string | null; confirmed_json: string | null; corrected_from_id: string | null; corrected_to_id: string | null; updated_at: string }
 interface StoredAsset { plan_json: string; evidence_json: string | null; phase: string }
 export const correctionConflict = (message: string) => new DesktopError("CONFLICT", message);
