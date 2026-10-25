@@ -25,7 +25,7 @@ model {
     core = process 'Media Core' {
       description '唯一业务库写入者；来源版本、调度、识别、COPY、修正与独立交付'
       sources = component 'SourceRules' {
-        description '唯一配置入口；草稿、不可变有效版本、旧身份定位、执行预览及可恢复删除'
+        description '唯一配置入口；不可变有效版本、目录健康快照、执行预览及可恢复删除'
       }
       subscriptions = component 'CloudSubscriptions' {
         description '按有效来源版本周期补扫；共享需求和分层暂停'
@@ -51,7 +51,7 @@ model {
     guardian = process 'Guardian'
     openlist = process 'OpenList · v4.2.7'
     rclone = process 'Rclone CLI · v1.75.2'
-    database = storage '业务 SQLite · v24'
+    database = storage '业务 SQLite · v25'
     vault = storage '系统保护的凭据密文'
     backups = storage '受限升级备份'
     managed = storage '已授权原卷' {
@@ -83,8 +83,8 @@ model {
   desktop.core -> desktop.managed.completed '同卷独占发布后记账'
   desktop.core.sources -> desktop.core.subscriptions '同事务更新执行配置；禁止独立编辑'
   desktop.core.sources -> desktop.core.downloads '确认版本；一次性意图与执行预览'
-  desktop.core.sources -> desktop.core.ingestion '本地配置／按需启用整理；安全点协调'
-  desktop.core.sources -> desktop.database '草稿、版本、迁移映射和幂等收据'
+  desktop.core.sources -> desktop.core.ingestion '本地配置、授权根检查与整理协调'
+  desktop.core.sources -> desktop.database '草稿、版本、健康快照和幂等收据'
   desktop.core.subscriptions -> desktop.core.downloads '完整扫描后建立版本化需求'
   desktop.core.downloads -> desktop.core.ingestion 'outbox／补扫；按需求及版本核对策略'
   desktop.local -> desktop.core.ingestion '普通文件观察；不创建云端下载进度'

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, realpath, rm, lstat, statfs, writeFile, readFile, readdir, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, rmdir, lstat, statfs, writeFile, readFile, readdir, symlink, rename, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -14,6 +14,7 @@ import { unavailableHost } from "../cloud/host-gateway";
 import { MediaConnections } from "../application/media-connections";
 import { IngestionPipeline } from "../ingestion/pipeline";
 import { SourceRules } from "./rules";
+import { LocalSourceHealthChecks } from "./local-health";
 
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -37,6 +38,59 @@ async function fixture() {
   return { directory, sourcePath, targetPath, db, rules, grants, draft, pipeline, preview, advance(ms: number) { clock += ms; } };
 }
 describe("统一来源配置与真实 SQLite 事务", () => {
+  it("本地目录检查分别核验原输入与目标，暂停时也可检查但不扫描或整理", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), applied = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
+    f.rules.control({ id: applied.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() });
+    const check = { items: [{ id: applied.id, expectedVersion: 1, expectedLifecycleRevision: 0 }], force: true };
+    expect((await f.rules.localHealth.check(check)).items[0]).toMatchObject({ sourceId: applied.id, version: 1, input: { state: "AVAILABLE" }, target: { state: "AVAILABLE" } });
+    await rename(f.sourcePath, f.sourcePath + "-原目录"); await mkdir(f.sourcePath);
+    const missing = (await f.rules.localHealth.check(check)).items[0]!; expect(missing.input).toEqual({ state: "UNAVAILABLE", reason: "ORIGINAL_DIRECTORY_UNAVAILABLE" }); expect(missing.target.state).toBe("AVAILABLE");
+    expect(JSON.parse((f.db.connection.prepare("SELECT snapshot_json FROM source_rule_local_health WHERE source_id=?").get(applied.id) as { snapshot_json: string }).snapshot_json)).toEqual(missing);
+    const backup = join(f.directory, "健康检查副本.sqlite3"); await f.db.backup(backup); const restoredDb = await CoreDatabase.open(backup), connections = new MediaConnections(restoredDb, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" })), pipeline = new IngestionPipeline(restoredDb, () => undefined, connections), restoredChecks = new LocalSourceHealthChecks(restoredDb, (id) => f.rules.get(id), (id) => pipeline.localDirectoryHealth(id));
+    try { const restored = (await restoredChecks.check(check)).items[0]!; expect(restored.input.state).toBe("UNVERIFIED"); expect(restored.target.state).toBe("UNVERIFIED"); expect(restored.previous).toEqual({ checkedAt: missing.checkedAt, input: missing.input, target: missing.target }); expect(JSON.parse((restoredDb.connection.prepare("SELECT snapshot_json FROM source_rule_local_health").get() as { snapshot_json: string }).snapshot_json)).toEqual(missing); } finally { await restoredChecks.close(); await pipeline.close(); connections.close(); restoredDb.close(); }
+    expect(await readdir(f.sourcePath)).toEqual([]); await rmdir(f.sourcePath); await rename(f.sourcePath + "-原目录", f.sourcePath);
+    await rename(f.targetPath, f.targetPath + "-原目标"); await mkdir(f.targetPath);
+    const replaced = (await f.rules.localHealth.check(check)).items[0]!; expect(replaced.input.state).toBe("AVAILABLE"); expect(replaced.target.state).toBe("UNAVAILABLE"); expect(await readdir(f.targetPath)).toEqual([]);
+    await rmdir(f.targetPath); await rename(f.targetPath + "-原目标", f.targetPath); expect((await f.rules.localHealth.check(check)).items[0]).toMatchObject({ input: { state: "AVAILABLE" }, target: { state: "AVAILABLE" } });
+    for (const table of ["ingestion_candidate", "ingestion_operation", "media_task", "download_job"]) expect(f.db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    expect(f.rules.get(applied.id)).toMatchObject({ version: 1, draftRevision: 1, paused: true }); expect(await readFile(join(f.sourcePath, "保留.mp4"), "utf8")).toBe("preserve-original");
+  });
+  it.skipIf(process.platform === "win32")("输入可读与目标可写权限分别检查，权限恢复不重放来源确认", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), applied = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
+    f.rules.control({ id: applied.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() }); const input = { items: [{ id: applied.id, expectedVersion: 1, expectedLifecycleRevision: 0 }], force: true };
+    try { await chmod(f.sourcePath, 0o000); expect((await f.rules.localHealth.check(input)).items[0]!.input).toEqual({ state: "UNAVAILABLE", reason: "PERMISSION_DENIED" }); } finally { await chmod(f.sourcePath, 0o700); }
+    try { await chmod(f.targetPath, 0o500); expect((await f.rules.localHealth.check(input)).items[0]).toMatchObject({ input: { state: "AVAILABLE" }, target: { state: "UNAVAILABLE", reason: "PERMISSION_DENIED" } }); } finally { await chmod(f.targetPath, 0o700); }
+    expect((await f.rules.localHealth.check(input)).items[0]).toMatchObject({ input: { state: "AVAILABLE" }, target: { state: "AVAILABLE" } }); expect(f.rules.get(applied.id)!.version).toBe(1);
+  });
+  it("并发检查合并，短缓存可显式刷新；旧版本响应不保存为新配置的健康", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), applied = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
+    f.rules.control({ id: applied.id, expectedVersion: 1, operation: "pause", requestKey: randomUUID() }); const input = { items: [{ id: applied.id, expectedVersion: 1, expectedLifecycleRevision: 0 }] };
+    const original = f.pipeline.localDirectoryHealth.bind(f.pipeline); let release!: () => void; const gate = new Promise<void>((done) => { release = done; }), probe = vi.spyOn(f.pipeline, "localDirectoryHealth").mockImplementationOnce(async (id) => { const result = await original(id); await gate; return result; });
+    const first = f.rules.localHealth.check(input), second = f.rules.localHealth.check(input); expect(probe).toHaveBeenCalledOnce(); release(); await first; await second; await f.rules.localHealth.check(input); expect(probe).toHaveBeenCalledOnce();
+    f.advance(10000); await f.rules.localHealth.check(input); expect(probe).toHaveBeenCalledTimes(2); await f.rules.localHealth.check({ ...input, force: true }); expect(probe).toHaveBeenCalledTimes(3);
+    let finish!: () => void; const delayed = new Promise<void>((done) => { finish = done; }); probe.mockImplementationOnce(async (id) => { const result = await original(id); await delayed; return result; });
+    const old = f.rules.localHealth.check({ ...input, force: true }), rejected = expect(old).rejects.toMatchObject({ code: "CONFLICT" });
+    const changed = f.rules.configure({ ...f.draft, id: applied.id, expectedVersion: 1, expectedDraftRevision: 1, requestKey: randomUUID(), configuration: { ...f.draft.configuration, name: "新生效配置" } }); await f.rules.apply({ previewId: f.preview(changed).id, requestKey: randomUUID() }, f.grants);
+    finish(); await rejected; expect(f.db.connection.prepare("SELECT version FROM source_rule_local_health WHERE source_id=?").get(applied.id)).toEqual({ version: 1 });
+    expect((await f.rules.localHealth.check({ items: [{ ...input.items[0]!, expectedVersion: 2 }] })).items[0]!.version).toBe(2);
+  });
+  it("没有当前根授权时返回未核验，关闭等待在途只读检查且丢弃迟到快照", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), applied = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
+    const before = f.pipeline.bootstrap().find((row) => row.sourceId === applied.localSourceId)!; await f.pipeline.close();
+    const restoredConnections = new MediaConnections(f.db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" })); cleanup.push(() => restoredConnections.close()); const replacement = new IngestionPipeline(f.db, () => undefined, restoredConnections); cleanup.push(() => replacement.close());
+    expect(await replacement.localDirectoryHealth(before.sourceId)).toEqual({ input: { state: "UNVERIFIED", reason: "WAITING_AUTHORIZATION" }, target: { state: "UNVERIFIED", reason: "WAITING_AUTHORIZATION" } });
+    let finish!: () => void; const gate = new Promise<void>((done) => { finish = done; }); vi.spyOn(f.pipeline, "localDirectoryHealth").mockImplementationOnce(async () => { await gate; return { input: { state: "AVAILABLE" }, target: { state: "AVAILABLE" } }; });
+    const pending = f.rules.localHealth.check({ items: [{ id: applied.id, expectedVersion: 1, expectedLifecycleRevision: 0 }], force: true }), rejection = expect(pending).rejects.toMatchObject({ code: "INTERRUPTED" });
+    let completed = false; const close = f.rules.close().then(() => { completed = true; }); await Promise.resolve(); expect(completed).toBe(false); finish(); await rejection; await close;
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM source_rule_local_health").get()).toEqual({ n: 0 });
+  });
+  it("目录健康最多保留 32 项在途检查，超出容量不继续读取根目录", async () => {
+    const f = await fixture(), draft = f.rules.configure(f.draft), source = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants), rows = new Map(Array.from({ length: 33 }, () => { const id = randomUUID(); return [id, { ...source, id }] as const; }));
+    let release!: () => void; const gate = new Promise<void>((done) => { release = done; }), probe = vi.fn(async () => { await gate; return { input: { state: "AVAILABLE" as const }, target: { state: "AVAILABLE" as const } }; });
+    const checks = new LocalSourceHealthChecks(f.db, (id) => rows.get(id) ?? null, probe), items = [...rows.keys()].map((id) => ({ id, expectedVersion: 1, expectedLifecycleRevision: 0 }));
+    const first = checks.check({ items: items.slice(0, 25) }), second = checks.check({ items: items.slice(25, 32) }), firstResult = Promise.allSettled([first, second]);
+    try { expect(probe).toHaveBeenCalledTimes(32); await expect(checks.check({ items: items.slice(32) })).rejects.toThrow("目录检查繁忙"); const close = checks.close(); release(); await close; expect((await firstResult).every((item) => item.status === "rejected")).toBe(true); expect(f.db.connection.prepare("SELECT count(*) AS n FROM source_rule_local_health").get()).toEqual({ n: 0 }); } finally { release(); await checks.close(); await firstResult; }
+  });
   it("删除与恢复草稿保留原记录，旧请求不能跨生命周期改变来源", async () => {
     const f = await fixture(), draft = f.rules.configure(f.draft), preview = f.preview(draft), remove = { id: draft.id, expectedVersion: 0, expectedDraftRevision: 1, expectedLifecycleRevision: 0, requestKey: randomUUID() };
     const deleted = f.rules.lifecycle(remove, "remove"); expect(deleted).toMatchObject({ deletedAt: expect.any(String), lifecycleRevision: 1, paused: true, version: 0 }); expect(f.rules.list()).toEqual([]); expect(f.rules.list(true)).toHaveLength(1); expect(f.rules.lifecycle(remove, "remove")).toEqual(deleted);

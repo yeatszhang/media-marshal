@@ -8,6 +8,7 @@ import { SourceEditorForm } from "../components/SourceEditorForm";
 import { SourceRemotePicker } from "../components/SourceRemotePicker";
 import { SourceExecutionPreview } from "../components/SourceExecutionPreview";
 import { SourceLifecycleDialog } from "../components/SourceLifecycleDialog";
+import { LocalSourceHealthPanel } from "../components/LocalSourceHealth";
 import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 
@@ -22,6 +23,8 @@ export function Sources() {
   const open = (row: SourceRule) => { if (sourceId === row.id) void model.openSource(row.id); else setQuery({ source: row.id }); };
   const pages = Math.max(1, Math.ceil(state.sourceCount / 25)), visiblePage = Math.min(page, pages);
   const archivePages = Math.max(1, Math.ceil(state.archivedCount / 25)), visibleArchivePage = Math.min(archivedPage, archivePages);
+  const healthKey = JSON.stringify(state.items.slice((visiblePage - 1) * 25, visiblePage * 25).filter((row) => row.version > 0 && row.configuration?.type === "local").map((row) => ({ id: row.id, expectedVersion: row.version, expectedLifecycleRevision: row.lifecycleRevision ?? 0 })));
+  useEffect(() => model.watchLocalHealth(JSON.parse(healthKey)), [model, healthKey]);
   const requestLifecycle = (row: SourceRule, operation: "remove" | "restore") => { if (model.prepareLifecycle(row)) setLifecycle({ row, operation }); };
   return <>
     <Header title="来源配置" description="把网盘内容下载到本地，或整理已有本地文件。每个来源独立设置下载方式和媒体库目标。">
@@ -30,6 +33,7 @@ export function Sources() {
       <Button ref={addRef} data-source-add disabled={busy} onClick={() => { setQuery({}); model.newSource(); }}><Plus size={16} />添加来源</Button>
     </Header>
     <ErrorNotice message={state.error} retry={() => { void model.reload(); }} />
+    <ErrorNotice message={state.healthError ? `本地目录检查：${state.healthError}` : null} retry={() => { void model.checkVisibleLocalHealth(true); }} />
     {state.legacyNotice && <p className="notice" role="status">{state.legacyNotice} <Link to="/downloads">查看下载历史</Link></p>}
     {state.notice && <p className="notice" role="status">{state.notice}</p>}
     {state.organizePaused && <p className="notice">全部整理已暂停。恢复来源不会解除此暂停；云端下载与已提交文件的 Emby 交付仍独立处理。</p>}
@@ -44,6 +48,10 @@ export function Sources() {
         <p className="source-card-status">{row.version ? `生效版本 v${row.version}` : "草稿，尚未确认"}{row.paused && row.version > 0 ? " · 来源已暂停" : ""}{row.reviewRequired ? " · 归属待核对" : ""}</p>
         {configuration.type === "cloud" ? <><p className="cloud-root-path">{state.accounts.find((value) => value.id === configuration.accountId)?.name ?? "账号需核对"} · {row.remoteName ?? "远端范围需核对"} → {downloadRoot?.path ?? "下载目录待授权"}</p><p className="cloud-hint">{configuration.periodic.enabled ? `每 ${configuration.periodic.intervalSeconds / 60} 分钟扫描` : "仅手动执行，不开启周期扫描"} · {configuration.organization ? "下载后整理到媒体库" : "只下载，未启用整理"}</p></> : <p className="cloud-root-path">{sourceClients[configuration.client]} · {configuration.sourcePath}</p>}
         {configuration.organization && <p className="cloud-root-path">整理目标：{configuration.organization.targetPath} · COPY · 人工确认</p>}
+        {configuration.type === "local" && <>
+          <p className="cloud-hint">{configuration.client === "quark" ? "请先用夸克官方客户端下载到输入目录，再在待处理核对作品并确认整理。" : configuration.client === "custom" ? "使用已有本地文件，按普通目录观察并等待人工确认。" : "此为保留的历史客户端标签，行为未验证；按普通本地目录观察，仍需人工确认。"}</p>
+          <LocalSourceHealthPanel row={row} health={state.localHealth[row.id]} busy={state.healthBusy.includes(row.id)} blocked={state.healthBusy.length > 0} onCheck={() => { void model.checkLocalSourceHealth(row); }} />
+        </>}
         {row.version > 0 && JSON.stringify(row.draft) !== JSON.stringify(row.configuration) && <p className="notice">有尚未生效的草稿，执行仍沿用 v{row.version}。</p>}
         {subscription && <div className="cloud-hint"><p>{sourceScanLabels[subscription.state]} · 最近扫描 {sourceDate(subscription.lastScanAt)} · 下次运行 {sourceDate(subscription.nextScanAt)}</p>{subscription.lastResult && <p>{subscription.lastResult.complete ? "完整扫描" : "扫描未完成"}：{subscription.lastResult.files} 项，复用 {subscription.lastResult.reused} 项，冲突 {subscription.lastResult.conflicts} 项。</p>}{subscription.failure && <ErrorNotice message={subscription.failure.message} />}</div>}
         {row.lastRun && <p className="cloud-hint" role="status">最近一次{row.lastRun.forceRedownload ? "强制" : ""}执行：{sourceRunLabels[row.lastRun.state]}{row.lastRun.failure ? ` · ${row.lastRun.failure.message}` : ""} {row.lastRun.jobId && <Link to="/downloads">查看下载</Link>}</p>}

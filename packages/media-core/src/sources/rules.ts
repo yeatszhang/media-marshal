@@ -11,6 +11,7 @@ import type { IngestionPipeline } from "../ingestion/pipeline.js";
 import { SourceRuns } from "./runs.js";
 import { organizationConflicts } from "./organization.js";
 import { SourceExecutionPreviews } from "./executions.js";
+import { LocalSourceHealthChecks } from "./local-health.js";
 
 interface Row {
   id: string; type: SourceRule["type"]; version: number; draft_revision: number; draft_json: string;
@@ -28,10 +29,11 @@ export class SourceRules {
   private queue: Promise<unknown> = Promise.resolve(); private accepting = true;
   readonly runs: SourceRuns;
   readonly executions: SourceExecutionPreviews;
-  constructor(private readonly database: CoreDatabase, private readonly downloads: CloudDownloads, private readonly subscriptions: CloudSubscriptions, private readonly ingestion: IngestionPipeline, private readonly now = Date.now) { this.runs = new SourceRuns(database, downloads, now); this.executions = new SourceExecutionPreviews(database, downloads, this.runs, now); }
+  readonly localHealth: LocalSourceHealthChecks;
+  constructor(private readonly database: CoreDatabase, private readonly downloads: CloudDownloads, private readonly subscriptions: CloudSubscriptions, private readonly ingestion: IngestionPipeline, private readonly now = Date.now) { this.runs = new SourceRuns(database, downloads, now); this.executions = new SourceExecutionPreviews(database, downloads, this.runs, now); this.localHealth = new LocalSourceHealthChecks(database, (id) => this.get(id), (id) => ingestion.localDirectoryHealth(id), now); }
   start() { this.synchronize(); this.runs.start(); }
   synchronize() { for (const source of this.list(true)) { try { this.reconcile(source.id); } catch { /* 主机授权恢复后再次协调，不因离线阻止 Core 启动。 */ } } }
-  quiesce() { this.accepting = false; this.runs.quiesce(); this.executions.quiesce(); }
+  quiesce() { this.accepting = false; this.runs.quiesce(); this.executions.quiesce(); this.localHealth.quiesce(); }
   private writable() { if (!this.accepting) throw new DesktopError("INTERRUPTED", "来源配置正在停止", true); }
   private row(id: string) { return this.database.connection.prepare("SELECT * FROM source_rule WHERE id=?").get(id) as Row | undefined; }
   get(id: string): SourceRule | null {
@@ -268,5 +270,5 @@ export class SourceRules {
       return this.get(row.id)!;
     } finally { if (!committed) await prepared?.discard(); }
   }
-  async close() { this.quiesce(); await this.queue.catch(() => {}); await this.runs.close(); }
+  async close() { this.quiesce(); await this.queue.catch(() => {}); await this.localHealth.close(); await this.runs.close(); }
 }

@@ -20,11 +20,30 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v25 健康快照迁移保留本地来源、历史标签和任务，不扫描或启动文件操作，旧核心拒绝新库", async () => {
+    const path = await temporary(), previous = await CoreDatabase.open(path, migrations.slice(0, 24)), id = randomUUID(), task = randomUUID(), stamp = new Date().toISOString();
+    const configuration = JSON.stringify({ type: "local", name: "历史标签来源", client: "baidu", sourcePath: "/原输入", organization: { targetPath: "/原目标" } });
+    previous.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,paused,health,created_at) VALUES(?,'历史标签来源','baidu','/原输入','/原目标','AUTO','COPY',1,'unavailable',?)").run(id, stamp);
+    previous.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,local_source_id,paused,created_at,updated_at) VALUES(?,'local',3,2,?,?,1,?,?)").run(id, configuration, id, stamp, stamp);
+    previous.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,created_at) VALUES(?,3,?,?,?)").run(id, configuration, id, stamp);
+    previous.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'AWAITING_CONFIRMATION',?,?)").run(task, id, "/原输入/保留.mp4", stamp, stamp); previous.close();
+    const upgraded = await CoreDatabase.open(path);
+    try { expect(upgraded.schemaVersion).toBe(25); expect(upgraded.connection.prepare("SELECT kind,paused,health FROM desktop_source WHERE id=?").get(id)).toEqual({ kind: "baidu", paused: 1, health: "unavailable" }); expect(upgraded.connection.prepare("SELECT version,draft_revision,draft_json FROM source_rule WHERE id=?").get(id)).toEqual({ version: 3, draft_revision: 2, draft_json: configuration }); expect(upgraded.connection.prepare("SELECT id,status FROM media_task").get()).toEqual({ id: task, status: "AWAITING_CONFIRMATION" }); for (const table of ["source_rule_local_health", "ingestion_operation", "download_job"]) expect(upgraded.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 }); expect(upgraded.connection.pragma("foreign_key_check")).toEqual([]); } finally { upgraded.close(); }
+    const backup = new Database(`${path}.before-v25.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(24); expect(backup.prepare("SELECT kind,paused FROM desktop_source WHERE id=?").get(id)).toEqual({ kind: "baidu", paused: 1 }); } finally { backup.close(); }
+    await expect(CoreDatabase.open(path, migrations.slice(0, 24))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
+  it("v25 迁移失败整体回滚，重试保留原 v24 备份和配置", async () => {
+    const path = await temporary(), previous = await CoreDatabase.open(path, migrations.slice(0, 24)); previous.connection.prepare("INSERT INTO app_setting VALUES('原配置','保留')").run(); previous.close();
+    await expect(CoreDatabase.open(path, [...migrations.slice(0, 24), { ...migrations[24]!, sql: migrations[24]!.sql + "SELECT missing_health_migration();" }])).rejects.toThrow();
+    const original = await CoreDatabase.open(path, migrations.slice(0, 24)); try { expect(original.schemaVersion).toBe(24); expect(original.connection.prepare("SELECT name FROM sqlite_master WHERE name='source_rule_local_health'").get()).toBeUndefined(); } finally { original.close(); }
+    const retry = await CoreDatabase.open(path); try { expect(retry.schemaVersion).toBe(25); expect(retry.connection.prepare("SELECT value FROM app_setting WHERE key='原配置'").get()).toEqual({ value: "保留" }); } finally { retry.close(); }
+    const backup = new Database(`${path}.before-v25.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(24); expect(backup.prepare("SELECT value FROM app_setting WHERE key='原配置'").get()).toEqual({ value: "保留" }); } finally { backup.close(); }
+  });
   it("v24 升级保留修正配置与 v23 备份，批次迁移失败整体回滚且旧核心拒绝新库", async () => {
     const path = await temporary(), previous = await CoreDatabase.open(path, migrations.slice(0, 23)); previous.connection.prepare("INSERT INTO app_setting VALUES('批量配置','保留原状态')").run(); previous.close();
     await expect(CoreDatabase.open(path, [...migrations.slice(0, 23), { ...migrations[23]!, sql: migrations[23]!.sql + "SELECT missing_batch_migration();" }])).rejects.toThrow();
     const unchanged = new Database(path); try { expect(unchanged.pragma("user_version", { simple: true })).toBe(23); expect(unchanged.prepare("SELECT name FROM sqlite_master WHERE name='media_correction_batch'").get()).toBeUndefined(); } finally { unchanged.close(); }
-    const upgraded = await CoreDatabase.open(path); try { expect(upgraded.schemaVersion).toBe(24); expect(upgraded.connection.prepare("SELECT value FROM app_setting WHERE key='批量配置'").get()).toEqual({ value: "保留原状态" }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_correction_batch_member").get()).toEqual({ n: 0 }); expect(upgraded.connection.pragma("foreign_key_check")).toEqual([]); } finally { upgraded.close(); }
+    const upgraded = await CoreDatabase.open(path, migrations.slice(0, 24)); try { expect(upgraded.schemaVersion).toBe(24); expect(upgraded.connection.prepare("SELECT value FROM app_setting WHERE key='批量配置'").get()).toEqual({ value: "保留原状态" }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_correction_batch_member").get()).toEqual({ n: 0 }); expect(upgraded.connection.pragma("foreign_key_check")).toEqual([]); } finally { upgraded.close(); }
     const backup = new Database(`${path}.before-v24.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(23); } finally { backup.close(); }
     await expect(CoreDatabase.open(path, migrations.slice(0, 23))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
   });

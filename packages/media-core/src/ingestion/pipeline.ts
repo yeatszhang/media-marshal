@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { open } from "node:fs/promises";
+import { access, open } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { watch, type FSWatcher } from "node:fs";
-import { DesktopError, sourceConfigurationSchema, type CoreInput, type CoreOutput, type SourceConfiguration } from "@media-marshal/contracts";
+import { constants, watch, type FSWatcher } from "node:fs";
+import { DesktopError, sourceConfigurationSchema, type CoreInput, type CoreOutput, type LocalDirectoryHealth, type SourceConfiguration } from "@media-marshal/contracts";
 import { localFileEvidenceSchema, managedRootGrantSchema, type LocalFileEvidence, type ManagedRootGrant } from "@media-marshal/contracts/internal";
 import type { PrivateCoreInput, PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
 import type { CoreDatabase } from "../infrastructure/database.js";
@@ -294,6 +294,25 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!row || row.mode !== "local") return;
     const target = this.database.connection.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(row.target_root_id) as { grant_json: string };
     this.checkConfiguration({ sourceId, sourceVersion: row.source_version, mode: "local", downloadRootId: null, source: JSON.parse(row.source_grant_json), target: JSON.parse(target.grant_json) });
+  }
+  async localDirectoryHealth(id: string): Promise<{ input: LocalDirectoryHealth; target: LocalDirectoryHealth }> {
+    const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(id) as SourceRow | undefined;
+    const pending = { state: "UNVERIFIED" as const, reason: "WAITING_AUTHORIZATION" as const };
+    if (!row || row.mode !== "local") return { input: pending, target: pending };
+    const source = this.sources.get(id); let target: ReturnType<ManagedRoots["get"]> | undefined;
+    try { target = this.targets.get(row.target_root_id); } catch { /* 没有当前有效授权，不将其解释成原目录已消失。 */ }
+    const check = async (root: { grant: ManagedRootGrant; check(): Promise<number> } | undefined, writable = false): Promise<LocalDirectoryHealth> => {
+      if (!root) return pending;
+      try { await root.check(); await access(root.grant.path, constants.R_OK | constants.X_OK | (writable ? constants.W_OK : 0)); await root.check(); return { state: "AVAILABLE" }; }
+      catch (error) { const code = error && typeof error === "object" && "code" in error ? String(error.code) : "", issue = error && typeof error === "object" && "directoryIssue" in error ? error.directoryIssue as { reason?: string } | undefined : undefined; return { state: "UNAVAILABLE", reason: issue?.reason === "PERMISSION_DENIED" || ["EACCES", "EPERM", "EROFS"].includes(code) ? "PERMISSION_DENIED" : "ORIGINAL_DIRECTORY_UNAVAILABLE" }; }
+    };
+    const [inputHealth, targetHealth] = await Promise.all([check(source), check(target, true)]);
+    let currentTarget: typeof target; try { currentTarget = this.targets.get(row.target_root_id); } catch { /* 原授权仍未恢复。 */ }
+    const updated = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(id) as SourceRow | undefined;
+    if (this.closed || !updated || updated.version !== row.version || updated.target_root_id !== row.target_root_id || this.sources.get(id) !== source || currentTarget !== target) {
+      const changed = { state: "UNVERIFIED" as const, reason: "RECHECK_REQUIRED" as const }; return { input: changed, target: changed };
+    }
+    return { input: inputHealth, target: targetHealth };
   }
   syncSourceWatcher(id: string) {
     const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(id) as SourceRow | undefined, source = this.sources.get(id);

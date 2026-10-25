@@ -127,6 +127,18 @@
 .source-rule-fields textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .source-rule-fields .notice { flex-wrap: wrap; line-height: 1.6; }
 .source-rule-card { min-width: 0; padding: 20px; }
+.local-source-health { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; }
+.local-source-health-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.local-source-health-heading h4 { font-size: 13px; margin: 0; }
+.local-source-health dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.local-directory-health { min-width: 0; padding: 12px; border-radius: 6px; background: var(--background); }
+.local-directory-health dt { color: var(--muted-foreground); font-size: 12px; margin-bottom: 6px; }
+.local-directory-health dd { margin: 0; font-size: 12px; line-height: 1.7; }
+.local-directory-health dd strong { font-weight: 550; }
+.local-directory-health dd p { margin-top: 6px; color: var(--muted-foreground); }
+.local-directory-health.is-unavailable { background: #fff4e7; }
+.local-directory-health.is-unavailable dd strong { color: #95610e; }
+@media (max-width: 1020px) { .local-source-health dl { grid-template-columns: minmax(0, 1fr); } }
 .source-archive { margin-top: 24px; }
 .source-archive > summary { cursor: pointer; font-weight: 600; }
 .source-archive .source-rule-card { border-top: 1px solid var(--border); }

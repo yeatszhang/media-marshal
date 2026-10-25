@@ -21,6 +21,7 @@ import { fileRelocationMigrationSql } from "./file-relocation-migration.js";
 import { correctionMigrationSql } from "./correction-migration.js";
 import { correctionBatchMigrationSql } from "./correction-batch-migration.js";
 import { correctionPreparationMigrationSql } from "./correction-preparation-migration.js";
+import { sourceHealthMigrationSql } from "./source-health-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
@@ -82,6 +83,7 @@ export const migrations: readonly Migration[] = [
   { version: 22, sql: correctionMigrationSql },
   { version: 23, sql: correctionPreparationMigrationSql },
   { version: 24, sql: correctionBatchMigrationSql },
+  { version: 25, sql: sourceHealthMigrationSql },
 ];
 
 export class CoreDatabase {

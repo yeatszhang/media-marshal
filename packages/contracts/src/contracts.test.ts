@@ -21,6 +21,11 @@ const request = (action = "runtime.get", payload: unknown = {}) => ({
   payload,
 });
 describe("受限进程契约", () => {
+  it("目录健康只接受有界且唯一的来源版本，不接受任意目录、授权或自动开关", () => {
+    const item = { id: randomUUID(), expectedVersion: 1, expectedLifecycleRevision: 0 }, input = { items: [item] };
+    expect(parseCoreRequest(request("source-rules.local-health", input))).toMatchObject({ payload: { items: [item], force: false } });
+    for (const payload of [{ items: [] }, { items: [item, item] }, { items: Array.from({ length: 26 }, () => ({ ...item, id: randomUUID() })) }, { ...input, path: "/任意目录" }, { ...input, grant: {} }, { ...input, automatic: true }, { items: [{ ...item, expectedVersion: 0 }] }, { items: [{ ...item, sourcePath: "/任意目录" }] }]) expect(() => parseCoreRequest(request("source-rules.local-health", payload))).toThrow();
+  });
   it("修正只接受任务与已授权目标身份，完整文件清单确认不可省略，不接受路径或证据注入", () => {
     const taskId = randomUUID(), requestKey = randomUUID(), previewId = randomUUID(), input = { taskId, requestKey, selection: { tmdbId: 9, mediaType: "MOVIE" } };
     expect(parseCoreRequest(request("corrections.preview", input))).toMatchObject({ payload: { includeAccessories: true, selection: { season: null, episode: null, episodeEnd: null } } });

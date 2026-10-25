@@ -1,5 +1,5 @@
 import { inject, injectable, StatefulService } from "@yeatz/app-framework/ioc";
-import { sourceConfigurationSchema, type SourceConfiguration, type SourceRule, type SourceRulePreview, type SourceExecutionPreview, type DesktopApi, type CloudAccount, type ManagedDownloadRoot, type RemoteEntry, type CloudSubscription, type SourceLegacyReference } from "@media-marshal/contracts";
+import { sourceConfigurationSchema, type CoreInput, type LocalSourceHealth, type SourceConfiguration, type SourceRule, type SourceRulePreview, type SourceExecutionPreview, type DesktopApi, type CloudAccount, type ManagedDownloadRoot, type RemoteEntry, type CloudSubscription, type SourceLegacyReference } from "@media-marshal/contracts";
 import { DesktopClient } from "./desktop-client";
 
 export interface SourceEditor {
@@ -18,6 +18,7 @@ export interface SourceViewState {
   picker: boolean; trail: RemoteEntry[]; entries: RemoteEntry[]; cursor: string | null; total: number | null; complete: boolean; browsing: boolean; browserError: string | null;
   organizePaused: boolean;
   executionPreview: SourceExecutionPreview | null;
+  localHealth: Record<string, LocalSourceHealth>; healthBusy: string[]; healthError: string | null;
 }
 export const sourceDraftKeys = ["editor", "dirty", "picker", "trail", "entries", "cursor", "total", "complete", "browsing", "browserError"] as const;
 export type SourceDraftState = Pick<SourceViewState, (typeof sourceDraftKeys)[number]>;
@@ -38,14 +39,14 @@ function fromSource(row: SourceRule): SourceEditor {
 /** 服务只保存核心 DTO 及操作反馈；表单和远端选择临时状态由路由上层 React 绑定提供。 */
 @injectable()
 export class SourceRulesViewModel extends StatefulService<SourceRemoteState, SourceComputed> {
-  protected initState: SourceRemoteState = { items: [], archived: [], accounts: [], roots: [], subscriptions: [], legacy: [], legacyNotice: null, loading: false, error: null, notice: null, pending: null, busy: [], preview: null, organizePaused: false, executionPreview: null };
+  protected initState: SourceRemoteState = { items: [], archived: [], accounts: [], roots: [], subscriptions: [], legacy: [], legacyNotice: null, loading: false, error: null, notice: null, pending: null, busy: [], preview: null, organizePaused: false, executionPreview: null, localHealth: {}, healthBusy: [], healthError: null };
   protected computed = { sourceCount: (state: SourceRemoteState) => state.items.length, archivedCount: (state: SourceRemoteState) => state.archived.length, hasPending: (state: SourceRemoteState) => !!state.pending };
   private draftBinding: DraftBinding | null = null;
   get view(): SourceViewState & SourceComputed { return sourceView(this.state, this.draftBinding?.read() ?? emptyDraft); }
   bindDraft(binding: DraftBinding) {
     if (this.draftBinding && this.draftBinding !== binding) throw new Error("来源草稿只能绑定一个 React 根");
     this.draftBinding = binding;
-    return () => { if (this.draftBinding === binding) { this.draftBinding = null; ++this.request; ++this.navigation; ++this.editorEpoch; ++this.epoch; this.flight = undefined; clearTimeout(this.timer); } };
+    return () => { if (this.draftBinding === binding) { this.draftBinding = null; ++this.request; ++this.navigation; ++this.editorEpoch; ++this.epoch; this.flight = undefined; clearTimeout(this.timer); this.releaseHealth(); } };
   }
   private updateView(patch: Partial<SourceViewState>) {
     const draft: Partial<SourceDraftState> = {}, remote: Partial<SourceRemoteState> = {};
@@ -59,6 +60,8 @@ export class SourceRulesViewModel extends StatefulService<SourceRemoteState, Sou
   private stopped = false; private watchers = 0; private epoch = 0; private request = 0; private navigation = 0; private editorEpoch = 0;
   private timer?: ReturnType<typeof setTimeout>; private flight?: Promise<void>; private editorRow: SourceRule | null = null;
   private queryError: string | null = null;
+  private healthOwner = 0; private healthRequest = 0; private healthTimer?: ReturnType<typeof setTimeout>;
+  private healthTargets: CoreInput<"source-rules.local-health">["items"] = [];
   private saveIntent?: { signature: string; key: string }; private previewIntent?: { signature: string; key: string };
   private executionIntent?: { signature: string; key: string };
   private lifecycleIntents = new Map<string, string>();
@@ -72,6 +75,28 @@ export class SourceRulesViewModel extends StatefulService<SourceRemoteState, Sou
   }
   refresh(): Promise<void> { if (this.stopped || !this.draftBinding) return Promise.resolve(); if (this.flight) return this.flight; const flight = this.read().finally(() => { if (this.flight === flight) this.flight = undefined; }); return this.flight = flight; }
   reload() { this.updateView({ error: null }); return this.refresh(); }
+  private releaseHealth() { ++this.healthOwner; ++this.healthRequest; clearTimeout(this.healthTimer); this.healthTargets = []; if (!this.stopped) this.updateView({ healthBusy: [], healthError: null }); }
+  watchLocalHealth(items: CoreInput<"source-rules.local-health">["items"]) {
+    this.releaseHealth(); if (this.stopped || !this.draftBinding || !items.length) return () => {};
+    this.healthTargets = items; const owner = this.healthOwner;
+    const tick = async () => { await this.checkVisibleLocalHealth(); if (!this.stopped && owner === this.healthOwner && this.draftBinding) this.healthTimer = setTimeout(() => { void tick(); }, 10000); }; void tick();
+    return () => { if (owner === this.healthOwner) this.releaseHealth(); };
+  }
+  checkVisibleLocalHealth(force = false) { return this.checkLocalHealth(this.healthTargets, force); }
+  checkLocalSourceHealth(row: SourceRule) { return this.checkLocalHealth([{ id: row.id, expectedVersion: row.version, expectedLifecycleRevision: row.lifecycleRevision ?? 0 }], true); }
+  private async checkLocalHealth(items: CoreInput<"source-rules.local-health">["items"], force: boolean) {
+    if (this.stopped || !this.draftBinding || !items.length || this.view.healthBusy.length) return;
+    const owner = this.healthOwner, request = ++this.healthRequest;
+    this.updateView({ healthBusy: items.map((item) => item.id) });
+    try {
+      const result = await this.client.checkLocalSourceHealth({ items, force });
+      if (this.stopped || !this.draftBinding || owner !== this.healthOwner || request !== this.healthRequest) return;
+      const localHealth = { ...this.view.localHealth };
+      for (const item of result.items) { const row = this.view.items.find((row) => row.id === item.sourceId); if (row?.version === item.version && (row.lifecycleRevision ?? 0) === item.lifecycleRevision && row.configuration?.type === "local") localHealth[item.sourceId] = item; }
+      this.updateView({ localHealth, healthError: null });
+    } catch (error) { if (!this.stopped && owner === this.healthOwner && request === this.healthRequest) this.updateView({ healthError: errorText(error) }); }
+    finally { if (!this.stopped && owner === this.healthOwner && request === this.healthRequest) this.updateView({ healthBusy: [] }); }
+  }
   legacyNotice(message: string) { this.updateView({ legacyNotice: message }); }
   private async read() {
     const request = ++this.request; this.updateView({ loading: true });
@@ -274,5 +299,5 @@ export class SourceRulesViewModel extends StatefulService<SourceRemoteState, Sou
       if (reference?.sourceId) await this.openSource(reference.sourceId);
     } catch (error) { this.updateView({ legacyNotice: "旧入口暂时无法定位，请在来源列表核对配置。", error: errorText(error) }); }
   }
-  protected dispose() { this.draftBinding = null; this.stopped = true; ++this.epoch; ++this.request; ++this.navigation; ++this.editorEpoch; clearTimeout(this.timer); this.confirmations.clear(); this.controls.clear(); this.lifecycleIntents.clear(); }
+  protected dispose() { this.draftBinding = null; this.stopped = true; this.releaseHealth(); ++this.epoch; ++this.request; ++this.navigation; ++this.editorEpoch; clearTimeout(this.timer); this.confirmations.clear(); this.controls.clear(); this.lifecycleIntents.clear(); }
 }

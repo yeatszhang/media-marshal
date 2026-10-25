@@ -263,6 +263,7 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  checkLocalSourceHealth(input: CoreInput<"source-rules.local-health">): Promise<CoreOutput<"source-rules.local-health">>;
   onBeforeReload(listener: () => Promise<void>): () => void;
   getHostPreferences(): Promise<HostPreferences>;
   saveHostPreferences(input: HostPreferencesDraft): Promise<HostPreferences>;

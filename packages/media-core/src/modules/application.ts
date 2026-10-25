@@ -55,6 +55,7 @@ declare module "@yeatz/app-framework/command" {
     "media.corrections.retry": (input: CoreInput<"corrections.retry">) => CoreOutput<"corrections.retry">;
     "media.source-rules.resolve-legacy": (input: CoreInput<"source-rules.resolve-legacy">) => CoreOutput<"source-rules.resolve-legacy">;
     "media.source-rules.control": (input: CoreInput<"source-rules.control">) => CoreOutput<"source-rules.control">;
+    "media.source-rules.local-health": (input: CoreInput<"source-rules.local-health">) => Promise<CoreOutput<"source-rules.local-health">>;
     "media.source-rules.preview-execution": (input: CoreInput<"source-rules.preview-execution">) => CoreOutput<"source-rules.preview-execution">;
     "media.source-rules.get-execution-preview": (input: CoreInput<"source-rules.get-execution-preview">) => CoreOutput<"source-rules.get-execution-preview">;
     "media.source-rules.execute": (input: CoreInput<"source-rules.execute">) => CoreOutput<"source-rules.execute">;
@@ -232,6 +233,7 @@ export function createMediaApplication(
       add(registry.register("media.source-rules.legacy", (_, input) => sourceRules.legacy(input)));
       add(registry.register("media.source-rules.configure", (_, input) => sourceRules.configure(input)));
       add(registry.register("media.source-rules.list", (_, input) => sourceRules.list(input.includeDeleted)));
+      add(registry.register("media.source-rules.local-health", (_, input) => sourceRules.localHealth.check(input)));
       add(registry.register("media.source-rules.remove", (_, input) => sourceRules.lifecycle(input, "remove")));
       add(registry.register("media.source-rules.restore", (_, input) => sourceRules.lifecycle(input, "restore")));
       add(registry.register("media.source-rules.get", (_, input) => sourceRules.get(input.id)));

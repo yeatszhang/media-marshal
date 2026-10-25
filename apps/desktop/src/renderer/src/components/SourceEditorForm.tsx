@@ -67,6 +67,7 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
         <SourceStep number={1} title="选择本地输入目录" description="这里存放已经下载的文件；本地来源不需要登录网盘账号。">
           <div className="folder-field"><span>本地输入目录</span><div><Folder size={17} aria-hidden="true" /><span className="path" title={editor.sourcePath}>{editor.sourcePath || "尚未选择本地输入目录"}</span><Button variant="outline" size="sm" onClick={() => { void model.choose("source"); }}>选择本地输入目录</Button></div></div>
           <label>外部下载客户端<select aria-label="外部下载客户端" value={editor.client} onChange={(event) => model.change({ client: event.target.value as typeof editor.client })}>{Object.entries(sourceClients).filter(([key]) => key === "quark" || key === "custom" || (editor.draftRevision > 0 && key === editor.client)).map(([key, label]) => <option key={key} value={key}>{label}{key === "quark" || key === "custom" ? "" : "（历史标签）"}</option>)}</select><small className="source-field-help">仅描述文件来自哪个客户端，和网盘账号连接相互独立。</small></label>
+          {editor.client === "quark" && <p className="source-field-help">请先用夸克官方客户端把文件下载到所选输入目录。这里只读取本地文件，接入后在待处理核对作品并确认整理。</p>}
           {editor.client !== "quark" && editor.client !== "custom" && <p className="notice">此历史客户端行为未验证，按普通本地目录接入并保留原标签；不会转换为夸克账号，整理仍需人工确认。</p>}
         </SourceStep>
         <SourceStep number={2} title="选择整理目标" description="确认后把识别的影片复制到这里，输入目录中的文件继续保留。">{organization}</SourceStep>

@@ -43,7 +43,7 @@ export class ManagedRoot {
       const original = await this.handle.stat({ bigint: true }), current = await lstat(this.grant.path, { bigint: true }), volume = await statfs(this.grant.path, { bigint: true });
       if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== original.dev || current.ino !== original.ino || String(current.ino) !== this.grant.volume.rootInode || String(current.birthtimeNs) !== this.grant.volume.rootBirthtimeNs || String(current.dev) !== this.grant.volume.observedDevice || String(volume.type) !== this.grant.volume.fsTypeCode || await realpath(this.grant.path) !== this.grant.path) throw new Error();
       const free = volume.bavail * volume.bsize; return Number(free > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : free);
-    } catch { throw new CloudError("LOCAL_UNAVAILABLE"); }
+    } catch (error) { const denied = ["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException)?.code ?? ""); throw new CloudError("LOCAL_UNAVAILABLE", undefined, denied ? { reason: "PERMISSION_DENIED" } : undefined); }
   }
   segments(input: readonly string[]): string[] {
     if (!input.length || input.length > 128) throw new CloudError("INVALID_REQUEST");

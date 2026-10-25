@@ -4,7 +4,7 @@ import {
   _electron,
   type Page, type ElectronApplication,
 } from "@playwright/test";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, readdir, writeFile, rename } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, rmdir, stat, readdir, writeFile, rename, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { createServer as createHttpServer } from "node:http";
@@ -1101,4 +1101,34 @@ test("菜单与快捷键受控重载先清理 React，保留同一后台核心�
   await expect(reopened.getByRole("article", { name: "来源 重载保留核心草稿", exact: true })).toBeVisible(); await expect(reopened.getByLabel("来源名称", { exact: true })).toHaveCount(0);
   expect((await reopened.evaluate(() => window.desktopApi.listSourceRules()))[0]).toMatchObject({ id: saved.id, version: 0, draftRevision: 1, configuration: null });
   expect(await reopened.evaluate(() => window.desktopApi.listJobs())).toEqual([]); expect(await application.evaluate(({ app }) => app.getAppMetrics().find((row) => row.name === "Media Marshal Core")!.pid)).toBe(corePid);
+});
+
+test("本地来源健康区分原目录替换和权限，暂停中只检查，重启保留历史诊断且不认领替代目录", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(90000);
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), source = join(canonical, "夸克本地输入 中文"), target = join(canonical, "独立媒体目标 中文"), name = "夸克本地目录健康检查";
+  await mkdir(source); await mkdir(target); const note = join(source, "保留说明.txt"); await writeFile(note, "健康检查保留本地文件，不创建识别或整理作业"); const inode = (await stat(note)).ino;
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [source, target]);
+  await window.getByRole("link", { name: "来源", exact: true }).click(); await window.getByRole("button", { name: "添加来源", exact: true }).click(); await window.getByLabel("来源类型", { exact: true }).selectOption("local"); await window.getByLabel("外部下载客户端", { exact: true }).selectOption("quark"); await window.getByLabel("来源名称", { exact: true }).fill(name);
+  await expect(window.getByRole("button", { name: "选择远端范围", exact: true })).toHaveCount(0); await window.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click(); await window.getByRole("button", { name: "预览配置", exact: true }).click(); await window.getByRole("button", { name: "确认配置生效", exact: true }).click(); await window.getByRole("button", { name: "取消编辑", exact: true }).click();
+  const card = window.getByRole("article", { name: `来源 ${name}`, exact: true }); await card.getByRole("button", { name: "暂停来源", exact: true }).click(); await expect(card).toContainText("来源已暂停");
+  const health = card.getByRole("region", { name: `本地目录健康 ${name}`, exact: true }), input = health.getByText("输入目录", { exact: true }).locator(".."), destination = health.getByText("整理目标", { exact: true }).locator(".."), check = health.getByRole("button", { name: "重新检查目录", exact: true });
+  await expect(input).toContainText("原目录已核验"); await expect(destination).toContainText("原目录已核验"); await expect(card.getByRole("progressbar")).toHaveCount(0); await expect(card).not.toContainText("网盘账号"); await expect(card).not.toContainText("登录");
+  const row = (await window.evaluate(() => window.desktopApi.listSourceRules()))[0]!; expect(row).toMatchObject({ version: 1, draftRevision: 1, paused: true, configuration: { type: "local", client: "quark", organization: { automatic: false } } });
+  await rename(source, source + "-原目录"); await mkdir(source); await expect(check).toBeEnabled(); await check.click(); await expect(input).toContainText("原目录不可用"); await expect(destination).toContainText("原目录已核验"); expect(await readdir(source)).toEqual([]);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await expect.poll(() => window.evaluate(() => innerWidth)).toBe(920); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await card.screenshot({ path: "test-results/desktop/local-source-health-replaced-input.png" });
+  await rmdir(source); await rename(source + "-原目录", source); await rename(target, target + "-原目录"); await mkdir(target); await expect(check).toBeEnabled(); await check.click(); await expect(input).toContainText("原目录已核验"); await expect(destination).toContainText("原目录不可用"); expect(await readdir(target)).toEqual([]);
+  await rmdir(target); await rename(target + "-原目录", target);
+  try { await chmod(target, 0o500); await expect(check).toBeEnabled(); await check.click(); await expect(destination).toContainText("目录访问权限不足"); } finally { await chmod(target, 0o700); }
+  await expect(check).toBeEnabled(); await check.click(); await expect(input).toContainText("原目录已核验"); await expect(destination).toContainText("原目录已核验");
+  await rename(source, source + "-原目录"); await mkdir(source); await expect(check).toBeEnabled(); await check.click(); await expect(input).toContainText("原目录不可用");
+  await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(check).toBeEnabled(); await check.click(); await expect(input).toContainText("尚未核验");
+  await health.locator("details > summary").click(); await expect(health).toContainText("历史结果仅供排查，当前目录仍需重新核验"); await expect(health.getByText("上次输入目录", { exact: true }).locator("..")).toContainText("原目录不可用");
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(input).toContainText("尚未核验"); await expect(health.locator("details > summary")).toBeVisible(); await health.locator("details > summary").click(); await card.screenshot({ path: "test-results/desktop/local-source-health-history-after-restart.png" });
+  await rmdir(source); await rename(source + "-原目录", source); await application.evaluate(({ powerMonitor }) => powerMonitor.emit("resume"));
+  await expect.poll(async () => (await window.evaluate((row) => window.desktopApi.checkLocalSourceHealth({ items: [{ id: row.id, expectedVersion: row.version, expectedLifecycleRevision: row.lifecycleRevision ?? 0 }], force: true }), row)).items[0]?.input.state, { timeout: 20000, intervals: [500, 1000] }).toBe("AVAILABLE");
+  await expect(check).toBeEnabled(); await check.click(); await expect(input).toContainText("原目录已核验"); await expect(destination).toContainText("原目录已核验"); await expect(health.locator("details > summary")).toHaveCount(0); await card.screenshot({ path: "test-results/desktop/local-source-health-restored.png" });
+  expect((await window.evaluate(() => window.desktopApi.listSourceRules()))[0]).toMatchObject({ id: row.id, version: 1, draftRevision: 1, paused: true, configuration: { client: "quark", organization: { automatic: false } } }); expect(await window.evaluate(() => window.desktopApi.listCloudAccounts())).toEqual([]);
+  expect((await window.evaluate(() => window.desktopApi.listIngestionCandidates({}))).total).toBe(0); expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(0); expect((await window.evaluate(() => window.desktopApi.listDownloads({}))).total).toBe(0); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
+  expect(await readFile(note, "utf8")).toBe("健康检查保留本地文件，不创建识别或整理作业"); expect((await stat(note)).ino).toBe(inode); expect((await readdir(target)).filter((entry) => entry !== ".media-marshal")).toEqual([]);
 });

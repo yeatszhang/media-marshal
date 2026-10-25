@@ -26,6 +26,7 @@ function memoryApi() {
   const root = { id: crypto.randomUUID(), path: "/中文 下载", state: "AVAILABLE" as const, availableBytes: 10 * 1024 ** 3 }, stamp = new Date().toISOString();
   const copy = <T,>(value: T): T => structuredClone(value);
   const api = {
+    checkLocalSourceHealth: vi.fn<DesktopApi["checkLocalSourceHealth"]>(async (input) => ({ items: input.items.map((item) => ({ sourceId: item.id, version: item.expectedVersion, lifecycleRevision: item.expectedLifecycleRevision, checkedAt: stamp, input: { state: "AVAILABLE" }, target: { state: "AVAILABLE" } })) })),
     listSourceRules: vi.fn(async () => copy([...rows.values()])), getSourceRule: vi.fn(async (id: string) => copy(rows.get(id) ?? null)),
     listCloudAccounts: vi.fn(async () => [account]), listDownloadRoots: vi.fn(async () => [root]), listCloudSubscriptions: vi.fn(async () => ({ items: [], total: 0 })), listSourceLegacy: vi.fn(async () => ({ items: [], total: 0 })),
     resolveSourceLegacy: vi.fn<DesktopApi["resolveSourceLegacy"]>(async () => null), getOrganizePause: vi.fn(async () => ({ paused: false })), setOrganizePause: vi.fn(async (input: { paused: boolean }) => ({ paused: input.paused })),
@@ -95,8 +96,43 @@ async function fill(name: string, value: string) {
 async function checkbox(name: string) { await act(async () => field(name).click()); }
 async function selectRemote(name: string) { await click("选择远端范围"); await act(async () => document.querySelector<HTMLButtonElement>(`button[aria-label="选择范围 ${name}"]`)!.click()); }
 async function cloudDraft(f: Awaited<ReturnType<typeof mount>>) { await click("添加来源"); await fill("来源名称", "我的下载来源"); await selectRemote(f.directory.name); await click("选择下载目录"); }
+function savedLocal(f: ReturnType<typeof memoryApi>, name: string, client: "quark" | "custom" | "baidu" = "custom") {
+  const id = crypto.randomUUID(), stamp = new Date().toISOString(), configuration = sourceConfigurationSchema.parse({ type: "local", name, client, sourcePath: `/本地输入/${id}`, organization: { targetPath: `/媒体目标/${id}` } });
+  const row: SourceRule = { id, type: "local", version: 1, draftRevision: 1, draft: configuration, configuration, paused: true, reviewRequired: false, localSourceId: id, subscriptionId: null, ingestionSourceId: null, createdAt: stamp, updatedAt: stamp }; f.rows.set(id, row); return row;
+}
 
 describe("统一来源页、连接返回和确认边界", () => {
+  it("本地目录健康分别定位输入与目标失败，显式重查不保存配置、浏览网盘或发起下载", async () => {
+    const f = await mount({}, "/sources", (fixture) => { savedLocal(fixture, "夸克本地健康", "quark"); });
+    const card = f.element.querySelector('article[aria-label="来源 夸克本地健康"]')!; expect(card.textContent).toContain("来源已暂停"); expect(card.textContent).toContain("请先用夸克官方客户端下载到输入目录"); expect(card.querySelectorAll("dd strong")).toHaveLength(2);
+    vi.mocked(f.api.checkLocalSourceHealth).mockImplementationOnce(async (input) => ({ items: input.items.map((item) => ({ sourceId: item.id, version: item.expectedVersion, lifecycleRevision: item.expectedLifecycleRevision, checkedAt: new Date().toISOString(), input: { state: "UNAVAILABLE", reason: "ORIGINAL_DIRECTORY_UNAVAILABLE" }, target: { state: "UNAVAILABLE", reason: "PERMISSION_DENIED" } })) }));
+    await click("重新检查目录"); expect(card.textContent).toContain("不会接管同名替代目录"); expect(card.textContent).toContain("目录访问权限不足"); expect(f.api.checkLocalSourceHealth).toHaveBeenLastCalledWith(expect.objectContaining({ force: true }));
+    expect(card.querySelector("progress")).toBeNull(); expect(card.textContent).not.toContain("登录"); expect(f.api.configureSourceRule).not.toHaveBeenCalled(); expect(f.api.applySourceRule).not.toHaveBeenCalled(); expect(f.api.listRemote).not.toHaveBeenCalled(); expect(f.api.runSourceOnce).not.toHaveBeenCalled();
+  });
+  it("历史客户端保持本地身份和原标签，编辑预览仍人工确认，不关联夸克账号", async () => {
+    let row!: SourceRule; const f = await mount({}, "/sources", (fixture) => { row = savedLocal(fixture, "历史百度本地", "baidu"); });
+    expect(f.element.textContent).toContain("此为保留的历史客户端标签，行为未验证"); await act(async () => f.model.openSource(row.id)); expect(field("外部下载客户端").value).toBe("baidu"); expect(f.element.textContent).toContain("不会转换为夸克账号");
+    await fill("来源名称", "保留原标签的本地来源"); await click("预览配置"); expect(f.api.configureSourceRule).toHaveBeenLastCalledWith(expect.objectContaining({ id: row.id, expectedVersion: 1, configuration: expect.objectContaining({ type: "local", client: "baidu", organization: expect.objectContaining({ automatic: false }) }) }));
+    expect(f.api.applySourceRule).not.toHaveBeenCalled(); expect(f.api.listRemote).not.toHaveBeenCalled(); expect(f.api.loginCloudAccount).not.toHaveBeenCalled(); expect(f.api.authorizeCloudAccount).not.toHaveBeenCalled(); expect(f.api.controlSourceRule).not.toHaveBeenCalled();
+  });
+  it("健康检查离页释放轮询并忽略迟到响应，重挂载只读当前核心状态", async () => {
+    vi.useFakeTimers(); const f = await mount({}, "/sources", (fixture) => { savedLocal(fixture, "只读健康检查"); }); const before = f.model.state.localHealth;
+    let release!: (value: Awaited<ReturnType<DesktopApi["checkLocalSourceHealth"]>>) => void;
+    vi.mocked(f.api.checkLocalSourceHealth).mockImplementationOnce(() => new Promise((done) => { release = done; })); await click("重新检查目录"); await f.unmount();
+    const requests = vi.mocked(f.api.checkLocalSourceHealth).mock.calls.length, reads = vi.mocked(f.api.listSourceRules).mock.calls.length, row = [...f.rows.values()][0]!;
+    await act(async () => release({ items: [{ sourceId: row.id, version: 1, lifecycleRevision: 0, checkedAt: new Date().toISOString(), input: { state: "UNAVAILABLE", reason: "ORIGINAL_DIRECTORY_UNAVAILABLE" }, target: { state: "AVAILABLE" } }] }));
+    await vi.advanceTimersByTimeAsync(30000); expect(f.model.state.localHealth).toEqual(before); expect(f.api.checkLocalSourceHealth).toHaveBeenCalledTimes(requests); expect(f.api.listSourceRules).toHaveBeenCalledTimes(reads); expect(f.app.state).toBe("running");
+    await f.remount(); expect(f.api.checkLocalSourceHealth.mock.calls.length).toBeGreaterThan(requests); expect(f.element.textContent).toContain("原目录已核验"); expect(f.api.configureSourceRule).not.toHaveBeenCalled(); expect(f.api.applySourceRule).not.toHaveBeenCalled();
+  });
+  it("健康批次只包含当前页最多 25 个本地来源，翻页释放上一页检查", async () => {
+    const f = await mount({}, "/sources", (fixture) => { for (let index = 0; index < 26; index++) savedLocal(fixture, `本地来源 ${index}`); });
+    expect(f.api.checkLocalSourceHealth.mock.calls.at(-1)![0].items).toHaveLength(25);
+    let release!: (value: Awaited<ReturnType<DesktopApi["checkLocalSourceHealth"]>>) => void; vi.mocked(f.api.checkLocalSourceHealth).mockImplementationOnce(() => new Promise((done) => { release = done; })); await click("重新检查目录");
+    const second = f.element.querySelectorAll("article")[1]!; expect(second.textContent).toContain("正在检查本页其他来源"); expect(second.textContent).not.toContain("正在核验当前来源");
+    await click("下一页来源"); expect(f.api.checkLocalSourceHealth.mock.calls.at(-1)![0].items).toHaveLength(1); expect(f.element.querySelectorAll("article")).toHaveLength(1); const first = [...f.rows.values()][0]!;
+    await act(async () => release({ items: [{ sourceId: first.id, version: 1, lifecycleRevision: 0, checkedAt: new Date().toISOString(), input: { state: "UNAVAILABLE", reason: "ORIGINAL_DIRECTORY_UNAVAILABLE" }, target: { state: "AVAILABLE" } }] }));
+    expect(f.model.state.localHealth[first.id]!.input.state).toBe("AVAILABLE"); expect(f.api.configureSourceRule).not.toHaveBeenCalled();
+  });
   it("编辑仅保留在 React，框架快照没有表单字段，computed 选择订阅忽略草稿和错误反馈更新", async () => {
     const f = await mount(); await cloudDraft(f); const renders = f.projectionRenders();
     await fill("来源名称", "尚未提交的 React 草稿"); await fill("扩展名过滤", "mp4,mkv");

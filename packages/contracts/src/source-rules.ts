@@ -35,6 +35,18 @@ export const sourceRuleSchema = z.strictObject({
   lastRun: z.lazy(() => sourceRunSchema).nullable().optional(),
 });
 export type SourceRule = z.output<typeof sourceRuleSchema>;
+export const localDirectoryHealthSchema = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.literal("AVAILABLE") }),
+  z.strictObject({ state: z.literal("UNVERIFIED"), reason: z.enum(["WAITING_AUTHORIZATION", "RECHECK_REQUIRED", "CONFIGURATION_REVIEW_REQUIRED"]) }),
+  z.strictObject({ state: z.literal("UNAVAILABLE"), reason: z.enum(["ORIGINAL_DIRECTORY_UNAVAILABLE", "PERMISSION_DENIED"]) }),
+]);
+export type LocalDirectoryHealth = z.output<typeof localDirectoryHealthSchema>;
+export const localSourceHealthSchema = z.strictObject({
+  sourceId: id, version: z.number().int().positive(), lifecycleRevision: version,
+  checkedAt: z.iso.datetime(), input: localDirectoryHealthSchema, target: localDirectoryHealthSchema,
+  previous: z.strictObject({ checkedAt: z.iso.datetime(), input: localDirectoryHealthSchema, target: localDirectoryHealthSchema }).optional(),
+});
+export type LocalSourceHealth = z.output<typeof localSourceHealthSchema>;
 export const sourceRuleDraftSchema = z.strictObject({
   id, expectedVersion: version, expectedDraftRevision: version, requestKey: id,
   expectedLifecycleRevision: version.optional(),
@@ -71,6 +83,10 @@ export const sourceExecutionPreviewSchema = z.strictObject({
 });
 export type SourceExecutionPreview = z.output<typeof sourceExecutionPreviewSchema>;
 export const sourceRuleActions = {
+  "source-rules.local-health": {
+    input: z.strictObject({ items: z.array(z.strictObject({ id, expectedVersion: z.number().int().positive(), expectedLifecycleRevision: version })).min(1).max(25).refine((items) => new Set(items.map((value) => value.id)).size === items.length, "来源不能重复"), force: z.boolean().default(false) }),
+    output: z.strictObject({ items: z.array(localSourceHealthSchema).max(25) }),
+  },
   "source-rules.remove": { input: lifecycleCommand, output: sourceRuleSchema },
   "source-rules.restore": { input: lifecycleCommand, output: sourceRuleSchema },
   "source-rules.preview-execution": { input: sourceCommand.extend({ forceRedownload: z.boolean().default(false) }), output: sourceExecutionPreviewSchema },
