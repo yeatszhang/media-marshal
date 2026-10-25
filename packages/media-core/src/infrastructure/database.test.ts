@@ -20,6 +20,26 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v15 资产历史升级后仅保留一个当前版本，已完成 COPY 摘要作为原内容基线", async () => {
+    const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 15)), source = randomUUID(), old = randomUUID(), latest = randomUUID(), task = randomUUID(), target = randomUUID(), stamp = new Date().toISOString(), sha = "a".repeat(64);
+    const sql = first.connection;
+    sql.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'历史输入','custom','/输入','/媒体库','MOVIE','COPY',?)").run(source, stamp);
+    sql.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'DONE',?,?)").run(task, source, "/输入/保留.mp4", stamp, stamp);
+    sql.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,snapshot_json,state,task_id,created_at,updated_at) VALUES(?,?,'[\"保留.mp4\"]','旧属性','{}','PROCESSED',?,?,?)").run(old, source, task, stamp, stamp);
+    sql.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,snapshot_json,state,created_at,updated_at) VALUES(?,?,'[\"保留.mp4\"]','新属性','{}','OBSERVING',?,?)").run(latest, source, stamp, stamp);
+    sql.prepare("INSERT INTO media_target_root(id,grant_json) VALUES(?,'{}')").run(target);
+    sql.prepare("INSERT INTO ingestion_operation(id,candidate_id,task_id,request_key,target_root_id,target_slot,plan_json,attempt_id,phase,evidence_json,created_at,updated_at) VALUES(?,?,?,?,?,'slot','{}',?,'RECORDED',?,?,?)").run(randomUUID(), old, task, randomUUID(), target, randomUUID(), JSON.stringify({ sha256: sha }), stamp, stamp); first.close();
+    const upgraded = await CoreDatabase.open(path);
+    try {
+      expect(upgraded.schemaVersion).toBe(16);
+      expect(upgraded.connection.prepare("SELECT id,attribute_key,is_current,expected_sha256 FROM ingestion_candidate ORDER BY rowid").all()).toEqual([{ id: old, attribute_key: "旧属性", is_current: 0, expected_sha256: sha }, { id: latest, attribute_key: "新属性", is_current: 1, expected_sha256: null }]);
+      expect(upgraded.connection.prepare("SELECT status FROM media_task WHERE id=?").get(task)).toEqual({ status: "DONE" }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM ingestion_content_review").get()).toEqual({ n: 0 });
+      expect(() => upgraded.connection.prepare("UPDATE ingestion_candidate SET is_current=1 WHERE id=?").run(old)).toThrow();
+    } finally { upgraded.close(); }
+    await expect(CoreDatabase.open(path, migrations.slice(0, 15))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+    const backup = new Database(`${path}.before-v16.bak`, { readonly: true });
+    try { expect(backup.pragma("user_version", { simple: true })).toBe(15); expect(backup.prepare("SELECT expected_sha256 FROM ingestion_candidate WHERE id=?").get(old)).toEqual({ expected_sha256: null }); } finally { backup.close(); }
+  });
   it("v13 来源快照原文升级后保持，默认忽略兼容；旧核心拒绝新版本", async () => {
     const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 13)), id = randomUUID(), stamp = new Date().toISOString();
     const configuration = JSON.stringify({ type: "local", name: "既有来源", client: "baidu", sourcePath: "/既有输入", organization: { targetPath: "/既有目标" } });

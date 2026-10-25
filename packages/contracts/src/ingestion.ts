@@ -10,7 +10,14 @@ export const recognitionSchema = z.strictObject({ taskId: id, candidateId: id, s
 export type Recognition = z.infer<typeof recognitionSchema>;
 export const organizePreviewSchema = z.strictObject({ id, taskId: id, title: z.string().max(500), mediaType: z.enum(["MOVIE", "TV_SHOW"]), targetPath: z.string().max(16384), sourcePath: z.string().max(16384), size: z.number().int().positive(), season: z.number().int().nullable(), episode: z.number().int().nullable(), episodeEnd: z.number().int().nullable(), expiresAt: z.number().int(), operationId: id.nullable(), accessories: z.array(z.strictObject({ sourcePath: z.string().max(16384), targetPath: z.string().max(16384), size: z.number().int().positive() })).max(100).optional() });
 export type OrganizePreview = z.infer<typeof organizePreviewSchema>;
+export const contentReviewSchema = z.strictObject({ id, sourceId: id, sourceVersion: z.number().int().positive(), state: z.enum(["PENDING", "RUNNING", "WAITING_SOURCE", "COMPLETED", "PARTIAL_FAILED", "FAILED", "CANCELLED"]), total: z.number().int().nonnegative(), checked: z.number().int().nonnegative(), changed: z.number().int().nonnegative(), baselined: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), currentPath: z.string().max(16384).nullable(), failure: z.string().max(500).nullable(), createdAt: z.string(), updatedAt: z.string() });
+export type ContentReview = z.infer<typeof contentReviewSchema>;
+const reviewFile = z.strictObject({ relativePath: z.string().max(16384), state: z.enum(["PENDING", "UNCHANGED", "BASELINED", "CHANGED", "FAILED"]), candidateId: id.nullable(), failure: z.string().max(500).nullable() });
 export const ingestionActions = {
+  "ingestion.review-content": { input: z.strictObject({ sourceId: id, requestKey: id }), output: contentReviewSchema },
+  "ingestion.content-reviews": { input: z.strictObject({ page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(contentReviewSchema).max(25), total: z.number().int().nonnegative() }) },
+  "ingestion.content-review-files": { input: z.strictObject({ id, page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(reviewFile).max(100), total: z.number().int().nonnegative() }) },
+  "ingestion.cancel-content-review": { input: z.strictObject({ id }), output: contentReviewSchema },
   "ingestion.pause-status": { input: empty, output: z.strictObject({ paused: z.boolean() }) },
   "ingestion.set-paused": { input: z.strictObject({ paused: z.boolean(), requestKey: id }), output: z.strictObject({ paused: z.boolean() }) },
   "ingestion.candidates": { input: z.strictObject({ sourceId: id.optional(), page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(candidateSchema).max(100), total: z.number().int().nonnegative() }) },

@@ -64,3 +64,32 @@ CREATE TABLE ingestion_accessory (
 );
 CREATE INDEX ingestion_accessory_parent ON ingestion_accessory(operation_id,phase);
 `;
+
+/** 属性键与资产版本分离：内容复核发现静默替换后，不复用旧版本的领取记录。 */
+export const ingestionContentReviewMigrationSql = `
+ALTER TABLE ingestion_candidate ADD COLUMN attribute_key TEXT;
+ALTER TABLE ingestion_candidate ADD COLUMN is_current INTEGER NOT NULL DEFAULT 0 CHECK(is_current IN (0,1));
+UPDATE ingestion_candidate SET attribute_key=version_key;
+UPDATE ingestion_candidate SET expected_sha256=(SELECT json_extract(o.evidence_json,'$.sha256') FROM ingestion_operation o WHERE o.candidate_id=ingestion_candidate.id AND o.phase='RECORDED' AND json_valid(o.evidence_json))
+ WHERE expected_sha256 IS NULL AND managed_item_id IS NULL;
+UPDATE ingestion_candidate SET is_current=1 WHERE managed_item_id IS NULL AND rowid IN (
+ SELECT max(rowid) FROM ingestion_candidate WHERE managed_item_id IS NULL GROUP BY source_id,relative_json
+);
+CREATE UNIQUE INDEX ingestion_candidate_current ON ingestion_candidate(source_id,relative_json) WHERE is_current=1 AND managed_item_id IS NULL;
+CREATE TABLE ingestion_content_review (
+ id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES desktop_source(id), source_version INTEGER NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('PENDING','RUNNING','WAITING_SOURCE','COMPLETED','PARTIAL_FAILED','FAILED','CANCELLED')),
+ enumerated INTEGER NOT NULL DEFAULT 0 CHECK(enumerated IN (0,1)), failure TEXT,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX ingestion_content_review_active ON ingestion_content_review(source_id) WHERE state IN ('PENDING','RUNNING','WAITING_SOURCE');
+CREATE TABLE ingestion_content_review_request (
+ request_key TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES desktop_source(id), review_id TEXT NOT NULL REFERENCES ingestion_content_review(id)
+);
+CREATE TABLE ingestion_content_review_file (
+ review_id TEXT NOT NULL REFERENCES ingestion_content_review(id), relative_json TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('PENDING','UNCHANGED','BASELINED','CHANGED','FAILED')),
+ candidate_id TEXT REFERENCES ingestion_candidate(id), sha256 TEXT, failure TEXT,
+ PRIMARY KEY(review_id,relative_json)
+);
+`;

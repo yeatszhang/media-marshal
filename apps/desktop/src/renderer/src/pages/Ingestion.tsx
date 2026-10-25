@@ -6,6 +6,7 @@ import { ListTodo, RefreshCw } from "lucide-react";
 import { IngestionViewModel } from "../services";
 import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
+import { ContentReviewsPanel } from "../components/ContentReviewsPanel";
 
 export function Ingestion() {
   const { t } = useTranslation(), model = useService(IngestionViewModel), state = useServiceState(model, (value) => value), location = useLocation();
@@ -20,6 +21,7 @@ export function Ingestion() {
   return <>
     <Header title={t("ingestion.title")} description={t("ingestion.help")}><Button variant="outline" onClick={() => { void model.refresh(); }}><RefreshCw size={15} />{t("reload")}</Button></Header>
     <ErrorNotice message={state.error} />
+    <ContentReviewsPanel sources={state.sources} />
     <div className="download-controls">{state.sources.filter((source) => source.configuration?.organization).map((source) => <Button key={source.id} variant="outline" size="sm" disabled={state.busy || source.paused || source.reviewRequired} onClick={() => { void model.scan(source.id); }}>{t("ingestion.scan")} · {source.configuration?.name ?? source.draft.name}</Button>)}</div>
     <section className="panel ingestion-candidates">{state.items.length ? <><table><thead><tr><th>{t("file")}</th><th>{t("status")}</th><th>{t("ingestion.action")}</th></tr></thead><tbody>{state.items.map((candidate) => <tr key={candidate.id}><td className="table-file" title={candidate.relativePath}><strong>{candidate.relativePath}</strong><small>{candidate.size.toLocaleString()} {t("ingestion.bytes")}</small></td><td>{t(`ingestion.${candidate.state}`)}{candidate.reason && <small>{candidate.reason}</small>}</td><td>{candidate.taskId ? <Button size="sm" variant="outline" disabled={state.busy} onClick={() => { void model.select(candidate.taskId!); }}>{t("ingestion.inspect")}</Button> : candidate.state === "READY" ? <Button size="sm" disabled={state.busy} onClick={() => { void model.recognize(candidate.id); }}>{t("ingestion.recognize")}</Button> : "—"}</td></tr>)}</tbody></table><div className="pagination"><Button variant="outline" size="sm" disabled={state.page <= 1} onClick={() => { void model.refresh(state.page - 1); }}>{t("previous")}</Button><span>{t("page", { page: state.page, total: state.total })}</span><Button variant="outline" size="sm" disabled={state.page * 100 >= state.total} onClick={() => { void model.refresh(state.page + 1); }}>{t("next")}</Button></div></> : <Empty icon={<ListTodo size={28} />} title={t("ingestion.empty")} description={t("ingestion.emptyHelp")} />}</section>
     {state.task && <section className="panel settings-form"><h2>{state.task.parsed?.title || t("ingestion.edit")}</h2><p role="status">{t(state.task.state)}</p><ErrorNotice message={state.task.failure} />

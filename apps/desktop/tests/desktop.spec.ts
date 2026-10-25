@@ -60,6 +60,35 @@ test.afterEach(async () => {
   if (application) await application.close().catch(() => {});
   if (directory) await rm(directory, { recursive: true, force: true });
 });
+test("全量内容复核经实际 IPC 保存逐项失败，重载和 Core 重启只恢复记录且不整理", async () => {
+  test.skip(process.platform !== "darwin");
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), source = join(canonical, "内容复核 中文输入"), target = join(canonical, "独立媒体库"); await mkdir(source); await mkdir(target);
+  const present = join(source, "中文长电影名称_".repeat(8) + ".mp4"), missing = join(source, "已知但暂时缺失.mp4"); await writeFile(present, "原始视频保留"); await writeFile(missing, "另一份视频");
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [source, target]);
+  const applied = await window.evaluate(async ({ source, target }) => {
+    await window.desktopApi.chooseDirectory("source"); await window.desktopApi.chooseDirectory("target");
+    const draft = await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: "本地内容复核验收", sourcePath: source, organization: { targetPath: target } } });
+    const preview = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: 0, expectedDraftRevision: draft.draftRevision, requestKey: crypto.randomUUID() });
+    return window.desktopApi.applySourceRule({ previewId: preview.id, requestKey: crypto.randomUUID() });
+  }, { source, target });
+  await window.evaluate((id) => window.desktopApi.scanIngestion(id), applied.id); await rename(missing, missing + ".保留"); const targetBefore = await readdir(target);
+  await window.getByRole("link", { name: "待处理", exact: true }).click();
+  const panel = window.getByRole("region", { name: "全量内容复核", exact: true }); await expect(panel).toBeVisible();
+  await panel.getByRole("button", { name: "开始全量内容复核", exact: true }).click();
+  await expect.poll(() => window.evaluate(() => window.desktopApi.listContentReviews({}))).toMatchObject({ total: 1, items: [{ state: "PARTIAL_FAILED", total: 2, checked: 2, failed: 1, baselined: 1 }] });
+  const firstId = (await window.evaluate(() => window.desktopApi.listContentReviews({}))).items[0]!.id;
+  await expect(panel).toContainText("部分文件未完成"); await panel.getByRole("button", { name: "查看逐项结果", exact: true }).click();
+  await expect(panel.getByRole("region", { name: "内容复核逐项结果", exact: true })).toContainText("已知但暂时缺失.mp4"); await expect(panel).toContainText("未能复核");
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); expect(await window.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await panel.screenshot({ path: "test-results/desktop/content-review-partial-minimum.png" });
+  await window.reload(); await expect(panel).toContainText("部分文件未完成"); expect((await window.evaluate(() => window.desktopApi.listContentReviews({}))).items[0]!.id).toBe(firstId);
+  await rename(missing + ".保留", missing); await panel.getByRole("button", { name: "开始全量内容复核", exact: true }).click();
+  await expect.poll(() => window.evaluate(() => window.desktopApi.listContentReviews({}))).toMatchObject({ total: 2, items: [{ state: "COMPLETED", checked: 2, failed: 0, changed: 0 }, { id: firstId, state: "PARTIAL_FAILED" }] });
+  await window.evaluate(() => window.desktopApi.restartCore()); await expect.poll(() => window.evaluate(() => window.desktopApi.listContentReviews({}))).toMatchObject({ total: 2, items: [{ state: "COMPLETED" }, { id: firstId, state: "PARTIAL_FAILED" }] });
+  expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 }); expect(await readdir(target)).toEqual(targetBefore); expect(await readFile(present, "utf8")).toBe("原始视频保留"); expect(await readFile(missing, "utf8")).toBe("另一份视频");
+});
+
 test("来源表单按文件去向分组，长路径与最小窗口下开关文字保持相邻", async () => {
   test.skip(process.platform !== "darwin");
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();

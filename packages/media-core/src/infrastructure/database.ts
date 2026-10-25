@@ -7,7 +7,7 @@ import { cloudMigrationSql } from "./cloud-migration.js";
 import { cloudAuthorizationMigrationSql } from "./cloud-authorization-migration.js";
 import { cloudDownloadMigrationSql } from "./cloud-download-migration.js";
 import { cloudSubscriptionMigrationSql } from "./cloud-subscription-migration.js";
-import { ingestionMigrationSql, ingestionAccessoryMigrationSql } from "./ingestion-migration.js";
+import { ingestionMigrationSql, ingestionAccessoryMigrationSql, ingestionContentReviewMigrationSql } from "./ingestion-migration.js";
 import { sourceRuleMigrationSql } from "./source-rule-migration.js";
 import { sourceRuleLegacyMigrationSql, migrateLegacySourceRules } from "./source-rule-legacy-migration.js";
 import { sourceExecutionMigrationSql } from "./source-execution-migration.js";
@@ -64,6 +64,7 @@ export const migrations: readonly Migration[] = [
   { version: 14, sql: "SELECT 1;" },
   // 恢复核对中的 RECORDED 操作可暂为 PROCESSING；旧核心不得忽略持久核对队列。
   { version: 15, sql: "SELECT 1;" },
+  { version: 16, sql: ingestionContentReviewMigrationSql },
 ];
 
 export class CoreDatabase {

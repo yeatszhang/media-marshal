@@ -14,6 +14,9 @@ import { normalizeParse } from "../domain/media";
 import { IngestionPipeline } from "./pipeline";
 import { SourceRoot } from "../files/source-root";
 import { MediaNetworkError } from "../infrastructure/json-http";
+import { DesktopError } from "@media-marshal/contracts";
+import type { BigIntStats } from "node:fs";
+import type { SourceSnapshot } from "../files/source-root";
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); vi.useRealTimers(); });
 async function grant(path: string, id = randomUUID()): Promise<ManagedRootGrant> {
@@ -46,6 +49,116 @@ async function fixture(options: { ignoredFilePatterns?: string[] | null; watchFi
   const preview = async () => { const candidate = await ready(); const task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick(); return pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" } }); };
   return { directory, source, target, db, pipeline, sourceId, sourceGrant, targetGrant, connections, file, bytes, advance, ready, preview, calls: () => calls, jump(ms: number) { monotonic += ms; clock += ms; }, wallJump(ms: number) { clock += ms; } };
 }
+describe("显式全量内容复核与资产版本", () => {
+  function coarseAttributes(f: Awaited<ReturnType<typeof fixture>>) {
+    const snapshot = JSON.parse((f.db.connection.prepare("SELECT snapshot_json FROM ingestion_candidate WHERE is_current=1").get() as { snapshot_json: string }).snapshot_json) as SourceSnapshot;
+    const prototype = SourceRoot.prototype as unknown as { snapshot(info: BigIntStats): SourceSnapshot }, original = prototype.snapshot;
+    // 故障注入：文件真实原地写入，但来源报告粗粒度时间属性；不宣称 APFS 实际 ctime 未变。
+    vi.spyOn(prototype, "snapshot").mockImplementation(function (this: SourceRoot, info) { const actual = original.call(this, info); return actual.inode === snapshot.inode ? { ...actual, modifiedNs: snapshot.modifiedNs, changedNs: snapshot.changedNs } : actual; });
+    return snapshot;
+  }
+  const current = (f: Awaited<ReturnType<typeof fixture>>) => f.db.connection.prepare("SELECT * FROM ingestion_candidate WHERE is_current=1").get() as { id: string; expected_sha256: string | null; state: string; snapshot_json: string };
+  const review = async (f: Awaited<ReturnType<typeof fixture>>) => { const job = f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey: randomUUID() }); await f.pipeline.contentReviews.idle(); return f.pipeline.contentReviews.list({}).items.find((row) => row.id === job.id)!; };
+  it("首轮建立基线、再次核对不变，重复请求和并发点击复用同一持久作业", async () => {
+    const f = await fixture(); await f.pipeline.scan(f.sourceId); const id = current(f).id, requestKey = randomUUID();
+    const first = f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey });
+    expect(f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey: randomUUID() }).id).toBe(first.id);
+    await f.pipeline.contentReviews.idle();
+    expect(f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey })).toMatchObject({ id: first.id, state: "COMPLETED", total: 1, checked: 1, baselined: 1, changed: 0 });
+    expect(current(f)).toMatchObject({ id, expected_sha256: expect.stringMatching(/^[a-f0-9]{64}$/), state: "OBSERVING" });
+    expect(await review(f)).toMatchObject({ state: "COMPLETED", total: 1, checked: 1, baselined: 0, changed: 0 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 }); expect(await readdir(f.target)).not.toContain("测试电影 (2026) [tmdb-1]");
+  });
+  it("已完成文件的同属性替换生成新候选，保留历史和目标，并发扫描与领取仍只有一项", async () => {
+    const f = await fixture(), preview = await f.preview(); await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    const old = current(f), originalInode = (await lstat(preview.targetPath, { bigint: true })).ino; expect(old.expected_sha256).toMatch(/^[a-f0-9]{64}$/); coarseAttributes(f);
+    await writeFile(f.file, Buffer.alloc(f.bytes.length, 65)); await Promise.all([f.pipeline.scan(f.sourceId), f.pipeline.scan(f.sourceId)]);
+    expect(current(f).id).toBe(old.id); expect(current(f).state).toBe("PROCESSED");
+    const result = await review(f); expect(result).toMatchObject({ state: "COMPLETED", changed: 1, checked: 1 });
+    const next = current(f); expect(next).toMatchObject({ state: "OBSERVING" }); expect(next.id).not.toBe(old.id); expect(next.snapshot_json).toBe(old.snapshot_json);
+    expect(f.pipeline.task(preview.taskId).state).toBe("DONE"); expect(await readFile(preview.targetPath)).toEqual(f.bytes); expect((await lstat(preview.targetPath, { bigint: true })).ino).toBe(originalInode);
+    await Promise.all([f.pipeline.scan(f.sourceId), f.pipeline.scan(f.sourceId)]); expect(current(f).id).toBe(next.id);
+    await expect(f.pipeline.recognize({ candidateId: next.id, requestKey: randomUUID() })).rejects.toMatchObject({ code: "CONFLICT" });
+    await f.advance(); const claims = await Promise.all([f.pipeline.recognize({ candidateId: next.id, requestKey: randomUUID() }), f.pipeline.recognize({ candidateId: next.id, requestKey: randomUUID() })]); expect(claims[0]).toEqual(claims[1]); await f.pipeline.tick();
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_candidate WHERE is_current=1").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 });
+    expect(f.pipeline.contentReviews.items({ id: result.id }).items).toMatchObject([{ state: "CHANGED", candidateId: next.id, relativePath: "测试电影.2026.mp4" }]);
+  });
+  it("A→B→A 不复用已处理资产版本，唯一约束阻止两个当前候选", async () => {
+    const f = await fixture(); await f.pipeline.scan(f.sourceId); await review(f); coarseAttributes(f); const a = current(f).id;
+    await writeFile(f.file, Buffer.alloc(f.bytes.length, 66)); expect((await review(f)).changed).toBe(1); const b = current(f).id;
+    await writeFile(f.file, f.bytes); expect((await review(f)).changed).toBe(1); const nextA = current(f).id;
+    expect(new Set([a, b, nextA]).size).toBe(3); await f.pipeline.scan(f.sourceId); expect(current(f).id).toBe(nextA);
+    expect(() => f.db.connection.prepare("UPDATE ingestion_candidate SET is_current=1 WHERE id=?").run(a)).toThrow();
+  });
+  it("复核进行中拒绝旧预览确认，取消不会把未读文件标为通过或写入基线", async () => {
+    const f = await fixture(), preview = await f.preview(); let release!: () => void;
+    const entered = new Promise<void>((resolve) => { release = resolve; }), original = SourceRoot.prototype.digest; let blocked = true, started!: () => void; const ready = new Promise<void>((resolve) => { started = resolve; });
+    vi.spyOn(SourceRoot.prototype, "digest").mockImplementation(async function (this: SourceRoot, ...args) { if (blocked) { blocked = false; started(); await entered; } return original.apply(this, args); });
+    const job = f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey: randomUUID() }); await ready;
+    await expect(f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() })).rejects.toThrow("正在全量复核");
+    expect(f.pipeline.contentReviews.cancel(job.id)).toMatchObject({ state: "CANCELLED", checked: 0 }); release(); await f.pipeline.contentReviews.idle();
+    expect(current(f).expected_sha256).toBeNull(); expect(f.pipeline.contentReviews.items({ id: job.id }).items[0]?.state).toBe("PENDING");
+    expect((await review(f)).baselined).toBe(1); await expect(f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() })).rejects.toThrow("证据已更新");
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
+  it("关闭中断的文件保持待复核，数据库重开后继续同一作业且不重复候选", async () => {
+    const f = await fixture(); await f.pipeline.scan(f.sourceId); let started!: () => void; const ready = new Promise<void>((resolve) => { started = resolve; });
+    const spy = vi.spyOn(SourceRoot.prototype, "digest").mockImplementationOnce(async (_handle, _size, signal) => { started(); await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(new DesktopError("INTERRUPTED", "测试关闭")), { once: true })); return ""; });
+    const job = f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey: randomUUID() }); await ready; await f.pipeline.close(); spy.mockRestore(); f.connections.close(); f.db.close();
+    const db = await CoreDatabase.open(join(f.directory, "core.sqlite3")); cleanup.push(() => db.close()); const connections = new MediaConnections(db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" })); cleanup.push(() => connections.close());
+    const pipeline = new IngestionPipeline(db, () => undefined, connections); cleanup.push(() => pipeline.close()); await pipeline.tick(); await pipeline.contentReviews.idle();
+    expect(pipeline.contentReviews.list({}).items[0]).toMatchObject({ id: job.id, state: "WAITING_SOURCE", checked: 0 });
+    await pipeline.authorize({ sourceId: f.sourceId, sourceVersion: 1, mode: "local", source: f.sourceGrant, target: f.targetGrant }); await pipeline.tick(); await pipeline.contentReviews.idle();
+    expect(pipeline.contentReviews.list({}).items[0]).toMatchObject({ id: job.id, state: "COMPLETED", checked: 1, baselined: 1 }); expect(db.connection.prepare("SELECT count(*) AS n FROM ingestion_candidate").get()).toEqual({ n: 1 });
+  });
+  it("单文件失败持久显示对象，其他文件继续；规则变化不提交迟到摘要", async () => {
+    const f = await fixture(); const denied = join(f.source, "不可读.mp4"); await writeFile(denied, "保留"); const original = SourceRoot.prototype.inspect;
+    const spy = vi.spyOn(SourceRoot.prototype, "inspect").mockImplementation(function (this: SourceRoot, path) { if (path.at(-1) === "不可读.mp4") return Promise.reject(new DesktopError("LOCAL_UNAVAILABLE", "文件无法读取，请检查权限")); return original.call(this, path); });
+    const result = await review(f); expect(result).toMatchObject({ state: "PARTIAL_FAILED", checked: 2, failed: 1, baselined: 1 }); expect(f.pipeline.contentReviews.items({ id: result.id }).items[0]).toMatchObject({ relativePath: "不可读.mp4", state: "FAILED", failure: expect.stringContaining("权限") }); spy.mockRestore();
+    let release!: () => void, started!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }), ready = new Promise<void>((resolve) => { started = resolve; }), digest = SourceRoot.prototype.digest;
+    vi.spyOn(SourceRoot.prototype, "digest").mockImplementationOnce(async function (this: SourceRoot, ...args) { started(); await gate; return digest.apply(this, args); });
+    const job = f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey: randomUUID() }); await ready; f.db.connection.prepare("UPDATE desktop_source SET version=2 WHERE id=?").run(f.sourceId); release(); await f.pipeline.contentReviews.idle();
+    expect(f.pipeline.contentReviews.list({}).items.find((row) => row.id === job.id)).toMatchObject({ state: "FAILED", checked: 0, failure: expect.stringContaining("配置已变化") }); expect(await readFile(denied, "utf8")).toBe("保留");
+  });
+  it("候选版本与单项结果同事务，记账失败不留下未报告的新版本", async () => {
+    const f = await fixture(); await f.pipeline.scan(f.sourceId); await review(f); const old = current(f); coarseAttributes(f); await writeFile(f.file, Buffer.alloc(f.bytes.length, 67));
+    const original = f.db.connection.prepare.bind(f.db.connection); let injected = false;
+    vi.spyOn(f.db.connection, "prepare").mockImplementation((sql) => { if (!injected && sql.startsWith("UPDATE ingestion_content_review_file SET state=?,")) { injected = true; throw new Error("受控记账中断"); } return original(sql); });
+    const result = await review(f); expect(result).toMatchObject({ state: "PARTIAL_FAILED", failed: 1, changed: 0 }); expect(current(f)).toEqual(old); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_candidate").get()).toEqual({ n: 1 });
+    expect((await review(f)).changed).toBe(1);
+  });
+  it("来源目录在读取期间失联保留待复核，原目录恢复后继续；已知缺失文件可逐项定位", async () => {
+    const f = await fixture(); await f.pipeline.scan(f.sourceId); let release!: () => void, started!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }), ready = new Promise<void>((resolve) => { started = resolve; }), digest = SourceRoot.prototype.digest;
+    vi.spyOn(SourceRoot.prototype, "digest").mockImplementationOnce(async function (this: SourceRoot, ...args) { started(); await gate; return digest.apply(this, args); });
+    const job = f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey: randomUUID() }); await ready; await rename(f.source, f.source + "-离线"); release(); await f.pipeline.contentReviews.idle();
+    expect(f.pipeline.contentReviews.list({}).items[0]).toMatchObject({ id: job.id, state: "WAITING_SOURCE", checked: 0 }); expect(current(f).expected_sha256).toBeNull();
+    await rename(f.source + "-离线", f.source); await f.pipeline.tick(); await f.pipeline.contentReviews.idle(); expect(f.pipeline.contentReviews.list({}).items[0]).toMatchObject({ id: job.id, state: "COMPLETED", checked: 1 });
+    await rename(f.file, f.file + ".保留"); const missing = await review(f); expect(missing).toMatchObject({ state: "PARTIAL_FAILED", total: 1, failed: 1 }); expect(f.pipeline.contentReviews.items({ id: missing.id }).items[0]).toMatchObject({ relativePath: "测试电影.2026.mp4", state: "FAILED" });
+  });
+  it("活动 COPY 阻断复核启动，安全点后只读复核不重写媒体", async () => {
+    const f = await fixture(), preview = await f.preview(), target = f.pipeline.targets.get(f.targetGrant.id), prepare = target.prepareStage.bind(target); let release!: () => void, started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; }), ready = new Promise<void>((resolve) => { started = resolve; });
+    vi.spyOn(target, "prepareStage").mockImplementationOnce(async (...args) => { started(); await gate; return prepare(...args); });
+    await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await ready;
+    expect(() => f.pipeline.reviewContent({ sourceId: f.sourceId, requestKey: randomUUID() })).toThrow("活动整理"); release(); await f.pipeline.tick();
+    const inode = (await lstat(preview.targetPath, { bigint: true })).ino; expect(await review(f)).toMatchObject({ state: "COMPLETED", baselined: 0, changed: 0 }); expect((await lstat(preview.targetPath, { bigint: true })).ino).toBe(inode);
+  });
+  it("确认等待目录核验时完成复核，事务提交仍拒绝不含新摘要的旧预览", async () => {
+    const f = await fixture(), preview = await f.preview(), target = f.pipeline.targets.get(f.targetGrant.id), vacant = target.assertVacant.bind(target);
+    vi.spyOn(target, "assertVacant").mockImplementationOnce(async (...args) => { await vacant(...args); await review(f); });
+    await expect(f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() })).rejects.toThrow("证据已更新");
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
+  it("复制校验后尚未记阶段即暂停，恢复旧计划仍核对已保存摘要而不接受静默替换", async () => {
+    const f = await fixture(), preview = await f.preview(), target = f.pipeline.targets.get(f.targetGrant.id), verify = target.verifyStage.bind(target); coarseAttributes(f);
+    vi.spyOn(target, "verifyStage").mockImplementationOnce(async (...args) => { const evidence = await verify(...args); f.pipeline.setPaused({ paused: true, requestKey: randomUUID() }); return evidence; });
+    await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await f.pipeline.tick(); expect(current(f).expected_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(f.db.connection.prepare("SELECT phase,evidence_json FROM ingestion_operation").get()).toEqual({ phase: "COPYING", evidence_json: null });
+    await writeFile(f.file, Buffer.alloc(f.bytes.length, 68)); f.pipeline.setPaused({ paused: false, requestKey: randomUUID() }); await f.pipeline.scan(f.sourceId); await f.advance(); await f.pipeline.tick();
+    expect(f.pipeline.task(preview.taskId)).toMatchObject({ state: "FAILED" }); await expect(lstat(preview.targetPath)).rejects.toMatchObject({ code: "ENOENT" }); expect(await readFile(f.file)).toEqual(Buffer.alloc(f.bytes.length, 68));
+  });
+});
+
 describe("持久候选、人工确认与真实 COPY", () => {
   it("恢复核对幂等且不重放 COPY，主文件与字幕通过后重新等待 Emby 核对", async () => {
     const f = await fixture(); await writeFile(join(f.source, "测试电影.2026.zh.srt"), "字幕内容");

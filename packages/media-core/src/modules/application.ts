@@ -59,6 +59,10 @@ declare module "@yeatz/app-framework/command" {
     "media.emby.retry": (input: CoreInput<"emby.retry">) => CoreOutput<"emby.retry">;
     "media.ingestion.candidates": (input: CoreInput<"ingestion.candidates">) => CoreOutput<"ingestion.candidates">;
     "media.ingestion.scan": (input: CoreInput<"ingestion.scan">) => Promise<CoreOutput<"ingestion.scan">>;
+    "media.ingestion.review-content": (input: CoreInput<"ingestion.review-content">) => CoreOutput<"ingestion.review-content">;
+    "media.ingestion.content-reviews": (input: CoreInput<"ingestion.content-reviews">) => CoreOutput<"ingestion.content-reviews">;
+    "media.ingestion.content-review-files": (input: CoreInput<"ingestion.content-review-files">) => CoreOutput<"ingestion.content-review-files">;
+    "media.ingestion.cancel-content-review": (input: CoreInput<"ingestion.cancel-content-review">) => CoreOutput<"ingestion.cancel-content-review">;
     "media.ingestion.recognize": (input: CoreInput<"ingestion.recognize">) => Promise<CoreOutput<"ingestion.recognize">>;
     "media.ingestion.task": (input: CoreInput<"ingestion.task">) => CoreOutput<"ingestion.task">;
     "media.ingestion.preview": (input: CoreInput<"ingestion.preview">) => Promise<CoreOutput<"ingestion.preview">>;
@@ -186,6 +190,15 @@ export function createMediaApplication(
       add(registry.register("media.emby.connect", (_, input) => delivery.connect(input)));
       add(registry.register("media.emby.retry", (_, input) => delivery.retry(input.taskId)));
       add(registry.register("media.ingestion.candidates", (_, input) => ingestion.list(input)));
+      add(registry.register("media.ingestion.review-content", (_, input) => {
+        const source = sourceRules.get(input.sourceId);
+        if (!source) return ingestion.reviewContent(input);
+        if (source.type !== "local" || !source.localSourceId) throw new DesktopError("CONFLICT", "全量内容复核仅用于已确认的本地来源；网盘请在来源页使用强制重新下载");
+        return ingestion.reviewContent({ ...input, sourceId: source.localSourceId });
+      }));
+      add(registry.register("media.ingestion.content-reviews", (_, input) => ingestion.contentReviews.list(input)));
+      add(registry.register("media.ingestion.content-review-files", (_, input) => ingestion.contentReviews.items(input)));
+      add(registry.register("media.ingestion.cancel-content-review", (_, input) => ingestion.contentReviews.cancel(input.id)));
       add(registry.register("media.ingestion.scan", (_, input) => {
         const source = sourceRules.get(input.sourceId);
         if (!source) return ingestion.scan(input.sourceId);

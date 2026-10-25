@@ -23,6 +23,18 @@ process.once("message", async (input) => {
     db.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'崩溃恢复','custom',?,?,'MOVIE','COPY',?)").run(sourceId, input.source.path, input.target.path, new Date(clock).toISOString());
     const authorization = { sourceId, sourceVersion: 1, mode: "local", downloadRootId: null, source: input.source, target: input.target };
     await pipeline.authorize(authorization); await pipeline.scan(sourceId);
+    if (input.point === "content-review") {
+      await writeFile(join(input.source.path, "A.mp4"), "首项已复核，来源仍保留"); await pipeline.scan(sourceId);
+      let reads = 0, review; const digest = SourceRoot.prototype.digest;
+      SourceRoot.prototype.digest = async function (...args) {
+        if (++reads === 3) {
+          // 第一项两轮摘要及单项事务已完成，第二项保持读取中，由父进程按句柄强杀。
+          process.send({ reviewId: review.id, authorization, sourceFile, size: bytes.length }); await new Promise(() => {});
+        }
+        return digest.apply(this, args);
+      };
+      review = pipeline.reviewContent({ sourceId, requestKey: randomUUID() }); await pipeline.contentReviews.idle(); return;
+    }
     for (let index = 0; index < 12; index++) { clock += 10000; monotonic += 10000; await pipeline.scan(sourceId); }
     const candidate = pipeline.list({ sourceId }).items.find((row) => row.state === "READY");
     const task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick();

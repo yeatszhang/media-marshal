@@ -20,6 +20,7 @@ import type {
 import { DesktopClient } from "./desktop-client";
 export { DesktopClient } from "./desktop-client";
 import { SourceRulesViewModel } from "./source-rules-model";
+import { ContentReviewsViewModel } from "./content-reviews-model";
 import { CloudAccountsViewModel } from "./cloud-accounts-model";
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "操作失败，请重试";
@@ -308,7 +309,7 @@ export function createRendererApplication(client: DesktopApi) {
     },
   };
   const modules: ApplicationModule[] = [
-    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); } },
+    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.downloads", dependencies: [connection.id], register(bind) { bind(DownloadsViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.cloud", dependencies: [connection.id], register(bind) { bind(CloudAccountsViewModel).toSelf().inSingletonScope(); } },
     {

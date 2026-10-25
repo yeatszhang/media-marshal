@@ -18,6 +18,26 @@ const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
 describe.skipIf(process.platform !== "darwin")("整理与交付记账真实 SIGKILL", () => {
   beforeAll(async () => { await promisify(execFile)(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "-p", "packages/media-core/tsconfig.json"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 30000, shell: false }); });
+  it("全量内容复核读取中强杀，原作业保留已完成项并只读取未完成文件", async () => {
+    const path = await realpath(await mkdtemp(join(tmpdir(), "marshal-content-review-crash-"))); cleanup.push(() => rm(path, { recursive: true, force: true }));
+    const sourcePath = join(path, "输入"), targetPath = join(path, "媒体库"); await mkdir(sourcePath); await mkdir(targetPath);
+    const source = await probeReadOnlyVolume(sourcePath), target = await probeManagedVolume(targetPath);
+    const child = fork(resolve("tools/desktop-sidecars/ingestion-crash-fixture.mjs"), [], { execPath: process.execPath, stdio: ["ignore", "pipe", "pipe", "ipc"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }); child.stdout!.resume(); child.stderr!.resume();
+    const exited = new Promise<string | null>((resolve) => child.once("exit", (_code, signal) => resolve(signal))); cleanup.push(async () => { if (child.exitCode === null && !child.signalCode) { child.kill("SIGKILL"); await exited; } });
+    const reached = new Promise<{ reviewId: string; sourceFile: string; size: number; authorization: PrivateCoreInput<"media.sources.authorize"> }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("复核未到达读取边界")), 10000);
+      child.once("message", (value: any) => { clearTimeout(timer); if (value.error) reject(new Error("内容复核崩溃夹具失败")); else resolve(value); }); child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    });
+    child.send({ path, source, target, point: "content-review" }); const receipt = await reached; child.kill("SIGKILL"); expect(await exited).toBe("SIGKILL");
+    const db = await CoreDatabase.open(join(path, "desktop.sqlite3"), undefined, { exclusiveOwner: true }); cleanup.push(() => db.close());
+    expect(db.connection.prepare("SELECT state FROM ingestion_content_review_file ORDER BY relative_json").all()).toEqual([{ state: "BASELINED" }, { state: "PENDING" }]);
+    const connections = new MediaConnections(db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" })); cleanup.push(() => connections.close());
+    const pipeline = new IngestionPipeline(db, () => undefined, connections); cleanup.push(() => pipeline.close()); await pipeline.authorize(receipt.authorization);
+    const reads = vi.spyOn(SourceRoot.prototype, "read"); await pipeline.tick(); await pipeline.contentReviews.idle();
+    expect(pipeline.contentReviews.list({}).items[0]).toMatchObject({ id: receipt.reviewId, state: "COMPLETED", total: 2, checked: 2, baselined: 2, changed: 0 });
+    expect(reads).toHaveBeenCalledOnce(); expect(reads.mock.calls[0]![0]).toEqual(["测试电影.2026.mp4"]);
+    expect(db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 }); expect(db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect((await readFile(receipt.sourceFile)).length).toBe(receipt.size);
+  });
   it.each(["planned", "writing", "verified", "linked", "file-committed", "recorded", "missing-delivery", "foreign-target"])("%s 边界强杀后按持久证据恢复或保留冲突", async (point) => {
     const path = await realpath(await mkdtemp(join(tmpdir(), "marshal-ingestion-crash-"))); cleanup.push(() => rm(path, { recursive: true, force: true }));
     const sourcePath = join(path, "来源"), targetPath = join(path, "媒体库"); await mkdir(sourcePath); await mkdir(targetPath);

@@ -271,6 +271,10 @@ export interface DesktopApi {
   configureManagedIngestion(input: z.input<typeof ingestionConfigureSchema>): Promise<DesktopSource>;
   listIngestionCandidates(input: CoreInput<"ingestion.candidates">): Promise<CoreOutput<"ingestion.candidates">>;
   scanIngestion(sourceId: string): Promise<CoreOutput<"ingestion.scan">>;
+  reviewIngestionContent(input: CoreInput<"ingestion.review-content">): Promise<CoreOutput<"ingestion.review-content">>;
+  listContentReviews(input: CoreInput<"ingestion.content-reviews">): Promise<CoreOutput<"ingestion.content-reviews">>;
+  listContentReviewFiles(input: CoreInput<"ingestion.content-review-files">): Promise<CoreOutput<"ingestion.content-review-files">>;
+  cancelContentReview(id: string): Promise<CoreOutput<"ingestion.cancel-content-review">>;
   recognizeIngestion(input: CoreInput<"ingestion.recognize">): Promise<CoreOutput<"ingestion.recognize">>;
   getIngestionTask(taskId: string): Promise<CoreOutput<"ingestion.task">>;
   previewOrganize(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">>;

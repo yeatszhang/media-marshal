@@ -20,6 +20,13 @@ const request = (action = "runtime.get", payload: unknown = {}) => ({
   payload,
 });
 describe("受限进程契约", () => {
+  it("内容复核仅接受来源身份与幂等标识，查询有界且不接受路径或摘要注入", () => {
+    const sourceId = randomUUID(), requestKey = randomUUID();
+    expect(parseCoreRequest(request("ingestion.review-content", { sourceId, requestKey }))).toMatchObject({ payload: { sourceId, requestKey } });
+    for (const extra of [{ path: "/任意目录" }, { sha256: "a".repeat(64) }, { automatic: true }]) expect(() => parseCoreRequest(request("ingestion.review-content", { sourceId, requestKey, ...extra }))).toThrow();
+    expect(() => parseCoreRequest(request("ingestion.content-review-files", { id: requestKey, page: 1000001 }))).toThrow();
+    expect(() => parseCoreRequest(request("ingestion.cancel-content-review", { id: "../../其他作业" }))).toThrow();
+  });
   it("目录失败携带受限原因和可信配置引用，跨私有与公开通道保留分类", () => {
     const issue = { reason: "SOURCE_OVERLAP" as const, conflict: { kind: "source" as const, id: randomUUID() } };
     const failure = cloudFailureSchema.parse(JSON.parse(JSON.stringify(cloudFailure(new CloudError("CONFLICT", undefined, issue)))));

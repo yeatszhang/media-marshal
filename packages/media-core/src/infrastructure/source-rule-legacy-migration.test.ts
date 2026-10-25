@@ -11,7 +11,9 @@ const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const stamp = "2026-10-20T01:00:00.000Z";
 const oldTables = ["desktop_source", "ingestion_source", "media_task", "ingestion_candidate", "ingestion_operation", "cloud_account", "cloud_subscription", "cloud_subscription_runtime", "cloud_scan", "download_job", "download_job_item", "download_item", "managed_download_root", "media_target_root"];
-const snapshot = (db: CoreDatabase) => Object.fromEntries(oldTables.map((table) => [table, db.connection.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+// 比较 v8 已存在的事实；v16 新增的属性键与当前版本列由独立迁移测试核对。
+const candidateColumns = "id,source_id,relative_json,version_key,snapshot_json,expected_sha256,managed_item_id,managed_version_key,state,task_id,reason,created_at,updated_at";
+const snapshot = (db: CoreDatabase) => Object.fromEntries(oldTables.map((table) => [table, db.connection.prepare(`SELECT ${table === "ingestion_candidate" ? candidateColumns : "*"} FROM ${table} ORDER BY rowid`).all()]));
 async function oldFixture(options: { unconfirmed?: boolean; shared?: boolean; orphan?: boolean; oldJobVersion?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "marshal-来源迁移-")); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "desktop.sqlite3"), db = await CoreDatabase.open(path, migrations.slice(0, 8));
