@@ -9,10 +9,9 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: '首页', link: '/' },
-      { text: '用户手册', link: '/user-guide' },
-      { text: '部署指南', link: '/deployment' },
+      { text: '桌面开发', link: '/architecture/desktop-development' },
+      { text: '旧工程资料', link: '/legacy/' },
       { text: '架构文档', link: '/architecture/' },
-      { text: '常见问题', link: '/faq' },
     ],
 
     sidebar: [
@@ -20,9 +19,6 @@ export default defineConfig({
         text: 'Media Marshal',
         items: [
           { text: '项目介绍', link: '/' },
-          { text: '用户手册', link: '/user-guide' },
-          { text: '部署指南', link: '/deployment' },
-          { text: '常见问题', link: '/faq' },
         ],
       },
       {
@@ -37,14 +33,28 @@ export default defineConfig({
         text: '开发与架构',
         items: [
           { text: '架构总览', link: '/architecture/' },
-          { text: '发现与整理流程', link: '/architecture/processing' },
-          { text: '数据与恢复机制', link: '/architecture/data-and-recovery' },
+          { text: '桌面识别规则', link: '/architecture/desktop-recognition' },
+          { text: '桌面整理流水线', link: '/architecture/desktop-ingestion' },
           { text: '桌面迁移基线', link: '/architecture/desktop-migration' },
           { text: '桌面客户端开发', link: '/architecture/desktop-development' },
           { text: '云端下载内部边界', link: '/architecture/cloud-downloads-internal' },
           { text: '网盘与传输扩展开发', link: '/architecture/cloud-adapter-development' },
           { text: 'Mac 云端下载验收', link: '/architecture/mac-cloud-downloads-validation' },
-          { text: 'Codex 识别兜底', link: '/codex-fallback' },
+        ],
+      },
+      {
+        text: '旧工程资料（Java / Vue / Docker）',
+        collapsed: true,
+        items: [
+          { text: '归档索引', link: '/legacy/' },
+          { text: '旧项目介绍', link: '/legacy/overview' },
+          { text: '用户手册', link: '/legacy/user-guide' },
+          { text: '部署指南', link: '/legacy/deployment' },
+          { text: '常见问题', link: '/legacy/faq' },
+          { text: '架构总览', link: '/legacy/architecture/' },
+          { text: '发现与整理流程', link: '/legacy/architecture/processing' },
+          { text: '数据与恢复机制', link: '/legacy/architecture/data-and-recovery' },
+          { text: 'Codex 识别兜底', link: '/legacy/codex-fallback' },
         ],
       },
     ],

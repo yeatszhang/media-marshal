@@ -1,11 +1,19 @@
 # 旧 Java / Vue / Docker 工程资料
 
-这些资料于 2026-10-25 从 Cursor 规则目录迁入，保留旧项目行为、决策与验收证据，供维护旧工程和迁移规则时按需查阅。它们不是当前桌面架构，也不代表全部记录仍与当前源码一致。
+这些资料于 2026-10-25 从 Cursor 规则目录和原文档主目录迁入，保留旧项目行为、决策与验收证据，供维护旧工程和迁移规则时按需查阅。它们不是当前桌面架构，也不代表全部记录仍与当前源码一致。
 
 ## 阅读入口
 
 | 资料 | 用途 |
 | --- | --- |
+| [旧项目介绍](./overview.md) | 旧版本能力与产品边界 |
+| [用户手册](./user-guide.md) | 旧 Web UI 操作与功能范围 |
+| [部署指南](./deployment.md) | 旧 Docker 服务部署、升级与备份 |
+| [常见问题](./faq.md) | 旧服务排障 |
+| [Codex 识别兜底](./codex-fallback.md) | 旧 Java 后端的 CLI 桥接与配置 |
+| [架构总览](./architecture/index.md) | 旧三服务拓扑与模块边界 |
+| [发现与整理流程](./architecture/processing.md) | 旧 Java 业务流水线 |
+| [数据与恢复机制](./architecture/data-and-recovery.md) | 旧数据库与故障恢复 |
 | [项目上下文](./project-context.md) | 旧三服务部署、端口、配置优先级与能力边界 |
 | [API 契约快照](./api-contracts.md) | 旧 HTTP / WebSocket 接口与数据结构；修改旧接口时需重新核对控制器、DTO 和测试 |
 | [架构决策历史](./design-decisions.md) | ADR 编号、决策演变和被替代的设计 |

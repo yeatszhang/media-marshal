@@ -20,7 +20,7 @@
 
 数据库、密钥、活动镜像版本、启动脚本与备份放在 `~/Library/Application Support/MediaMarshal`。源码目录只保存 Git 文件及已忽略的 `build-artifacts/` 构建缓存，运行数据不进入 Git。
 
-后端数据挂载使用运行目录下的 `data/`，媒体卷默认 `/Volumes/Seagate`，网页和 API 只绑定本机 3000、8080 端口。监听规则、TMDB Key、Codex 开关继续从原数据库读取，不由部署脚本覆盖。Codex 私有配置及独立启动项沿用原设置，参见 [Codex 兜底](../../docs/codex-fallback.md)。
+后端数据挂载使用运行目录下的 `data/`，媒体卷默认 `/Volumes/Seagate`，网页和 API 只绑定本机 3000、8080 端口。监听规则、TMDB Key、Codex 开关继续从原数据库读取，不由部署脚本覆盖。Codex 私有配置及独立启动项沿用原设置，参见 [Codex 兜底](../../docs/legacy/codex-fallback.md)。
 
 镜像标签对应构建时的 Git 短提交号；有未提交改动时追加 `-dirty`。活动标签保存在运行目录 `deployment.env` 中，构建成功后才更新。旧镜像保留，可通过 `MEDIA_MARSHAL_LOCAL_TAG=旧标签 ./scripts/local-service.sh start` 临时回退；数据库发生结构迁移时还需使用对应备份。
 
