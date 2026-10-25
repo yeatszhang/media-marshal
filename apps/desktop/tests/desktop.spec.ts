@@ -1041,3 +1041,16 @@ test("来源 React 草稿跨账号页保留，完整重载只读回核心草稿�
   await window.getByRole("button", { name: "编辑并预览", exact: true }).click(); await expect(window.getByLabel("来源名称", { exact: true })).toHaveValue("核心中保存的来源草稿"); expect(await window.evaluate(() => window.desktopApi.listSources())).toEqual([]); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]); expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(0); expect((await window.evaluate(() => window.desktopApi.listDownloads({}))).total).toBe(0);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await window.getByRole("form", { name: "来源配置草稿", exact: true }).screenshot({ path: "test-results/desktop/source-react-draft-recovered.png" });
 });
+
+test("设置保存密钥和刷新不覆盖未保存地址，重载只读取已保存配置", async () => {
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const original = await window.evaluate(() => window.desktopApi.getSettings());
+  await window.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "设置", exact: true }).click();
+  const emby = window.locator("#settings-emby-url"), proxy = window.locator("#settings-tmdb-proxy"), key = window.locator("#settings-tmdb-key");
+  await emby.fill("http://draft.example:8096"); await proxy.fill("http://127.0.0.1:7890"); await key.fill("isolated-renderer-settings-fixture");
+  await key.locator("..").getByRole("button").click(); await expect(window.getByText("密钥已通过系统保护保存", { exact: true })).toBeVisible();
+  await expect(key).toHaveValue(""); await expect(emby).toHaveValue("http://draft.example:8096"); await expect(proxy).toHaveValue("http://127.0.0.1:7890");
+  expect(await window.evaluate(() => window.desktopApi.getSettings())).toMatchObject({ embyUrl: original.embyUrl, tmdbProxy: original.tmdbProxy, tmdbKeyConfigured: true });
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(emby).toHaveValue(original.embyUrl); await expect(proxy).toHaveValue(original.tmdbProxy); await expect(key).toHaveValue("");
+  expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(0); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
+});

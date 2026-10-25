@@ -191,45 +191,64 @@ export class SettingsViewModel extends StatefulService<{
   error: string | null;
 }> {
   protected initState = { settings: null, loading: false, error: null };
+  private request = 0;
+  private page = 0;
+  private watchers = 0;
+  private stopped = false;
+  private writing = false;
   constructor(@inject(DesktopClient) readonly client: DesktopApi) {
     super();
   }
   async refresh() {
+    if (this.stopped || this.writing) return;
+    const request = ++this.request;
     this.setState({ loading: true, error: null });
     try {
-      this.setState({ settings: await this.client.getSettings() });
+      const settings = await this.client.getSettings();
+      if (!this.stopped && request === this.request) this.setState({ settings });
     } catch (error) {
-      this.setState({ error: message(error) });
+      if (!this.stopped && request === this.request) this.setState({ error: message(error) });
     } finally {
-      this.setState({ loading: false });
+      if (!this.stopped && request === this.request) this.setState({ loading: false });
     }
   }
-  async save(input: SettingsDraft) {
+  watch() {
+    if (this.stopped) return () => {};
+    ++this.watchers; void this.refresh();
+    let released = false;
+    return () => { if (released) return; released = true; if (!--this.watchers) { ++this.page; ++this.request; this.setState({ loading: false }); } };
+  }
+  private async write(work: () => Promise<unknown>) {
+    if (this.stopped) throw new Error("界面已停止，请重新打开后操作");
+    if (this.writing) throw new Error("设置正在保存，请等待当前操作完成");
+    const page = this.page; this.writing = true; ++this.request;
+    this.setState({ error: null, loading: false });
     try {
+      await work();
+    } catch (error) {
+      if (!this.stopped && page === this.page) this.setState({ error: message(error) });
+      throw error;
+    } finally { this.writing = false; }
+    if (!this.stopped && (page === this.page || this.watchers)) await this.refresh();
+  }
+  save(input: SettingsDraft) {
+    return this.write(async () => {
       const parsed = settingsDraftSchema.safeParse(input);
       if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("；"));
       await this.client.saveSettings(parsed.data);
-      await this.refresh();
-    } catch (error) {
-      this.setState({ error: message(error) });
-      throw error;
-    }
+    });
   }
-  async saveKey(kind: "tmdb" | "emby", value: string) {
-    try {
-      await this.client.saveCredential(kind, value);
-      await this.refresh();
-    } catch (error) {
-      this.setState({ error: message(error) });
-      throw error;
-    }
+  saveKey(kind: "tmdb" | "emby", value: string) {
+    return this.write(() => this.client.saveCredential(kind, value));
   }
-  async prepareUpgrade() { try { await this.client.prepareDesktopUpgrade(); } catch (error) { this.setState({ error: message(error) }); } }
-  async restoreUpgrade() { try { await this.client.restoreDesktopUpgrade(); } catch (error) { this.setState({ error: message(error) }); } }
+  async prepareUpgrade() { if (this.stopped) return; try { await this.client.prepareDesktopUpgrade(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
+  async restoreUpgrade() { if (this.stopped) return; try { await this.client.restoreDesktopUpgrade(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
   async exportDiagnostics() {
+    if (this.stopped) throw new Error("界面已停止，请重新打开后操作");
     try { return await this.client.exportDiagnostics(); }
-    catch (error) { this.setState({ error: message(error) }); throw error; }
+    catch (error) { if (!this.stopped) this.setState({ error: message(error) }); throw error; }
   }
+  protected dispose() { this.stopped = true; ++this.request; ++this.page; }
 }
 @injectable()
 export class DownloadsViewModel extends StatefulService<{ paused: boolean; pausing: boolean; changingPause: boolean; items: DownloadJob[]; page: number; total: number; loading: boolean; error: string | null; busy: string[] }> {

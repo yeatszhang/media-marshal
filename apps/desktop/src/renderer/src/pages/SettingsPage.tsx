@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useService, useServiceState } from "@yeatz/app-framework/react";
 import {
@@ -20,18 +20,18 @@ export function SettingsPage() {
   const { t } = useTranslation();
   const model = useService(SettingsViewModel);
   const { settings, error, loading } = useServiceState(model, (state) => state);
-  const [embyUrl, setEmbyUrl] = useState(""),
-    [tmdbProxy, setProxy] = useState(""),
+  const [embyUrl, setEmbyUrl] = useState(settings?.embyUrl ?? ""),
+    [tmdbProxy, setProxy] = useState(settings?.tmdbProxy ?? ""),
     [keys, setKeys] = useState({ tmdb: "", emby: "" }),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState<string | null>(null);
-  useEffect(() => {
-    void model.refresh();
-  }, [model]);
+  const edited = useRef({ embyUrl: false, tmdbProxy: false });
+  const current = useRef({ embyUrl, tmdbProxy }); current.current = { embyUrl, tmdbProxy };
+  useEffect(() => model.watch(), [model]);
   useEffect(() => {
     if (settings) {
-      setEmbyUrl(settings.embyUrl);
-      setProxy(settings.tmdbProxy);
+      if (!edited.current.embyUrl) setEmbyUrl(settings.embyUrl);
+      if (!edited.current.tmdbProxy) setProxy(settings.tmdbProxy);
     }
   }, [settings]);
   const submit = async (e: FormEvent) => {
@@ -44,6 +44,8 @@ export function SettingsPage() {
         tmdbProxy,
         language: i18n.language === "en" ? "en" : "zh-CN",
       });
+      if (current.current.embyUrl === embyUrl) edited.current.embyUrl = false;
+      if (current.current.tmdbProxy === tmdbProxy) edited.current.tmdbProxy = false;
       setNotice(t("saved"));
     } catch {
     } finally {
@@ -80,7 +82,7 @@ export function SettingsPage() {
                   type="url"
                   placeholder="http://localhost:8096"
                   value={embyUrl}
-                  onChange={(e) => { setEmbyUrl(e.target.value); setNotice(null); }}
+                  onChange={(e) => { edited.current.embyUrl = true; setEmbyUrl(e.target.value); setNotice(null); }}
                 />
               </div>
               <div className="settings-row">
@@ -90,7 +92,7 @@ export function SettingsPage() {
                   type="url"
                   placeholder="http://127.0.0.1:7890"
                   value={tmdbProxy}
-                  onChange={(e) => { setProxy(e.target.value); setNotice(null); }}
+                  onChange={(e) => { edited.current.tmdbProxy = true; setProxy(e.target.value); setNotice(null); }}
                 />
                 <small className="settings-description settings-proxy-help">仅用于 TMDB 查询，支持 HTTP(S) 代理。留空表示直连；地址不包含账号、密码或子路径。</small>
               </div>
