@@ -13,7 +13,6 @@ npm ci
 npm run typecheck
 npm run check:boundaries
 npm run check:framework
-npm test
 ```
 
 开发和构建：
@@ -26,6 +25,8 @@ npm run test:electron-node
 npm run test:desktop
 npm run desktop:pack
 ```
+
+Mac 首次运行测试前，先执行 `npm run desktop:prepare-native-files`。它使用锁文件已有 node-gyp 从 Electron 官方地址校验并缓存当前版本头文件，再通过 Xcode Command Line Tools 编译修正所需的 Node-API 原语；其他平台的该组原生测试按条件跳过。随后执行 `npm test`。当前原语只供隔离开发验证，输出位于 `build-artifacts/desktop-files`，尚未接入修正服务或安装包，不表示修正任务已完成。
 
 原生模块需要匹配目标平台、架构和运行时。`npm test` 通过仓库运行器使用 Electron 内置 Node，`test:electron-node` 是兼容别名；SQLite 二进制必须先匹配桌面 ABI。当前 SQLite 包提供平台预编译文件，产物检查核对它在 ASAR 外可用，实际加载仍以窗口测试为准。不要用另一系统 Node ABI 直接加载已经重建的 SQLite 模块。`desktop:build` 只编译，不启动旧服务。
 

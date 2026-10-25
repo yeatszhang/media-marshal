@@ -67,3 +67,11 @@ schema v16 将本地候选的属性键 `attribute_key` 与资产版本 `version_
 待确认任务支持单条／批量编辑识别字段，保存与重新匹配均不创建 COPY；整理预览同时绑定识别版本。具体字段、错误和恢复契约见[人工识别字段](./desktop-recognition.md#人工识别字段与重新匹配)。
 
 待确认任务可从目录共同候选或文件勾选生成持久批量预览，跨项检查真实季集、主文件及附属文件目标。只有全部计划可用并明确确认完整范围后才逐项提交原 COPY；停止、部分失败和收据补记均保留已提交文件。详见[共同作品与逐文件批量整理](./desktop-recognition.md#共同作品与逐文件批量整理)。
+
+## 修正所需的独占改名原语
+
+修正须先持久保存旧／新目标和文件证据，再执行不覆盖的目标变更。Mac 已有独立 Node-API 8 开发原语，调用 `renameatx_np` 的 `RENAME_EXCL` 并区分未改名、已改名及需核对结果；不使用普通 `rename` 的预检代替排他提交。Apple 将此能力按文件系统声明，见 [Apple 独占改名说明](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsexclusiverenaming)。本机自有映像证明 APFS、HFS+ 成功改名且阻止目标覆盖，exFAT 不支持，跨卷调用保持来源并返回明确分类；全部测试映像已卸载清理。
+
+原语复制并独占持有目录 FD，放到工作线程执行，限制 64 项等待；不提供任意路径、命令、删除或自动回滚。Core 仍须校验授权、原卷、实际文件与摘要，调用前持久化计划，改名后核对并补记。进程中断或返回需核对状态不能直接重放或删除文件。
+
+当前仅有隔离原生测试与文件系统证据，尚未由修正服务调用或进入安装包。任务 5.6／5.7 继续保持未完成；旧目标回收、附属文件、历史链、强杀恢复、x64 运行和签名安装均须后续验收。构建入口为 `npm run desktop:prepare-native-files`，原生测试为 `npm test -- packages/media-core/src/files/rename-exclusive.test.ts`；完整开发契约和脱敏结果位于 `tools/desktop-files/README.md` 与该目录 `fixtures/`。

@@ -12,6 +12,7 @@ on:
       - 'vitest.config.ts'
       - '.github/workflows/desktop-prototype.yml'
       - 'tools/desktop-parser/**'
+      - 'tools/desktop-files/**'
 
 permissions:
   contents: read
@@ -41,6 +42,8 @@ jobs:
       - run: python tools/desktop-parser/build.py
       - run: python tools/desktop-parser/smoke.py
       - run: npm ci
+      - if: runner.os == 'macOS'
+        run: npm run desktop:prepare-native-files
       - run: npm run typecheck
       - run: npm run check:boundaries
       - run: npm run check:framework

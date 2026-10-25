@@ -1,0 +1,137 @@
+{
+  "capturedAt": "2026-10-25T15:49:04.806Z",
+  "os": {
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Tue Jun  9 22:26:46 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T8103"
+  },
+  "build": {
+    "format": 1,
+    "target": "darwin-arm64",
+    "napi": 8,
+    "sdk": "26.2",
+    "electronHeaders": "44.9.0",
+    "source": {
+      "path": "tools/desktop-files/rename-exclusive.c",
+      "sha256": "7d788f7686b848d2ec4404b3da768940487e4ffa86316749b920fee389e9e8dc"
+    },
+    "headers": {
+      "node_api.h": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a",
+      "node_api_types.h": "a25356630d3058f0a0c8937d9f297e9471e037fda58c2696d8a505c2bd99cb00",
+      "js_native_api.h": "239e46a0e9f74ded674fab6cd693e231a04b79732cdc044831f0b8b5307c569f",
+      "js_native_api_types.h": "4f19cb90d240765cc0961d92a1ee20f65fdc50db7de1ab0a5cb6bc227224e1a0"
+    },
+    "binary": {
+      "name": "rename-exclusive.node",
+      "size": 53032,
+      "sha256": "1af6e73237a71077f910f7088a4ae8be37e0e0fb0ea70b919d7af37fdc159fd0"
+    },
+    "compiler": "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+    "releaseStatus": "unintegrated-development"
+  },
+  "platform": "darwin",
+  "arch": "arm64",
+  "napi": "10",
+  "binarySha256": "1af6e73237a71077f910f7088a4ae8be37e0e0fb0ea70b919d7af37fdc159fd0",
+  "results": [
+    {
+      "filesystem": "APFS",
+      "occupied": {
+        "state": "NOT_RENAMED",
+        "code": "TARGET_EXISTS",
+        "moved": false,
+        "osError": 17
+      },
+      "renamed": {
+        "state": "RENAMED",
+        "code": "OK",
+        "moved": true,
+        "osError": 0
+      },
+      "crossVolume": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      }
+    },
+    {
+      "filesystem": "HFS+",
+      "occupied": {
+        "state": "NOT_RENAMED",
+        "code": "TARGET_EXISTS",
+        "moved": false,
+        "osError": 17
+      },
+      "renamed": {
+        "state": "RENAMED",
+        "code": "OK",
+        "moved": true,
+        "osError": 0
+      },
+      "crossVolume": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      }
+    },
+    {
+      "filesystem": "exFAT",
+      "occupied": {
+        "state": "NOT_RENAMED",
+        "code": "TARGET_EXISTS",
+        "moved": false,
+        "osError": 17
+      },
+      "renamed": {
+        "state": "NOT_RENAMED",
+        "code": "UNSUPPORTED",
+        "moved": false,
+        "osError": 45
+      },
+      "crossVolume": {
+        "state": "NOT_RENAMED",
+        "code": "CROSS_VOLUME",
+        "moved": false,
+        "osError": 18
+      }
+    }
+  ],
+  "cleanup": true,
+  "x64Build": {
+    "format": 1,
+    "target": "darwin-x64",
+    "napi": 8,
+    "sdk": "26.2",
+    "electronHeaders": "44.9.0",
+    "source": {
+      "path": "tools/desktop-files/rename-exclusive.c",
+      "sha256": "7d788f7686b848d2ec4404b3da768940487e4ffa86316749b920fee389e9e8dc"
+    },
+    "headers": {
+      "node_api.h": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a",
+      "node_api_types.h": "a25356630d3058f0a0c8937d9f297e9471e037fda58c2696d8a505c2bd99cb00",
+      "js_native_api.h": "239e46a0e9f74ded674fab6cd693e231a04b79732cdc044831f0b8b5307c569f",
+      "js_native_api_types.h": "4f19cb90d240765cc0961d92a1ee20f65fdc50db7de1ab0a5cb6bc227224e1a0"
+    },
+    "binary": {
+      "name": "rename-exclusive.node",
+      "size": 19712,
+      "sha256": "6735323c03b12f3909699d3bc0debf40c54f66e9b16d9927d3b134545d84adab"
+    },
+    "compiler": "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+    "releaseStatus": "unintegrated-development"
+  },
+  "electronRuntime": {
+    "electron": "44.9.0",
+    "node": "24.22.0",
+    "napi": "10",
+    "nativeTests": 8
+  },
+  "limitations": [
+    "x64 仅交叉编译及 Mach-O 结构核对，未在 Intel Mac 执行",
+    "尚未接入 Core 修正计划、业务日志、历史或安装包",
+    "未完成签名、公证及安装态验收",
+    "原语不授权目录、不验证完整文件摘要，也不承担跨卷 COPY 或旧目标回收"
+  ]
+}
