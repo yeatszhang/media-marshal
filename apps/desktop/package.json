@@ -4,7 +4,7 @@
   "description": "本机影视下载目录整理与 Emby 入库助手",
   "author": "Media Marshal contributors",
   "license": "GPL-3.0",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "main": "out/main/index.js",
   "scripts": {

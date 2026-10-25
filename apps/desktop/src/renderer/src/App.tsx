@@ -6,6 +6,8 @@ import {
   ArrowRight,
   ChevronRight,
   Clapperboard,
+  Cloud,
+  Download,
   Folder,
   LayoutDashboard,
   ListTodo,
@@ -20,7 +22,11 @@ import { ErrorNotice, Empty } from "./components/shared";
 import { Overview } from "./pages/Overview";
 import { Sources } from "./pages/Sources";
 import { Tasks } from "./pages/Tasks";
+import { Ingestion } from "./pages/Ingestion";
 import { SettingsPage } from "./pages/SettingsPage";
+import { CloudDrives } from "./pages/CloudDrives";
+import { Downloads } from "./pages/Downloads";
+import { Subscriptions } from "./pages/Subscriptions";
 import i18n from "./i18n";
 
 function Shell() {
@@ -48,6 +54,9 @@ function Shell() {
     { to: "/tasks", name: "tasks", Icon: Clapperboard },
     { to: "/review", name: "review", Icon: ListTodo },
     { to: "/sources", name: "sources", Icon: Folder },
+    { to: "/cloud", name: "cloud.title", Icon: Cloud },
+    { to: "/downloads", name: "cloud.downloads", Icon: Download },
+    { to: "/subscriptions", name: "cloud.subscriptions", Icon: ListTodo },
     { to: "/settings", name: "settings", Icon: Settings },
   ];
   return (
@@ -107,8 +116,11 @@ function Shell() {
             <Routes>
               <Route path="/" element={<Overview />} />
               <Route path="/sources" element={<Sources />} />
+              <Route path="/cloud" element={<CloudDrives />} />
+              <Route path="/downloads" element={<Downloads />} />
+              <Route path="/subscriptions" element={<Subscriptions />} />
               <Route path="/tasks" element={<Tasks />} />
-              <Route path="/review" element={<Tasks review />} />
+              <Route path="/review" element={<Ingestion />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Routes>
           ) : (

@@ -1,0 +1,70 @@
+specification {
+  element person
+  element system {
+    style { color gray }
+  }
+  element process
+  element component
+  element storage {
+    style { color amber }
+  }
+}
+
+model {
+  user = person '用户'
+  quark = system '夸克网盘'
+  desktop = system 'Media Marshal · macOS' {
+    renderer = process 'Renderer' {
+      description 'React / StatefulService；账号、范围预览、订阅和下载状态'
+    }
+    main = process 'Electron Main' {
+      description '系统保险箱、原生授权、进程身份及升级备份'
+    }
+    core = process 'Media Core' {
+      description '唯一业务库写入者；订阅、计划、领取、校验、提交和 outbox'
+    }
+    host = process 'Sidecar Host' {
+      provider = component 'CloudDriveProvider'
+      engine = component 'TransferEngine'
+    }
+    guardian = process 'Guardian'
+    openlist = process 'OpenList · v4.2.7'
+    rclone = process 'Rclone CLI · v1.75.2'
+    database = storage '业务 SQLite · v6'
+    vault = storage '系统保护的凭据密文'
+    backups = storage '受限升级备份'
+    managed = storage '已授权原卷' {
+      staging = storage '自有 attempt 暂存区'
+      completed = storage 'completed 成果'
+    }
+  }
+  user -> desktop.renderer '配置、预览并确认'
+  desktop.renderer -> desktop.main '受限公开桥；不持有内部协议'
+  desktop.main -> desktop.core '公开命令 / 私有账号及根授权'
+  desktop.core -> desktop.main '反向宿主 RPC；代际、attempt、幂等键'
+  desktop.main -> desktop.host '私有端口；凭据与受管根'
+  desktop.main -> desktop.vault '异步 safeStorage'
+  desktop.main -> desktop.guardian 'OS 身份核验及回收'
+  desktop.main -> desktop.backups '停写后保存；恢复日志先于 Core 启动'
+  desktop.core -> desktop.database '事务、领取、提交意图、完成/outbox'
+  desktop.core -> desktop.managed '原卷身份、独立校验、不覆盖提交'
+  desktop.host.provider -> desktop.openlist '当前网盘适配；可替换为自研 Bridge'
+  desktop.host.engine -> desktop.rclone '参数数组、受控配置；不调用 shell'
+  desktop.guardian -> desktop.openlist '监管生命周期'
+  desktop.guardian -> desktop.rclone '监管生命周期'
+  desktop.rclone -> desktop.openlist '只读回环 WebDAV'
+  desktop.openlist -> quark '本人账号授权；只读获取'
+  desktop.rclone -> desktop.managed.staging '仅写当前 attempt'
+  desktop.core -> desktop.managed.completed '同卷独占发布后记账'
+}
+
+views {
+  view index {
+    title 'Mac 云端下载的进程与权限边界'
+    include user, quark, desktop.*
+  }
+  view adapters of desktop.host {
+    title '接入与传输的可替换边界'
+    include desktop.host.*, desktop.openlist, desktop.rclone, desktop.managed.staging, quark
+  }
+}

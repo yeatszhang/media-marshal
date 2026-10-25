@@ -1,0 +1,155 @@
+{
+  "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java",
+  "cases": [
+    {
+      "id": "optionalSegmentIsKeptWhenAllVariablesArePresent",
+      "template": "{title} ({year})[[ - {resolution}]]{ext}",
+      "variables": {
+        "title": "影片名",
+        "year": 2026,
+        "resolution": "2160p",
+        "ext": ".mkv"
+      },
+      "expected": "影片名 (2026) - 2160p.mkv"
+    },
+    {
+      "id": "optionalSegmentIsRemovedWhenVariableIsMissing",
+      "template": "{title} ({year})[[ - {resolution}]]{ext}",
+      "variables": {
+        "title": "影片名",
+        "year": 2026,
+        "ext": ".mkv"
+      },
+      "expected": "影片名 (2026).mkv"
+    },
+    {
+      "id": "optionalSegmentIsRemovedWhenAnyVariableIsMissing",
+      "template": "{title} ({year})[[ - {resolution} - {codec}]]{ext}",
+      "variables": {
+        "title": "影片名",
+        "year": 2026,
+        "resolution": "2160p",
+        "ext": ".mkv"
+      },
+      "expected": "影片名 (2026).mkv"
+    },
+    {
+      "id": "missingVariableOutsideOptionalSegmentKeepsPlaceholder",
+      "template": "{title} ({year}) - {resolution}{ext}",
+      "variables": {
+        "title": "影片名",
+        "year": 2026,
+        "ext": ".mkv"
+      },
+      "expected": "影片名 (2026) - {resolution}.mkv"
+    },
+    {
+      "id": "stringVariablesAreSanitizedBeforeRenderingPathSegments",
+      "template": "{title}[[ - {release_group}]]{ext}",
+      "variables": {
+        "title": "Bad/Movie:Name?",
+        "release_group": "TEAM|A",
+        "ext": ".mkv"
+      },
+      "expected": "Bad_Movie_Name_ - TEAM_A.mkv"
+    },
+    {
+      "id": "optionalSegmentIsRemovedWhenSanitizedVariableIsBlank",
+      "template": "{title}[[ - {release_group}]]{ext}",
+      "variables": {
+        "title": "Movie",
+        "release_group": "   ",
+        "ext": ".mkv"
+      },
+      "expected": "Movie.mkv"
+    },
+    {
+      "id": "emptyExtRendersAsEmptyString",
+      "template": "{title}{ext}",
+      "variables": {
+        "title": "Movie",
+        "ext": ""
+      },
+      "expected": "Movie"
+    },
+    {
+      "id": "formattedVariablesWorkInsideOptionalSegment",
+      "template": "{title}[[ - S{season:02d}E{episode:02d}]]{ext}",
+      "variables": {
+        "title": "剧名",
+        "season": 3,
+        "episode": 7,
+        "ext": ".mkv"
+      },
+      "expected": "剧名 - S03E07.mkv"
+    },
+    {
+      "id": "placeholderParametersRenderAffixesForSingleValues",
+      "template": "{season:02d;prefix=S}{episode:02d;prefix=E}",
+      "variables": {
+        "season": 1,
+        "episode": 16
+      },
+      "expected": "S01E16"
+    },
+    {
+      "id": "placeholderParametersRenderAffixesForRanges",
+      "template": "{season:02d;prefix=S}{episode:02d;prefix=E}",
+      "variables": {
+        "season": 1,
+        "episode": {
+          "start": 16,
+          "end": 17
+        }
+      },
+      "expected": "S01E16-E17"
+    },
+    {
+      "id": "rangeRenderingCanSkipRepeatedAffixes",
+      "template": "{episode:02d;prefix=E;suffix=X;repeatPrefix=false;repeatSuffix=false}",
+      "variables": {
+        "episode": {
+          "start": 21,
+          "end": 28
+        }
+      },
+      "expected": "E21-28X"
+    },
+    {
+      "id": "rangeRenderingUsesCustomSeparator",
+      "template": "{episode:03d;prefix=EP;separator=_}",
+      "variables": {
+        "episode": {
+          "start": 1,
+          "end": 2
+        }
+      },
+      "expected": "EP001_EP002"
+    },
+    {
+      "id": "placeholderParameterValuesAreSanitized",
+      "template": "{episode:02d;prefix=E/;suffix=:X;separator=/}",
+      "variables": {
+        "episode": {
+          "start": 1,
+          "end": 2
+        }
+      },
+      "expected": "E_01_X_E_02_X"
+    },
+    {
+      "id": "parameterizedPlaceholderWorksInsideOptionalSegment",
+      "template": "{title}[[ - S{season:02d}{episode:02d;prefix=E}]]{ext}",
+      "variables": {
+        "title": "Friends",
+        "season": 1,
+        "episode": {
+          "start": 16,
+          "end": 17
+        },
+        "ext": ".mkv"
+      },
+      "expected": "Friends - S01E16-E17.mkv"
+    }
+  ]
+}

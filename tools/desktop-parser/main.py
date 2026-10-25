@@ -3,6 +3,9 @@
 import json
 import re
 import sys
+import os
+import threading
+import time
 from importlib.metadata import version
 
 from guessit import guessit
@@ -54,6 +57,15 @@ def handle(line):
 
 
 def main():
+    if sys.platform != "win32":
+        parent_pid = os.getppid()
+        def watch_parent():
+            # 即使 guessit 正在计算，Core 强杀后也退出；不按进程名查找或杀其他程序。
+            while True:
+                time.sleep(0.5)
+                if os.getppid() != parent_pid:
+                    os._exit(0)
+        threading.Thread(target=watch_parent, daemon=True).start()
     reader, writer = sys.stdin.buffer, sys.stdout.buffer
     while True:
         line = reader.readline(MAX_REQUEST_BYTES + 1)

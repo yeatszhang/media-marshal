@@ -1,0 +1,588 @@
+{
+  "schemaVersion": 1,
+  "componentVersion": "v4.2.7",
+  "sourceCommit": "3b28270a4066ea52943a69ecddd850d83f7e8bdc",
+  "target": "darwin-arm64",
+  "scope": "临时 Local 驱动，不能作为真实夸克账号或其他平台验收证据",
+  "records": [
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "authenticated": false,
+      "request": {
+        "username": "admin",
+        "password": "<已脱敏>"
+      },
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "token": "<已脱敏>"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/me",
+      "authenticated": true,
+      "request": null,
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "id": 1,
+          "username": "admin",
+          "password": "",
+          "base_path": "/",
+          "role": 2,
+          "disabled": false,
+          "permission": 29183,
+          "sso_id": "",
+          "allow_ldap": true,
+          "otp": false
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/public/init_status",
+      "authenticated": false,
+      "request": null,
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "initialized": true
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/driver/info?driver=Quark",
+      "authenticated": true,
+      "request": null,
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "common": [
+            {
+              "name": "mount_path",
+              "type": "string",
+              "default": "",
+              "options": "",
+              "required": true,
+              "help": "The path you want to mount to, it is unique and cannot be repeated"
+            },
+            {
+              "name": "order",
+              "type": "number",
+              "default": "",
+              "options": "",
+              "required": false,
+              "help": "use to sort"
+            },
+            {
+              "name": "remark",
+              "type": "text",
+              "default": "",
+              "options": "",
+              "required": false,
+              "help": ""
+            },
+            {
+              "name": "cache_expiration",
+              "type": "number",
+              "default": "30",
+              "options": "",
+              "required": true,
+              "help": "The cache expiration time for this storage"
+            },
+            {
+              "name": "custom_cache_policies",
+              "type": "text",
+              "default": "",
+              "options": "",
+              "required": false,
+              "help": "The cache expiration rules for this storage"
+            },
+            {
+              "name": "web_proxy",
+              "type": "bool",
+              "default": "",
+              "options": "",
+              "required": false,
+              "help": ""
+            },
+            {
+              "name": "webdav_policy",
+              "type": "select",
+              "default": "302_redirect",
+              "options": "302_redirect,use_proxy_url,native_proxy",
+              "required": true,
+              "help": ""
+            },
+            {
+              "name": "down_proxy_url",
+              "type": "text",
+              "default": "",
+              "options": "",
+              "required": false,
+              "help": ""
+            },
+            {
+              "name": "disable_proxy_sign",
+              "type": "bool",
+              "default": "false",
+              "options": "",
+              "required": false,
+              "help": "Disable sign for Download proxy URL"
+            },
+            {
+              "name": "extract_folder",
+              "type": "select",
+              "default": "",
+              "options": "front,back",
+              "required": false,
+              "help": ""
+            },
+            {
+              "name": "disable_index",
+              "type": "bool",
+              "default": "false",
+              "options": "",
+              "required": true,
+              "help": ""
+            },
+            {
+              "name": "enable_sign",
+              "type": "bool",
+              "default": "false",
+              "options": "",
+              "required": true,
+              "help": ""
+            }
+          ],
+          "additional": [
+            {
+              "name": "cookie",
+              "type": "string",
+              "default": "",
+              "options": "",
+              "required": true,
+              "help": ""
+            },
+            {
+              "name": "root_folder_id",
+              "type": "string",
+              "default": "0",
+              "options": "",
+              "required": true,
+              "help": ""
+            },
+            {
+              "name": "order_by",
+              "type": "select",
+              "default": "none",
+              "options": "none,file_type,file_name,updated_at",
+              "required": false,
+              "help": ""
+            },
+            {
+              "name": "order_direction",
+              "type": "select",
+              "default": "asc",
+              "options": "asc,desc",
+              "required": false,
+              "help": ""
+            },
+            {
+              "name": "use_transcoding_address",
+              "type": "bool",
+              "default": "false",
+              "options": "",
+              "required": true,
+              "help": "You can watch the transcoded video and support 302 redirection"
+            },
+            {
+              "name": "only_list_video_file",
+              "type": "bool",
+              "default": "false",
+              "options": "",
+              "required": false,
+              "help": ""
+            }
+          ],
+          "config": {
+            "name": "Quark",
+            "local_sort": false,
+            "only_proxy": false,
+            "no_cache": false,
+            "no_upload": false,
+            "need_ms": false,
+            "default_root": "0",
+            "alert": "",
+            "only_indices": false,
+            "prefer_proxy": false
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/storage/create",
+      "authenticated": true,
+      "request": {
+        "mount_path": "/fixture",
+        "driver": "Local",
+        "addition": "<已脱敏>",
+        "cache_expiration": 1,
+        "web_proxy": true,
+        "webdav_policy": "native_proxy",
+        "proxy_range": true,
+        "enable_sign": true
+      },
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "id": 1
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/storage/list?page=1&per_page=10",
+      "authenticated": true,
+      "request": null,
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "content": [
+            {
+              "id": 1,
+              "mount_path": "/fixture",
+              "order": 0,
+              "driver": "Local",
+              "cache_expiration": 1,
+              "custom_cache_policies": "",
+              "status": "work",
+              "addition": "<已脱敏>",
+              "remark": "",
+              "modified": "2026-10-24T16:34:01.219856+08:00",
+              "disabled": false,
+              "disable_index": false,
+              "enable_sign": true,
+              "order_by": "",
+              "order_direction": "",
+              "extract_folder": "",
+              "web_proxy": true,
+              "webdav_policy": "native_proxy",
+              "proxy_range": true,
+              "down_proxy_url": "",
+              "disable_proxy_sign": false
+            }
+          ],
+          "total": 1
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/user/create",
+      "authenticated": true,
+      "request": {
+        "username": "reader",
+        "password": "<已脱敏>",
+        "role": 0,
+        "base_path": "/fixture",
+        "permission": 256
+      },
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/fs/list",
+      "authenticated": true,
+      "request": {
+        "path": "/fixture",
+        "page": 1,
+        "per_page": 1,
+        "refresh": true
+      },
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "content": [
+            {
+              "name": "sample.txt",
+              "size": 42,
+              "is_dir": false,
+              "modified": "2026-10-24T16:34:01.089017238+08:00",
+              "created": "2026-10-24T16:34:01.088950739+08:00",
+              "sign": "<已脱敏>",
+              "thumb": "",
+              "type": 4,
+              "hashinfo": "null",
+              "hash_info": null
+            }
+          ],
+          "total": 2,
+          "readme": "",
+          "header": "",
+          "write": true,
+          "write_content_bypass": false,
+          "provider": "unknown"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/fs/list",
+      "authenticated": true,
+      "request": {
+        "path": "/fixture",
+        "page": 2,
+        "per_page": 1,
+        "refresh": false
+      },
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "content": [
+            {
+              "name": "电影 样片.txt",
+              "size": 42,
+              "is_dir": false,
+              "modified": "2026-10-24T16:34:01.08911411+08:00",
+              "created": "2026-10-24T16:34:01.089070861+08:00",
+              "sign": "<已脱敏>",
+              "thumb": "",
+              "type": 4,
+              "hashinfo": "null",
+              "hash_info": null
+            }
+          ],
+          "total": 2,
+          "readme": "",
+          "header": "",
+          "write": true,
+          "write_content_bypass": false,
+          "provider": "unknown"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/fs/get",
+      "authenticated": true,
+      "request": {
+        "path": "/fixture/sample.txt"
+      },
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "name": "sample.txt",
+          "size": 42,
+          "is_dir": false,
+          "modified": "2026-10-24T16:34:01.089017238+08:00",
+          "created": "2026-10-24T16:34:01.088950739+08:00",
+          "sign": "<已脱敏>",
+          "thumb": "",
+          "type": 4,
+          "hashinfo": "null",
+          "hash_info": null,
+          "raw_url": "<已脱敏>",
+          "readme": "",
+          "header": "",
+          "provider": "Local",
+          "related": null
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/fs/list",
+      "authenticated": false,
+      "request": {
+        "path": "/fixture",
+        "page": 1,
+        "per_page": 10
+      },
+      "httpStatus": 200,
+      "response": {
+        "code": 401,
+        "message": "Guest user is disabled, login please",
+        "data": null
+      }
+    },
+    {
+      "method": "PROPFIND",
+      "path": "/dav/",
+      "authenticated": false,
+      "httpStatus": 401,
+      "headers": {
+        "Content-Length": "0"
+      }
+    },
+    {
+      "method": "PROPFIND",
+      "path": "/dav/",
+      "authenticated": true,
+      "httpStatus": 207,
+      "headers": {
+        "Content-Type": "text/xml; charset=utf-8",
+        "Content-Length": "1980"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/dav/sample.txt",
+      "authenticated": true,
+      "httpStatus": 200,
+      "headers": {
+        "Content-Length": "42",
+        "Content-Type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/dav/电影 样片.txt",
+      "authenticated": true,
+      "httpStatus": 200,
+      "headers": {
+        "Content-Length": "42",
+        "Content-Type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "method": "HEAD",
+      "path": "/dav/sample.txt",
+      "authenticated": true,
+      "httpStatus": 200,
+      "headers": {
+        "Content-Length": "42",
+        "Content-Type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/dav/sample.txt",
+      "authenticated": true,
+      "httpStatus": 206,
+      "headers": {
+        "Content-Length": "5",
+        "Content-Range": "bytes 0-4/42",
+        "Content-Type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/dav/forbidden.txt",
+      "authenticated": true,
+      "httpStatus": 403,
+      "headers": {
+        "Content-Length": "0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/d/fixture/sample.txt",
+      "authenticated": false,
+      "httpStatus": 401
+    },
+    {
+      "method": "GET",
+      "path": "/p/fixture/sample.txt",
+      "authenticated": false,
+      "httpStatus": 401
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/user/list?page=1&per_page=10",
+      "authenticated": true,
+      "request": null,
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "content": [
+            {
+              "id": 1,
+              "username": "admin",
+              "password": "",
+              "base_path": "/",
+              "role": 2,
+              "disabled": false,
+              "permission": 29183,
+              "sso_id": "",
+              "allow_ldap": true
+            },
+            {
+              "id": 2,
+              "username": "guest",
+              "password": "",
+              "base_path": "/",
+              "role": 1,
+              "disabled": true,
+              "permission": 0,
+              "sso_id": "",
+              "allow_ldap": true
+            },
+            {
+              "id": 3,
+              "username": "reader",
+              "password": "",
+              "base_path": "/fixture",
+              "role": 0,
+              "disabled": false,
+              "permission": 256,
+              "sso_id": "",
+              "allow_ldap": true
+            }
+          ],
+          "total": 3
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/storage/delete?id=1",
+      "authenticated": true,
+      "request": null,
+      "httpStatus": 200,
+      "response": {
+        "code": 200,
+        "message": "success",
+        "data": null
+      }
+    }
+  ],
+  "security": {
+    "privateDirectoryMode": "0o700",
+    "privateFileModes": {
+      "config.json": "0o600",
+      "data.db": "0o600"
+    },
+    "rawLogsRetained": false
+  }
+}

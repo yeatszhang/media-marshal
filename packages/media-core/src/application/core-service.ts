@@ -16,10 +16,14 @@ import {
   type DesktopJob,
 } from "@media-marshal/contracts";
 import { CoreDatabase } from "../infrastructure/database.js";
+import { pathsOverlap } from "../files/index.js";
+import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
 
 export const DatabaseToken = createIdentifier<CoreDatabase>(
   "media-core.database",
 );
+export interface CoreComponents { parserReady(): boolean }
+export const ComponentsToken = createIdentifier<CoreComponents>("media-core.components");
 function contains(parent: string, child: string): boolean {
   const rest = relative(parent, child);
   return (
@@ -28,6 +32,8 @@ function contains(parent: string, child: string): boolean {
   );
 }
 interface SourceRow {
+  mode?: "local" | "managed";
+  download_root_id?: string | null;
   id: string;
   name: string;
   kind: DesktopSource["kind"];
@@ -42,6 +48,7 @@ interface SourceRow {
 function sourceDto(row: SourceRow): DesktopSource {
   return sourceSchema.parse({
     id: row.id,
+    mode: row.mode ?? "local", downloadRootId: row.download_root_id ?? null,
     name: row.name,
     kind: row.kind,
     sourcePath: row.source_path,
@@ -59,7 +66,7 @@ function sourceDto(row: SourceRow): DesktopSource {
 @injectable()
 export class CoreService {
   private accepting = true;
-  constructor(@inject(DatabaseToken) private readonly database: CoreDatabase) {}
+  constructor(@inject(DatabaseToken) private readonly database: CoreDatabase, @inject(ComponentsToken) private readonly components: CoreComponents = { parserReady: () => false }) {}
   quiesce(): void {
     this.accepting = false;
   }
@@ -70,6 +77,12 @@ export class CoreService {
         "核心正在停止，尚未接收此操作",
         true,
       );
+  }
+  private checkManagedRoots(paths: string[]) {
+    const roots = this.database.connection.prepare("SELECT canonical_path,volume_identity FROM managed_download_root").all() as { canonical_path: string; volume_identity: string }[];
+    if (roots.some((root) => paths.some((path) => pathsOverlap(root.canonical_path, path, JSON.parse(root.volume_identity) as ManagedRootGrant["volume"])))) throw new DesktopError("UNSAFE_PATH", "目录与受管下载目录重叠");
+    const targets = this.database.connection.prepare("SELECT grant_json FROM media_target_root").all() as { grant_json: string }[];
+    if (targets.some((row) => { const grant = JSON.parse(row.grant_json) as ManagedRootGrant; return pathsOverlap(paths[0]!, grant.path, grant.volume) || (paths[1] !== grant.path && pathsOverlap(paths[1]!, grant.path, grant.volume)); })) throw new DesktopError("UNSAFE_PATH", "目录与媒体目标或历史操作目录重叠");
   }
   getRuntime(): CoreStatus {
     const count = (table: "desktop_source" | "media_task") =>
@@ -83,14 +96,14 @@ export class CoreService {
       sourceCount: count("desktop_source"),
       taskCount: count("media_task"),
       mode: "manual-only",
-      parser: "unavailable",
+      parser: this.components.parserReady() ? "ready" : "unavailable",
     };
   }
   listSources(): DesktopSource[] {
     return (
       this.database.connection
         .prepare(
-          "SELECT * FROM desktop_source ORDER BY created_at, id LIMIT 1000",
+          "SELECT s.*,i.mode,i.download_root_id FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id ORDER BY s.created_at,s.id LIMIT 1000",
         )
         .all() as SourceRow[]
     ).map(sourceDto);
@@ -126,6 +139,7 @@ export class CoreService {
     }
     if (contains(sourcePath, targetPath) || contains(targetPath, sourcePath))
       throw new DesktopError("UNSAFE_PATH", "来源与目标不能相同或互相包含");
+    this.checkManagedRoots([sourcePath, targetPath]);
     for (const other of this.listSources()) {
       if (other.id === input.id) continue;
       if (
@@ -148,6 +162,7 @@ export class CoreService {
       await unlink(probe).catch(() => {});
     }
     this.writable();
+    this.checkManagedRoots([sourcePath, targetPath]);
     const id = input.id ?? randomUUID();
     const db = this.database.connection;
     // 异步目录探测之后再次检查，避免并发保存绕过重叠检查。
@@ -232,6 +247,7 @@ export class CoreService {
         url.password ||
         url.search ||
         url.hash
+        || (address === input.tmdbProxy && url.pathname !== "/")
       )
         throw new DesktopError(
           "INVALID_REQUEST",

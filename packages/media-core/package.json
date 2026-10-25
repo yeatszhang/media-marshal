@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./files": {
+      "types": "./dist/files/index.d.ts",
+      "import": "./dist/files/index.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
@@ -16,6 +20,8 @@
   "dependencies": {
     "@media-marshal/contracts": "0.1.0",
     "@yeatz/app-framework": "0.1.0",
-    "better-sqlite3": "13.0.3"
+    "better-sqlite3": "13.0.3",
+    "https-proxy-agent": "7.0.6",
+    "zod": "4.6.7"
   }
 }

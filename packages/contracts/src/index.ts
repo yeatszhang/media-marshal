@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { cloudActions, cloudCredentialDraftSchema, cloudDiagnosticCountsSchema, CloudError, cloudFailure, type CloudAccount, type CloudAuthorization, type CloudCredentialDraft, type RemotePage, type RemoteEntry, type ManagedDownloadRoot, type CloudInput, type DownloadPreview, type CloudOutput, type CloudSubscription } from "./cloud/index.js";
+export * from "./cloud/index.js";
+import { ingestionActions, ingestionConfigureSchema } from "./ingestion.js";
+export * from "./ingestion.js";
+import { embyActions } from "./emby.js";
+export * from "./emby.js";
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_MESSAGE_BYTES = 64 * 1024;
@@ -15,12 +21,14 @@ export const errorCodeSchema = z.enum([
   "UNSAFE_PATH",
   "STORAGE_ERROR",
   "INTERNAL_ERROR",
+  "AUTH_REQUIRED", "RATE_LIMITED", "NETWORK_UNAVAILABLE", "REMOTE_CHANGED", "REMOTE_NOT_FOUND", "LOCAL_UNAVAILABLE", "UNSUPPORTED_CAPABILITY", "COMPONENT_UNAVAILABLE",
 ]);
 export type ErrorCode = z.infer<typeof errorCodeSchema>;
 export const rpcErrorSchema = z.strictObject({
   code: errorCodeSchema,
   message: z.string().max(500),
   retryable: z.boolean(),
+  retryAfterSeconds: z.number().int().min(1).max(3600).optional(),
 });
 export type RpcError = z.infer<typeof rpcErrorSchema>;
 export class DesktopError extends Error {
@@ -28,6 +36,7 @@ export class DesktopError extends Error {
     readonly code: ErrorCode,
     message: string,
     readonly retryable = false,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "DesktopError";
@@ -47,6 +56,8 @@ export const sourceDraftSchema = z.strictObject({
 });
 export type SourceDraft = z.infer<typeof sourceDraftSchema>;
 export const sourceSchema = sourceDraftSchema.extend({
+  mode: z.enum(["local", "managed"]).optional(),
+  downloadRootId: z.uuid().nullable().optional(),
   id: z.uuid(),
   version: z.number().int().positive(),
   paused: z.boolean(),
@@ -133,6 +144,24 @@ export type DesktopRuntime = z.infer<typeof runtimeSchema>;
 
 const empty = z.strictObject({});
 export const coreActions = {
+  ...ingestionActions,
+  ...embyActions,
+  "cloud.downloads.pause-status": cloudActions["cloud.downloads.pause-status"],
+  "cloud.downloads.set-paused": cloudActions["cloud.downloads.set-paused"],
+  "cloud.subscriptions.configure": cloudActions["cloud.subscriptions.configure"],
+  "cloud.subscriptions.list": cloudActions["cloud.subscriptions.list"],
+  "cloud.subscriptions.control": cloudActions["cloud.subscriptions.control"],
+  "cloud.roots.list": cloudActions["cloud.roots.list"],
+  "cloud.downloads.preview": cloudActions["cloud.downloads.preview"],
+  "cloud.downloads.get-preview": cloudActions["cloud.downloads.get-preview"],
+  "cloud.downloads.confirm": cloudActions["cloud.downloads.confirm"],
+  "cloud.downloads.list": cloudActions["cloud.downloads.list"],
+  "cloud.downloads.control": cloudActions["cloud.downloads.control"],
+  "cloud.accounts.list": cloudActions["cloud.accounts.list"],
+  "cloud.authorizations.get": cloudActions["cloud.authorizations.get"],
+  "cloud.remote.list": cloudActions["cloud.remote.list"],
+  "cloud.remote.stat": cloudActions["cloud.remote.stat"],
+  "cloud.diagnostics": { input: empty, output: cloudDiagnosticCountsSchema },
   "runtime.get": { input: empty, output: coreStatusSchema },
   "sources.list": { input: empty, output: z.array(sourceSchema).max(1000) },
   "sources.save": { input: sourceDraftSchema, output: sourceSchema },
@@ -185,6 +214,16 @@ export const credentialSchema = z.strictObject({
   value: z.string().trim().max(1024),
 });
 export const nativeActions = {
+  "desktop.ingestion.configure": ingestionConfigureSchema,
+  "desktop.media.choose-target": z.strictObject({ mediaType: z.enum(["MOVIE", "TV_SHOW"]) }),
+  "desktop.emby.open": z.strictObject({ taskId: z.uuid() }),
+  "desktop.upgrade.prepare": empty,
+  "desktop.upgrade.restore": empty,
+  "desktop.cloud.choose-root": empty,
+  "desktop.cloud.open-completed": z.strictObject({ jobId: z.uuid() }),
+  "desktop.cloud.authorize": cloudCredentialDraftSchema,
+  "desktop.cloud.disconnect": z.strictObject({ accountId: z.uuid() }),
+  "desktop.cloud.restore": empty,
   "desktop.runtime": empty,
   "desktop.choose-directory": z.strictObject({
     purpose: z.enum(["source", "target"]),
@@ -192,10 +231,46 @@ export const nativeActions = {
   "desktop.credentials.save": credentialSchema,
   "desktop.settings": empty,
   "desktop.restart-core": empty,
+  "desktop.diagnostics.export": empty,
 } as const;
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  listMediaLibraries(): Promise<CoreOutput<"media.libraries">>;
+  chooseMediaTarget(mediaType: "MOVIE" | "TV_SHOW"): Promise<CoreOutput<"media.libraries">>;
+  getEmbyConfiguration(): Promise<CoreOutput<"emby.configuration">>;
+  listEmbyLibraries(): Promise<CoreOutput<"emby.libraries">>;
+  connectEmby(input: CoreInput<"emby.connect">): Promise<CoreOutput<"emby.connect">>;
+  retryEmby(taskId: string): Promise<void>;
+  openEmby(taskId: string): Promise<void>;
+  configureManagedIngestion(input: z.input<typeof ingestionConfigureSchema>): Promise<DesktopSource>;
+  listIngestionCandidates(input: CoreInput<"ingestion.candidates">): Promise<CoreOutput<"ingestion.candidates">>;
+  scanIngestion(sourceId: string): Promise<CoreOutput<"ingestion.scan">>;
+  recognizeIngestion(input: CoreInput<"ingestion.recognize">): Promise<CoreOutput<"ingestion.recognize">>;
+  getIngestionTask(taskId: string): Promise<CoreOutput<"ingestion.task">>;
+  previewOrganize(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">>;
+  confirmOrganize(input: CoreInput<"ingestion.confirm">): Promise<CoreOutput<"ingestion.confirm">>;
+  retryOrganize(taskId: string): Promise<void>;
+  getCloudDownloadPause(): Promise<CloudOutput<"cloud.downloads.pause-status">>;
+  setCloudDownloadPause(input: CloudInput<"cloud.downloads.set-paused">): Promise<CloudOutput<"cloud.downloads.set-paused">>;
+  configureCloudSubscription(input: CloudInput<"cloud.subscriptions.configure">): Promise<CloudSubscription>;
+  listCloudSubscriptions(input: CloudInput<"cloud.subscriptions.list">): Promise<CloudOutput<"cloud.subscriptions.list">>;
+  controlCloudSubscription(input: CloudInput<"cloud.subscriptions.control">): Promise<CloudSubscription>;
+  listDownloadRoots(): Promise<ManagedDownloadRoot[]>;
+  chooseDownloadRoot(): Promise<ManagedDownloadRoot | null>;
+  previewDownload(input: CloudInput<"cloud.downloads.preview">): Promise<DownloadPreview>;
+  getDownloadPreview(requestKey: string): Promise<DownloadPreview | null>;
+  confirmDownload(input: CloudInput<"cloud.downloads.confirm">): Promise<{ jobId: string }>;
+  listDownloads(input: CloudInput<"cloud.downloads.list">): Promise<CloudOutput<"cloud.downloads.list">>;
+  controlDownload(input: CloudInput<"cloud.downloads.control">): Promise<{ jobId: string }>;
+  openDownloadDirectory(jobId: string): Promise<void>;
+  listCloudAccounts(): Promise<CloudAccount[]>;
+  authorizeCloudAccount(input: CloudCredentialDraft): Promise<CloudAuthorization>;
+  getCloudAuthorization(requestKey: string): Promise<CloudAuthorization | null>;
+  disconnectCloudAccount(accountId: string): Promise<void>;
+  restoreCloudAccounts(): Promise<void>;
+  listRemote(input: { accountId: string; parentRef: string; cursor?: string | null; pageSize?: number; refresh?: boolean }): Promise<RemotePage>;
+  statRemote(accountId: string, ref: string): Promise<RemoteEntry>;
   getRuntime(): Promise<DesktopRuntime>;
   listSources(): Promise<DesktopSource[]>;
   saveSource(input: SourceDraft): Promise<DesktopSource>;
@@ -207,6 +282,9 @@ export interface DesktopApi {
   saveCredential(kind: "tmdb" | "emby", value: string): Promise<void>;
   chooseDirectory(purpose: "source" | "target"): Promise<string | null>;
   restartCore(): Promise<void>;
+  prepareDesktopUpgrade(): Promise<void>;
+  restoreDesktopUpgrade(): Promise<void>;
+  exportDiagnostics(): Promise<boolean>;
 }
 
 export function checkMessageSize(
@@ -242,11 +320,13 @@ export function parseCoreRequest(value: unknown): CoreRequest {
   return { ...request.data, payload: payload.data };
 }
 export function publicError(error: unknown): RpcError {
+  if (error instanceof CloudError) return cloudFailure(error);
   if (error instanceof DesktopError)
     return {
       code: error.code,
       message: error.message,
       retryable: error.retryable,
+      ...(error.code === "RATE_LIMITED" && error.retryAfterSeconds && error.retryAfterSeconds <= 3600 ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
     };
   // 文件系统、数据库和网络原始错误可能包含个人路径或凭据。
   return {

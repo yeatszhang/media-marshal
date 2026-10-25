@@ -18,6 +18,10 @@ import {
   type CoreOutput,
   type DesktopRuntime,
 } from "@media-marshal/contracts";
+import type { CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
+import { privateCoreActions, privateCoreResponseSchema, type PrivateCoreAction, type PrivateCoreInput, type PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
+import { CloudError } from "@media-marshal/contracts";
+import type { ParserLaunch } from "@media-marshal/contracts/internal";
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -32,13 +36,21 @@ export class CoreSupervisor {
   private retryTimer?: ReturnType<typeof setTimeout>;
   private attempts = 0;
   private stopping = false;
+  private stopEpoch = 0;
   private starting?: Promise<void>;
   state: DesktopRuntime["core"] = "starting";
   detail: string | null = null;
+  onReady?: () => Promise<void>;
   constructor(
     private readonly workerPath: string,
     private readonly dataDir: string,
+    private hostBridge?: CoreHostBridge,
+    private readonly parser?: () => Promise<ParserLaunch | undefined>,
   ) {}
+  attachHostBridge(bridge: CoreHostBridge): void {
+    if (this.child || this.starting) throw new DesktopError("CONFLICT", "核心运行期间不能更换宿主通道");
+    this.hostBridge = bridge;
+  }
 
   start(): Promise<void> {
     if (this.starting) return this.starting;
@@ -52,6 +64,8 @@ export class CoreSupervisor {
     if (this.child) throw new DesktopError("CONFLICT", "旧核心尚未退出");
     this.state = "starting";
     this.detail = null;
+    const parser = await this.parser?.();
+    if (this.stopping) throw new DesktopError("INTERRUPTED", "核心启动已停止", true);
     const child = utilityProcess.fork(this.workerPath, [], {
       serviceName: "Media Marshal Core",
       stdio: "pipe",
@@ -59,6 +73,10 @@ export class CoreSupervisor {
     this.child = child;
     const { port1, port2 } = new MessageChannelMain();
     this.port = port1;
+    const coreGeneration = randomUUID();
+    const hostGeneration = this.hostBridge?.generation ?? randomUUID();
+    this.hostBridge?.attachCore(coreGeneration, (message) => port1.postMessage(message));
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     // 子进程错误不直接输出，避免原始数据库/文件错误泄漏个人路径。
     child.stdout?.on("data", () => {});
     child.stderr?.on("data", () => {});
@@ -85,6 +103,10 @@ export class CoreSupervisor {
         child.kill();
         return;
       }
+      if (message && typeof message === "object" && "kind" in message && message.kind === "host.request") {
+        this.hostBridge?.receiveCore(message);
+        return;
+      }
       if (
         message &&
         typeof message === "object" &&
@@ -103,6 +125,16 @@ export class CoreSupervisor {
         this.state = "ready";
         this.detail = null;
         readyResolve();
+        void this.onReady?.().catch(() => {});
+        return;
+      }
+      const privateResponse = privateCoreResponseSchema.safeParse(message);
+      if (privateResponse.success) {
+        const response = privateResponse.data, pending = this.pending.get(response.requestId);
+        if (!pending) return;
+        clearTimeout(pending.timer); this.pending.delete(response.requestId);
+        if (response.ok) pending.resolve(response.result);
+        else pending.reject(new CloudError(response.error.code, response.error.retryAfterSeconds));
         return;
       }
       const parsed = responseSchema.safeParse(message);
@@ -119,18 +151,16 @@ export class CoreSupervisor {
             response.error.code,
             response.error.message,
             response.error.retryable,
+            response.error.retryAfterSeconds,
           ),
         );
     });
     port1.start();
     this.exited = new Promise<void>((resolve) =>
       child.once("exit", () => {
+        clearInterval(heartbeat);
         fail();
         port1.close();
-        if (this.child === child) {
-          this.child = undefined;
-          this.port = undefined;
-        }
         for (const pending of this.pending.values()) {
           clearTimeout(pending.timer);
           pending.reject(
@@ -146,25 +176,31 @@ export class CoreSupervisor {
         this.detail = this.stopping
           ? null
           : "媒体核心已中断，正在恢复或等待重试";
-        resolve();
-        if (!this.stopping && this.attempts < 3) {
-          this.attempts++;
-          this.retryTimer = setTimeout(() => {
-            void this.start().catch(() => {});
-          }, this.attempts * 1000);
-        }
+        void (async () => {
+          let stopped = true;
+          try { await this.hostBridge?.detachCore(coreGeneration); } catch { stopped = false; this.detail = "旧云端执行尚未确认停止，核心恢复已阻断"; }
+          if (this.child === child) { this.child = undefined; this.port = undefined; }
+          resolve();
+          if (stopped && !this.stopping && this.attempts < 3) {
+            this.attempts++;
+            this.retryTimer = setTimeout(() => { void this.start().catch(() => {}); }, this.attempts * 1000);
+          }
+        })();
       }),
     );
-    child.once("spawn", () =>
+    child.once("spawn", () => {
       child.postMessage(
         {
           kind: "initialize",
           protocolVersion: PROTOCOL_VERSION,
           databasePath: join(this.dataDir, "desktop.sqlite3"),
+          coreGeneration, hostGeneration,
+          ...(parser ? { parser } : {}),
         },
         [port2],
-      ),
-    );
+      );
+      heartbeat = setInterval(() => { try { port1.postMessage({ kind: "core.heartbeat", protocolVersion: PROTOCOL_VERSION }); } catch {} }, 500);
+    });
     try {
       await ready;
     } catch (error) {
@@ -214,12 +250,28 @@ export class CoreSupervisor {
     return coreActions[action].output.parse(result) as CoreOutput<K>;
   }
   async restart(): Promise<void> {
+    const epoch = this.stopEpoch + 1;
     await this.stop();
     await this.starting?.catch(() => {});
+    if (this.stopEpoch !== epoch) throw new DesktopError("INTERRUPTED", "核心重启已被停止操作撤销", true);
     this.attempts = 0;
     await this.start();
   }
+  async requestPrivate<K extends PrivateCoreAction>(action: K, payload: PrivateCoreInput<K>): Promise<PrivateCoreOutput<K>> {
+    if (this.state !== "ready" || !this.port) throw new CloudError("COMPONENT_UNAVAILABLE");
+    if (this.pending.size >= 64) throw new CloudError("CONFLICT");
+    const requestId = randomUUID(), message = { kind: "core.private.request", requestId, action, payload: privateCoreActions[action].input.parse(payload) };
+    checkMessageSize(message);
+    const result = await new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(requestId); reject(new CloudError("TIMEOUT")); }, 15000);
+      this.pending.set(requestId, { resolve, reject, timer });
+      try { this.port!.postMessage(message); }
+      catch { clearTimeout(timer); this.pending.delete(requestId); reject(new CloudError("INTERRUPTED")); }
+    });
+    return privateCoreActions[action].output.parse(result) as PrivateCoreOutput<K>;
+  }
   async stop(): Promise<void> {
+    this.stopEpoch++;
     this.stopping = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = undefined;

@@ -1,0 +1,2 @@
+# 上游许可按摘要逐字节保留，禁止 Windows 检出时转换行尾。
+licenses/*.LICENSE -text whitespace=-blank-at-eof

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useService, useServiceState } from "@yeatz/app-framework/react";
 import { ShieldCheck, ListTodo } from "lucide-react";
@@ -9,7 +10,8 @@ import { Button } from "../components/ui/button";
 export function Tasks({ review = false }: { review?: boolean }) {
   const { t } = useTranslation();
   const model = useService(TasksViewModel);
-  const { data, loading, error } = useServiceState(model, (state) => state);
+  const navigate = useNavigate();
+  const { data, loading, error, busy } = useServiceState(model, (state) => state);
   useEffect(() => {
     void model.refresh(1, review);
   }, [model, review]);
@@ -47,6 +49,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
                   <th>{t("file")}</th>
                   <th>{t("status")}</th>
                   <th>{t("delivery")}</th>
+                  <th>{t("ingestion.action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -57,6 +60,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
                     </td>
                     <td>{t(task.status)}</td>
                     <td>{t(task.deliveryStatus)}</td>
+                    <td><div className="download-controls"><Button variant="outline" size="sm" onClick={() => navigate("/review", { state: { taskId: task.id } })}>{t("ingestion.inspect")}</Button>{task.status === "DONE" && (task.deliveryStatus === "COLLECTED" ? <Button variant="outline" size="sm" disabled={busy.includes(task.id)} onClick={() => { void model.delivery(task.id, true); }}>{t("ingestion.openEmby")}</Button> : <Button variant="outline" size="sm" disabled={busy.includes(task.id)} onClick={() => { void model.delivery(task.id); }}>{t("ingestion.deliveryRetry")}</Button>)}</div></td>
                   </tr>
                 ))}
               </tbody>

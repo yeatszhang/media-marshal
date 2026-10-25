@@ -1,0 +1,17 @@
+{
+  "target": "darwin-arm64",
+  "openlist": "4.2.7",
+  "rclone": "1.75.2",
+  "scope": "真实 Main/系统保险箱/Core/Host/OpenList/Rclone，窗口范围预览与确认、完整文件校验提交、重载与 Core 重启",
+  "wholeFileDownloaded": true,
+  "size": 604951500,
+  "localSha256": "01663a977dc49a136db3f257113a3125b0de00358c54406a28d2991f75abb503",
+  "remoteEvidence": "weak",
+  "endToEndDigestClaimed": false,
+  "membership": "user-declared-vip",
+  "durationMs": 27782,
+  "completedItems": 1,
+  "restoredSameCompletedJob": true,
+  "minimumWindowNoHorizontalOverflow": true,
+  "signed": false
+}

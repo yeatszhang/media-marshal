@@ -1,0 +1,1810 @@
+{
+  "target": "darwin-arm64",
+  "packaged": true,
+  "note": "单次实测；ps CPU 为系统观测口径，RSS 合计可能重复包含共享页，不等同独占物理内存。",
+  "metrics": [
+    {
+      "elapsedMs": 31,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 287168,
+          "cpuPercent": 3.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 104768,
+          "cpuPercent": 2.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49072,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184512,
+          "cpuPercent": 9.5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 105664,
+          "cpuPercent": 1.8
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 186304,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5504,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 71008,
+          "cpuPercent": 0.2
+        }
+      ],
+      "rssSumKiB": 994000,
+      "cpuSumPercent": 17.4
+    },
+    {
+      "elapsedMs": 1108,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 284464,
+          "cpuPercent": 2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 105168,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49072,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 185232,
+          "cpuPercent": 1.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 108048,
+          "cpuPercent": 2.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 188784,
+          "cpuPercent": 2.4
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5744,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 72464,
+          "cpuPercent": 4.7
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 55568,
+          "cpuPercent": 14.1
+        }
+      ],
+      "rssSumKiB": 1054544,
+      "cpuSumPercent": 28.799999999999997
+    },
+    {
+      "elapsedMs": 2210,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 284496,
+          "cpuPercent": 1.5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 89632,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49072,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 185312,
+          "cpuPercent": 1.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 108096,
+          "cpuPercent": 2.8
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 188832,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5776,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 73904,
+          "cpuPercent": 2.9
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 56304,
+          "cpuPercent": 0.2
+        }
+      ],
+      "rssSumKiB": 1041424,
+      "cpuSumPercent": 9.2
+    },
+    {
+      "elapsedMs": 3307,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 284544,
+          "cpuPercent": 1.5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 89056,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49072,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184672,
+          "cpuPercent": 1.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 108176,
+          "cpuPercent": 2.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 188960,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5872,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 86224,
+          "cpuPercent": 24
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 59312,
+          "cpuPercent": 5.5
+        }
+      ],
+      "rssSumKiB": 1055888,
+      "cpuSumPercent": 36.5
+    },
+    {
+      "elapsedMs": 4370,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 273120,
+          "cpuPercent": 1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 86880,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49072,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184688,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 108272,
+          "cpuPercent": 1.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 189008,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5888,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104752,
+          "cpuPercent": 23.4
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 60320,
+          "cpuPercent": 6.5
+        }
+      ],
+      "rssSumKiB": 1062000,
+      "cpuSumPercent": 33.7
+    },
+    {
+      "elapsedMs": 5426,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 273072,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 86336,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49072,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184800,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 108560,
+          "cpuPercent": 1.8
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 189008,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5920,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105344,
+          "cpuPercent": 18.7
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 62384,
+          "cpuPercent": 3
+        }
+      ],
+      "rssSumKiB": 1064496,
+      "cpuSumPercent": 26.9
+    },
+    {
+      "elapsedMs": 6496,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 273152,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 86304,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49072,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 185920,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 109072,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 189040,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5968,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105408,
+          "cpuPercent": 9.5
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 63408,
+          "cpuPercent": 3.5
+        }
+      ],
+      "rssSumKiB": 1067344,
+      "cpuSumPercent": 16.4
+    },
+    {
+      "elapsedMs": 7570,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 273168,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 86368,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49088,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 186432,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 109680,
+          "cpuPercent": 1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 189040,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5984,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105408,
+          "cpuPercent": 10.6
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 63408,
+          "cpuPercent": 4
+        }
+      ],
+      "rssSumKiB": 1068576,
+      "cpuSumPercent": 17.1
+    },
+    {
+      "elapsedMs": 8660,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 273184,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 82096,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49088,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 186576,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 110288,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 189056,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5984,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105392,
+          "cpuPercent": 10.6
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 63408,
+          "cpuPercent": 2.6
+        }
+      ],
+      "rssSumKiB": 1065072,
+      "cpuSumPercent": 15.5
+    },
+    {
+      "elapsedMs": 9766,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 273216,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 86272,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 49088,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 186752,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 110704,
+          "cpuPercent": 2.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 189056,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6016,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105392,
+          "cpuPercent": 16.3
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 64432,
+          "cpuPercent": 9.2
+        }
+      ],
+      "rssSumKiB": 1070928,
+      "cpuSumPercent": 29.6
+    },
+    {
+      "elapsedMs": 10833,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 268304,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81984,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44336,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 185456,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 105712,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 189104,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6016,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105392,
+          "cpuPercent": 8.8
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 64448,
+          "cpuPercent": 2.3
+        }
+      ],
+      "rssSumKiB": 1050752,
+      "cpuSumPercent": 12.3
+    },
+    {
+      "elapsedMs": 11934,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 268160,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81792,
+          "cpuPercent": 1.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44288,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184848,
+          "cpuPercent": 2.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 101312,
+          "cpuPercent": 2.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 189120,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6032,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105408,
+          "cpuPercent": 17.6
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 66496,
+          "cpuPercent": 3.6
+        }
+      ],
+      "rssSumKiB": 1047456,
+      "cpuSumPercent": 29.900000000000006
+    },
+    {
+      "elapsedMs": 13025,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 267904,
+          "cpuPercent": 1.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81456,
+          "cpuPercent": 1.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44288,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183888,
+          "cpuPercent": 5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 96624,
+          "cpuPercent": 2.8
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183952,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6048,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105424,
+          "cpuPercent": 10.6
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 66496,
+          "cpuPercent": 2.8
+        }
+      ],
+      "rssSumKiB": 1036080,
+      "cpuSumPercent": 25.1
+    },
+    {
+      "elapsedMs": 14134,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 266896,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81376,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44272,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183664,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 95872,
+          "cpuPercent": 2.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183952,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6048,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105424,
+          "cpuPercent": 19.9
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 67552,
+          "cpuPercent": 5.2
+        }
+      ],
+      "rssSumKiB": 1035056,
+      "cpuSumPercent": 29.899999999999995
+    },
+    {
+      "elapsedMs": 15239,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 265744,
+          "cpuPercent": 2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81136,
+          "cpuPercent": 1.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44144,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 182656,
+          "cpuPercent": 3.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 95776,
+          "cpuPercent": 3.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183952,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6064,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105440,
+          "cpuPercent": 12.5
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 67552,
+          "cpuPercent": 3.6
+        }
+      ],
+      "rssSumKiB": 1032464,
+      "cpuSumPercent": 27.4
+    },
+    {
+      "elapsedMs": 16343,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 265184,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81136,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44144,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 182688,
+          "cpuPercent": 1.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 95840,
+          "cpuPercent": 2.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183968,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6064,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105440,
+          "cpuPercent": 12.1
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 67552,
+          "cpuPercent": 3.3
+        }
+      ],
+      "rssSumKiB": 1032016,
+      "cpuSumPercent": 22.3
+    },
+    {
+      "elapsedMs": 17406,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 265584,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81136,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44144,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 182832,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 95872,
+          "cpuPercent": 1.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184000,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6064,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105440,
+          "cpuPercent": 12
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 67552,
+          "cpuPercent": 3.9
+        }
+      ],
+      "rssSumKiB": 1032624,
+      "cpuSumPercent": 20.599999999999998
+    },
+    {
+      "elapsedMs": 18487,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 265536,
+          "cpuPercent": 1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81200,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44144,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 182912,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 95952,
+          "cpuPercent": 1.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184048,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6064,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105440,
+          "cpuPercent": 8.4
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 67552,
+          "cpuPercent": 3.9
+        }
+      ],
+      "rssSumKiB": 1032848,
+      "cpuSumPercent": 16.599999999999998
+    },
+    {
+      "elapsedMs": 19573,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 263600,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 81136,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 44144,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 173200,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 95952,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184080,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6080,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105440,
+          "cpuPercent": 13.3
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 67552,
+          "cpuPercent": 3
+        }
+      ],
+      "rssSumKiB": 1021184,
+      "cpuSumPercent": 19.8
+    },
+    {
+      "elapsedMs": 20641,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 260496,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80768,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43920,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154512,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 95904,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184128,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6096,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105440,
+          "cpuPercent": 20.6
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 3.7
+        }
+      ],
+      "rssSumKiB": 1002928,
+      "cpuSumPercent": 26.7
+    },
+    {
+      "elapsedMs": 21751,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 260496,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80784,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43712,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154576,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 95872,
+          "cpuPercent": 1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184192,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6112,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105440,
+          "cpuPercent": 7.6
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 1.6
+        }
+      ],
+      "rssSumKiB": 1002848,
+      "cpuSumPercent": 11.4
+    },
+    {
+      "elapsedMs": 22837,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 260496,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80304,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43712,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154608,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 90832,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184256,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6112,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105440,
+          "cpuPercent": 13.7
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 3.4
+        }
+      ],
+      "rssSumKiB": 997424,
+      "cpuSumPercent": 19
+    },
+    {
+      "elapsedMs": 23937,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 260496,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80256,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43712,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154688,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 91008,
+          "cpuPercent": 1.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184288,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6112,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105472,
+          "cpuPercent": 18.2
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 3.4
+        }
+      ],
+      "rssSumKiB": 997696,
+      "cpuSumPercent": 24.2
+    },
+    {
+      "elapsedMs": 25040,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 253856,
+          "cpuPercent": 7.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80288,
+          "cpuPercent": 1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 156112,
+          "cpuPercent": 11.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 92400,
+          "cpuPercent": 10.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184352,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6128,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105472,
+          "cpuPercent": 11.6
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 6.8
+        }
+      ],
+      "rssSumKiB": 994000,
+      "cpuSumPercent": 49.5
+    },
+    {
+      "elapsedMs": 26146,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 253936,
+          "cpuPercent": 1.8
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80208,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 153088,
+          "cpuPercent": 3.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 91184,
+          "cpuPercent": 2.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 184000,
+          "cpuPercent": 6.6
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6144,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105488,
+          "cpuPercent": 17.8
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 3.4
+        }
+      ],
+      "rssSumKiB": 989440,
+      "cpuSumPercent": 35.3
+    },
+    {
+      "elapsedMs": 27250,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 255088,
+          "cpuPercent": 2.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80272,
+          "cpuPercent": 1.5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 153904,
+          "cpuPercent": 3.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 91632,
+          "cpuPercent": 2.6
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183040,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6144,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105504,
+          "cpuPercent": 20.2
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 4.1
+        }
+      ],
+      "rssSumKiB": 990976,
+      "cpuSumPercent": 34.8
+    },
+    {
+      "elapsedMs": 28310,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 255248,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80256,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154000,
+          "cpuPercent": 2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 92112,
+          "cpuPercent": 3.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183088,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6160,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105504,
+          "cpuPercent": 13.6
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 8.5
+        }
+      ],
+      "rssSumKiB": 991760,
+      "cpuSumPercent": 30.799999999999997
+    },
+    {
+      "elapsedMs": 29371,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 255408,
+          "cpuPercent": 1.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80256,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154144,
+          "cpuPercent": 1.8
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 92128,
+          "cpuPercent": 2.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183136,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6160,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105504,
+          "cpuPercent": 17.1
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 3.4
+        }
+      ],
+      "rssSumKiB": 992128,
+      "cpuSumPercent": 27
+    },
+    {
+      "elapsedMs": 30421,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 249088,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80320,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154272,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 92368,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183184,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6160,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105504,
+          "cpuPercent": 7.3
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71664,
+          "cpuPercent": 1
+        }
+      ],
+      "rssSumKiB": 986288,
+      "cpuSumPercent": 9.8
+    },
+    {
+      "elapsedMs": 31490,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 230736,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 76144,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154288,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 92432,
+          "cpuPercent": 1.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183216,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6160,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105504,
+          "cpuPercent": 13
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73648,
+          "cpuPercent": 7.6
+        }
+      ],
+      "rssSumKiB": 965856,
+      "cpuSumPercent": 24.1
+    },
+    {
+      "elapsedMs": 32563,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 230736,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80224,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154352,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 92448,
+          "cpuPercent": 1.5
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 183264,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6160,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105504,
+          "cpuPercent": 10
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73712,
+          "cpuPercent": 2.4
+        }
+      ],
+      "rssSumKiB": 970128,
+      "cpuSumPercent": 15.6
+    },
+    {
+      "elapsedMs": 33679,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 212256,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80176,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154544,
+          "cpuPercent": 1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 92480,
+          "cpuPercent": 1.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 181056,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6176,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 105504,
+          "cpuPercent": 21.1
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73728,
+          "cpuPercent": 3.6
+        }
+      ],
+      "rssSumKiB": 949648,
+      "cpuSumPercent": 29.000000000000004
+    },
+    {
+      "elapsedMs": 34781,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 212256,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 80176,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43728,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 154544,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 92528,
+          "cpuPercent": 1.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 181344,
+          "cpuPercent": 1.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6240,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 74800,
+          "cpuPercent": 7.3
+        }
+      ],
+      "rssSumKiB": 845616,
+      "cpuSumPercent": 11.899999999999999
+    },
+    {
+      "elapsedMs": 35841,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168480,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 79984,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43568,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 147568,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 93248,
+          "cpuPercent": 50.4
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 86800,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5632,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 70064,
+          "cpuPercent": 0.2
+        }
+      ],
+      "rssSumKiB": 695344,
+      "cpuSumPercent": 51.5
+    },
+    {
+      "elapsedMs": 36893,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168528,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 75760,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 43568,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 147568,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 93968,
+          "cpuPercent": 85.9
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 86928,
+          "cpuPercent": 0
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5632,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 70160,
+          "cpuPercent": 0
+        }
+      ],
+      "rssSumKiB": 692112,
+      "cpuSumPercent": 86.10000000000001
+    }
+  ],
+  "observations": 35,
+  "peakRssSumKiB": 1070928,
+  "peakCpuSumPercent": 86.10000000000001
+}

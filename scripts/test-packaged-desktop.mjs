@@ -6,7 +6,8 @@ const relative =
   process.platform === "win32"
     ? "win-unpacked/Media Marshal.exe"
     : `${process.arch === "arm64" ? "mac-arm64" : "mac"}/Media Marshal.app/Contents/MacOS/Media Marshal`;
-const executable = resolve("apps/desktop/release", relative);
+// 允许直接验收只读 DMG 中的应用，未指定时仍检查本地目录包。
+const executable = process.env.MARSHAL_APP_PATH ? resolve(process.env.MARSHAL_APP_PATH) : resolve("apps/desktop/release", relative);
 if (!existsSync(executable))
   throw new Error("尚未生成当前平台的桌面目录包，请先运行 desktop:pack");
 const env = {

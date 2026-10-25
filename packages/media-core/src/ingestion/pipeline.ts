@@ -1,0 +1,436 @@
+import { createHash, randomUUID } from "node:crypto";
+import { open } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
+import { performance } from "node:perf_hooks";
+import { watch, type FSWatcher } from "node:fs";
+import { DesktopError, type CoreInput, type CoreOutput } from "@media-marshal/contracts";
+import { localFileEvidenceSchema, managedRootGrantSchema, type LocalFileEvidence, type ManagedRootGrant } from "@media-marshal/contracts/internal";
+import type { PrivateCoreInput, PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
+import type { CoreDatabase } from "../infrastructure/database.js";
+import type { NameParser } from "../infrastructure/parser-process.js";
+import { SourceRoot, sameSnapshot, sourceSnapshotSchema, sourceVersion, type SourceSnapshot } from "../files/source-root.js";
+import { ManagedRoots, pathsOverlap, sameVolumeRoot, assertSpaceBudget } from "../files/index.js";
+import type { ManagedIngestionSink } from "../cloud/outbox.js";
+import type { MediaConnections } from "../application/media-connections.js";
+import { mergeParentEvidence, parentContext, searchMatches, type MediaMatch, type MetadataWork } from "../domain/matching.js";
+import { assertUniqueEpisodes, reconcileEpisodes, resolveSeason, type ParsedMedia } from "../domain/media.js";
+import { templatePath } from "../domain/template.js";
+import { titleInitial } from "../domain/title-initial.js";
+
+type Authorization = PrivateCoreInput<"media.sources.authorize">;
+interface SourceRow { source_id: string; mode: "local" | "managed"; download_root_id: string | null; source_grant_json: string; target_root_id: string; source_version: number; available: number; paused: number; version: number; source_path: string; target_path: string; media_type: "AUTO" | "MOVIE" | "TV_SHOW" }
+interface CandidateRow { id: string; source_id: string; relative_json: string; version_key: string; snapshot_json: string; expected_sha256: string | null; managed_item_id: string | null; managed_version_key: string | null; state: CoreOutput<"ingestion.candidates">["items"][number]["state"]; task_id: string | null; reason: string | null; created_at: string; updated_at: string }
+interface Accessory { sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null }
+interface Plan { taskId: string; candidateId: string; sourceId: string; sourceVersion: number; connectionVersion: number; source: ManagedRootGrant; target: ManagedRootGrant; sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null; parsed: ParsedMedia; metadata: MetadataWork; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null }; episodeTitle: string | null; accessories?: Accessory[] }
+interface PreviewRow { id: string; request_key: string; task_id: string; input_hash: string; plan_json: string; expires_at: number; operation_id: string | null }
+interface OperationRow { id: string; task_id: string; candidate_id: string; target_root_id: string; plan_json: string; attempt_id: string; phase: string; evidence_json: string | null }
+const sourceQuery = "SELECT i.*,s.paused,s.version,s.source_path,s.target_path,s.media_type FROM ingestion_source i JOIN desktop_source s ON s.id=i.source_id";
+const timestamp = (now: () => number) => new Date(now()).toISOString();
+const conflict = (message = "内容或配置已变化，请刷新并重新预览") => new DesktopError("CONFLICT", message);
+const video = /\.(?:mkv|mp4|avi|mov|m4v|ts|m2ts|wmv|flv|webm|mpg|mpeg|rmvb)$/i;
+const temporary = /(?:\.(?:part|tmp|temp|aria2|download|downloading|crdownload)|\.!qB)$/i;
+const unsupported = /\.(?:mp3|flac|wav|m4a|aac|ogg|iso)$/i;
+const associated = /\.(?:srt|ass|ssa|sub|idx|nfo|jpg|jpeg|png|webp|md5|vtt)$/i;
+const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+/** SQLite 持有所有业务事实；内存只记录本次进程的稳定观察时钟和可取消的执行。 */
+export class IngestionPipeline implements ManagedIngestionSink {
+  readonly targets = new ManagedRoots("direct");
+  private readonly sources = new Map<string, SourceRoot>();
+  private readonly observations = new Map<string, { since: number; last: number; version: string }>();
+  private readonly accessoryObservations = new Map<string, { since: number; last: number; version: string }>();
+  private timer?: ReturnType<typeof setInterval>; private flight?: Promise<void>; private closed = false; private controller?: AbortController;
+  private configurationQueue: Promise<unknown> = Promise.resolve();
+  private readonly scans = new Map<string, Promise<{ discovered: number }>>();
+  private readonly watches = new Map<string, { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout> }>();
+  constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now()) {
+    const db = database.connection;
+    db.prepare("UPDATE media_target_root SET available=0").run(); db.prepare("UPDATE ingestion_source SET available=0").run();
+    db.prepare("UPDATE desktop_source SET health='unverified' WHERE id IN (SELECT source_id FROM ingestion_source)").run();
+    this.resetObservations();
+    db.prepare("UPDATE media_task SET status='PENDING' WHERE status='PROCESSING' AND id IN (SELECT task_id FROM ingestion_candidate) AND id NOT IN (SELECT task_id FROM ingestion_operation)").run();
+  }
+  start() { if (!this.timer && !this.closed) { this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 10000); void this.tick().catch(() => {}); } }
+  resetObservations() {
+    this.observations.clear();
+    this.accessoryObservations.clear();
+    this.database.connection.prepare("UPDATE ingestion_candidate SET state='OBSERVING',reason='重新观察文件稳定性' WHERE state IN ('READY','UNAVAILABLE')").run();
+  }
+  sourceChanged(id: string) {
+    this.controller?.abort();
+    for (const row of this.database.connection.prepare("SELECT id FROM ingestion_candidate WHERE source_id=?").all(id) as { id: string }[]) this.observations.delete(row.id);
+    for (const key of this.accessoryObservations.keys()) if (key.startsWith(id + ":")) this.accessoryObservations.delete(key);
+    this.database.connection.prepare("UPDATE ingestion_candidate SET state='OBSERVING',reason='来源配置或暂停状态已变化，请重新观察' WHERE source_id=? AND state='READY'").run(id);
+  }
+  bootstrap(): PrivateCoreOutput<"media.sources.bootstrap"> {
+    return (this.database.connection.prepare("SELECT i.*,t.grant_json FROM ingestion_source i JOIN media_target_root t ON t.id=i.target_root_id ORDER BY i.source_id LIMIT 1000").all() as (SourceRow & { grant_json: string })[])
+      .map((row) => ({ sourceId: row.source_id, sourceVersion: row.source_version, mode: row.mode, downloadRootId: row.download_root_id, source: managedRootGrantSchema.parse(JSON.parse(row.source_grant_json)), target: managedRootGrantSchema.parse(JSON.parse(row.grant_json)) }));
+  }
+  libraryBootstrap(): PrivateCoreOutput<"media.library.bootstrap"> {
+    return (this.database.connection.prepare("SELECT r.media_type,t.grant_json FROM media_library_route r JOIN media_target_root t ON t.id=r.target_root_id ORDER BY r.media_type").all() as { media_type: "MOVIE" | "TV_SHOW"; grant_json: string }[]).map((row) => ({ mediaType: row.media_type, target: managedRootGrantSchema.parse(JSON.parse(row.grant_json)) }));
+  }
+  authorizeLibrary(input: PrivateCoreInput<"media.library.authorize">) { return this.serialize(async () => {
+    const db = this.database.connection, targets = db.prepare("SELECT id,grant_json FROM media_target_root").all() as { id: string; grant_json: string }[];
+    const previous = targets.find((row) => row.id === input.target.id);
+    if (previous && (JSON.parse(previous.grant_json).path !== input.target.path || !sameVolumeRoot(JSON.parse(previous.grant_json).volume, input.target.volume))) throw new DesktopError("LOCAL_UNAVAILABLE", "目标原卷身份不一致", true);
+    const overlaps = () => {
+      const roots = db.prepare("SELECT canonical_path FROM managed_download_root").all() as { canonical_path: string }[];
+      const sources = db.prepare("SELECT source_path FROM desktop_source").all() as { source_path: string }[];
+      if ([...roots.map((row) => row.canonical_path), ...sources.map((row) => row.source_path)].some((path) => pathsOverlap(path, input.target.path, input.target.volume)) || targets.some((row) => row.id !== input.target.id && pathsOverlap(JSON.parse(row.grant_json).path, input.target.path, input.target.volume))) throw new DesktopError("UNSAFE_PATH", "媒体目标与其他来源或目标重叠");
+    }; overlaps(); await this.targets.install(input.target); overlaps();
+    db.transaction(() => { db.prepare("INSERT INTO media_target_root VALUES(?,?,1) ON CONFLICT(id) DO UPDATE SET grant_json=excluded.grant_json,available=1").run(input.target.id, JSON.stringify(input.target)); db.prepare("INSERT INTO media_library_route VALUES(?,?) ON CONFLICT(media_type) DO UPDATE SET target_root_id=excluded.target_root_id").run(input.mediaType, input.target.id); })();
+    return {};
+  }); }
+  libraries() { return this.libraryBootstrap().map((row) => ({ mediaType: row.mediaType, targetId: row.target.id, path: row.target.path, available: (this.database.connection.prepare("SELECT available FROM media_target_root WHERE id=?").get(row.target.id) as { available: number }).available === 1 })); }
+  private targetFor(source: SourceRow, type: "MOVIE" | "TV_SHOW") { const route = this.database.connection.prepare("SELECT target_root_id FROM media_library_route WHERE media_type=?").get(type) as { target_root_id: string } | undefined; return this.targets.get(route?.target_root_id ?? source.target_root_id); }
+  private serialize<T>(work: () => Promise<T>) { const promise = this.configurationQueue.catch(() => {}).then(work); this.configurationQueue = promise; return promise; }
+  private checkConfiguration(input: Authorization, draft?: { version: number; source_path: string; target_path: string }) {
+    if (this.closed) throw new DesktopError("INTERRUPTED", "整理服务正在停止", true);
+    const db = this.database.connection, source = draft ?? db.prepare("SELECT * FROM desktop_source WHERE id=?").get(input.sourceId) as { version: number; source_path: string; target_path: string } | undefined;
+    const sourcePath = input.mode === "managed" ? join(input.source.path, "completed") : input.source.path;
+    if (!source || source.version !== input.sourceVersion || source.source_path !== sourcePath || source.target_path !== input.target.path) throw conflict();
+    if (pathsOverlap(input.source.path, input.target.path, input.target.volume)) throw new DesktopError("UNSAFE_PATH", "来源和目标不能相互包含");
+    const others = db.prepare("SELECT id,source_path,target_path FROM desktop_source WHERE id!=?").all(input.sourceId) as { source_path: string; target_path: string }[];
+    if (others.some((row) => [row.source_path, row.target_path].some((path) => [input.source.path, input.target.path].some((candidate) => pathsOverlap(path, candidate, input.target.volume))))) throw new DesktopError("UNSAFE_PATH", "目录与其他来源或目标重叠");
+    const roots = db.prepare("SELECT id,canonical_path FROM managed_download_root").all() as { id: string; canonical_path: string }[];
+    if (roots.some((root) => pathsOverlap(root.canonical_path, input.target.path, input.target.volume) || (root.id !== input.downloadRootId && pathsOverlap(root.canonical_path, input.source.path, input.source.volume)))) throw new DesktopError("UNSAFE_PATH", "目录与其他受管下载目录重叠");
+    if (input.mode === "managed") {
+      const root = db.prepare("SELECT * FROM managed_download_root WHERE id=? AND state='AVAILABLE'").get(input.downloadRootId) as { canonical_path: string; volume_identity: string } | undefined;
+      if (!root || root.canonical_path !== input.source.path || !sameVolumeRoot(JSON.parse(root.volume_identity), input.source.volume)) throw new DesktopError("LOCAL_UNAVAILABLE", "受管下载原卷尚未就绪", true);
+    } else if (input.downloadRootId) throw conflict();
+    const previous = db.prepare("SELECT * FROM ingestion_source WHERE source_id=?").get(input.sourceId) as SourceRow | undefined;
+    if (previous && (previous.mode !== input.mode || (JSON.parse(previous.source_grant_json).path === input.source.path && !sameVolumeRoot(JSON.parse(previous.source_grant_json).volume, input.source.volume)))) throw new DesktopError("LOCAL_UNAVAILABLE", "原卷身份不一致，请重新选择来源", true);
+    const existing = db.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(input.target.id) as { grant_json: string } | undefined;
+    if (existing && (JSON.parse(existing.grant_json).path !== input.target.path || !sameVolumeRoot(JSON.parse(existing.grant_json).volume, input.target.volume))) throw new DesktopError("LOCAL_UNAVAILABLE", "目标原卷身份不一致", true);
+    const storedTargets = db.prepare("SELECT id,grant_json FROM media_target_root WHERE id!=?").all(input.target.id) as { id: string; grant_json: string }[];
+    if (storedTargets.some((row) => pathsOverlap(JSON.parse(row.grant_json).path, input.target.path, input.target.volume))) throw conflict("目标与历史操作保留的目录重叠，请使用原有目标授权或独立目录");
+  }
+  authorize(input: Authorization): Promise<{}> { return this.serialize(() => this.install(input)); }
+  private async install(input: Authorization) {
+    this.checkConfiguration(input);
+    const source = await SourceRoot.open(input.source);
+    try {
+      await this.targets.install(input.target); this.checkConfiguration(input);
+      this.database.connection.transaction(() => {
+        this.database.connection.prepare("INSERT INTO media_target_root(id,grant_json,available) VALUES(?,?,1) ON CONFLICT(id) DO UPDATE SET grant_json=excluded.grant_json,available=1").run(input.target.id, JSON.stringify(input.target));
+        this.database.connection.prepare("INSERT INTO ingestion_source(source_id,mode,download_root_id,source_grant_json,target_root_id,source_version,available) VALUES(?,?,?,?,?,?,1) ON CONFLICT(source_id) DO UPDATE SET mode=excluded.mode,download_root_id=excluded.download_root_id,source_grant_json=excluded.source_grant_json,target_root_id=excluded.target_root_id,source_version=excluded.source_version,available=1").run(input.sourceId, input.mode, input.downloadRootId, JSON.stringify(input.source), input.target.id, input.sourceVersion);
+        this.database.connection.prepare("UPDATE desktop_source SET health='available' WHERE id=?").run(input.sourceId);
+      })();
+      const previous = this.sources.get(input.sourceId); this.sources.set(input.sourceId, source); await previous?.close();
+      this.watchSource(input.sourceId, input.source.path);
+      for (const row of this.database.connection.prepare("SELECT id FROM ingestion_candidate WHERE source_id=?").all(input.sourceId) as { id: string }[]) this.observations.delete(row.id);
+      return {};
+    } catch (error) { await source.close(); throw error; }
+  }
+  configureManaged(input: PrivateCoreInput<"media.sources.configure-managed">): Promise<string> { return this.serialize(async () => {
+    const db = this.database.connection, existing = db.prepare(sourceQuery + " WHERE i.download_root_id=?").get(input.downloadRootId) as SourceRow | undefined;
+    const sourceId = existing?.source_id ?? randomUUID(), current = timestamp(this.now), sourcePath = join(input.source.path, "completed");
+    const version = existing ? existing.version + 1 : 1, authorization: Authorization = { sourceId, sourceVersion: version, mode: "managed", downloadRootId: input.downloadRootId, source: input.source, target: input.target };
+    this.checkConfiguration(authorization, { version, source_path: sourcePath, target_path: input.target.path });
+    const original = db.prepare("SELECT name,target_path,media_type,version,health FROM desktop_source WHERE id=?").get(sourceId) as { name: string; target_path: string; media_type: string; version: number; health: string } | undefined;
+    // 配置失败的草稿保持未授权，不会自动扫描或复制。
+    if (existing) db.prepare("UPDATE desktop_source SET name=?,target_path=?,media_type=?,version=version+1,health='unverified' WHERE id=?").run(input.name, input.target.path, input.mediaType, sourceId);
+    else db.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,?,'custom',?,?,?,'COPY',?)").run(sourceId, input.name, sourcePath, input.target.path, input.mediaType, current);
+    try { await this.install(authorization); }
+    catch (error) {
+      if (original) db.prepare("UPDATE desktop_source SET name=?,target_path=?,media_type=?,version=?,health=? WHERE id=? AND version=?").run(original.name, original.target_path, original.media_type, original.version, original.health, sourceId, version);
+      else if (!db.prepare("SELECT 1 FROM ingestion_source WHERE source_id=?").get(sourceId)) db.prepare("DELETE FROM desktop_source WHERE id=? AND version=?").run(sourceId, version);
+      throw error;
+    }
+    db.prepare("UPDATE ingestion_outbox SET delivery_attempts=0,next_attempt_at=NULL WHERE state='PENDING' AND item_id IN (SELECT id FROM download_item WHERE target_root_id=?)").run(input.downloadRootId);
+    return sourceId;
+  }); }
+  private source(id: string) {
+    const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(id) as SourceRow | undefined;
+    if (!row || !row.available || row.source_version !== row.version || !this.sources.has(id)) throw new DesktopError("LOCAL_UNAVAILABLE", "来源需重新授权或原卷尚未就绪", true);
+    if (row.paused) throw conflict("来源已暂停"); return row;
+  }
+  private candidate(id: string) { const row = this.database.connection.prepare("SELECT * FROM ingestion_candidate WHERE id=?").get(id) as CandidateRow | undefined; if (!row) throw conflict("候选文件已不存在"); return row; }
+  private watchSource(id: string, path: string) {
+    const previous = this.watches.get(id); if (previous) { clearTimeout(previous.timer); previous.watcher.close(); this.watches.delete(id); }
+    if (this.closed) return;
+    try {
+      const watcher = watch(path, { recursive: true }, (_event, filename) => {
+        if (this.closed || filename?.split(/[/\\]/).some((part) => part.normalize("NFC").toLowerCase() === ".media-marshal")) return;
+        const owned = this.watches.get(id); if (!owned || owned.timer) return;
+        owned.timer = setTimeout(() => { owned.timer = undefined; if (!this.closed) void this.scan(id).catch(() => {}); }, 500);
+      });
+      watcher.on("error", () => { const owned = this.watches.get(id); if (owned?.watcher === watcher) { clearTimeout(owned.timer); watcher.close(); this.watches.delete(id); } });
+      this.watches.set(id, { watcher });
+    } catch { /* 事件只是提示；不支持递归监听的环境仍用相同就绪规则定时补扫。 */ }
+  }
+  private async observe(row: CandidateRow) {
+    this.source(row.source_id); const source = this.sources.get(row.source_id)!;
+    let snapshot: SourceSnapshot;
+    try { snapshot = await source.inspect(JSON.parse(row.relative_json)); }
+    catch { this.observations.delete(row.id); this.database.connection.prepare("UPDATE ingestion_candidate SET state='UNAVAILABLE',reason='文件不可访问，未将其当作删除',updated_at=? WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(timestamp(this.now), row.id); throw new DesktopError("LOCAL_UNAVAILABLE", "来源文件不可访问，等待原卷或文件恢复", true); }
+    if (!sameSnapshot(snapshot, sourceSnapshotSchema.parse(JSON.parse(row.snapshot_json)))) {
+      this.observations.delete(row.id); this.database.connection.prepare("UPDATE ingestion_candidate SET state='SUPERSEDED',reason='来源版本已变化',updated_at=? WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED')").run(timestamp(this.now), row.id); throw conflict();
+    }
+    const now = this.monotonic(), previous = this.observations.get(row.id);
+    // 超长停顿可能来自休眠或调度停止；不将这段时间算成持续观察。
+    const current = !previous || now < previous.last || now - previous.last > 30000 ? { since: now, last: now, version: row.version_key } : { ...previous, last: now };
+    this.observations.set(row.id, current);
+    const ready = snapshot.size > 0 && !temporary.test(JSON.parse(row.relative_json).at(-1)) && now - current.since >= 120000;
+    if (row.state !== "QUEUED" && row.state !== "PROCESSED" && row.state !== "SKIPPED") this.database.connection.prepare("UPDATE ingestion_candidate SET state=?,reason=?,updated_at=? WHERE id=?").run(ready ? "READY" : "OBSERVING", ready ? "未经验证的下载行为，请确认文件已完整下载" : "等待文件稳定至少 120 秒", timestamp(this.now), row.id);
+    return ready;
+  }
+  private async receive(sourceId: string, relative: string[], managed?: { itemId: string; versionKey: string; sha256: string; size: number }) {
+    const source = this.source(sourceId), snapshot = await this.sources.get(sourceId)!.inspect(relative), version = sourceVersion(snapshot), db = this.database.connection;
+    if (managed && snapshot.size !== managed.size) throw conflict();
+    if (associated.test(relative.at(-1)!)) await this.observeAccessory(sourceId, relative);
+    let previous = managed ? db.prepare("SELECT * FROM ingestion_candidate WHERE managed_item_id=? AND managed_version_key=?").get(managed.itemId, managed.versionKey) as CandidateRow | undefined : undefined;
+    if (previous && previous.version_key !== version) throw conflict("受管下载文件已被修改，请核验下载成果");
+    previous ??= db.prepare("SELECT * FROM ingestion_candidate WHERE source_id=? AND relative_json=? AND version_key=?").get(source.source_id, JSON.stringify(relative), version) as CandidateRow | undefined;
+    if (!previous) {
+      const id = randomUUID(), current = timestamp(this.now), skip = (!video.test(relative.at(-1)!) && !temporary.test(relative.at(-1)!)) || relative.some((part) => /^(?:BDMV|VIDEO_TS)$/i.test(part));
+      db.transaction(() => {
+        db.prepare("UPDATE ingestion_candidate SET state='SUPERSEDED',reason='已发现新版本',updated_at=? WHERE source_id=? AND relative_json=? AND version_key!=? AND state IN ('OBSERVING','READY','UNAVAILABLE')").run(current, sourceId, JSON.stringify(relative), version);
+        db.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,snapshot_json,expected_sha256,managed_item_id,managed_version_key,state,reason,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(id, sourceId, JSON.stringify(relative), version, JSON.stringify(snapshot), managed?.sha256 ?? null, managed?.itemId ?? null, managed?.versionKey ?? null, skip ? "SKIPPED" : "OBSERVING", skip ? "此项不能作为普通视频识别；音乐、ISO 和蓝光目录首版不支持" : "等待文件稳定至少 120 秒", current, current);
+      })(); previous = this.candidate(id);
+    }
+    if (!["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(previous.state)) await this.observe(previous);
+    return { candidateId: previous.id };
+  }
+  async accept(input: Parameters<ManagedIngestionSink["accept"]>[0], signal: AbortSignal) {
+    if (this.closed || signal.aborted) throw new DesktopError("INTERRUPTED", "候选接收已中断", true);
+    const db = this.database.connection, row = db.prepare(sourceQuery + " WHERE i.download_root_id=?").get(input.rootId) as SourceRow | undefined;
+    if (!row) throw new DesktopError("COMPONENT_UNAVAILABLE", "请先为下载目录配置整理目标");
+    const committed = db.prepare("SELECT i.target_segments_json,c.file_evidence_json FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.id=? AND i.version_key=? AND i.target_root_id=? AND i.state='COMPLETED'").get(input.itemId, input.versionKey, input.rootId) as { target_segments_json: string; file_evidence_json: string } | undefined;
+    if (!committed || committed.target_segments_json !== JSON.stringify(input.completedSegments)) throw conflict();
+    const evidence = localFileEvidenceSchema.parse(JSON.parse(committed.file_evidence_json));
+    if (evidence.sha256 !== input.sha256 || evidence.size !== input.size) throw conflict();
+    this.source(row.source_id);
+    const current = await this.sources.get(row.source_id)!.inspect(["completed", ...input.completedSegments]);
+    if (current.inode !== evidence.inode || current.birthtimeNs !== evidence.birthtimeNs || current.modifiedNs !== evidence.modifiedNs || current.size !== evidence.size) throw conflict("受管下载成果的文件身份已变化");
+    const result = await this.receive(row.source_id, ["completed", ...input.completedSegments], input);
+    if (signal.aborted) throw new DesktopError("INTERRUPTED", "候选确认已中断，重试会复用原候选", true); return result;
+  }
+  scan(sourceId: string): Promise<{ discovered: number }> {
+    if (this.closed) return Promise.reject(new DesktopError("INTERRUPTED", "整理服务正在停止", true));
+    const previous = this.scans.get(sourceId); if (previous) return previous;
+    const pending = this.scanSource(sourceId).finally(() => { if (this.scans.get(sourceId) === pending) this.scans.delete(sourceId); }); this.scans.set(sourceId, pending); return pending;
+  }
+  private async scanSource(sourceId: string) {
+    const row = this.source(sourceId); let discovered = 0;
+    try {
+      if (row.mode === "managed") {
+        const files = this.database.connection.prepare("SELECT i.id,i.version_key,i.target_segments_json,c.file_evidence_json FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.target_root_id=? AND i.state='COMPLETED' ORDER BY i.id LIMIT 10001").all(row.download_root_id) as { id: string; version_key: string; target_segments_json: string; file_evidence_json: string }[];
+        if (files.length > 10000) throw conflict("已完成下载超过一万项，请按来源拆分目录");
+        for (const file of files) { if (this.closed) break; const evidence = localFileEvidenceSchema.parse(JSON.parse(file.file_evidence_json)); await this.accept({ itemId: file.id, versionKey: file.version_key, rootId: row.download_root_id!, completedSegments: JSON.parse(file.target_segments_json), size: evidence.size, sha256: evidence.sha256 }, new AbortController().signal); discovered++; }
+      } else for (const relative of await this.sources.get(sourceId)!.discover()) { if (this.closed) break; if (associated.test(relative.at(-1)!)) { await this.observeAccessory(sourceId, relative).catch(() => {}); continue; } if (!video.test(relative.at(-1)!) && !unsupported.test(relative.at(-1)!) && !temporary.test(relative.at(-1)!)) continue; try { await this.receive(sourceId, relative); discovered++; } catch { /* 一个不可读文件不冒充删除，也不阻断其他候选。 */ } }
+      this.database.connection.prepare("UPDATE desktop_source SET health='available' WHERE id=?").run(sourceId);
+    } catch (error) { this.database.connection.prepare("UPDATE desktop_source SET health='unavailable' WHERE id=?").run(sourceId); throw error; }
+    return { discovered };
+  }
+  list(input: CoreInput<"ingestion.candidates">): CoreOutput<"ingestion.candidates"> {
+    const where = input.sourceId ? " WHERE source_id=?" : "", args = input.sourceId ? [input.sourceId] : [], db = this.database.connection;
+    const total = (db.prepare("SELECT count(*) AS n FROM ingestion_candidate" + where).get(...args) as { n: number }).n;
+    const rows = db.prepare("SELECT * FROM ingestion_candidate" + where + " ORDER BY updated_at DESC,id LIMIT 100 OFFSET ?").all(...args, ((input.page ?? 1) - 1) * 100) as CandidateRow[];
+    return { total, items: rows.map((row) => ({ id: row.id, sourceId: row.source_id, relativePath: (JSON.parse(row.relative_json) as string[]).join("/"), size: sourceSnapshotSchema.parse(JSON.parse(row.snapshot_json)).size, state: row.state, requiresConfirmation: true, taskId: row.task_id, reason: row.reason, updatedAt: row.updated_at })) };
+  }
+  async recognize(input: CoreInput<"ingestion.recognize">) {
+    const row = this.candidate(input.candidateId); if (row.task_id) return { taskId: row.task_id };
+    if (row.state !== "READY" || !await this.observe(row)) throw conflict("文件尚未稳定，请等待观察完成");
+    const id = randomUUID(), current = timestamp(this.now), source = this.source(row.source_id);
+    this.database.connection.transaction(() => {
+      this.database.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'PENDING',?,?)").run(id, row.source_id, join(JSON.parse(source.source_grant_json).path, ...JSON.parse(row.relative_json)), current, current);
+      this.database.connection.prepare("UPDATE ingestion_candidate SET task_id=?,state='QUEUED',reason=NULL,updated_at=? WHERE id=? AND task_id IS NULL").run(id, current, row.id);
+    })();
+    void this.tick().catch(() => {}); return { taskId: id };
+  }
+  task(taskId: string): CoreOutput<"ingestion.task"> {
+    const row = this.database.connection.prepare("SELECT t.*,c.id AS candidate_id,c.reason FROM media_task t JOIN ingestion_candidate c ON c.task_id=t.id WHERE t.id=?").get(taskId) as { id: string; candidate_id: string; status: string; parsed_json: string | null; reason: string | null } | undefined;
+    if (!row) throw conflict("任务不存在");
+    const parsed = row.parsed_json ? JSON.parse(row.parsed_json) as ParsedMedia : null;
+    const matches = this.database.connection.prepare("SELECT metadata_json FROM task_candidate WHERE task_id=? ORDER BY confidence DESC,id LIMIT 100").all(taskId) as { metadata_json: string }[];
+    const accessories = (this.database.connection.prepare("SELECT a.* FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id WHERE o.task_id=? ORDER BY a.id LIMIT 100").all(taskId) as (OperationRow & { failure_code: string | null })[]).map((asset) => { const plan = JSON.parse(asset.plan_json) as Plan; return { id: asset.id, sourcePath: join(plan.source.path, ...plan.sourceSegments), targetPath: join(plan.target.path, ...plan.targetSegments), state: asset.phase as NonNullable<CoreOutput<"ingestion.task">["accessories"]>[number]["state"], failure: asset.failure_code }; });
+    return { taskId, candidateId: row.candidate_id, state: row.status, parsed: parsed ? { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, episodeEnd: parsed.episodeEnd, type: parsed.type } : null, matches: matches.map((entry) => { const match = JSON.parse(entry.metadata_json) as MediaMatch; return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, explanation: match.parentOnlyCapped ? "父目录证据不足，仅供人工选择" : `名称 ${Math.round(match.score.titleScore * 100)}%，年份 ${Math.round(match.score.yearScore * 100)}%，${match.evidence === "both" ? "父目录与名称一致" : "请核对作品"}` }; }), failure: row.reason, accessories };
+  }
+  private async identify(row: CandidateRow, signal: AbortSignal) {
+    const db = this.database.connection;
+    if (!await this.observe(row)) return;
+    const source = this.source(row.source_id), parser = this.parser(); if (!parser) throw new DesktopError("COMPONENT_UNAVAILABLE", "名称解析器尚未就绪，请重试", true);
+    const connectionVersion = this.connections.version, relative: string[] = JSON.parse(row.relative_json);
+    db.prepare("UPDATE media_task SET status='PROCESSING',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id);
+    const parsed = await parser.parse(relative.at(-1)!, signal); if (source.media_type !== "AUTO") parsed.type = source.media_type;
+    parsed.season = parsed.type === "TV_SHOW" ? resolveSeason(parsed.season, null, relative.slice(0, -1)) : null;
+    let matches = await searchMatches(parsed, this.connections.tmdb, signal);
+    const parent = relative.slice(0, -1).reverse().map((part) => parentContext(part, parsed)).find(Boolean);
+    if (parent) { const context = await parser.parse(parent.folderName, signal); context.type = parsed.type; context.season = parsed.season; matches = mergeParentEvidence(matches, await searchMatches(context, this.connections.tmdb, signal)); }
+    if (signal.aborted || connectionVersion !== this.connections.version || this.source(row.source_id).version !== source.version) throw conflict();
+    db.transaction(() => {
+      db.prepare("DELETE FROM task_candidate WHERE task_id=?").run(row.task_id);
+      for (const match of matches) db.prepare("INSERT INTO task_candidate(id,task_id,metadata_json,confidence) VALUES(?,?,?,?)").run(randomUUID(), row.task_id, JSON.stringify(match), match.score.confidence);
+      db.prepare("UPDATE media_task SET parsed_json=?,status='AWAITING_CONFIRMATION',title=?,updated_at=? WHERE id=?").run(JSON.stringify(parsed), parsed.title, timestamp(this.now), row.task_id);
+      db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(matches.length ? null : "没有可靠候选，请手动输入 TMDB ID 预览", row.id);
+    })();
+  }
+  private async observeAccessory(sourceId: string, relative: string[], expected?: SourceSnapshot) {
+    this.source(sourceId); const snapshot = await this.sources.get(sourceId)!.inspect(relative), version = sourceVersion(snapshot), key = sourceId + ":" + JSON.stringify(relative), now = this.monotonic(), previous = this.accessoryObservations.get(key);
+    if (expected && !sameSnapshot(expected, snapshot)) throw conflict("附属文件已变化，请重新预览");
+    const observation = !previous || previous.version !== version || now < previous.last || now - previous.last > 30000 ? { since: now, last: now, version } : { ...previous, last: now }; this.accessoryObservations.set(key, observation);
+    return snapshot.size > 0 && now - observation.since >= 120000;
+  }
+  private async accessories(source: SourceRow, candidate: CandidateRow, targetSegments: string[]) {
+    const relative = JSON.parse(candidate.relative_json) as string[], sourceName = relative.at(-1)!, base = sourceName.slice(0, -extname(sourceName).length), targetName = targetSegments.at(-1)!, targetBase = targetName.slice(0, -extname(targetName).length), result: Accessory[] = [];
+    for (const entry of await this.sources.get(source.source_id)!.filesIn(relative.slice(0, -1))) {
+      const name = entry.at(-1)!; if (!associated.test(name)) continue;
+      const sameBase = name.startsWith(base + "."), generic = /^(?:poster|folder|cover)\.jpg$/i.test(name); if (!sameBase && !generic) continue;
+      let expectedSha256: string | null = null;
+      if (source.mode === "managed") {
+        const proof = this.database.connection.prepare("SELECT c.file_evidence_json FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.target_root_id=? AND i.target_segments_json=? AND i.state='COMPLETED'").get(source.download_root_id, JSON.stringify(entry.slice(1))) as { file_evidence_json: string } | undefined;
+        if (!proof) continue; expectedSha256 = localFileEvidenceSchema.parse(JSON.parse(proof.file_evidence_json)).sha256;
+      }
+      if (!await this.observeAccessory(source.source_id, entry)) throw conflict("同名附属文件还未稳定 120 秒，请稍后预览或取消附属文件复制");
+      result.push({ sourceSegments: entry, targetSegments: [...targetSegments.slice(0, -1), sameBase ? targetBase + name.slice(base.length) : name], snapshot: await this.sources.get(source.source_id)!.inspect(entry), expectedSha256 });
+      if (result.length > 100) throw conflict("附属文件超过一百项，请缩小来源范围");
+    }
+    return result;
+  }
+  private previewDto(row: PreviewRow): CoreOutput<"ingestion.preview"> { const plan = JSON.parse(row.plan_json) as Plan; return { id: row.id, taskId: row.task_id, title: plan.metadata.title, mediaType: plan.metadata.mediaType, targetPath: join(plan.target.path, ...plan.targetSegments), sourcePath: join(plan.source.path, ...plan.sourceSegments), size: plan.snapshot.size, season: plan.selection.season, episode: plan.selection.episode, episodeEnd: plan.selection.episodeEnd, expiresAt: row.expires_at, operationId: row.operation_id, accessories: plan.accessories?.map((asset) => ({ sourcePath: join(plan.source.path, ...asset.sourceSegments), targetPath: join(plan.target.path, ...asset.targetSegments), size: asset.snapshot.size })) ?? [] }; }
+  async preview(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">> {
+    const db = this.database.connection, digest = fingerprint(input), existing = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
+    if (existing) { if (existing.input_hash !== digest) throw conflict("预览请求键已用于不同内容"); return this.previewDto(existing); }
+    const row = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id WHERE t.id=? AND t.status='AWAITING_CONFIRMATION'").get(input.taskId) as CandidateRow | undefined;
+    if (!row || !await this.observe(row)) throw conflict("任务或文件尚未就绪");
+    const source = this.source(row.source_id), target = this.targetFor(source, input.selection.mediaType), connectionVersion = this.connections.version;
+    const parsedRow = db.prepare("SELECT parsed_json FROM media_task WHERE id=?").get(input.taskId) as { parsed_json: string | null };
+    if (!parsedRow.parsed_json) throw conflict("请先完成名称识别");
+    const parsed = JSON.parse(parsedRow.parsed_json) as ParsedMedia, selection = { ...input.selection, season: input.selection.season ?? null, episode: input.selection.episode ?? null, episodeEnd: input.selection.episodeEnd ?? null };
+    const metadata = await this.connections.tmdb.detail(selection.tmdbId, selection.mediaType); let episodeTitle: string | null = null;
+    if (selection.mediaType === "TV_SHOW") {
+      if (selection.season === null || selection.episode === null) throw conflict("请补齐 TMDB 季集坐标");
+      const checked = await reconcileEpisodes({ season: selection.season, episode: selection.episode, episodeEnd: selection.episodeEnd }, metadata.seasons, (season) => this.connections.tmdb.episodes(selection.tmdbId, season));
+      Object.assign(selection, { season: checked.season, episode: checked.episode, episodeEnd: checked.episodeEnd }); episodeTitle = checked.episodeTitle;
+    } else Object.assign(selection, { season: null, episode: null, episodeEnd: null });
+    const variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(parsed.originalFilename).slice(1) };
+    const template = input.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}");
+    const segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments); await target.assertVacant(segments); await target.check();
+    const accessories = input.includeAccessories === false ? [] : await this.accessories(source, row, segments); target.assertMappings([segments, ...accessories.map((asset) => asset.targetSegments)]);
+    if (connectionVersion !== this.connections.version || this.source(row.source_id).version !== source.version || !await this.observe(row)) throw conflict();
+    this.assertCoordinates(selection, row.id);
+    const plan: Plan = { taskId: input.taskId, candidateId: row.id, sourceId: row.source_id, sourceVersion: source.version, connectionVersion, source: JSON.parse(source.source_grant_json), target: target.grant, sourceSegments: JSON.parse(row.relative_json), targetSegments: segments, snapshot: JSON.parse(row.snapshot_json), expectedSha256: row.expected_sha256, parsed, metadata, selection, episodeTitle, accessories };
+    const result: PreviewRow = { id: randomUUID(), request_key: input.requestKey, task_id: input.taskId, input_hash: digest, plan_json: JSON.stringify(plan), expires_at: this.now() + 10 * 60 * 1000, operation_id: null };
+    const concurrent = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
+    if (concurrent) { if (concurrent.input_hash !== digest) throw conflict(); return this.previewDto(concurrent); }
+    db.prepare("INSERT INTO ingestion_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(result.id, result.request_key, result.task_id, result.input_hash, result.plan_json, result.expires_at); return this.previewDto(result);
+  }
+  private assertCoordinates(selection: Plan["selection"], candidateId: string) {
+    if (selection.mediaType !== "TV_SHOW") return;
+    const rows = this.database.connection.prepare("SELECT plan_json FROM ingestion_operation WHERE candidate_id!=?").all(candidateId) as { plan_json: string }[];
+    const values = [...rows.map((row) => (JSON.parse(row.plan_json) as Plan).selection).filter((entry) => entry.mediaType === "TV_SHOW" && entry.tmdbId === selection.tmdbId), selection];
+    assertUniqueEpisodes(values.map((value) => ({ tmdbId: value.tmdbId, season: value.season!, episode: value.episode!, episodeEnd: value.episodeEnd })));
+  }
+  async confirm(input: CoreInput<"ingestion.confirm">) {
+    const db = this.database.connection, previous = db.prepare("SELECT id FROM ingestion_operation WHERE request_key=?").get(input.requestKey) as { id: string } | undefined;
+    const receipt = db.prepare("SELECT * FROM ingestion_preview WHERE id=?").get(input.previewId) as PreviewRow | undefined;
+    if (previous) { if (receipt?.operation_id !== previous.id) throw conflict("确认请求键已用于其他预览"); return { operationId: previous.id }; }
+    if (!receipt) throw conflict("预览不存在"); if (receipt.operation_id) return { operationId: receipt.operation_id };
+    const plan = JSON.parse(receipt.plan_json) as Plan, source = this.source(plan.sourceId), candidate = this.candidate(plan.candidateId);
+    if (receipt.expires_at <= this.now() || source.version !== plan.sourceVersion || this.targetFor(source, plan.selection.mediaType).grant.id !== plan.target.id || this.connections.version !== plan.connectionVersion || candidate.task_id !== receipt.task_id || !["QUEUED", "READY"].includes(candidate.state) || !await this.observe(candidate)) throw conflict("预览已过期或文件变化，请重新预览");
+    const target = this.targets.get(plan.target.id); await target.assertVacant(plan.targetSegments); for (const asset of plan.accessories ?? []) if (!await this.observeAccessory(plan.sourceId, asset.sourceSegments, asset.snapshot)) throw conflict("附属文件需重新观察"); assertSpaceBudget(await target.check(), plan.snapshot.size + (plan.accessories ?? []).reduce((sum, asset) => sum + asset.snapshot.size, 0), this.reserved(plan.target.id));
+    const id = randomUUID(), current = timestamp(this.now);
+    const concurrent = db.prepare("SELECT id FROM ingestion_operation WHERE candidate_id=?").get(candidate.id) as { id: string } | undefined;
+    if (concurrent) { const updated = db.prepare("SELECT operation_id FROM ingestion_preview WHERE id=?").get(receipt.id) as { operation_id: string | null }; if (updated.operation_id === concurrent.id) return { operationId: concurrent.id }; throw conflict(); }
+    db.transaction(() => {
+      if (this.source(plan.sourceId).version !== plan.sourceVersion || this.connections.version !== plan.connectionVersion) throw conflict();
+      if (db.prepare("SELECT 1 FROM ingestion_operation WHERE candidate_id=?").get(candidate.id)) throw conflict("此文件已有整理计划");
+      this.assertCoordinates(plan.selection, candidate.id);
+      db.prepare("INSERT INTO ingestion_operation(id,candidate_id,task_id,request_key,target_root_id,target_slot,plan_json,attempt_id,phase,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'PLANNED',?,?)").run(id, candidate.id, receipt.task_id, input.requestKey, plan.target.id, target.slotKey(plan.targetSegments), receipt.plan_json, randomUUID(), current, current);
+      db.prepare("UPDATE ingestion_preview SET operation_id=? WHERE id=?").run(id, receipt.id);
+      db.prepare("UPDATE media_task SET status='PROCESSING',confirmed_json=?,metadata_json=?,title=?,updated_at=? WHERE id=?").run(JSON.stringify(plan.selection), JSON.stringify(plan.metadata), plan.metadata.title, current, receipt.task_id);
+      db.prepare("INSERT INTO desktop_job(id,kind,state,plan_json,updated_at) VALUES(?,'ingestion','PLANNED',?,?)").run(id, receipt.plan_json, current);
+      for (const asset of plan.accessories ?? []) db.prepare("INSERT INTO ingestion_accessory(id,operation_id,target_root_id,plan_json,attempt_id,phase,created_at,updated_at) VALUES(?,?,?,?,?,'PLANNED',?,?)").run(randomUUID(), id, plan.target.id, JSON.stringify({ ...plan, ...asset, accessories: [] }), randomUUID(), current, current);
+    })(); void this.tick().catch(() => {}); return { operationId: id };
+  }
+  private reserved(rootId: string, except?: string) { const rows = this.database.connection.prepare("SELECT id,plan_json FROM ingestion_operation WHERE target_root_id=? AND phase IN ('PLANNED','COPYING') UNION ALL SELECT id,plan_json FROM ingestion_accessory WHERE target_root_id=? AND phase IN ('PLANNED','COPYING')").all(rootId, rootId) as { id: string; plan_json: string }[]; return rows.filter((row) => row.id !== except).reduce((total, row) => total + (JSON.parse(row.plan_json) as Plan).snapshot.size, 0); }
+  private async copyContent(operation: OperationRow, signal: AbortSignal, table: "ingestion_operation" | "ingestion_accessory") {
+    const db = this.database.connection, plan = JSON.parse(operation.plan_json) as Plan, sourceRow = this.source(plan.sourceId), target = this.targets.get(plan.target.id), source = this.sources.get(plan.sourceId)!;
+    if (!sameVolumeRoot(target.grant.volume, plan.target.volume)) throw conflict();
+    let evidence = operation.evidence_json ? localFileEvidenceSchema.parse(JSON.parse(operation.evidence_json)) : undefined;
+    if (!evidence) {
+      if (sourceRow.version !== plan.sourceVersion || this.targetFor(sourceRow, plan.selection.mediaType).grant.id !== plan.target.id) throw conflict("来源规则或路由已变化，未开始计划需要重新预览");
+      if (table === "ingestion_operation" ? !await this.observe(this.candidate(plan.candidateId)) : !await this.observeAccessory(plan.sourceId, plan.sourceSegments, plan.snapshot)) return;
+      assertSpaceBudget(await target.check(), plan.snapshot.size, this.reserved(target.grant.id, operation.id)); await target.assertVacant(plan.targetSegments);
+      // COPYING 重启时仅清理持有本操作标记的残留暂存，再换新尝试 ID。
+      if (operation.phase === "COPYING") { await target.cleanupAttempt(operation.attempt_id).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); operation.attempt_id = randomUUID(); db.prepare(`UPDATE ${table} SET attempt_id=? WHERE id=?`).run(operation.attempt_id, operation.id); }
+      db.prepare(`UPDATE ${table} SET phase='COPYING',updated_at=? WHERE id=?`).run(timestamp(this.now), operation.id);
+      await target.prepareStage(operation.attempt_id); const stage = await target.stageFilePath(operation.attempt_id, plan.targetSegments);
+      let copiedHash = "";
+      await source.read(plan.sourceSegments, plan.snapshot, async (handle) => {
+        const writer = await open(stage, "wx", 0o600);
+        try { copiedHash = await source.digest(handle, plan.snapshot.size, signal, async (buffer) => { let offset = 0; while (offset < buffer.length) { const result = await writer.write(buffer, offset, buffer.length - offset); if (!result.bytesWritten) throw new Error(); offset += result.bytesWritten; } }); await writer.sync(); }
+        finally { await writer.close(); }
+        const rechecked = await source.digest(handle, plan.snapshot.size, signal); if (rechecked !== copiedHash || (plan.expectedSha256 && copiedHash !== plan.expectedSha256)) throw conflict("来源内容校验失败，未发布正式文件");
+      });
+      evidence = await target.verifyStage(operation.attempt_id, plan.targetSegments, plan.snapshot.size);
+      if (evidence.sha256 !== copiedHash) throw conflict("暂存文件内容校验失败");
+      if (signal.aborted) throw new DesktopError("INTERRUPTED", "整理已中断，文件保留在暂存区", true);
+      db.prepare(`UPDATE ${table} SET phase='VERIFIED',evidence_json=?,updated_at=? WHERE id=?`).run(JSON.stringify(evidence), timestamp(this.now), operation.id);
+    }
+    // VERIFIED 之后恢复只补提交和记账，绝不再从来源复制。
+    if (signal.aborted || this.source(plan.sourceId).paused) return;
+    const committed = await target.commit(operation.attempt_id, plan.targetSegments, evidence);
+    db.prepare(`UPDATE ${table} SET phase='FILE_COMMITTED',updated_at=? WHERE id=?`).run(timestamp(this.now), operation.id); return committed;
+  }
+  private async copy(operation: OperationRow, signal: AbortSignal) {
+    const committed = await this.copyContent(operation, signal, "ingestion_operation"); if (!committed) return;
+    const db = this.database.connection, plan = JSON.parse(operation.plan_json) as Plan, target = this.targets.get(plan.target.id);
+    db.transaction(() => {
+      db.prepare("UPDATE media_task SET status='DONE',target_path=?,delivery_status='REFRESH_PENDING',updated_at=? WHERE id=?").run(committed.path, timestamp(this.now), plan.taskId);
+      db.prepare("UPDATE ingestion_candidate SET state='PROCESSED',reason=NULL,updated_at=? WHERE id=?").run(timestamp(this.now), plan.candidateId);
+      db.prepare("UPDATE ingestion_operation SET phase='RECORDED',failure_code=NULL,updated_at=? WHERE id=?").run(timestamp(this.now), operation.id);
+      db.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(plan.accessories?.length ? "COPYING_ACCESSORIES" : "DONE", timestamp(this.now), operation.id);
+      const connection = db.prepare("SELECT id,version FROM emby_connection ORDER BY verified_at DESC LIMIT 1").get() as { id: string; version: number } | undefined;
+      db.prepare("INSERT INTO emby_delivery(task_id,operation_id,connection_id,connection_version,state,next_attempt_at,updated_at) VALUES(?,?,?,?,'REFRESH_PENDING',?,?) ON CONFLICT(task_id) DO NOTHING").run(plan.taskId, operation.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, timestamp(this.now));
+    })(); await target.cleanupAttempt(operation.attempt_id).catch(() => {});
+  }
+  private async copyAccessory(operation: OperationRow & { operation_id: string }, signal: AbortSignal) {
+    const committed = await this.copyContent(operation, signal, "ingestion_accessory"); if (!committed) return;
+    const db = this.database.connection, plan = JSON.parse(operation.plan_json) as Plan;
+    db.transaction(() => {
+      db.prepare("UPDATE ingestion_accessory SET phase='RECORDED',failure_code=NULL,updated_at=? WHERE id=?").run(timestamp(this.now), operation.id);
+      // 字幕稍后补齐时只再安排交付，主视频记录和文件不重新复制。
+      db.prepare("UPDATE emby_delivery SET state='REFRESH_PENDING',next_attempt_at=?,check_started_at=NULL,emby_item_id=NULL WHERE task_id=? AND state IN ('REFRESH_PENDING','WAITING_LIBRARY','COLLECTED')").run(this.now() + 30000, plan.taskId);
+      db.prepare("UPDATE media_task SET delivery_status=(SELECT state FROM emby_delivery WHERE task_id=?) WHERE id=?").run(plan.taskId, plan.taskId);
+    })(); await this.targets.get(plan.target.id).cleanupAttempt(operation.attempt_id).catch(() => {}); this.accessoryJobState(operation.operation_id);
+  }
+  private accessoryJobState(operationId: string) { const rows = this.database.connection.prepare("SELECT phase FROM ingestion_accessory WHERE operation_id=?").all(operationId) as { phase: string }[]; this.database.connection.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(rows.every((row) => row.phase === "RECORDED") ? "DONE" : rows.some((row) => row.phase === "NEEDS_ATTENTION") ? "PARTIAL_FAILED" : "COPYING_ACCESSORIES", timestamp(this.now), operationId); }
+  retry(taskId: string) {
+    const db = this.database.connection, candidate = db.prepare("SELECT * FROM ingestion_candidate WHERE task_id=?").get(taskId) as CandidateRow | undefined; if (!candidate) throw conflict(); this.source(candidate.source_id);
+    const operation = db.prepare("SELECT * FROM ingestion_operation WHERE task_id=?").get(taskId) as OperationRow | undefined;
+    if (operation?.phase === "RECORDED") {
+      const changed = db.prepare("UPDATE ingestion_accessory SET phase=CASE WHEN evidence_json IS NULL THEN 'COPYING' ELSE 'VERIFIED' END,failure_code=NULL WHERE operation_id=? AND phase='NEEDS_ATTENTION'").run(operation.id);
+      if (!changed.changes) throw conflict("文件已完成，请仅重试 Emby 交付"); this.accessoryJobState(operation.id); void this.tick().catch(() => {}); return {};
+    }
+    if (operation) db.prepare("UPDATE ingestion_operation SET phase=CASE WHEN evidence_json IS NULL THEN 'COPYING' ELSE 'VERIFIED' END,failure_code=NULL WHERE id=?").run(operation.id);
+    db.prepare("UPDATE media_task SET status=?,updated_at=? WHERE id=?").run(operation ? "PROCESSING" : "PENDING", timestamp(this.now), taskId); db.prepare("UPDATE ingestion_candidate SET reason=NULL WHERE id=?").run(candidate.id); void this.tick().catch(() => {}); return {};
+  }
+  tick(): Promise<void> { if (this.closed) return Promise.resolve(); return this.flight ??= this.run().finally(() => { this.flight = undefined; }); }
+  private async run() {
+    const db = this.database.connection, controller = new AbortController(); this.controller = controller;
+    try {
+      for (const source of db.prepare(sourceQuery + " WHERE i.available=1 AND s.paused=0 AND i.source_version=s.version ORDER BY i.source_id LIMIT 1000").all() as SourceRow[]) { if (controller.signal.aborted) return; await this.scan(source.source_id).catch(() => {}); }
+      const candidates = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id JOIN desktop_source s ON s.id=c.source_id WHERE t.status='PENDING' AND s.paused=0 ORDER BY t.created_at,t.id LIMIT 10").all() as CandidateRow[];
+      for (const row of candidates) { if (controller.signal.aborted) return; try { await this.identify(row, controller.signal); } catch { db.prepare("UPDATE media_task SET status='AWAITING_CONFIRMATION',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason='识别未完成，请检查解析器、TMDB 配置或网络后重试' WHERE id=?").run(row.id); } }
+      const operations = db.prepare("SELECT o.* FROM ingestion_operation o JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND s.paused=0 ORDER BY o.created_at,o.id LIMIT 10").all() as OperationRow[];
+      for (const operation of operations) { if (controller.signal.aborted) return; try { await this.copy(operation, controller.signal); } catch (error) {
+        if (controller.signal.aborted) return;
+        const unavailable = error instanceof DesktopError && error.code === "LOCAL_UNAVAILABLE" || error instanceof Error && "code" in error && error.code === "LOCAL_UNAVAILABLE";
+        if (unavailable) { db.prepare("UPDATE desktop_source SET health='unavailable' WHERE id=(SELECT source_id FROM ingestion_candidate WHERE id=?)").run(operation.candidate_id); continue; }
+        db.prepare("UPDATE ingestion_operation SET phase='NEEDS_ATTENTION',failure_code=?,updated_at=? WHERE id=?").run(error instanceof DesktopError ? error.code : "STORAGE_ERROR", timestamp(this.now), operation.id);
+        db.prepare("UPDATE media_task SET status='FAILED',updated_at=? WHERE id=?").run(timestamp(this.now), operation.task_id);
+        db.prepare("UPDATE ingestion_candidate SET reason='整理中断或证据冲突，未覆盖现有文件；请检查后重试' WHERE id=?").run(operation.candidate_id);
+      } }
+      const accessories = db.prepare("SELECT a.*,o.task_id,o.candidate_id FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase='RECORDED' AND a.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND s.paused=0 ORDER BY a.created_at,a.id LIMIT 100").all() as (OperationRow & { operation_id: string })[];
+      for (const asset of accessories) { if (controller.signal.aborted) return; try { await this.copyAccessory(asset, controller.signal); } catch (error) {
+        if (controller.signal.aborted) return;
+        if (error instanceof Error && "code" in error && error.code === "LOCAL_UNAVAILABLE") continue;
+        db.prepare("UPDATE ingestion_accessory SET phase='NEEDS_ATTENTION',failure_code=?,updated_at=? WHERE id=?").run(error instanceof DesktopError ? error.code : "STORAGE_ERROR", timestamp(this.now), asset.id); this.accessoryJobState(asset.operation_id);
+      } }
+    } finally { this.controller = undefined; }
+  }
+  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
+  async close() { await this.quiesce(); await Promise.allSettled([...this.sources.values()].map((source) => source.close())); this.sources.clear(); await this.targets.close(); }
+}

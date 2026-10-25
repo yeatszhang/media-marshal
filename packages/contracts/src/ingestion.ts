@@ -1,0 +1,21 @@
+import { z } from "zod";
+const id = z.uuid(), empty = z.strictObject({});
+export const ingestionConfigureSchema = z.strictObject({ downloadRootId: id, name: z.string().trim().min(1).max(100), targetPath: z.string().min(1).max(4096), mediaType: z.enum(["AUTO", "MOVIE", "TV_SHOW"]).default("AUTO") });
+export const candidateSchema = z.strictObject({ id, sourceId: id, relativePath: z.string().max(16384), size: z.number().int().nonnegative(), state: z.enum(["OBSERVING", "READY", "UNAVAILABLE", "SUPERSEDED", "QUEUED", "PROCESSED", "SKIPPED"]), requiresConfirmation: z.literal(true), taskId: id.nullable(), reason: z.string().max(500).nullable(), updatedAt: z.string() });
+export type IngestionCandidate = z.infer<typeof candidateSchema>;
+export const selectionSchema = z.strictObject({ tmdbId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), mediaType: z.enum(["MOVIE", "TV_SHOW"]), season: z.number().int().min(0).max(999).nullable().default(null), episode: z.number().int().min(1).max(10000).nullable().default(null), episodeEnd: z.number().int().min(1).max(10000).nullable().default(null) });
+export const matchSchema = z.strictObject({ tmdbId: z.number().int().positive(), mediaType: z.enum(["MOVIE", "TV_SHOW"]), title: z.string().max(500), originalTitle: z.string().max(500).nullable(), year: z.number().int().nullable(), confidence: z.number().min(0).max(1), evidence: z.enum(["filename", "parent", "both"]), explanation: z.string().max(500) });
+export const accessorySchema = z.strictObject({ id, sourcePath: z.string().max(16384), targetPath: z.string().max(16384), state: z.enum(["PLANNED","COPYING","VERIFIED","FILE_COMMITTED","RECORDED","NEEDS_ATTENTION"]), failure: z.string().max(100).nullable() });
+export const recognitionSchema = z.strictObject({ taskId: id, candidateId: id, state: z.string().max(64), parsed: z.strictObject({ title: z.string().nullable(), year: z.number().nullable(), season: z.number().nullable(), episode: z.number().nullable(), episodeEnd: z.number().nullable(), type: z.enum(["MOVIE", "TV_SHOW"]).nullable() }).nullable(), matches: z.array(matchSchema).max(100), failure: z.string().max(500).nullable(), accessories: z.array(accessorySchema).max(100).optional() });
+export type Recognition = z.infer<typeof recognitionSchema>;
+export const organizePreviewSchema = z.strictObject({ id, taskId: id, title: z.string().max(500), mediaType: z.enum(["MOVIE", "TV_SHOW"]), targetPath: z.string().max(16384), sourcePath: z.string().max(16384), size: z.number().int().positive(), season: z.number().int().nullable(), episode: z.number().int().nullable(), episodeEnd: z.number().int().nullable(), expiresAt: z.number().int(), operationId: id.nullable(), accessories: z.array(z.strictObject({ sourcePath: z.string().max(16384), targetPath: z.string().max(16384), size: z.number().int().positive() })).max(100).optional() });
+export type OrganizePreview = z.infer<typeof organizePreviewSchema>;
+export const ingestionActions = {
+  "ingestion.candidates": { input: z.strictObject({ sourceId: id.optional(), page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(candidateSchema).max(100), total: z.number().int().nonnegative() }) },
+  "ingestion.scan": { input: z.strictObject({ sourceId: id }), output: z.strictObject({ discovered: z.number().int().nonnegative() }) },
+  "ingestion.recognize": { input: z.strictObject({ candidateId: id, requestKey: id }), output: z.strictObject({ taskId: id }) },
+  "ingestion.task": { input: z.strictObject({ taskId: id }), output: recognitionSchema },
+  "ingestion.preview": { input: z.strictObject({ taskId: id, requestKey: id, selection: selectionSchema, template: z.string().min(1).max(16384).optional(), includeAccessories: z.boolean().default(true) }), output: organizePreviewSchema },
+  "ingestion.confirm": { input: z.strictObject({ previewId: id, requestKey: id }), output: z.strictObject({ operationId: id }) },
+  "ingestion.retry": { input: z.strictObject({ taskId: id }), output: empty },
+} as const;

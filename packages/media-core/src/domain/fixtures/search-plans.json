@@ -1,0 +1,290 @@
+{
+  "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java",
+  "cases": [
+    {
+      "id": "bilingualMovie",
+      "filename": "飞驰人生3.Pegasus.3.2026.2160p.WEB-DL.mkv",
+      "raw": {
+        "title": "飞驰人生3 Pegasus 3",
+        "year": 2026,
+        "type": "movie"
+      },
+      "expected": [
+        "飞驰人生3",
+        "Pegasus 3",
+        "飞驰人生3 Pegasus 3"
+      ]
+    },
+    {
+      "id": "bilingualSeries",
+      "filename": "长乐曲.Melody.Of.Golden.Age.S01E01.2024.1080p.mkv",
+      "raw": {
+        "title": "长乐曲",
+        "year": 2024,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "长乐曲",
+        "Melody Of Golden Age",
+        "长乐曲 Melody Of Golden Age"
+      ]
+    },
+    {
+      "id": "bracketedBilingual",
+      "filename": "[钢铁森林].Sunsets.Secrets.Regrets.S01E01.2025.1080p.mkv",
+      "raw": {
+        "title": "钢铁森林",
+        "year": 2025,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "钢铁森林",
+        "Sunsets Secrets Regrets",
+        "钢铁森林 Sunsets Secrets Regrets"
+      ]
+    },
+    {
+      "id": "shortChineseTitle",
+      "filename": "[逍遥].The.Unclouded.Soul.S01E01.2026.1080p.mkv",
+      "raw": {
+        "title": "逍遥",
+        "year": 2026,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "逍遥",
+        "The Unclouded Soul",
+        "逍遥 The Unclouded Soul"
+      ]
+    },
+    {
+      "id": "titleNumbers",
+      "filename": "方圆八百米.Eight.Hundred.S01E02.2026.2160p.WEB-DL.H265.AAC-HHWEB.mp4",
+      "raw": {
+        "title": "方圆八百米",
+        "year": 2026,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "方圆八百米",
+        "Eight Hundred",
+        "方圆八百米 Eight Hundred"
+      ]
+    },
+    {
+      "id": "excludeEpisodeTitle",
+      "filename": "Your.Friends.and.Neighbors.S01E01.This.Is.What.Happens.2025.1080p.mkv",
+      "raw": {
+        "title": "Your Friends and Neighbors",
+        "year": 2025,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "Your Friends and Neighbors"
+      ]
+    },
+    {
+      "id": "anime1",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][48][GB][1080P][x264_AAC].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "anime2",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][48][GB][1080P][x264_AAC]-4439f0c824f5.mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "anime3",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][048v2][CHS][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "anime4",
+      "filename": "【BeanSub&FZSD】【Jujutsu_Kaisen】【48】【GB】【1080P】.mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "anime5",
+      "filename": "[1080p][BeanSub&FZSD][Jujutsu_Kaisen][48][GB].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "anime6",
+      "filename": "[x264_AAC][CHS+CHT][BeanSub&FZSD][Jujutsu_Kaisen][48].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "anime7",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][GB][1080P].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "anime8",
+      "filename": "（BeanSub&FZSD）（Jujutsu_Kaisen）（48）（GB）.mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "subtitleGroupWithoutParsedGroup",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][48][GB][1080P].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "knownReleaseGroup",
+      "filename": "[Example-Raws] Jujutsu_Kaisen [48-49][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "Example-Raws"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "separateBilingual",
+      "filename": "[字幕组][咒术回战][Jujutsu_Kaisen][48][GB][1080P].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "字幕组"
+      },
+      "expected": [
+        "咒术回战",
+        "Jujutsu Kaisen",
+        "咒术回战 Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "noReleaseGroup",
+      "filename": "[Jujutsu_Kaisen][48][GB][1080P].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    },
+    {
+      "id": "numericWorkTitle",
+      "filename": "[86][48][CHS][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "86"
+      ]
+    },
+    {
+      "id": "numericTitleToken",
+      "filename": "[Mob_Psycho_100][48][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "Mob Psycho 100"
+      ]
+    },
+    {
+      "id": "unknownLeadingBracket",
+      "filename": "[Odd_Taxi][48][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "Odd Taxi"
+      ]
+    },
+    {
+      "id": "parentheticalTitle",
+      "filename": "It.(Chapter.Two).2019.1080p.mkv",
+      "raw": {
+        "year": 2019,
+        "type": "movie"
+      },
+      "expected": [
+        "It Chapter Two"
+      ]
+    },
+    {
+      "id": "metadataOnly",
+      "filename": "[BeanSub][GB][1080p][x264_AAC].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub"
+      },
+      "expected": []
+    }
+  ]
+}

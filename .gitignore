@@ -18,6 +18,8 @@ tools/desktop-parser/.venv/
 tools/desktop-parser/build/
 tools/desktop-parser/dist/
 tools/desktop-parser/*.spec
+apps/desktop/resources/sidecars/
+apps/desktop/resources/parser/
 test-results/
 playwright-report/
 frontend/.env.local

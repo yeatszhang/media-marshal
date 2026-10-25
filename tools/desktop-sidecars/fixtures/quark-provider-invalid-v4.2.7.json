@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "componentVersion": "v4.2.7",
+  "driver": "Quark",
+  "target": "darwin-arm64",
+  "scope": "正式 Provider + 真实受管 OpenList；仅合成无效凭据，不使用或验证真实有效账号",
+  "checks": {
+    "invalidCredentialMappedToAuthRequired": true,
+    "failedCandidateMountDeleted": true,
+    "ordinaryDriverOnly": true
+  },
+  "command": "MARSHAL_NATIVE_TESTS=1 MARSHAL_QUARK_INVALID_PROBE=1 npx vitest run apps/desktop/src/sidecar-host/openlist/runtime.integration.test.ts",
+  "result": "4 passed",
+  "date": "2026-10-24"
+}

@@ -216,7 +216,7 @@ export function Sources() {
             <div className="source-info">
               <h3>
                 {source.name}
-                <span className="badge">{t(source.kind)}</span>
+                <span className="badge">{source.mode === "managed" ? t("ingestion.managed") : t(source.kind)}</span>
                 {source.paused && <span className="badge">{t("paused")}</span>}
               </h3>
               <div className="source-path">
@@ -226,7 +226,7 @@ export function Sources() {
               </div>
               <div className="source-meta">
                 <span>{t("copy")}</span>
-                <span>{t("unverified")}</span>
+                <span>{t(source.health)}</span>
               </div>
             </div>
             <Button

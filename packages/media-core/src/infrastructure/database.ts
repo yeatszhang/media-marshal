@@ -2,8 +2,14 @@ import Database from "better-sqlite3";
 import { mkdirSync, existsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { DesktopError } from "@media-marshal/contracts";
+import { cloudMigrationSql } from "./cloud-migration.js";
+import { cloudAuthorizationMigrationSql } from "./cloud-authorization-migration.js";
+import { cloudDownloadMigrationSql } from "./cloud-download-migration.js";
+import { cloudSubscriptionMigrationSql } from "./cloud-subscription-migration.js";
+import { ingestionMigrationSql, ingestionAccessoryMigrationSql } from "./ingestion-migration.js";
 
-export const SCHEMA_VERSION = 1;
+import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
+export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
 export interface Migration {
   version: number;
   sql: string;
@@ -35,6 +41,13 @@ export const migrations: readonly Migration[] = [
   CREATE UNIQUE INDEX correction_active_task ON correction_item(task_id) WHERE state IN ('PENDING','RUNNING');
 `,
   },
+  { version: 2, sql: cloudMigrationSql },
+  { version: 3, sql: cloudAuthorizationMigrationSql },
+  { version: 4, sql: cloudDownloadMigrationSql },
+  { version: 5, sql: cloudSubscriptionMigrationSql },
+  { version: 6, sql: "ALTER TABLE provider_binding ADD COLUMN object_namespace TEXT;" },
+  { version: 7, sql: ingestionMigrationSql },
+  { version: 8, sql: ingestionAccessoryMigrationSql },
 ];
 
 export class CoreDatabase {
@@ -47,12 +60,13 @@ export class CoreDatabase {
   static async open(
     path: string,
     plan: readonly Migration[] = migrations,
+    options: { exclusiveOwner?: boolean } = {},
   ): Promise<CoreDatabase> {
     if (path !== ":memory:")
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const existed =
       path !== ":memory:" && existsSync(path) && statSync(path).size > 0;
-    const connection = new Database(path);
+    const connection = new Database(path, { timeout: 3000 });
     try {
       const version = connection.pragma("user_version", {
         simple: true,
@@ -82,6 +96,11 @@ export class CoreDatabase {
       for (let index = 0; index < plan.length; index++) {
         if (plan[index]?.version !== index + 1)
           throw new DesktopError("STORAGE_ERROR", "数据库迁移顺序无效");
+      }
+      if (options.exclusiveOwner && path !== ":memory:") {
+        // 操作系统锁跨进程生效；旧 Core 未关闭连接时，新 Core 无法开始迁移或业务写入。
+        connection.pragma("locking_mode = EXCLUSIVE");
+        connection.exec("BEGIN EXCLUSIVE; COMMIT;");
       }
       if (existed && version < latest)
         await connection.backup(`${path}.before-v${latest}.bak`);

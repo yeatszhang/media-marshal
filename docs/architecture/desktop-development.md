@@ -46,7 +46,7 @@ legacy 装饰器由 TypeScript 统一转换，参数使用显式 `@inject(Token)
 
 ## 运行与数据
 
-页面使用 `marshal://app` 协议。Main 校验顶层 frame、来源、动作和参数；目录保存还要求通过原生目录对话框取得授权。Core 再次核对真实路径、目录关系与权限。Main 与 Renderer 不打开 SQLite。Main/Core 通信使用私有 MessagePort，端口断开后 Core 安全退出，无 HTTP/WS 业务服务。
+页面使用 `marshal://app` 协议。Main 校验顶层 frame、来源、动作和参数；目录保存还要求通过原生目录对话框取得授权。Core 再次核对真实路径、目录关系与权限。Main 与 Renderer 不打开 SQLite。Main/Core 通信使用私有 MessagePort，端口断开后 Core 安全退出；媒体业务不开放 HTTP/WS 服务。新增受管网盘组件的授权回环接口及凭据副本边界见仓库中的 `openspec/changes/add-bundled-quark-downloads/design.md`，尚未验收的能力不视为当前可用功能。
 
 桌面数据位于 Electron 用户数据目录的 `desktop.sqlite3`，敏感凭据单独由 safeStorage 保护；查询不返回密钥。测试只使用临时数据目录。数据库使用 `user_version`、短事务和升级前 SQLite backup；未知或更高版本停止写入，旧 Java 无版本表不会被接管。
 
@@ -84,6 +84,14 @@ legacy 装饰器由 TypeScript 统一转换，参数使用显式 `@inject(Token)
 
 任务 1.3 的三平台原型门槛没有被本机测试替代。跨平台结果返回前不将后续大批业务迁移声明为完成，也不删除或缩减原任务的验收要求。
 
+### 内置网盘组件 M0（2026-10-24）
+
+OpenList v4.2.7 lite 与 Rclone v1.75.2 已固定三目标资产及双重摘要。独立 Chrome 扫码会话完成普通 Quark 驱动只读联调：指定约 577 MiB 视频的前 8 MiB 代理读取、重复 Range、匿名拒绝与失效 Cookie 拒绝通过；公开接口仍只有弱版本证据。Cookie 未保存，测试会话已关闭。
+
+macOS arm64、Intel Mac、Windows x64 在同一提交上各通过 22 次本地 API/WebDAV 请求、Rclone 传输用例及六种退出/强杀场景，见 [M0 CI 记录](https://github.com/yeatszhang/media-marshal/actions/runs/40086100943) 和 `tools/desktop-sidecars/fixtures/platform-m0.json`。实测要求在 Utility Host 之外增加独立 Guardian；Windows 先建立 Job 归属再启动子进程，父管道断开后回收自有执行。查询失败不能视为停止证据。
+
+此结果不覆盖上表中的原型目录包、冻结 parser、正式签名安装器或完整媒体业务；云端契约、宿主接线与下载界面仍待实施。
+
 ## 原型测量
 
 生成当前平台目录包和独立冻结 parser 后，在 macOS 运行 `npm run desktop:benchmark`。原始样本及环境保存到 `test-results/desktop/benchmark.json`。测量包含 Playwright 启动、查询与交互开销，系统磁盘缓存未清空；冷启动在此定义为新应用进程，热唤起为已有托盘进程重新显示窗口。它们不等于安装态真实用户体验的最终基准。
@@ -100,3 +108,6 @@ legacy 装饰器由 TypeScript 统一转换，参数使用显式 `@inject(Token)
 冻结 parser 启动到 health 响应为一次样本 239.67 ms。最后一次启动稳定 2 秒后，Electron 管理的全部进程 CPU 采样合计约 0.33%，工作集相加约 566.69 MiB；共享页可能重复计算，该值不是系统独占内存。此时独立 parser 未接入 Core，不在该应用进程树内，不能视作最终完整流水线的资源数据。
 
 `du -sk` 测得当前应用目录约 367.91 MiB，独立 parser 目录约 23.53 MiB，均非 DMG/NSIS 下载体积。样本较小，未设置虚构性能承诺；Windows、Intel Mac、最低系统、正式签名产物及完整媒体队列均未测，后续接通 parser 和业务后需重新测量。
+
+
+云端测试默认使用 `npm test` 的 Electron Node 运行器，SQLite 与桌面 ABI 保持一致；`npm run test:electron-node` 为兼容别名。准备与验证命令见 [网盘与传输扩展开发](./cloud-adapter-development.md)。不要在桌面原生模块重建之后直接用另一 Node ABI 加载该 SQLite 二进制。

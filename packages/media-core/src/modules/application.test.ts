@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, mkdir, realpath, rm, symlink, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createApplication } from "@yeatz/app-framework/application";
 import { createMediaApplication } from "./application";
+import { SCHEMA_VERSION } from "../infrastructure/database";
 const directories: string[] = [];
 const running: ReturnType<typeof createMediaApplication>[] = [];
 const message = (action: string, payload: unknown = {}) => ({
@@ -31,6 +33,14 @@ afterEach(async () => {
   );
 });
 describe("框架组装与核心消息", () => {
+  it.skipIf(!existsSync(resolve(`apps/desktop/resources/parser/${process.platform}-${process.arch}/manifest.json`)))("Core 启动并持有冻结解析器，资源异常时保留云端查询且不伪报解析就绪", async () => {
+    const root = resolve(`apps/desktop/resources/parser/${process.platform}-${process.arch}`), manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
+    const healthy = createMediaApplication(":memory:", [], { parser: { root: join(root, "runtime"), manifest } }); running.push(healthy); await healthy.app.start();
+    expect(await healthy.dispatch(message("runtime.get"))).toMatchObject({ parser: "ready" }); await healthy.stop();
+    const broken = createMediaApplication(":memory:", [], { parser: { root: join(root, "missing-owned-runtime"), manifest } }); running.push(broken); await broken.app.start();
+    expect(await broken.dispatch(message("runtime.get"))).toMatchObject({ parser: "unavailable" });
+    expect(await broken.dispatch(message("cloud.accounts.list"))).toEqual([]);
+  });
   it("两套 Application 的命令和 SQLite 数据独立", async () => {
     const first = await create(),
       second = await create();
@@ -46,7 +56,7 @@ describe("框架组装与核心消息", () => {
       first.runtime.dispatch(message("runtime.get")),
     ).rejects.toMatchObject({ code: "INTERRUPTED" });
     expect(await second.runtime.dispatch(message("runtime.get"))).toMatchObject(
-      { schemaVersion: 1 },
+      { schemaVersion: SCHEMA_VERSION },
     );
   });
   it("通过真实目录保存 COPY 来源，重叠与符号链接绕过被阻止", async () => {
@@ -122,7 +132,7 @@ describe("框架组装与核心消息", () => {
     running.push(retried);
     await retried.app.start();
     expect(await retried.dispatch(message("runtime.get"))).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: SCHEMA_VERSION,
     });
   });
   it("缺少依赖与循环依赖不能启动", async () => {

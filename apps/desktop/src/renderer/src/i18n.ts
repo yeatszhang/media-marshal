@@ -1,5 +1,7 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
+import { cloudZh, cloudEn } from "./cloud-i18n";
+import { ingestionZh, ingestionEn } from "./ingestion-i18n";
 
 export const i18nReady = i18n.use(initReactI18next).init({
   lng: "zh-CN",
@@ -8,7 +10,13 @@ export const i18nReady = i18n.use(initReactI18next).init({
   resources: {
     "zh-CN": {
       translation: {
+        cloud: cloudZh,
+        ingestion: ingestionZh,
         overview: "总览",
+        diagnosticsTitle: "诊断",
+        diagnosticsHelp: "仅导出版本和组件状态，不包含账号、目录、凭据或原始日志。",
+        diagnosticsExport: "导出诊断",
+        diagnosticsSaved: "诊断已导出",
         tasks: "任务",
         review: "待处理",
         sources: "来源",
@@ -47,6 +55,8 @@ export const i18nReady = i18n.use(initReactI18next).init({
         resume: "恢复来源",
         paused: "已暂停",
         unverified: "来源行为待验证",
+        available: "目录可访问",
+        unavailable: "目录不可用",
         cancel: "取消",
         save: "保存",
         saving: "正在保存…",
@@ -70,9 +80,9 @@ export const i18nReady = i18n.use(initReactI18next).init({
         keySaved: "密钥已通过系统保护保存",
         saved: "配置已保存",
         language: "界面语言",
-        stageTitle: "客户端迁移原型",
+        stageTitle: "macOS 内测客户端",
         stageHelp:
-          "当前已接通本机核心与持久化配置。自动接入、文件整理及 Emby 收录尚未接通，暂不会处理你的文件。",
+          "已支持受管云端下载与目录订阅。媒体整理及 Emby 收录仍在开发中。",
         coreTitle: "本机核心",
         coreDetail: "业务数据保存在你的电脑上，页面通过受限接口访问。",
         schema: "数据版本",
@@ -109,7 +119,13 @@ export const i18nReady = i18n.use(initReactI18next).init({
     },
     en: {
       translation: {
+        cloud: cloudEn,
+        ingestion: ingestionEn,
         overview: "Overview",
+        diagnosticsTitle: "Diagnostics",
+        diagnosticsHelp: "Exports versions and component status without accounts, paths, credentials or raw logs.",
+        diagnosticsExport: "Export diagnostics",
+        diagnosticsSaved: "Diagnostics exported",
         tasks: "Tasks",
         review: "Needs attention",
         sources: "Sources",
@@ -148,6 +164,8 @@ export const i18nReady = i18n.use(initReactI18next).init({
         resume: "Resume source",
         paused: "Paused",
         unverified: "Download behavior unverified",
+        available: "Folder accessible",
+        unavailable: "Folder unavailable",
         cancel: "Cancel",
         save: "Save",
         saving: "Saving…",
@@ -175,9 +193,9 @@ export const i18nReady = i18n.use(initReactI18next).init({
         keySaved: "Key saved with system protection",
         saved: "Configuration saved",
         language: "Language",
-        stageTitle: "Desktop migration prototype",
+        stageTitle: "macOS preview client",
         stageHelp:
-          "The local core and persistent settings are connected. Automatic ingestion, file organization and Emby delivery are not connected yet. Your files will not be processed.",
+          "Managed cloud downloads and folder subscriptions are available. Media organization and Emby delivery are still in development.",
         coreTitle: "Local core",
         coreDetail:
           "Business data stays on your computer. The interface uses restricted actions.",

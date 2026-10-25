@@ -1,0 +1,13 @@
+pinyin4j 首字母派生数据
+
+上游项目：https://github.com/belerweb/pinyin4j
+固定源码：8a05f77d7c980aa21f6dd1c6c3911d790ddd7924
+固定字典：https://raw.githubusercontent.com/belerweb/pinyin4j/8a05f77d7c980aa21f6dd1c6c3911d790ddd7924/src/main/resources/pinyindb/unicode_to_hanyu_pinyin.txt
+字典 SHA-256：f41a310ae6874351a4abf65d6d7aa4b80bee13c88a71d5ee601981d422d1cca6
+
+上游 PinyinHelper.java 声明 GPL-2.0-or-later，作者 Li Min。
+本项目仅提取 CJK Unified Ideographs 单字首读音的 ASCII 首字母，
+保留原字典顺序，不做上下文多音字推断；派生数据按 GPL-3.0 分发，
+完整许可证见随包 media-marshal.LICENSE。
+资源不包含 Java 字节码或运行时。可重复生成：
+python3 tools/desktop-parser/generate_initials.py

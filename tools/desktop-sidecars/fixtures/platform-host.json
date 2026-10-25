@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "runId": 40096868203,
+  "commit": "0c4714c9fa1f50461ba22566e90cd200e12b8bac",
+  "url": "https://github.com/yeatszhang/media-marshal/actions/runs/40096868203",
+  "scope": "三平台系统 safeStorage、私有权限、正式 Utility Host 与受管 OpenList、单元/本地集成和真实窗口；不代表签名安装包验收",
+  "targets": [
+    {
+      "target": "darwin-arm64",
+      "conclusion": "success",
+      "encryption": {
+        "available": true,
+        "roundTrip": true,
+        "plaintextAbsent": true
+      },
+      "host": {
+        "ready": true,
+        "unknownProviderRejected": true,
+        "credentialInjected": true,
+        "credentialDropped": true,
+        "secretAbsentFromResponses": true,
+        "stopped": true,
+        "exitCode": 0
+      },
+      "artifact": {
+        "id": 12561426672,
+        "digest": "sha256:4678ca75542ab9e81b27f38f2d9d86bca75195cc81ecc929707ade63f1caf954",
+        "size": 205479
+      }
+    },
+    {
+      "target": "darwin-x64",
+      "conclusion": "success",
+      "encryption": {
+        "available": true,
+        "roundTrip": true,
+        "plaintextAbsent": true
+      },
+      "host": {
+        "ready": true,
+        "unknownProviderRejected": true,
+        "credentialInjected": true,
+        "credentialDropped": true,
+        "secretAbsentFromResponses": true,
+        "stopped": true,
+        "exitCode": 0
+      },
+      "artifact": {
+        "id": 12561198333,
+        "digest": "sha256:8bd34143f3d2576236de2650ee3199ba6f2e5f5a780dcf686c71e45e396e6d8a",
+        "size": 240999
+      }
+    },
+    {
+      "target": "win32-x64",
+      "conclusion": "success",
+      "encryption": {
+        "available": true,
+        "roundTrip": true,
+        "plaintextAbsent": true
+      },
+      "host": {
+        "ready": true,
+        "unknownProviderRejected": true,
+        "credentialInjected": true,
+        "credentialDropped": true,
+        "secretAbsentFromResponses": true,
+        "stopped": true,
+        "exitCode": 0
+      },
+      "artifact": {
+        "id": 12561470863,
+        "digest": "sha256:b6979cb808eaa72c0dd12ae0a4a555edb17b276f28e009f020851b52371434c4",
+        "size": 173274
+      }
+    }
+  ]
+}

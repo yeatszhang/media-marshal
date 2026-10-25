@@ -1,0 +1,1245 @@
+{
+  "target": "darwin-arm64",
+  "packaged": true,
+  "note": "单次实测；ps CPU 为系统观测口径，RSS 合计可能重复包含共享页，不等同独占物理内存。",
+  "metrics": [
+    {
+      "elapsedMs": 34,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 279168,
+          "cpuPercent": 9.9
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 102736,
+          "cpuPercent": 6.5
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 46784,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 187600,
+          "cpuPercent": 23.9
+        },
+        {
+          "role": "Core",
+          "rssKiB": 109216,
+          "cpuPercent": 4.6
+        },
+        {
+          "role": "Host",
+          "rssKiB": 190976,
+          "cpuPercent": 1.6
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5392,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 71280,
+          "cpuPercent": 0.8
+        }
+      ],
+      "rssSumKiB": 993152,
+      "cpuSumPercent": 47.3
+    },
+    {
+      "elapsedMs": 1134,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 276560,
+          "cpuPercent": 2.5
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 102176,
+          "cpuPercent": 1.6
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 44416,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 189520,
+          "cpuPercent": 5.8
+        },
+        {
+          "role": "Core",
+          "rssKiB": 110912,
+          "cpuPercent": 7.1
+        },
+        {
+          "role": "Host",
+          "rssKiB": 192688,
+          "cpuPercent": 5.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5664,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 71600,
+          "cpuPercent": 2.3
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 368,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Electron辅助进程",
+          "rssKiB": 416,
+          "cpuPercent": 0
+        }
+      ],
+      "rssSumKiB": 994320,
+      "cpuSumPercent": 24.700000000000003
+    },
+    {
+      "elapsedMs": 2197,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 276592,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 81408,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 44416,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 189408,
+          "cpuPercent": 3.4
+        },
+        {
+          "role": "Core",
+          "rssKiB": 111120,
+          "cpuPercent": 3
+        },
+        {
+          "role": "Host",
+          "rssKiB": 192672,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5712,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 71824,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 55712,
+          "cpuPercent": 0.6
+        }
+      ],
+      "rssSumKiB": 1028864,
+      "cpuSumPercent": 9.299999999999999
+    },
+    {
+      "elapsedMs": 3280,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 271936,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 83248,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 44416,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 189440,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "Core",
+          "rssKiB": 111360,
+          "cpuPercent": 1.3
+        },
+        {
+          "role": "Host",
+          "rssKiB": 192704,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5904,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 78304,
+          "cpuPercent": 6.5
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 57776,
+          "cpuPercent": 0.7
+        }
+      ],
+      "rssSumKiB": 1035088,
+      "cpuSumPercent": 10.299999999999999
+    },
+    {
+      "elapsedMs": 4338,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 271984,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 83232,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 44416,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 190416,
+          "cpuPercent": 2.2
+        },
+        {
+          "role": "Core",
+          "rssKiB": 112304,
+          "cpuPercent": 2.8
+        },
+        {
+          "role": "Host",
+          "rssKiB": 192704,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5984,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 101088,
+          "cpuPercent": 8.5
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 58816,
+          "cpuPercent": 1.3
+        }
+      ],
+      "rssSumKiB": 1060944,
+      "cpuSumPercent": 15.7
+    },
+    {
+      "elapsedMs": 5418,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 270544,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 81536,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 44240,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 187440,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Core",
+          "rssKiB": 112448,
+          "cpuPercent": 2.2
+        },
+        {
+          "role": "Host",
+          "rssKiB": 192704,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6032,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104656,
+          "cpuPercent": 21.4
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73248,
+          "cpuPercent": 7.9
+        }
+      ],
+      "rssSumKiB": 1072848,
+      "cpuSumPercent": 34.8
+    },
+    {
+      "elapsedMs": 6479,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 267120,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 76912,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 44176,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 184672,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "Core",
+          "rssKiB": 112560,
+          "cpuPercent": 1.6
+        },
+        {
+          "role": "Host",
+          "rssKiB": 192704,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6048,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104928,
+          "cpuPercent": 15.7
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73248,
+          "cpuPercent": 5.2
+        }
+      ],
+      "rssSumKiB": 1062368,
+      "cpuSumPercent": 23.9
+    },
+    {
+      "elapsedMs": 7551,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 198272,
+          "cpuPercent": 1
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 80528,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43824,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 169392,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Core",
+          "rssKiB": 96496,
+          "cpuPercent": 2.5
+        },
+        {
+          "role": "Host",
+          "rssKiB": 192752,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6048,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104928,
+          "cpuPercent": 21.3
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73248,
+          "cpuPercent": 7.9
+        }
+      ],
+      "rssSumKiB": 965488,
+      "cpuSumPercent": 34.2
+    },
+    {
+      "elapsedMs": 8604,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 187584,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 80544,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 169536,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "Core",
+          "rssKiB": 96624,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Host",
+          "rssKiB": 119952,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6128,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104944,
+          "cpuPercent": 10.8
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73248,
+          "cpuPercent": 4
+        }
+      ],
+      "rssSumKiB": 882336,
+      "cpuSumPercent": 16.8
+    },
+    {
+      "elapsedMs": 9662,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 186464,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 80512,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 169728,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Core",
+          "rssKiB": 96672,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Host",
+          "rssKiB": 109056,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6128,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104944,
+          "cpuPercent": 7.7
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73312,
+          "cpuPercent": 2.9
+        }
+      ],
+      "rssSumKiB": 870592,
+      "cpuSumPercent": 12.5
+    },
+    {
+      "elapsedMs": 10740,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 187024,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 80512,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 169808,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "Core",
+          "rssKiB": 97888,
+          "cpuPercent": 1.3
+        },
+        {
+          "role": "Host",
+          "rssKiB": 109072,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6144,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104928,
+          "cpuPercent": 11.3
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73328,
+          "cpuPercent": 4.4
+        }
+      ],
+      "rssSumKiB": 872480,
+      "cpuSumPercent": 18.200000000000003
+    },
+    {
+      "elapsedMs": 11789,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 187408,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 80512,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 169872,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Core",
+          "rssKiB": 98256,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Host",
+          "rssKiB": 109072,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6144,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104928,
+          "cpuPercent": 8.7
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73328,
+          "cpuPercent": 2.8
+        }
+      ],
+      "rssSumKiB": 873296,
+      "cpuSumPercent": 13.3
+    },
+    {
+      "elapsedMs": 12875,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 187424,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 76256,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 170000,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "Core",
+          "rssKiB": 98368,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Host",
+          "rssKiB": 109104,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 6192,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 104928,
+          "cpuPercent": 12.2
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73328,
+          "cpuPercent": 4.6
+        }
+      ],
+      "rssSumKiB": 869376,
+      "cpuSumPercent": 18.799999999999997
+    },
+    {
+      "elapsedMs": 13924,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 169856,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 79440,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 155520,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Core",
+          "rssKiB": 98000,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92192,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5616,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 100224,
+          "cpuPercent": 10.3
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 73328,
+          "cpuPercent": 2.6
+        }
+      ],
+      "rssSumKiB": 817952,
+      "cpuSumPercent": 14.700000000000001
+    },
+    {
+      "elapsedMs": 14994,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168256,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 79440,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 155088,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Core",
+          "rssKiB": 98128,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Host",
+          "rssKiB": 91936,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5520,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 100096,
+          "cpuPercent": 10
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 71856,
+          "cpuPercent": 2.7
+        }
+      ],
+      "rssSumKiB": 814096,
+      "cpuSumPercent": 14.100000000000001
+    },
+    {
+      "elapsedMs": 16070,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168256,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 79472,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 155664,
+          "cpuPercent": 2.4
+        },
+        {
+          "role": "Core",
+          "rssKiB": 98272,
+          "cpuPercent": 2.6
+        },
+        {
+          "role": "Host",
+          "rssKiB": 91968,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5536,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 100112,
+          "cpuPercent": 17.1
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 80048,
+          "cpuPercent": 4.5
+        }
+      ],
+      "rssSumKiB": 823104,
+      "cpuSumPercent": 27.6
+    },
+    {
+      "elapsedMs": 17171,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168256,
+          "cpuPercent": 1.3
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 79472,
+          "cpuPercent": 1.6
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 155776,
+          "cpuPercent": 4.5
+        },
+        {
+          "role": "Core",
+          "rssKiB": 98480,
+          "cpuPercent": 3.6
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92016,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5536,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 100160,
+          "cpuPercent": 23.9
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 80064,
+          "cpuPercent": 10.8
+        }
+      ],
+      "rssSumKiB": 823536,
+      "cpuSumPercent": 46
+    },
+    {
+      "elapsedMs": 18227,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168256,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 79456,
+          "cpuPercent": 0.7
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 155968,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Core",
+          "rssKiB": 98896,
+          "cpuPercent": 2.7
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92016,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5552,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 100240,
+          "cpuPercent": 12.5
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 80064,
+          "cpuPercent": 5.4
+        }
+      ],
+      "rssSumKiB": 824224,
+      "cpuSumPercent": 23.6
+    },
+    {
+      "elapsedMs": 19280,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168256,
+          "cpuPercent": 0.8
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 79424,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 155952,
+          "cpuPercent": 1.1
+        },
+        {
+          "role": "Core",
+          "rssKiB": 99088,
+          "cpuPercent": 3
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92016,
+          "cpuPercent": 0.3
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5568,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 100240,
+          "cpuPercent": 16.7
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 80064,
+          "cpuPercent": 8.1
+        }
+      ],
+      "rssSumKiB": 824384,
+      "cpuSumPercent": 30.1
+    },
+    {
+      "elapsedMs": 20339,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168320,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 78528,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43760,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 155840,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Core",
+          "rssKiB": 98432,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92080,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5360,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 99760,
+          "cpuPercent": 8.9
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 77584,
+          "cpuPercent": 3.7
+        }
+      ],
+      "rssSumKiB": 819664,
+      "cpuSumPercent": 16.5
+    },
+    {
+      "elapsedMs": 21405,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 168032,
+          "cpuPercent": 0.4
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 78512,
+          "cpuPercent": 0.2
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43760,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 155856,
+          "cpuPercent": 0.6
+        },
+        {
+          "role": "Core",
+          "rssKiB": 94480,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92096,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5312,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 99744,
+          "cpuPercent": 9.1
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 77584,
+          "cpuPercent": 2.7
+        }
+      ],
+      "rssSumKiB": 815376,
+      "cpuSumPercent": 14.5
+    },
+    {
+      "elapsedMs": 22465,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 167376,
+          "cpuPercent": 2.1
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 78448,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43760,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 156176,
+          "cpuPercent": 1.8
+        },
+        {
+          "role": "Core",
+          "rssKiB": 95104,
+          "cpuPercent": 2.8
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92112,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5312,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 99776,
+          "cpuPercent": 17
+        },
+        {
+          "role": "rclone",
+          "rssKiB": 77632,
+          "cpuPercent": 5.1
+        }
+      ],
+      "rssSumKiB": 815696,
+      "cpuSumPercent": 29.1
+    },
+    {
+      "elapsedMs": 23526,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 167392,
+          "cpuPercent": 1
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 78496,
+          "cpuPercent": 0.9
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43760,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 156336,
+          "cpuPercent": 1.4
+        },
+        {
+          "role": "Core",
+          "rssKiB": 95536,
+          "cpuPercent": 3.1
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92288,
+          "cpuPercent": 0.5
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5376,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 69680,
+          "cpuPercent": 2.8
+        }
+      ],
+      "rssSumKiB": 708864,
+      "cpuSumPercent": 9.8
+    },
+    {
+      "elapsedMs": 24580,
+      "processes": [
+        {
+          "role": "Main",
+          "rssKiB": 166160,
+          "cpuPercent": 11.8
+        },
+        {
+          "role": "GPU",
+          "rssKiB": 78544,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "Utility",
+          "rssKiB": 43776,
+          "cpuPercent": 0
+        },
+        {
+          "role": "Renderer",
+          "rssKiB": 152928,
+          "cpuPercent": 1.2
+        },
+        {
+          "role": "Core",
+          "rssKiB": 97248,
+          "cpuPercent": 13.7
+        },
+        {
+          "role": "Host",
+          "rssKiB": 92368,
+          "cpuPercent": 0.1
+        },
+        {
+          "role": "guardian",
+          "rssKiB": 5376,
+          "cpuPercent": 0
+        },
+        {
+          "role": "openlist",
+          "rssKiB": 70416,
+          "cpuPercent": 0.7
+        }
+      ],
+      "rssSumKiB": 706816,
+      "cpuSumPercent": 27.599999999999998
+    }
+  ]
+}

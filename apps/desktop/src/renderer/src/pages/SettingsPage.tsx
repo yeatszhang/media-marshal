@@ -6,6 +6,7 @@ import { SettingsViewModel } from "../services";
 import { Header, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 import i18n from "../i18n";
+import { LibrarySetup } from "./LibrarySetup";
 
 export function SettingsPage() {
   const { t } = useTranslation();
@@ -44,6 +45,7 @@ export function SettingsPage() {
   return (
     <>
       <Header title={t("settings")} description={t("setupHelp")} />
+      <section className="panel download-job"><h2>手动整包升级与恢复</h2><p>升级前先停写并保存业务库、凭据密文和组件私有状态。备份不包含下载文件或媒体库；恢复后应用退出，需使用匹配版本。</p><div className="download-controls"><Button variant="outline" disabled={busy} onClick={() => { setBusy(true); void model.prepareUpgrade().finally(() => setBusy(false)); }}>准备升级并退出</Button><Button variant="outline" disabled={busy} onClick={() => { void model.restoreUpgrade(); }}>恢复升级备份…</Button></div></section>
       <ErrorNotice
         message={error}
         retry={() => {
@@ -143,6 +145,15 @@ export function SettingsPage() {
                 </Button>
               </div>
             ))}
+          </section>
+          <LibrarySetup />
+          <section className="panel settings-form">
+            <div className="panel-heading"><h2>{t("diagnosticsTitle")}</h2></div>
+            <p>{t("diagnosticsHelp")}</p>
+            <Button variant="outline" disabled={busy} onClick={() => {
+              setBusy(true);
+              void model.exportDiagnostics().then((saved) => { if (saved) setNotice(t("diagnosticsSaved")); }).catch(() => {}).finally(() => setBusy(false));
+            }}>{t("diagnosticsExport")}</Button>
           </section>
         </>
       )}

@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-24",
+  "scope": "M0 开发态固定组件、最小真实进程树及临时本地数据；不代表正式安装包或完整下载业务",
+  "run": {
+    "url": "https://github.com/yeatszhang/media-marshal/actions/runs/40086100943",
+    "headSha": "e00566a14e3fb467d99ce851e6190dbe28639de2",
+    "conclusion": "success",
+    "createdAt": "2026-10-24T10:29:18Z",
+    "updatedAt": "2026-10-24T10:33:11Z"
+  },
+  "components": {
+    "openlist": "v4.2.7",
+    "rclone": "v1.75.2"
+  },
+  "targets": [
+    {
+      "target": "darwin-arm64",
+      "runner": "macos-15",
+      "jobUrl": "https://github.com/yeatszhang/media-marshal/actions/runs/40086100943/job/120849254253",
+      "passed": true,
+      "electron": "44.9.0",
+      "openlistRequests": 22,
+      "rcloneChecks": [
+        {
+          "check": "特殊名称与 JSON 统计",
+          "exitCode": 0
+        },
+        {
+          "check": "非零退出但部分文件完成",
+          "exitCode": 1
+        },
+        {
+          "check": "停止后新 attempt 重新下载",
+          "stopExitCode": 143,
+          "restartExitCode": 0
+        }
+      ],
+      "processCases": [
+        {
+          "scenario": "graceful",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-main",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-host",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-openlist",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-rclone",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-guardian",
+          "passed": true,
+          "identityChecked": true
+        }
+      ],
+      "artifactSha256": {
+        "openlist-contract.json": "888419a1778291a2cced42fe1affa748b4eaad43ee8ff8e81c662d475255019f",
+        "process-smoke.json": "18c00047dfad8d23732602c6c9ba16b5fd31ca808f425f833b380c37bc0f3b9a",
+        "rclone-smoke.json": "d7c7d2ec5d5a9758b4fe2039872011ef17ed393c9fd13d30d88e2e7d574b0bcb"
+      }
+    },
+    {
+      "target": "darwin-x64",
+      "runner": "macos-15-intel",
+      "jobUrl": "https://github.com/yeatszhang/media-marshal/actions/runs/40086100943/job/120849254414",
+      "passed": true,
+      "electron": "44.9.0",
+      "openlistRequests": 22,
+      "rcloneChecks": [
+        {
+          "check": "特殊名称与 JSON 统计",
+          "exitCode": 0
+        },
+        {
+          "check": "非零退出但部分文件完成",
+          "exitCode": 1
+        },
+        {
+          "check": "停止后新 attempt 重新下载",
+          "stopExitCode": 143,
+          "restartExitCode": 0
+        }
+      ],
+      "processCases": [
+        {
+          "scenario": "graceful",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-main",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-host",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-openlist",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-rclone",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-guardian",
+          "passed": true,
+          "identityChecked": true
+        }
+      ],
+      "artifactSha256": {
+        "openlist-contract.json": "114c7f7ce4837b183af5260488faa709bdc26de76a287336851699cc1bfdd522",
+        "process-smoke.json": "fa621259fa90e19dd9272c201747be9a491e36e5490748c8b53269b7c7bf4354",
+        "rclone-smoke.json": "cffc24b39b8a1d8ea7fa5b0a40531681719049f80ac5510a391814f54dbe96c5"
+      }
+    },
+    {
+      "target": "win32-x64",
+      "runner": "windows-2022",
+      "jobUrl": "https://github.com/yeatszhang/media-marshal/actions/runs/40086100943/job/120849254456",
+      "passed": true,
+      "electron": "44.9.0",
+      "openlistRequests": 22,
+      "rcloneChecks": [
+        {
+          "check": "特殊名称与 JSON 统计",
+          "exitCode": 0
+        },
+        {
+          "check": "非零退出但部分文件完成",
+          "exitCode": 1
+        },
+        {
+          "check": "停止后新 attempt 重新下载",
+          "stopExitCode": 1,
+          "restartExitCode": 0
+        }
+      ],
+      "processCases": [
+        {
+          "scenario": "graceful",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-main",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-host",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-openlist",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-rclone",
+          "passed": true,
+          "identityChecked": true
+        },
+        {
+          "scenario": "kill-guardian",
+          "passed": true,
+          "identityChecked": true
+        }
+      ],
+      "artifactSha256": {
+        "openlist-contract.json": "d5721e27c15dbfd3e12ffd69ab41f9769441788e5fc673ad22d4f44eadf81916",
+        "process-smoke.json": "1a9bd48337299d69530ab5950eb635691961f1c91fdcecc327b6d1d2a718d9d7",
+        "rclone-smoke.json": "07764c8e66eae8e80b8b8064811c94b511c437c8c71ce3e6060ae4714265e404"
+      }
+    }
+  ],
+  "limitations": [
+    "真实夸克账号仅在本机 macOS arm64 验收，读取指定视频前 8 MiB",
+    "Windows 当前用户 ACL 尚待正式凭据模块验收",
+    "签名、公证、安装器、整文件下载和业务界面未由本矩阵验收"
+  ]
+}

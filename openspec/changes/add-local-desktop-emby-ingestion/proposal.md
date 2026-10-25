@@ -4,15 +4,18 @@
 
 已经使用夸克、百度或阿里云盘客户端下载影视的 Emby 用户，需要把下载文件持续整理到本机媒体库。Media Marshal 已积累识别、人工确认、模板整理、修正与 Emby 集成规则；一期将这些能力迁入独立 Electron 客户端，降低部署和使用门槛，验证下载后自动入库的细分需求。付费规模尚待验证。
 
+产品有两类使用场景：新用户需要协助安装 Emby 并初始化媒体库；老用户已有 Emby，只需要将资源下载、整理并同步到指定媒体库路径。当前优先完成老用户场景，以维护者自己的 Mac、现有 Emby 和实际下载及媒体库路径走通闭环；新用户安装初始化放到后续阶段。
+
 ## 变更内容
 
-- 以 monorepo 管理 Electron 应用、TypeScript 媒体核心和进程契约。React + TypeScript 重建客户端界面，electron-vite 构建，electron-builder 生成官网分发的 macOS/Windows 安装包。
+- 以 monorepo 管理 Electron 应用、TypeScript 媒体核心和进程契约。React + TypeScript 重建客户端界面，electron-vite 构建，electron-builder 生成 macOS 安装包。当前只交付一个 Mac 客户端，优先完成 Apple Silicon 功能闭环，Intel 复用同一产品并按架构验证；Windows 等其他平台保留扩展性与兼容，不要求同期交付。
 - 采用 `wenger-repo/packages/app-framework` 的 `@yeatz/app-framework` 作为应用组织框架。Main、Utility Process 和 Renderer 各自拥有独立 Application，以静态模块、依赖注入、受管资源及生命周期组装功能；React 使用 StatefulService 与框架 hooks，页面临时状态仍使用 React。框架命令仅在进程内分发，IPC、安全校验和持久化恢复继续由客户端实现。
-- 将一期所需 Java 业务逻辑迁入应用内的 TypeScript 核心，在 Electron Utility Process 中执行；Main 管理桌面能力和生命周期，Renderer 仅处理交互。不携带 JRE、不启动 Spring Boot 或本地 HTTP/WS 业务服务，无需用户安装 Docker、Node.js、Java 或 Python。
+- 将一期所需 Java 业务逻辑迁入应用内的 TypeScript 核心，在 Electron Utility Process 中执行；Main 管理桌面能力和生命周期，Renderer 仅处理交互。不携带 JRE、不启动 Spring Boot 或媒体 HTTP/WS 业务服务，无需用户安装 Docker、Node.js、Java 或 Python；受管云端下载所需的回环服务由 `add-bundled-quark-downloads` 定义。
 - 保留 guessit 的解析能力为随包冻结的离线子进程，通过受控管道调用，不携带 FastAPI/uvicorn 服务；独立客户端不等于只有一个操作系统进程。
-- 提供夸克、百度、阿里云盘及自定义来源的本地目录接入。用户仍在官方客户端选择和下载内容；App 不登录网盘、不解析分享链接、不控制下载。
+- 提供夸克、百度、阿里云盘及自定义来源的本地目录接入。此类来源由用户在外部客户端选择和下载内容，不读取登录信息或虚构下载进度；独立的受管云端来源及账号授权、订阅下载由 `add-bundled-quark-downloads` 扩展，不将已有本地来源自动转为云端账号。
 - 首版处理电影与普通剧集，目录接入只开放复制并保留来源；统一文件就绪检查、预览、低置信度确认、冲突阻断、持久化任务与中断核对。已整理目标的纠错保留预览和可恢复执行，不移动原下载文件。
 - 将文件已整理、刷新待发送、等待收录与 Emby 已收录独立持久化；Emby 离线只重试交付，不再次复制媒体。
+- 当前接入已有 Emby 和媒体库，复用已保存的连接与用户指定目录；只配置所需的电影或剧集目标，不强制创建新库或更换目录。受管下载完成后交接到同一整理与交付链路，先完成维护者本机的一次真实资源下载和收录。
 - 提供托盘、可选登录启动、暂停接入、恢复、受限 IPC、凭据保护及脱敏诊断。应用无需产品账户和自建后台，但 TMDB 查询及 Emby 访问仍依赖相应服务可用。
 - 一期只交付独立客户端，不同步重建 Web/Docker 产品。既有 `backend/`、`frontend/`、`parser/` 与 Docker 入口作为历史实现及迁移参考保留，不进入桌面运行依赖，也不自动导入旧服务端数据库。
 - 桌面与整理核心免费；官方 API、托管通知等付费服务和商店上架独立规划，见[商业与付费策略](../../../docs/product/business-and-operations.md)。
@@ -22,8 +25,8 @@
 ### 新增能力
 
 - `desktop-runtime`：独立客户端运行、框架模块与进程隔离、受限进程通信、生命周期、应用内媒体核心、React 状态、凭据与数据管理。
-- `local-folder-ingestion`：来源引导、就绪检查、识别确认、模板整理、复制与修正恢复，以及业务迁移的行为契约。
-- `emby-delivery`：本机连接、持久化刷新、收录核对及独立重试。
+- `local-folder-ingestion`：来源引导、指定既有媒体目录、就绪检查、识别确认、模板整理、复制与修正恢复，以及业务迁移的行为契约。
+- `emby-delivery`：已有本机服务器与媒体库接入、持久化刷新、收录核对及独立重试。
 - `desktop-distribution`：自包含安装、平台签名、版本兼容、手动升级和数据保留。
 
 ### 修改能力
@@ -38,4 +41,16 @@
 - SQLite 由媒体 Utility Process 独占，使用 better-sqlite3、显式 SQL 迁移、版本检查和一致性备份；Electron Main/Renderer 不直接打开业务库。
 - 应用按框架公开子路径导入，领域纯函数和跨进程 contracts 不依赖框架；不复制其源码形成分叉，不引入第二套全局状态容器或 DI 容器。规划时公开 registry 尚无法取得该包；实施复核后已可获取 `@yeatz/app-framework@0.1.0`，按发布后路径使用精确版本、根锁文件和来源清单；正式安装与 CI 不依赖个人目录、全局链接或另一仓库的实时状态。
 - 增加目录来源、候选、文件操作与 Emby 交付记录，保留任务完成与收录完成的区别。首次安装新建独立桌面库，旧 Java 库导入及新 Web 产品另立变更。
-- 发行需要验证 Electron ABI 对应的原生 SQLite 模块和冻结 parser，携带许可及源码获取说明。Emby Server 与网盘客户端由用户自行安装，不打包进本应用。
+- 发行需要验证 Electron ABI 对应的原生 SQLite 模块和冻结 parser，携带许可及源码获取说明。当前以已有 Emby Server 为前提，不变更其安装及媒体库配置；协助新用户安装和初始化媒体库后续规划。普通目录接入可以使用外部网盘客户端，内置夸克下载由 `add-bundled-quark-downloads` 随包提供 OpenList/Rclone，不要求另装官方客户端。
+
+## 当前交付范围（2026-10-24）
+
+与[内置下载变更](../add-bundled-quark-downloads/design.md)统一采用 Mac 优先顺序：先完成 Mac 上可用的下载、整理与 Emby 交付，再独立规划其他平台客户端。平台差异留在宿主适配和构建资源层，业务核心、界面及跨进程契约保持可复用；已有 Windows 适配与三目标测试记录保留，但不作为本轮新功能或内测包的前置条件。
+
+Mac 功能验收、未签名内测包和正式公开发行分别记录。当前没有 Developer ID/公证配置，正式签名发行项保持未完成，不阻塞功能开发；其他平台安装器和签名留待相应平台启用时验收。
+
+### 当前优先级（2026-10-25）
+
+第一里程碑为维护者本机老用户闭环：验证已有 Emby 连接和指定媒体目录 → 选择一项实际资源下载 → 确认识别及目标预览 → 复制到指定目录 → 刷新并核对 Emby 收录 → 验证中断与交付重试不重复下载或复制。下载由 `add-bundled-quark-downloads` 负责，本变更负责后续整理和交付。
+
+实际地址、库标识及绝对路径从本机保存的配置或用户明确选择取得，不写死到代码、公开规划或测试默认值。以本次本机链路的实际架构和文件系统记账；其他架构、通用来源矩阵和发行验收继续保留，后续逐项完成。新用户的 Emby 安装、首次账号设置和媒体库初始化不作为该里程碑的前置条件。
