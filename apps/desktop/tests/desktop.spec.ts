@@ -60,6 +60,27 @@ test.afterEach(async () => {
   if (application) await application.close().catch(() => {});
   if (directory) await rm(directory, { recursive: true, force: true });
 });
+test("目录批量识别经真实稳定窗口与 IPC 提交，重启保留逐项匹配失败且不复制文件", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(230000);
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), source = join(canonical, "中文批量识别来源"), target = join(canonical, "独立媒体目标"); await mkdir(source); await mkdir(target);
+  for (const episode of [1, 2]) await writeFile(join(source, `测试作品.S01E0${episode}.mp4`), `第 ${episode} 个原视频保留`);
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [source, target]);
+  await window.evaluate(async ({ source, target }) => {
+    await window.desktopApi.chooseDirectory("source"); await window.desktopApi.chooseDirectory("target"); const draft = await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: "本地批量识别验收", client: "custom", sourcePath: source, organization: { targetPath: target } } }); const p = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: 0, expectedDraftRevision: 1, requestKey: crypto.randomUUID() }); await window.desktopApi.applySourceRule({ previewId: p.id, requestKey: crypto.randomUUID() });
+  }, { source, target });
+  // 使用真实单调时钟等待生产稳定窗口，不注入 READY 或替换观察结果。
+  await expect.poll(async () => { const result = await window.evaluate(() => window.desktopApi.listIngestionCandidates({})); return result.items.length === 2 && result.items.every((item) => item.state === "READY"); }, { timeout: 160000, intervals: [1000, 5000] }).toBe(true);
+  expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 }); await window.getByRole("link", { name: "待处理", exact: true }).click(); await window.getByRole("button", { name: "按目录查看", exact: true }).click(); await window.getByRole("button", { name: "查看目录文件", exact: true }).click();
+  const panel = window.getByRole("region", { name: "目录文件与候选摘要", exact: true }); await expect(panel).toContainText("整组 2 项"); await panel.getByRole("button", { name: "选择本页可处理文件", exact: true }).click(); await panel.getByRole("button", { name: "提交所选文件识别（2）", exact: true }).click();
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listRecognitionBatches({}))).items[0]?.submitted, { timeout: 20000 }).toBe(2);
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listRecognitionBatches({}))).items[0]?.recognitionFailed, { timeout: 30000 }).toBe(2);
+  const before = (await window.evaluate(() => window.desktopApi.listRecognitionBatches({}))).items[0]!; expect(before).toMatchObject({ failed: 0, submitted: 2, pending: 0, recognitionFailed: 2 }); await expect(window.getByLabel("批量识别逐项结果")).toContainText("TMDB");
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await expect.poll(() => window.evaluate(() => innerWidth)).toBe(920); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await window.screenshot({ path: "test-results/desktop/directory-batch-recognition.png", fullPage: true });
+  const tasks = (await window.evaluate(() => window.desktopApi.listTasks({}))).items; expect(tasks).toHaveLength(2); await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  expect((await window.evaluate(() => window.desktopApi.listRecognitionBatches({}))).items[0]).toMatchObject({ id: before.id, submitted: 2, recognitionFailed: 2 }); expect((await window.evaluate(() => window.desktopApi.listTasks({}))).items.map((row) => row.id).sort()).toEqual(tasks.map((row) => row.id).sort()); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
+  for (const episode of [1, 2]) expect(await readFile(join(source, `测试作品.S01E0${episode}.mp4`), "utf8")).toBe(`第 ${episode} 个原视频保留`); expect((await readdir(target)).filter((name) => name !== ".media-marshal")).toEqual([]);
+});
 test("来源删除确认、只读历史与恢复暂停经真实 IPC 保留，重载不重放", async () => {
   test.skip(process.platform !== "darwin");
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();

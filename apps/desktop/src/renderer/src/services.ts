@@ -20,6 +20,7 @@ import type {
 import { DesktopClient } from "./desktop-client";
 export { DesktopClient } from "./desktop-client";
 import { SourceRulesViewModel } from "./source-rules-model";
+import { DirectoriesViewModel } from "./directories-model";
 import { RecognitionEditsViewModel } from "./recognition-edits-model";
 import { ContentReviewsViewModel } from "./content-reviews-model";
 import { CloudAccountsViewModel } from "./cloud-accounts-model";
@@ -310,7 +311,7 @@ export function createRendererApplication(client: DesktopApi) {
     },
   };
   const modules: ApplicationModule[] = [
-    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); } },
+    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); bind(DirectoriesViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.downloads", dependencies: [connection.id], register(bind) { bind(DownloadsViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.cloud", dependencies: [connection.id], register(bind) { bind(CloudAccountsViewModel).toSelf().inSingletonScope(); } },
     {

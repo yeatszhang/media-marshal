@@ -6,12 +6,14 @@ import { ListTodo, RefreshCw } from "lucide-react";
 import { IngestionViewModel } from "../services";
 import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
+import { DirectoryQueuePanel } from "../components/DirectoryQueuePanel";
 import { RecognitionEditor } from "../components/RecognitionEditor";
 import { ContentReviewsPanel } from "../components/ContentReviewsPanel";
 
 export function Ingestion() {
   const { t } = useTranslation(), model = useService(IngestionViewModel), state = useServiceState(model, (value) => value), location = useLocation();
   const [id, setId] = useState(""), [type, setType] = useState<"MOVIE" | "TV_SHOW">("MOVIE"), [season, setSeason] = useState("1"), [episode, setEpisode] = useState("1"), [end, setEnd] = useState(""), [template, setTemplate] = useState(""), [complete, setComplete] = useState(false), [includeAccessories, setIncludeAccessories] = useState(true);
+  const [directoryMode, setDirectoryMode] = useState(false);
   const [selectedTasks, setSelectedTasks] = useState<string[]>([]), [editingTasks, setEditingTasks] = useState<string[] | null>(null);
   useEffect(() => model.watch(), [model]);
   useEffect(() => { const taskId = (location.state as { taskId?: string } | null)?.taskId; if (taskId) void model.select(taskId); }, [model, location.state]);
@@ -26,8 +28,11 @@ export function Ingestion() {
     <ContentReviewsPanel sources={state.sources} />
     <div className="download-controls">{state.sources.filter((source) => source.configuration?.organization).map((source) => <Button key={source.id} variant="outline" size="sm" disabled={state.busy || source.paused || source.reviewRequired} onClick={() => { void model.scan(source.id); }}>{t("ingestion.scan")} · {source.configuration?.name ?? source.draft.name}</Button>)}</div>
     {editingTasks && <RecognitionEditor key={editingTasks.join(",")} taskIds={editingTasks} onClose={() => setEditingTasks(null)} onSaved={() => { setSelectedTasks([]); model.clearPreview(); setComplete(false); void model.refresh(); }} />}
+    <div className="download-controls"><Button variant={directoryMode ? "outline" : "default"} onClick={() => setDirectoryMode(false)}>按文件查看</Button><Button variant={directoryMode ? "default" : "outline"} onClick={() => setDirectoryMode(true)}>按目录查看</Button></div>
+    {directoryMode ? <DirectoryQueuePanel onInspect={(id) => { void model.select(id); }} onEdit={setEditingTasks} /> : <>
     <div className="download-controls"><Button variant="outline" disabled={!selectedTasks.length || state.busy} onClick={() => setEditingTasks([...selectedTasks])}>编辑选中识别（{selectedTasks.length}）</Button><Button variant="ghost" disabled={!selectedTasks.length} onClick={() => setSelectedTasks([])}>清除任务选择</Button><span className="cloud-hint">勾选已有待确认任务可批量编辑，最多 100 项；编辑不执行整理。</span></div>
     <section className="panel ingestion-candidates">{state.items.length ? <><table><thead><tr><th>选择</th><th>{t("file")}</th><th>{t("status")}</th><th>{t("ingestion.action")}</th></tr></thead><tbody>{state.items.map((candidate) => <tr key={candidate.id}><td>{candidate.taskId && candidate.state === "QUEUED" ? <input type="checkbox" aria-label={`选择识别任务 ${candidate.relativePath}`} checked={selectedTasks.includes(candidate.taskId)} disabled={!selectedTasks.includes(candidate.taskId) && selectedTasks.length >= 100} onChange={(event) => setSelectedTasks(event.target.checked ? [...selectedTasks, candidate.taskId!] : selectedTasks.filter((id) => id !== candidate.taskId))} /> : "—"}</td><td className="table-file" title={candidate.relativePath}><strong>{candidate.relativePath}</strong><small>{candidate.size.toLocaleString()} {t("ingestion.bytes")}</small></td><td>{t(`ingestion.${candidate.state}`)}{candidate.reason && <small>{candidate.reason}</small>}</td><td>{candidate.taskId ? <Button size="sm" variant="outline" disabled={state.busy} onClick={() => { void model.select(candidate.taskId!); }}>{t("ingestion.inspect")}</Button> : candidate.state === "READY" ? <Button size="sm" disabled={state.busy} onClick={() => { void model.recognize(candidate.id); }}>{t("ingestion.recognize")}</Button> : "—"}</td></tr>)}</tbody></table><div className="pagination"><Button variant="outline" size="sm" disabled={state.page <= 1} onClick={() => { void model.refresh(state.page - 1); }}>{t("previous")}</Button><span>{t("page", { page: state.page, total: state.total })}</span><Button variant="outline" size="sm" disabled={state.page * 100 >= state.total} onClick={() => { void model.refresh(state.page + 1); }}>{t("next")}</Button></div></> : <Empty icon={<ListTodo size={28} />} title={t("ingestion.empty")} description={t("ingestion.emptyHelp")} />}</section>
+    </>}
     {state.task && <section className="panel settings-form"><h2>{state.task.parsed?.title || t("ingestion.edit")}</h2><p role="status">{t(state.task.state)}</p><ErrorNotice message={state.task.failure} />
       {state.task.state === "PENDING" || state.task.state === "PROCESSING" ? <p>{t("ingestion.waiting")}</p> : null}
       {state.task.state === "FAILED" || (state.task.state === "AWAITING_CONFIRMATION" && !state.task.parsed) ? <Button variant="outline" disabled={state.busy} onClick={() => { void model.retry(state.task!.taskId); }}>{t("ingestion.retry")}</Button> : null}

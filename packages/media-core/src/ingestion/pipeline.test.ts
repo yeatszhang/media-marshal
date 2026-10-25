@@ -55,6 +55,23 @@ async function fixture(options: { ignoredFilePatterns?: string[] | null; watchFi
   const preview = async () => { const candidate = await ready(); const task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick(); return pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" } }); };
   return { directory, source, target, db, pipeline, sourceId, sourceGrant, targetGrant, connections, parser, file, bytes, advance, ready, preview, calls: () => calls, jump(ms: number) { monotonic += ms; clock += ms; }, wallJump(ms: number) { clock += ms; } };
 }
+describe("目录批量识别与实际文件边界", () => {
+  it("暂停时保留批次等待，恢复后重新稳定再提交原候选，识别不创建 COPY", async () => {
+    const f = await fixture(), candidate = await f.ready(), job = f.pipeline.recognitionBatches.create({ candidateIds: [candidate.id], requestKey: randomUUID() });
+    f.db.connection.prepare("UPDATE desktop_source SET paused=1 WHERE id=?").run(f.sourceId); f.pipeline.sourceChanged(f.sourceId); await f.pipeline.recognitionBatches.tick(); expect(f.pipeline.recognitionBatches.get(job.id).pending).toBe(1);
+    f.db.connection.prepare("UPDATE desktop_source SET paused=0 WHERE id=?").run(f.sourceId); f.pipeline.sourceChanged(f.sourceId); await f.pipeline.scan(f.sourceId); f.jump(6000); await f.pipeline.recognitionBatches.tick(); expect(f.pipeline.recognitionBatches.get(job.id).submitted).toBe(0);
+    await f.advance(); await f.pipeline.recognitionBatches.tick(); await f.pipeline.tick(); const rows = f.pipeline.recognitionBatches.items({ id: job.id }).items; expect(rows[0]).toMatchObject({ state: "SUBMITTED", taskId: expect.any(String), taskState: "AWAITING_CONFIRMATION" });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(await readFile(f.file)).toEqual(f.bytes);
+  });
+  it("规则版本改变后旧批次逐项失败，不按新规则创建任务", async () => {
+    const f = await fixture(), candidate = await f.ready(), job = f.pipeline.recognitionBatches.create({ candidateIds: [candidate.id], requestKey: randomUUID() });
+    f.db.connection.prepare("UPDATE desktop_source SET version=version+1 WHERE id=?").run(f.sourceId); await f.pipeline.recognitionBatches.tick(); expect(f.pipeline.recognitionBatches.get(job.id)).toMatchObject({ failed: 1, submitted: 0 }); expect(f.pipeline.recognitionBatches.items({ id: job.id }).items[0]?.failure).toContain("不会改用新配置"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
+  });
+  it("已删除的来源不能保存潜伏的识别意图，恢复后须重新明确选择", async () => {
+    const f = await fixture({ ignoredFilePatterns: null }), candidate = await f.ready(); f.db.connection.prepare("UPDATE source_rule SET deleted_at=?,paused=1,lifecycle_revision=1 WHERE id=?").run(new Date().toISOString(), f.sourceId);
+    expect(() => f.pipeline.recognitionBatches.create({ candidateIds: [candidate.id], requestKey: randomUUID() })).toThrow("所属来源已删除"); expect(f.pipeline.recognitionBatches.list({}).total).toBe(0); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
+  });
+});
 describe("识别字段编辑与实际文件边界", () => {
   it("保存字段保留原匹配候选但标记过期，不创建文件操作；旧整理预览失效", async () => {
     const f = await fixture(), p = await f.preview(), before = f.pipeline.task(p.taskId), request = { items: [{ taskId: p.taskId, expectedRevision: 0 }], patch: { title: "人工修订作品" } }, checked = f.pipeline.recognitionEdits.preview(request);

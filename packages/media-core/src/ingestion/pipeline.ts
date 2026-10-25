@@ -21,6 +21,8 @@ import { discoveryIgnore, sampleVideos } from "../domain/discovery.js";
 import { resolveManagedOrganization, type ManagedOrganization, type OrganizationConfiguration } from "../sources/organization.js";
 import { ContentReviews } from "./content-reviews.js";
 import { RecognitionEdits } from "./recognition-edits.js";
+import { IngestionDirectories } from "./directories.js";
+import { RecognitionBatches, type BatchAvailability } from "./recognition-batches.js";
 
 type Authorization = PrivateCoreInput<"media.sources.authorize">;
 interface SourceRow { source_id: string; mode: "local" | "managed"; download_root_id: string | null; source_grant_json: string; target_root_id: string; source_version: number; available: number; paused: number; version: number; source_path: string; target_path: string; media_type: "AUTO" | "MOVIE" | "TV_SHOW"; policy_key?: string }
@@ -64,6 +66,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
   readonly targets = new ManagedRoots("direct");
   readonly contentReviews: ContentReviews;
   readonly recognitionEdits: RecognitionEdits;
+  readonly directories: IngestionDirectories;
+  readonly recognitionBatches: RecognitionBatches;
   private readonly sources = new Map<string, SourceRoot>();
   private readonly observations = new Map<string, Observation>();
   private readonly accessoryObservations = new Map<string, Observation>();
@@ -75,6 +79,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private readonly watches = new Map<string, { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout> }>();
   constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly watchFiles: typeof watch = watch) {
     const db = database.connection;
+    this.directories = new IngestionDirectories(database, (id) => this.describeCandidate(id), (id) => this.task(id));
+    this.recognitionBatches = new RecognitionBatches(database, { capture: (id) => ({ relativePath: JSON.parse(this.candidate(id).relative_json).join("/"), context: JSON.stringify(this.recognitionContext(id)) }), availability: (id, context) => this.batchAvailability(id, context), recognize: (id, requestKey) => this.recognize({ candidateId: id, requestKey }) }, now);
     this.recognitionEdits = new RecognitionEdits(database, (id) => {
       if (this.closed) throw new DesktopError("INTERRUPTED", "识别服务正在停止，请等待核心恢复");
       const candidate = this.candidate(id); this.assertCandidateCurrent(candidate);
@@ -101,7 +107,27 @@ export class IngestionPipeline implements ManagedIngestionSink {
       prepare: (id, version, path, signal) => this.prepareContentReview(id, version, path, signal),
     }, now);
   }
-  start() { if (!this.timer && !this.closed) { this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 10000); void this.tick().catch(() => {}); } }
+  start() { if (!this.timer && !this.closed) { this.recognitionBatches.start(); this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 10000); void this.tick().catch(() => {}); } }
+  private recognitionContext(id: string) {
+    const row = this.candidate(id), db = this.database.connection, source = db.prepare("SELECT version FROM desktop_source WHERE id=?").get(row.source_id) as { version: number };
+    const rules = db.prepare("SELECT DISTINCT s.id,s.version,s.lifecycle_revision,s.deleted_at FROM source_rule s LEFT JOIN download_source_demand d ON d.source_id=s.id LEFT JOIN download_job_item ji ON ji.job_id=d.job_id WHERE s.local_source_id=? OR (ji.item_id=? AND d.source_version=s.version AND EXISTS(SELECT 1 FROM source_rule_version v WHERE v.source_id=s.id AND v.version=d.source_version AND json_extract(v.configuration_json,'$.organization') IS NOT NULL)) ORDER BY s.id").all(row.source_id, row.managed_item_id) as { id: string; version: number; lifecycle_revision: number; deleted_at: string | null }[];
+    if (rules.length && rules.every((rule) => rule.deleted_at)) throw conflict("所属来源已删除，请先恢复来源再重新选择候选");
+    return { sourceVersion: source.version, rules: rules.filter((rule) => !rule.deleted_at), policy: this.candidatePolicy(row)?.policy_key ?? null };
+  }
+  private batchAvailability(id: string, serialized: string): BatchAvailability {
+    const row = this.candidate(id); if (row.task_id) return { state: "READY" };
+    const old = JSON.parse(serialized) as ReturnType<IngestionPipeline["recognitionContext"]>, current = this.recognitionContext(id);
+    if (old.sourceVersion !== current.sourceVersion || old.policy !== current.policy || old.rules.length && !old.rules.some((rule) => current.rules.some((latest) => latest.id === rule.id && latest.version === rule.version && latest.lifecycle_revision === rule.lifecycle_revision))) return { state: "FAILED", reason: "所属来源或整理策略已变化，请按当前来源重新选择候选；原批次不会改用新配置" };
+    if (row.state === "SUPERSEDED" || !row.managed_item_id && !row.is_current || row.state === "SKIPPED") return { state: "FAILED", reason: "此候选已被新版本替代或不受支持，请在待处理列表选择当前普通视频" };
+    const source = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(row.source_id) as SourceRow | undefined;
+    if (this.pauseStatus().paused || source?.paused || this.contentReviews.active(row.source_id)) return { state: "WAIT", reason: "来源、全局整理已暂停或正在复核内容；恢复后继续本批次，不解除其他暂停" };
+    if (!source || !source.available || !this.sources.has(row.source_id)) return { state: "WAIT", reason: "等待原磁盘、目录授权与稳定观察恢复，不接管同名替代磁盘" };
+    if (!this.managedCandidateEnabled(row)) {
+      const resolution = row.managed_item_id && row.managed_version_key ? resolveManagedOrganization(this.database, row.managed_item_id, row.managed_version_key) : null;
+      return resolution?.state === "PAUSED" ? { state: "WAIT", reason: "此下载项所属的整理来源已暂停，恢复后重新观察并继续" } : { state: "FAILED", reason: "此下载项的整理归属已改变或待核对，请按当前来源重新选择；原批次不改用其他策略" };
+    }
+    return row.state === "READY" ? { state: "READY" } : { state: "WAIT", reason: "等待文件重新完成至少 120 秒稳定观察；批量识别不会跳过就绪检查" };
+  }
   /** 恢复旧业务库后重新核对已有成果，只读目标，不重放 COPY。队列随数据库持久化。 */
   reconcileRestored() {
     const db = this.database.connection;
@@ -634,8 +660,10 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const args = input.sourceId ? [rule?.type === "local" ? rule.local_source_id ?? input.sourceId : input.sourceId] : [];
     const total = (db.prepare("SELECT count(*) AS n FROM ingestion_candidate" + where).get(...args) as { n: number }).n;
     const rows = db.prepare("SELECT * FROM ingestion_candidate" + where + " ORDER BY updated_at DESC,id LIMIT 100 OFFSET ?").all(...args, ((input.page ?? 1) - 1) * 100) as CandidateRow[];
-    return { total, items: rows.map((row) => ({ id: row.id, sourceId: row.source_id, relativePath: (JSON.parse(row.relative_json) as string[]).join("/"), size: sourceSnapshotSchema.parse(JSON.parse(row.snapshot_json)).size, state: row.state, requiresConfirmation: true, taskId: row.task_id, reason: row.reason, updatedAt: row.updated_at })) };
+    return { total, items: rows.map((row) => this.candidateDto(row)) };
   }
+  private candidateDto(row: CandidateRow): CoreOutput<"ingestion.candidates">["items"][number] { return { id: row.id, sourceId: row.source_id, relativePath: (JSON.parse(row.relative_json) as string[]).join("/"), size: sourceSnapshotSchema.parse(JSON.parse(row.snapshot_json)).size, state: row.state, requiresConfirmation: true, taskId: row.task_id, reason: row.reason, updatedAt: row.updated_at }; }
+  describeCandidate(id: string) { return this.candidateDto(this.candidate(id)); }
   async recognize(input: CoreInput<"ingestion.recognize">) {
     const row = this.candidate(input.candidateId); if (row.task_id) return { taskId: row.task_id };
     this.assertCandidateCurrent(row);
@@ -902,6 +930,6 @@ export class IngestionPipeline implements ManagedIngestionSink {
       } }
     } finally { this.controller = undefined; }
   }
-  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.contentReviews.close(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
+  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.recognitionBatches.close(); await this.contentReviews.close(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
   async close() { await this.quiesce(); await Promise.allSettled([...this.sources.values()].map((source) => source.close())); this.sources.clear(); await this.targets.close(); }
 }

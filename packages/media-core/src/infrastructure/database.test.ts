@@ -20,11 +20,16 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v18 批量识别迁移不启动任务或改写旧识别字段，旧核心拒绝新库", async () => {
+    const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 18)); first.connection.prepare("INSERT INTO app_setting VALUES('测试保留配置','原值')").run(); first.close(); const upgraded = await CoreDatabase.open(path);
+    try { expect(upgraded.schemaVersion).toBe(19); expect(upgraded.connection.prepare("SELECT value FROM app_setting WHERE key='测试保留配置'").get()).toEqual({ value: "原值" }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM ingestion_recognition_batch").get()).toEqual({ n: 0 }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 }); } finally { upgraded.close(); }
+    const backup = new Database(`${path}.before-v19.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(18); } finally { backup.close(); } await expect(CoreDatabase.open(path, migrations.slice(0, 18))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
   it("v17 识别编辑迁移不重写已有字段或排队任务，保留备份并阻止旧核心写新库", async () => {
     const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 17)), source = randomUUID(), task = randomUUID(), stamp = new Date().toISOString(), parsed = '{"title":"原作品","year":2026}';
     first.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'保留来源','custom','/输入','/媒体库','AUTO','COPY',?)").run(source, stamp);
     first.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,parsed_json,created_at,updated_at) VALUES(?,?,?,'AWAITING_CONFIRMATION',?,?,?)").run(task, source, "/输入/原文件.mp4", parsed, stamp, stamp); first.close();
-    const upgraded = await CoreDatabase.open(path); try { expect(upgraded.schemaVersion).toBe(18); expect(upgraded.connection.prepare("SELECT id,status,parsed_json FROM media_task").get()).toEqual({ id: task, status: "AWAITING_CONFIRMATION", parsed_json: parsed }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM ingestion_recognition_edit").get()).toEqual({ n: 0 }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM ingestion_recognition_command").get()).toEqual({ n: 0 }); } finally { upgraded.close(); }
+    const upgraded = await CoreDatabase.open(path, migrations.slice(0, 18)); try { expect(upgraded.schemaVersion).toBe(18); expect(upgraded.connection.prepare("SELECT id,status,parsed_json FROM media_task").get()).toEqual({ id: task, status: "AWAITING_CONFIRMATION", parsed_json: parsed }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM ingestion_recognition_edit").get()).toEqual({ n: 0 }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM ingestion_recognition_command").get()).toEqual({ n: 0 }); } finally { upgraded.close(); }
     const backup = new Database(`${path}.before-v18.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(17); expect(backup.prepare("SELECT parsed_json FROM media_task WHERE id=?").get(task)).toEqual({ parsed_json: parsed }); } finally { backup.close(); }
     await expect(CoreDatabase.open(path, migrations.slice(0, 17))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
   });

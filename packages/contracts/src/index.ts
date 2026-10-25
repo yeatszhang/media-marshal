@@ -277,6 +277,12 @@ export interface DesktopApi {
   listContentReviews(input: CoreInput<"ingestion.content-reviews">): Promise<CoreOutput<"ingestion.content-reviews">>;
   listContentReviewFiles(input: CoreInput<"ingestion.content-review-files">): Promise<CoreOutput<"ingestion.content-review-files">>;
   cancelContentReview(id: string): Promise<CoreOutput<"ingestion.cancel-content-review">>;
+  listIngestionDirectories(input: CoreInput<"ingestion.directories">): Promise<CoreOutput<"ingestion.directories">>;
+  getIngestionDirectory(input: CoreInput<"ingestion.directory">): Promise<CoreOutput<"ingestion.directory">>;
+  recognizeIngestionBatch(input: CoreInput<"ingestion.recognize-batch">): Promise<CoreOutput<"ingestion.recognize-batch">>;
+  listRecognitionBatches(input: CoreInput<"ingestion.recognition-batches">): Promise<CoreOutput<"ingestion.recognition-batches">>;
+  listRecognitionBatchItems(input: CoreInput<"ingestion.recognition-batch-items">): Promise<CoreOutput<"ingestion.recognition-batch-items">>;
+  cancelRecognitionBatch(id: string): Promise<CoreOutput<"ingestion.cancel-recognition-batch">>;
   recognizeIngestion(input: CoreInput<"ingestion.recognize">): Promise<CoreOutput<"ingestion.recognize">>;
   previewRecognitionEdit(input: CoreInput<"ingestion.preview-recognition-edit">): Promise<CoreOutput<"ingestion.preview-recognition-edit">>;
   saveRecognitionEdit(input: CoreInput<"ingestion.save-recognition-edit">): Promise<CoreOutput<"ingestion.save-recognition-edit">>;

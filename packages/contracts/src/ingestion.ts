@@ -22,10 +22,22 @@ export const recognitionEditPreviewSchema = z.strictObject({
   items: z.array(z.strictObject({ taskId: id, revision: z.number().int().nonnegative(), sourcePath: z.string().max(16384), before: recognitionFieldsSchema.nullable(), after: recognitionFieldsSchema.nullable(), blockers: z.array(z.string().max(500)).max(20) })).max(100),
 });
 export type RecognitionEditPreview = z.infer<typeof recognitionEditPreviewSchema>;
+const directoryId = z.string().regex(/^[a-f0-9]{64}$/);
+export const ingestionDirectorySchema = z.strictObject({ id: directoryId, sourceId: id, sourceName: z.string().max(100), relativePath: z.string().max(16384), total: z.number().int().nonnegative(), ready: z.number().int().nonnegative(), awaiting: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() });
+export type IngestionDirectory = z.infer<typeof ingestionDirectorySchema>;
+const recognitionBatchItemSchema = z.strictObject({ candidateId: id, relativePath: z.string().max(16384), state: z.enum(["PENDING", "SUBMITTED", "FAILED"]), taskId: id.nullable(), taskState: z.string().max(64).nullable(), failure: z.string().max(500).nullable(), waitingReason: z.string().max(500).nullable() });
+export const recognitionBatchSchema = z.strictObject({ id, state: z.enum(["PENDING", "SUBMITTED", "PARTIAL_FAILED", "CANCELLED"]), total: z.number().int().nonnegative(), submitted: z.number().int().nonnegative(), recognitionFailed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), pending: z.number().int().nonnegative(), createdAt: z.string(), updatedAt: z.string() });
+export type RecognitionBatch = z.infer<typeof recognitionBatchSchema>;
 export const contentReviewSchema = z.strictObject({ id, sourceId: id, sourceVersion: z.number().int().positive(), state: z.enum(["PENDING", "RUNNING", "WAITING_SOURCE", "COMPLETED", "PARTIAL_FAILED", "FAILED", "CANCELLED"]), total: z.number().int().nonnegative(), checked: z.number().int().nonnegative(), changed: z.number().int().nonnegative(), baselined: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), currentPath: z.string().max(16384).nullable(), failure: z.string().max(500).nullable(), createdAt: z.string(), updatedAt: z.string() });
 export type ContentReview = z.infer<typeof contentReviewSchema>;
 const reviewFile = z.strictObject({ relativePath: z.string().max(16384), state: z.enum(["PENDING", "UNCHANGED", "BASELINED", "CHANGED", "FAILED"]), candidateId: id.nullable(), failure: z.string().max(500).nullable() });
 export const ingestionActions = {
+  "ingestion.directories": { input: z.strictObject({ page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(ingestionDirectorySchema).max(25), total: z.number().int().nonnegative() }) },
+  "ingestion.directory": { input: z.strictObject({ id: directoryId, sourceId: id, page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ directory: ingestionDirectorySchema, items: z.array(z.strictObject({ candidate: candidateSchema, task: recognitionSchema.nullable() })).max(100), options: z.array(matchSchema.extend({ supportedFiles: z.number().int().positive(), common: z.boolean() })).max(100) }) },
+  "ingestion.recognize-batch": { input: z.strictObject({ candidateIds: z.array(id).min(1).max(100), requestKey: id }), output: recognitionBatchSchema },
+  "ingestion.recognition-batches": { input: z.strictObject({ page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(recognitionBatchSchema).max(25), total: z.number().int().nonnegative() }) },
+  "ingestion.recognition-batch-items": { input: z.strictObject({ id, page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(recognitionBatchItemSchema).max(100), total: z.number().int().nonnegative() }) },
+  "ingestion.cancel-recognition-batch": { input: z.strictObject({ id }), output: recognitionBatchSchema },
   "ingestion.preview-recognition-edit": { input: recognitionEditInput, output: recognitionEditPreviewSchema },
   "ingestion.save-recognition-edit": { input: recognitionEditInput.extend({ fingerprint: z.string().regex(/^[a-f0-9]{64}$/), requestKey: id, rematch: z.boolean() }), output: z.strictObject({ updated: z.number().int().nonnegative(), rematchQueued: z.number().int().nonnegative(), items: z.array(z.strictObject({ taskId: id, revision: z.number().int().nonnegative() })).max(100) }) },
   "ingestion.review-content": { input: z.strictObject({ sourceId: id, requestKey: id }), output: contentReviewSchema },

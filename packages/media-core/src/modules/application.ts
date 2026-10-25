@@ -65,6 +65,12 @@ declare module "@yeatz/app-framework/command" {
     "media.ingestion.content-reviews": (input: CoreInput<"ingestion.content-reviews">) => CoreOutput<"ingestion.content-reviews">;
     "media.ingestion.content-review-files": (input: CoreInput<"ingestion.content-review-files">) => CoreOutput<"ingestion.content-review-files">;
     "media.ingestion.cancel-content-review": (input: CoreInput<"ingestion.cancel-content-review">) => CoreOutput<"ingestion.cancel-content-review">;
+    "media.ingestion.directories": (input: CoreInput<"ingestion.directories">) => CoreOutput<"ingestion.directories">;
+    "media.ingestion.directory": (input: CoreInput<"ingestion.directory">) => CoreOutput<"ingestion.directory">;
+    "media.ingestion.recognize-batch": (input: CoreInput<"ingestion.recognize-batch">) => CoreOutput<"ingestion.recognize-batch">;
+    "media.ingestion.recognition-batches": (input: CoreInput<"ingestion.recognition-batches">) => CoreOutput<"ingestion.recognition-batches">;
+    "media.ingestion.recognition-batch-items": (input: CoreInput<"ingestion.recognition-batch-items">) => CoreOutput<"ingestion.recognition-batch-items">;
+    "media.ingestion.cancel-recognition-batch": (input: CoreInput<"ingestion.cancel-recognition-batch">) => CoreOutput<"ingestion.cancel-recognition-batch">;
     "media.ingestion.recognize": (input: CoreInput<"ingestion.recognize">) => Promise<CoreOutput<"ingestion.recognize">>;
     "media.ingestion.task": (input: CoreInput<"ingestion.task">) => CoreOutput<"ingestion.task">;
     "media.ingestion.preview-recognition-edit": (input: CoreInput<"ingestion.preview-recognition-edit">) => CoreOutput<"ingestion.preview-recognition-edit">;
@@ -212,6 +218,12 @@ export function createMediaApplication(
         if (!physicalId || source.paused || source.reviewRequired || !source.configuration?.organization) throw new DesktopError("CONFLICT", "来源未启用整理、已经暂停或需要核对，请检查来源配置");
         return ingestion.scan(physicalId);
       }));
+      add(registry.register("media.ingestion.directories", (_, input) => ingestion.directories.list(input)));
+      add(registry.register("media.ingestion.directory", (_, input) => ingestion.directories.get(input)));
+      add(registry.register("media.ingestion.recognize-batch", (_, input) => ingestion.recognitionBatches.create(input)));
+      add(registry.register("media.ingestion.recognition-batches", (_, input) => ingestion.recognitionBatches.list(input)));
+      add(registry.register("media.ingestion.recognition-batch-items", (_, input) => ingestion.recognitionBatches.items(input)));
+      add(registry.register("media.ingestion.cancel-recognition-batch", (_, input) => ingestion.recognitionBatches.cancel(input.id)));
       add(registry.register("media.ingestion.recognize", (_, input) => ingestion.recognize(input)));
       add(registry.register("media.ingestion.preview-recognition-edit", (_, input) => ingestion.recognitionEdits.preview(input)));
       add(registry.register("media.ingestion.save-recognition-edit", (_, input) => ingestion.recognitionEdits.save(input)));
