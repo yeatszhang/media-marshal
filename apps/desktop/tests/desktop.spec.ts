@@ -74,6 +74,35 @@ async function completedCorrectionFixture(mediaType: "MOVIE" | "TV_SHOW" = "MOVI
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${join(directory, "data")}`], env }); window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
   return { window, canonical, source, target, fileName, bytes, original };
 }
+test("自动策略以真实人工 COPY 预览授权，经 Main 固定桥确认，重载和核心重启不重做文件", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(60000);
+  // 复用生产 Core 准备的隔离人工 COPY 收据；受控时钟不作为实际客户端稳定窗口的证据。
+  const { window, source, target, fileName, bytes, original } = await completedCorrectionFixture();
+  const before = await window.evaluate(() => window.desktopApi.listJobs());
+  await window.getByRole("link", { name: "来源", exact: true }).click(); await window.getByRole("button", { name: "编辑并预览", exact: true }).click();
+  const form = window.getByRole("form", { name: "来源配置草稿" }), automatic = form.getByRole("checkbox", { name: "自动整理满足条件的新文件", exact: true });
+  await expect(automatic).not.toBeChecked(); await automatic.check(); await expect(form).toContainText("当前本地客户端行为尚未完整验证"); await form.getByRole("button", { name: "预览配置", exact: true }).click();
+  const preview = window.getByRole("region", { name: "来源配置预览", exact: true }), consent = preview.getByRole("checkbox", { name: "已核对首次预览并了解自动整理局限", exact: true }), apply = preview.getByRole("button", { name: "确认配置生效", exact: true });
+  await expect(preview).toContainText("首次整理预览：宿主旧作品"); await expect(preview).toContainText(original.targetPath); await expect(apply).toBeDisabled();
+  const sourceRule = (await window.evaluate(() => window.desktopApi.listSourceRules()))[0]!;
+  // 同一配置的合法预览引用仍须明确接受，不能由 Renderer 代填首次授权。
+  const draft = await window.evaluate((id) => window.desktopApi.getSourceRule(id), sourceRule.id);
+  const configPreview = await window.evaluate((row) => window.desktopApi.previewSourceRule({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, requestKey: crypto.randomUUID() }), draft!);
+  const missing = await window.evaluate(async (id) => { try { await window.desktopApi.applySourceRule({ previewId: id, requestKey: crypto.randomUUID() }); return null; } catch (error) { return { code: (error as { code?: string }).code, message: (error as Error).message }; } }, configPreview.id);
+  expect(missing).toMatchObject({ message: expect.stringContaining("核对首次 COPY 预览") });
+  expect(await window.evaluate((id) => window.desktopApi.getSourceRule(id), sourceRule.id)).toMatchObject({ version: 1, configuration: { organization: { automatic: false } } });
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const geometry = await consent.evaluate((input) => { const box = input.getBoundingClientRect(), text = input.parentElement!.querySelector("span")!.getBoundingClientRect(); return { width: box.width, gap: text.left - box.right }; }); expect(geometry.width).toBeLessThanOrEqual(20); expect(geometry.width).toBeGreaterThanOrEqual(16); expect(geometry.gap).toBeGreaterThanOrEqual(8); expect(geometry.gap).toBeLessThanOrEqual(16);
+  await preview.screenshot({ path: "test-results/desktop/automatic-source-consent-minimum.png" });
+  await consent.check(); await expect(apply).toBeEnabled(); await apply.click();
+  await expect.poll(async () => (await window.evaluate((id) => window.desktopApi.getSourceRule(id), sourceRule.id))?.configuration?.organization?.automatic).toBe(true);
+  expect((await window.evaluate(() => window.desktopApi.listSources()))[0]!.automatic).toBe(true); expect((await window.evaluate(() => window.desktopApi.getRuntime())).status?.mode).toBe("automatic-enabled");
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  expect((await window.evaluate((id) => window.desktopApi.getSourceRule(id), sourceRule.id))?.configuration?.organization?.automatic).toBe(true);
+  expect((await window.evaluate(() => window.desktopApi.listJobs())).map((row) => row.id)).toEqual(before.map((row) => row.id)); expect((await stat(original.targetPath)).ino.toString()).toBe(original.inode); expect(await readFile(join(source, fileName))).toEqual(bytes); expect(await readFile(original.targetPath)).toEqual(bytes); expect((await readdir(target)).length).toBeGreaterThan(0);
+});
+
 test("修正原生组件经 Main 私有资源、Utility Process 与固定 Preload 完成真实文件和历史变更", async () => {
   test.skip(process.platform !== "darwin"); test.setTimeout(60000);
   const { window, source, fileName, bytes, original } = await completedCorrectionFixture();
@@ -239,7 +268,7 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
   await expect(window.getByLabel("文件处理流程")).toContainText("未开启，仅保存下载文件");
   await expect(window.getByLabel("扫描间隔", { exact: true })).toHaveCount(0); await expect(window.getByLabel("媒体类型", { exact: true })).toHaveCount(0);
   const behavior = window.getByRole("complementary", { name: "当前配置的执行方式" });
-  await expect(behavior).toContainText("手动执行"); await expect(behavior).toContainText("仅保存到本地下载目录");
+  await expect(behavior).toContainText("手动执行"); await expect(behavior).toContainText("仅保存到本地下载目录"); await expect(behavior).toContainText("已连接的网盘账号和本地下载目录即可");
   const filters = form.locator("details.source-filter-group"), extensions = form.getByLabel("扩展名过滤", { exact: true });
   await expect(extensions).toBeHidden(); await filters.locator("summary").click(); await extensions.fill("mp4,mkv");
   await form.getByLabel("精确文件名过滤", { exact: true }).fill("01.mp4"); await filters.locator("summary").click();
@@ -253,6 +282,9 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
   await organize.locator("..").click(); await expect(organize).toBeChecked(); await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click();
   await expect(behavior).toContainText("每 15 分钟"); await expect(behavior).toContainText("你确认整理预览后，才复制到媒体库");
   await expect(window.getByLabel("文件处理流程")).toContainText(target);
+  await expect(behavior).toContainText("媒体库目录和 TMDB 密钥；Emby 可选");
+  await expect(form).toContainText("定期检查只控制下载时间，与下方是否整理相互独立");
+  await expect(form).toContainText("只整理文件无需连接");
   for (const width of [1280, 920]) {
     await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 900), width);
     expect(await window.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -263,6 +295,7 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
     }
   }
   await form.screenshot({ path: "test-results/desktop/source-form-cloud-organize-minimum.png" });
+  await form.locator(".source-step").nth(3).screenshot({ path: "test-results/desktop/source-form-processing-minimum.png" });
   await window.getByLabel("来源类型", { exact: true }).selectOption("local"); await expect(form.getByRole("region")).toHaveCount(3);
   await expect(behavior).toHaveCount(0);
   await expect(periodic).toHaveCount(0); await expect(organize).toHaveCount(0); await expect(window.getByRole("button", { name: "选择本地输入目录", exact: true })).toBeVisible();

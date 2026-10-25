@@ -22,6 +22,7 @@ import { correctionMigrationSql } from "./correction-migration.js";
 import { correctionBatchMigrationSql } from "./correction-batch-migration.js";
 import { correctionPreparationMigrationSql } from "./correction-preparation-migration.js";
 import { sourceScanMigrationSql } from "./source-scan-migration.js";
+import { automaticIngestionMigrationSql } from "./automatic-ingestion-migration.js";
 import { sourceHealthMigrationSql } from "./source-health-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
@@ -86,6 +87,7 @@ export const migrations: readonly Migration[] = [
   { version: 24, sql: correctionBatchMigrationSql },
   { version: 25, sql: sourceHealthMigrationSql },
   { version: 26, sql: sourceScanMigrationSql },
+  { version: 27, sql: automaticIngestionMigrationSql },
 ];
 
 export class CoreDatabase {

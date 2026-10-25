@@ -29,6 +29,8 @@ import { OrganizeBatches, type BatchManifest } from "./organize-batches.js";
 import { assertMediaCoordinates } from "./coordinates.js";
 import { assertCorrectionTarget } from "./correction-assets.js";
 import { previewFailure } from "./preview-errors.js";
+import { AutomaticIngestion } from "./automatic.js";
+import { AutomaticPolicies } from "./automatic-policy.js";
 import { validateMediaSelection } from "./selection-validation.js";
 
 type Authorization = PrivateCoreInput<"media.sources.authorize">;
@@ -77,6 +79,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
   readonly seasons: IngestionSeasons;
   readonly recognitionBatches: RecognitionBatches;
   readonly organizeBatches: OrganizeBatches;
+  readonly automatic: AutomaticIngestion;
+  private readonly automaticPolicies: AutomaticPolicies;
   private readonly sources = new Map<string, SourceRoot>();
   private readonly observations = new Map<string, Observation>();
   private readonly accessoryObservations = new Map<string, Observation>();
@@ -131,6 +135,23 @@ export class IngestionPipeline implements ManagedIngestionSink {
         return [...paths.values()];
       },
       prepare: (id, version, path, signal) => this.prepareContentReview(id, version, path, signal),
+    }, now);
+    this.automaticPolicies = new AutomaticPolicies(database);
+    this.automatic = new AutomaticIngestion(database, {
+      check: (id, sourceId, context) => this.automaticPolicies.check(id, sourceId, context),
+      available: async (id) => {
+        const row = this.candidate(id);
+        if (this.closed || this.pauseStatus().paused || this.contentReviews.active(row.source_id) || !this.connections.installed) return { state: "WAITING", reason: "等待整理服务、凭据或内容复核恢复后重新观察" };
+        return await this.observe(row) ? { state: "READY" } : { state: "WAITING", reason: "等待文件重新稳定至少 120 秒" };
+      },
+      recognize: (candidateId, requestKey) => this.recognize({ candidateId, requestKey }, requestKey),
+      task: (id) => this.task(id),
+      preview: (taskId, requestKey, selection) => this.withSourceWork(this.task(taskId).candidateId, this.controller?.signal ?? new AbortController().signal, (signal) => this.preview({ taskId, requestKey, selection }, signal)),
+      confirm: (previewId, requestKey, check) => {
+        const row = db.prepare("SELECT c.id FROM ingestion_candidate c JOIN ingestion_preview p ON p.task_id=c.task_id WHERE p.id=?").get(previewId) as { id: string };
+        return this.withSourceWork(row.id, this.controller?.signal ?? new AbortController().signal, (signal) => this.confirm({ previewId, requestKey }, undefined, () => { signal.throwIfAborted(); check(); }));
+      },
+      receipt: (key) => { const row = db.prepare("SELECT id FROM ingestion_operation WHERE request_key=?").get(key) as { id: string } | undefined; return row ? { operationId: row.id } : null; },
     }, now);
   }
   start() { if (!this.timer && !this.closed) { this.recognitionBatches.start(); this.organizeBatches.start(); this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 10000); void this.tick().catch(() => {}); } }
@@ -757,22 +778,25 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const rows = db.prepare("SELECT * FROM ingestion_candidate" + where + " ORDER BY updated_at DESC,id LIMIT 100 OFFSET ?").all(...args, ((input.page ?? 1) - 1) * 100) as CandidateRow[];
     return { total, items: rows.map((row) => this.candidateDto(row)) };
   }
-  private candidateDto(row: CandidateRow): CoreOutput<"ingestion.candidates">["items"][number] { return { id: row.id, sourceId: row.source_id, relativePath: (JSON.parse(row.relative_json) as string[]).join("/"), size: sourceSnapshotSchema.parse(JSON.parse(row.snapshot_json)).size, state: row.state, requiresConfirmation: true, taskId: row.task_id, reason: row.reason, updatedAt: row.updated_at }; }
+  private candidateDto(row: CandidateRow): CoreOutput<"ingestion.candidates">["items"][number] { const automation = this.automatic.status(row.id); return { id: row.id, sourceId: row.source_id, relativePath: (JSON.parse(row.relative_json) as string[]).join("/"), size: sourceSnapshotSchema.parse(JSON.parse(row.snapshot_json)).size, state: row.state, requiresConfirmation: automation?.state !== "SUBMITTED", automation, taskId: row.task_id, reason: row.reason, updatedAt: row.updated_at }; }
   describeCandidate(id: string) { return this.candidateDto(this.candidate(id)); }
-  async recognize(input: CoreInput<"ingestion.recognize">) {
-    const row = this.candidate(input.candidateId); if (row.task_id) return { taskId: row.task_id };
+  async recognize(input: CoreInput<"ingestion.recognize">, automaticKey?: string) {
+    const db = this.database.connection, row = this.candidate(input.candidateId);
+    const owned = () => db.prepare("SELECT id,task_id,source_id,context FROM ingestion_automatic WHERE candidate_id=? AND recognition_key=? AND state IN ('PENDING','RECOGNIZING')").get(row.id, automaticKey) as { id: string; task_id: string | null; source_id: string; context: string } | undefined;
+    if (row.task_id) { if (automaticKey && owned()?.task_id !== row.task_id) throw conflict("此文件已被人工领取，请在待处理继续核对"); return { taskId: row.task_id }; }
     this.assertCandidateCurrent(row);
     if (row.state !== "READY" || !await this.observe(row)) throw conflict("文件尚未稳定，请等待观察完成");
-    const db = this.database.connection;
     const taskId = db.transaction(() => {
       // 文件观察包含异步读取；领取必须在同一事务内重新核对，不能留下孤立任务。
-      const latest = this.candidate(row.id); if (latest.task_id) return latest.task_id;
+      const latest = this.candidate(row.id); if (latest.task_id) { if (automaticKey && owned()?.task_id !== latest.task_id) throw conflict("此文件已被人工领取，请继续人工核对"); return latest.task_id; }
+      if (automaticKey) { const owner = owned(); if (!owner || this.automaticPolicies.check(row.id, owner.source_id, owner.context).state !== "READY") throw conflict("自动领取授权已变化，请人工核对"); }
       this.assertCandidateCurrent(latest);
       if (latest.state !== "READY") throw conflict("候选状态已变化，请重新查询");
       const source = this.candidateSource(latest), id = randomUUID(), current = timestamp(this.now);
       this.database.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'PENDING',?,?)").run(id, row.source_id, join(JSON.parse(source.source_grant_json).path, ...JSON.parse(row.relative_json)), current, current);
       const claimed = db.prepare("UPDATE ingestion_candidate SET task_id=?,state='QUEUED',reason=NULL,updated_at=? WHERE id=? AND task_id IS NULL AND state='READY'").run(id, current, row.id);
       if (claimed.changes !== 1) throw conflict("候选已被领取，请查询现有任务");
+      if (automaticKey) db.prepare("UPDATE ingestion_automatic SET task_id=?,state='RECOGNIZING' WHERE id=?").run(id, owned()!.id);
       return id;
     })();
     void this.tick().catch(() => {}); return { taskId };
@@ -858,10 +882,10 @@ export class IngestionPipeline implements ManagedIngestionSink {
     // 同策略的其他原始需求仍有效时允许共享确认；全部原需求已删除／恢复则旧预览失效。
     if (original?.length ? !original.some((prior) => current.some((row) => row.id === prior.id && row.revision === prior.revision)) : current.some((row) => row.revision > 0)) throw conflict("来源已经删除或恢复，请重新预览整理范围");
   }
-  async preview(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">> {
-    try { return await this.buildPreview(input); } catch (error) { throw previewFailure(error); }
+  async preview(input: CoreInput<"ingestion.preview">, signal?: AbortSignal): Promise<CoreOutput<"ingestion.preview">> {
+    try { signal?.throwIfAborted(); return await this.buildPreview(input, signal); } catch (error) { throw previewFailure(error); }
   }
-  private async buildPreview(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">> {
+  private async buildPreview(input: CoreInput<"ingestion.preview">, signal?: AbortSignal): Promise<CoreOutput<"ingestion.preview">> {
     const db = this.database.connection, digest = fingerprint(input), existing = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (existing) { if (existing.input_hash !== digest) throw conflict("预览请求键已用于不同内容"); return this.previewDto(existing); }
     const row = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id WHERE t.id=? AND t.status='AWAITING_CONFIRMATION'").get(input.taskId) as CandidateRow | undefined;
@@ -872,7 +896,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const parsedRow = db.prepare("SELECT parsed_json FROM media_task WHERE id=?").get(input.taskId) as { parsed_json: string | null };
     if (!parsedRow.parsed_json) throw conflict("请先完成名称识别");
     const parsed = JSON.parse(parsedRow.parsed_json) as ParsedMedia;
-    const { selection, metadata, episodeTitle } = await validateMediaSelection(this.database, this.connections.tmdb, input.selection, { taskId: input.taskId, fileName: (JSON.parse(row.relative_json) as string[]).at(-1)! });
+    const { selection, metadata, episodeTitle } = await validateMediaSelection(this.database, this.connections.tmdb, input.selection, { taskId: input.taskId, fileName: (JSON.parse(row.relative_json) as string[]).at(-1)!, signal });
     const variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(parsed.originalFilename).slice(1) };
     const template = input.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}");
     const segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments); assertCorrectionTarget(this.database, target, segments, input.taskId); await target.assertVacant(segments); await target.check();
@@ -882,6 +906,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     this.assertCoordinates(selection, row.id);
     this.assertPreviewScope(row, sourceLifecycles);
     if (recognitionRevision !== this.recognitionEdits.revision(input.taskId)) throw conflict("识别信息已变化，请重新预览整理范围");
+    signal?.throwIfAborted();
     const plan: Plan = { taskId: input.taskId, candidateId: row.id, sourceId: row.source_id, sourceVersion: source.version, recognitionRevision, sourceLifecycles, connectionVersion, source: JSON.parse(source.source_grant_json), target: target.grant, sourceSegments: JSON.parse(row.relative_json), targetSegments: segments, snapshot: JSON.parse(row.snapshot_json), expectedSha256: row.expected_sha256, parsed, metadata, selection, episodeTitle, accessories };
     const result: PreviewRow = { id: randomUUID(), request_key: input.requestKey, task_id: input.taskId, input_hash: digest, plan_json: JSON.stringify(plan), expires_at: this.now() + 10 * 60 * 1000, operation_id: null };
     const concurrent = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
@@ -904,13 +929,15 @@ export class IngestionPipeline implements ManagedIngestionSink {
     for (const id of ids) this.correctionLeases.add(id);
     try { return await work(); } finally { for (const id of ids) this.correctionLeases.delete(id); }
   }
-  async confirm(input: CoreInput<"ingestion.confirm">, ownerBatchId?: string) {
+  async confirm(input: CoreInput<"ingestion.confirm">, ownerBatchId?: string, automaticCheck?: () => void) {
+    if (!automaticCheck && this.database.connection.prepare("SELECT 1 FROM ingestion_automatic a JOIN ingestion_preview p ON p.request_key=a.preview_key WHERE p.id=?").get(input.previewId)) throw conflict("此预览属于自动整理意图，请查看原任务或暂停来源后人工重新预览");
     const owner = this.database.connection.prepare("SELECT i.batch_id FROM ingestion_organize_batch_item i JOIN ingestion_preview p ON p.request_key=i.request_key WHERE p.id=?").get(input.previewId) as { batch_id: string } | undefined;
     if (owner && owner.batch_id !== ownerBatchId) throw conflict("此预览属于批量整理，请从批次入口确认完整范围");
     const db = this.database.connection, previous = db.prepare("SELECT id FROM ingestion_operation WHERE request_key=?").get(input.requestKey) as { id: string } | undefined;
     const receipt = db.prepare("SELECT * FROM ingestion_preview WHERE id=?").get(input.previewId) as PreviewRow | undefined;
     if (previous) { if (receipt?.operation_id !== previous.id) throw conflict("确认请求键已用于其他预览"); return { operationId: previous.id }; }
     if (!receipt) throw conflict("预览不存在"); if (receipt.operation_id) return { operationId: receipt.operation_id };
+    automaticCheck?.();
     const plan = JSON.parse(receipt.plan_json) as Plan, candidate = this.candidate(plan.candidateId), source = this.candidateSource(candidate);
     this.assertPreviewScope(candidate, plan.sourceLifecycles);
     if ((plan.recognitionRevision ?? 0) !== this.recognitionEdits.revision(receipt.task_id)) throw conflict("识别信息已变化，请重新预览整理范围");
@@ -922,6 +949,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const concurrent = db.prepare("SELECT id FROM ingestion_operation WHERE candidate_id=?").get(candidate.id) as { id: string } | undefined;
     if (concurrent) { const updated = db.prepare("SELECT operation_id FROM ingestion_preview WHERE id=?").get(receipt.id) as { operation_id: string | null }; if (updated.operation_id === concurrent.id) return { operationId: concurrent.id }; throw conflict(); }
     db.transaction(() => {
+      automaticCheck?.();
       if (this.candidateSource(candidate).version !== plan.sourceVersion || this.connections.version !== plan.connectionVersion) throw conflict();
       this.assertPreviewScope(candidate, plan.sourceLifecycles);
       if ((plan.recognitionRevision ?? 0) !== this.recognitionEdits.revision(receipt.task_id)) throw conflict("识别信息已变化，请重新预览整理范围");
@@ -1022,6 +1050,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const db = this.database.connection, controller = new AbortController(); this.controller = controller;
     try {
       for (const source of db.prepare(sourceQuery + " WHERE i.available=1 AND s.paused=0 AND i.source_version=s.version ORDER BY i.source_id LIMIT 1000").all() as SourceRow[]) { if (controller.signal.aborted) return; await this.scan(source.source_id).catch(() => {}); }
+      for (const row of db.prepare("SELECT id FROM ingestion_candidate WHERE state='READY' AND task_id IS NULL AND NOT EXISTS(SELECT 1 FROM ingestion_automatic a WHERE a.candidate_id=ingestion_candidate.id) AND EXISTS(SELECT 1 FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE json_extract(v.configuration_json,'$.organization.automatic')=1 AND s.deleted_at IS NULL AND (s.local_source_id=ingestion_candidate.source_id OR EXISTS(SELECT 1 FROM download_source_demand d JOIN download_job_item ji ON ji.job_id=d.job_id WHERE d.source_id=s.id AND d.source_version=s.version AND ji.item_id=ingestion_candidate.managed_item_id))) ORDER BY created_at,id LIMIT 1000").all() as { id: string }[]) { const intent = this.automaticPolicies.capture(row.id); if (intent) this.automatic.enqueue(intent); }
+      await this.automatic.tick();
       const candidates = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id JOIN desktop_source s ON s.id=c.source_id WHERE t.status='PENDING' AND s.paused=0 ORDER BY t.created_at,t.id LIMIT 10").all() as CandidateRow[];
       for (const row of candidates) { if (controller.signal.aborted) return; if (!this.managedCandidateEnabled(row) || this.contentReviews.active(row.source_id)) continue; try { await this.withSourceWork(row.id, controller.signal, (signal) => this.identify(row, signal)); } catch (error) {
         if (controller.signal.aborted) { db.prepare("UPDATE media_task SET status='PENDING',updated_at=? WHERE id=? AND status='PROCESSING'").run(timestamp(this.now), row.task_id); return; }
@@ -1030,6 +1060,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         if (error instanceof SourceWorkInterrupted) { db.prepare("UPDATE media_task SET status='PENDING',updated_at=? WHERE id=? AND status='PROCESSING'").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(error.message, row.id); continue; }
         db.prepare("UPDATE media_task SET status='AWAITING_CONFIRMATION',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(recognitionFailure(error), row.id);
       } }
+      await this.automatic.tick();
       const operations = db.prepare("SELECT o.* FROM ingestion_operation o JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND s.paused=0 ORDER BY o.created_at,o.id LIMIT 10").all() as OperationRow[];
       for (const operation of operations) { if (controller.signal.aborted) return; if (!this.operationRunnable(operation)) continue; try { await this.withSourceWork(operation.candidate_id, controller.signal, (signal) => this.copy(operation, signal)); } catch (error) {
         if (controller.signal.aborted) return;
@@ -1051,6 +1082,6 @@ export class IngestionPipeline implements ManagedIngestionSink {
       } }
     } finally { this.controller = undefined; }
   }
-  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const controller of this.scanControllers.values()) controller.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.organizeBatches.close(); await this.recognitionBatches.close(); await this.contentReviews.close(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
+  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const controller of this.scanControllers.values()) controller.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.automatic.close(); await this.organizeBatches.close(); await this.recognitionBatches.close(); await this.contentReviews.close(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
   async close() { await this.quiesce(); await Promise.allSettled([...this.sources.values()].map((source) => source.close())); this.sources.clear(); await this.targets.close(); }
 }

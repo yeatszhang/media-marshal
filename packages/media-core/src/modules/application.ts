@@ -354,7 +354,7 @@ export function createMediaApplication(
         const task = (async () => {
           if (request.action === "media.observations.reset") { ingestion.resetObservations(); return {}; }
           if (request.action === "desktop.state.reconcile-restored") { ingestion.reconcileRestored(); corrections.reconcileRestored(); downloads.reconcileRestored(); return {}; }
-          if (request.action === "source-rules.apply") { const input = privateCoreActions["source-rules.apply"].input.parse(payload); return sourceRules.apply({ previewId: input.previewId, requestKey: input.requestKey, runOnce: input.runOnce }, input.grants); }
+          if (request.action === "source-rules.apply") { const input = privateCoreActions["source-rules.apply"].input.parse(payload); return sourceRules.apply({ previewId: input.previewId, requestKey: input.requestKey, runOnce: input.runOnce, ...(input.automaticConsent ? { automaticConsent: input.automaticConsent } : {}) }, input.grants); }
           if (request.action === "media.targets.find") return ingestion.targetGrant((payload as { path: string }).path);
           if (request.action === "media.targets.bootstrap") return ingestion.targetBootstrap();
           if (request.action === "media.targets.authorize") return ingestion.authorizeTarget(privateCoreActions["media.targets.authorize"].input.parse(payload));

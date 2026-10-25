@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { sourceConfigurationSchema, sourceRuleDraftSchema, parseCoreRequest } from "./index";
+import { sourceConfigurationSchema, sourceRuleDraftSchema, sourceRuleApplySchema, parseCoreRequest } from "./index";
 
 const cloud = { type: "cloud", name: "网盘来源", accountId: randomUUID(), remoteRef: randomUUID(), downloadRootId: randomUUID() };
 const local = { type: "local", name: "本地来源", sourcePath: "/input", organization: { targetPath: "/library" } };
@@ -55,5 +55,15 @@ describe("统一来源受限契约", () => {
     for (const payload of [{ ...request.payload, expectedVersion: undefined }, { ...request.payload, operation: "shell" }, { ...request.payload, paused: true }]) expect(() => parseCoreRequest({ ...request, payload })).toThrow();
     expect(() => parseCoreRequest({ ...request, action: "source-rules.run-once", payload: { id: randomUUID(), expectedVersion: 1, requestKey: randomUUID(), intervalSeconds: 60 } })).toThrow();
     expect(() => parseCoreRequest({ ...request, action: "ingestion.set-paused", payload: { paused: true, requestKey: randomUUID(), command: "resume-all" } })).toThrow();
+  });
+});
+
+describe("自动来源授权的受限契约", () => {
+  it("统一草稿允许显式自动意图，确认只能携带样例引用和明确接受，不接收任意完成证据", () => {
+    expect(sourceConfigurationSchema.parse({ ...local, organization: { targetPath: "/library", automatic: true } }).organization?.automatic).toBe(true);
+    const input = { previewId: randomUUID(), requestKey: randomUUID(), automaticConsent: { previewId: randomUUID(), accepted: true } };
+    expect(sourceRuleApplySchema.safeParse(input).success).toBe(true);
+    for (const automaticConsent of [{ ...input.automaticConsent, accepted: false }, { previewId: randomUUID() }, { ...input.automaticConsent, verified: true }, { ...input.automaticConsent, path: "/任意目标" }]) expect(sourceRuleApplySchema.safeParse({ ...input, automaticConsent }).success).toBe(false);
+    expect(sourceConfigurationSchema.safeParse({ ...local, organization: { targetPath: "/library", automatic: true, verifiedProfile: "猜测客户端版本" } }).success).toBe(false);
   });
 });

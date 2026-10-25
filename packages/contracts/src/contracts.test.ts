@@ -137,7 +137,7 @@ describe("受限进程契约", () => {
       parseCoreRequest(request("tasks.list", { page: 1, pageSize: 25 })),
     ).toMatchObject({ payload: { page: 1, pageSize: 25 } });
   });
-  it("来源只能复制，未知网盘行为不允许自动接入", () => {
+  it("旧来源保存接口仅复制并保留人工模式，不能绕过统一来源授权", () => {
     const source = {
       name: "电影",
       kind: "quark",

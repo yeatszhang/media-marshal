@@ -102,6 +102,30 @@ function savedLocal(f: ReturnType<typeof memoryApi>, name: string, client: "quar
 }
 
 describe("统一来源页、连接返回和确认边界", () => {
+  it("自动开关默认关闭，必须核对冻结样例并明确勾选说明；编辑后不能沿用勾选", async () => {
+    let source!: SourceRule; const f = await mount({}, "/sources", (fixture) => { source = savedLocal(fixture, "自动条件测试", "quark"); });
+    await act(async () => { await f.model.openSource(source.id); });
+    const automatic = () => document.querySelector<HTMLInputElement>('[aria-label="自动整理满足条件的新文件"]')!;
+    expect(automatic().checked).toBe(false); await act(async () => automatic().click()); expect(f.api.applySourceRule).not.toHaveBeenCalled();
+    const sampleId = crypto.randomUUID(), originalPreview = vi.mocked(f.api.previewSourceRule).getMockImplementation()!;
+    vi.mocked(f.api.previewSourceRule).mockImplementation(async (input) => { const preview = await originalPreview(input); preview.automaticSample = { previewId: sampleId, title: "已预览示例", sourcePath: "/来源/示例.mp4", targetPath: "/媒体/示例/示例.mp4", size: 20 }; f.previews.set(preview.id, structuredClone(preview)); return preview; });
+    await click("预览配置"); expect(f.element.textContent).toContain("首次整理预览：已预览示例"); expect(button("确认配置生效").disabled).toBe(true);
+    await act(async () => { await f.model.confirm(); }); expect(f.api.applySourceRule).not.toHaveBeenCalled();
+    const consent = () => document.querySelector<HTMLInputElement>('[aria-label="已核对首次预览并了解自动整理局限"]')!;
+    await act(async () => consent().click()); expect(button("确认配置生效").disabled).toBe(false);
+    await fill("来源名称", "新名称仍需核对"); await click("预览配置"); expect(consent().checked).toBe(false); expect(button("确认配置生效").disabled).toBe(true);
+    await act(async () => consent().click()); await click("确认配置生效");
+    expect(f.api.applySourceRule).toHaveBeenCalledOnce(); expect(f.api.applySourceRule).toHaveBeenCalledWith(expect.objectContaining({ automaticConsent: { previewId: sampleId, accepted: true } }));
+    expect(f.api.configureSourceRule).toHaveBeenLastCalledWith(expect.objectContaining({ configuration: expect.objectContaining({ organization: expect.objectContaining({ automatic: true }) }) }));
+    expect(f.element.textContent).toContain("自动策略已开启，证据不足转人工"); expect(f.api.confirmDownload).not.toHaveBeenCalled(); expect(f.api.runSourceOnce).not.toHaveBeenCalled();
+  });
+  it("没有首次预览时显示具体修复步骤，保留草稿且不能确认自动策略", async () => {
+    let source!: SourceRule; const f = await mount({}, "/sources", (fixture) => { source = savedLocal(fixture, "缺少样例", "custom"); });
+    await act(async () => { await f.model.openSource(source.id); }); await act(async () => document.querySelector<HTMLInputElement>('[aria-label="自动整理满足条件的新文件"]')!.click());
+    const originalPreview = vi.mocked(f.api.previewSourceRule).getMockImplementation()!;
+    vi.mocked(f.api.previewSourceRule).mockImplementation(async (input) => { const preview = await originalPreview(input); preview.state = "FAILED"; preview.automaticSample = null; preview.automaticBlockedReason = "请先在待处理生成当前范围与目标的 COPY 预览"; f.previews.set(preview.id, structuredClone(preview)); return preview; });
+    await click("预览配置"); expect(f.element.textContent).toContain("请先在待处理生成当前范围与目标的 COPY 预览"); expect(button("确认配置生效").disabled).toBe(true); expect(f.api.applySourceRule).not.toHaveBeenCalled(); expect(f.model.view.editor?.automatic).toBe(true);
+  });
   it("本地目录健康分别定位输入与目标失败，显式重查不保存配置、浏览网盘或发起下载", async () => {
     const f = await mount({}, "/sources", (fixture) => { savedLocal(fixture, "夸克本地健康", "quark"); });
     const card = f.element.querySelector('article[aria-label="来源 夸克本地健康"]')!; expect(card.textContent).toContain("来源已暂停"); expect(card.textContent).toContain("请先用夸克官方客户端下载到输入目录"); expect(card.querySelectorAll("dd strong")).toHaveLength(2);
@@ -173,7 +197,7 @@ describe("统一来源页、连接返回和确认边界", () => {
   });
   it("按文件去向解释下载与整理，开关就近展开对应设置且编辑不执行", async () => {
     const f = await mount(); await cloudDraft(f);
-    expect([...f.element.querySelectorAll(".source-step h3")].map((node) => node.textContent)).toEqual(["选择网盘内容", "选择本地下载位置", "设置下载方式", "是否整理到媒体库"]);
+    expect([...f.element.querySelectorAll(".source-step h3")].map((node) => node.textContent)).toEqual(["从哪里下载", "下载保存到哪里", "什么时候下载", "下载后做什么"]);
     const flow = f.element.querySelector('[aria-label="文件处理流程"]')!;
     expect(flow.textContent).toContain("影视目录"); expect(flow.textContent).toContain("/中文 下载"); expect(flow.textContent).toContain("未开启，仅保存下载文件");
     expect(f.element.querySelector('[aria-label="扫描间隔"]')).toBeNull(); expect(f.element.querySelector('[aria-label="媒体类型"]')).toBeNull();

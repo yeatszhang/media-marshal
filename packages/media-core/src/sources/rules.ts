@@ -11,6 +11,7 @@ import type { IngestionPipeline } from "../ingestion/pipeline.js";
 import { SourceRuns } from "./runs.js";
 import { organizationConflicts } from "./organization.js";
 import { SourceExecutionPreviews } from "./executions.js";
+import { AutomaticConsents } from "./automatic-consent.js";
 import { SourceScans } from "./scans.js";
 import { LocalSourceHealthChecks } from "./local-health.js";
 
@@ -20,7 +21,7 @@ interface Row {
   ingestion_source_id: string | null; created_at: string; updated_at: string;
   deleted_at: string | null; lifecycle_revision: number;
 }
-interface PreviewRow { id: string; source_id: string; version: number; draft_revision: number; lifecycle_revision: number; request_key: string; configuration_json: string; download_preview_id: string | null; state: "READY" | "APPLIED" | "EXPIRED"; expires_at: number }
+interface PreviewRow { id: string; source_id: string; version: number; draft_revision: number; lifecycle_revision: number; request_key: string; configuration_json: string; automatic_preview_id: string | null; download_preview_id: string | null; state: "READY" | "APPLIED" | "EXPIRED"; expires_at: number }
 export interface SourceRuleGrants { source: ManagedRootGrant; target: ManagedRootGrant }
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const conflict = (message = "来源配置已变化，请刷新并重新预览") => new DesktopError("CONFLICT", message);
@@ -32,7 +33,8 @@ export class SourceRules {
   readonly executions: SourceExecutionPreviews;
   readonly localHealth: LocalSourceHealthChecks;
   readonly scans: SourceScans;
-  constructor(private readonly database: CoreDatabase, private readonly downloads: CloudDownloads, private readonly subscriptions: CloudSubscriptions, private readonly ingestion: IngestionPipeline, private readonly now = Date.now) { this.runs = new SourceRuns(database, downloads, now); this.executions = new SourceExecutionPreviews(database, downloads, this.runs, now); this.localHealth = new LocalSourceHealthChecks(database, (id) => this.get(id), (id) => ingestion.localDirectoryHealth(id), now); this.scans = new SourceScans(database, (id) => this.scanScope(id), (id, requestedId) => this.scanForRule(requestedId, id), now); }
+  readonly automaticConsents: AutomaticConsents;
+  constructor(private readonly database: CoreDatabase, private readonly downloads: CloudDownloads, private readonly subscriptions: CloudSubscriptions, private readonly ingestion: IngestionPipeline, private readonly now = Date.now) { this.automaticConsents = new AutomaticConsents(database, now); this.runs = new SourceRuns(database, downloads, now); this.executions = new SourceExecutionPreviews(database, downloads, this.runs, now); this.localHealth = new LocalSourceHealthChecks(database, (id) => this.get(id), (id) => ingestion.localDirectoryHealth(id), now); this.scans = new SourceScans(database, (id) => this.scanScope(id), (id, requestedId) => this.scanForRule(requestedId, id), now); }
   start() { this.synchronize(); this.runs.start(); this.scans.start(); }
   synchronize() { for (const source of this.list(true)) { try { this.reconcile(source.id); } catch { /* 主机授权恢复后再次协调，不因离线阻止 Core 启动。 */ } } }
   quiesce() { this.accepting = false; this.runs.quiesce(); this.executions.quiesce(); this.localHealth.quiesce(); this.scans.quiesce(); }
@@ -214,9 +216,9 @@ export class SourceRules {
     if (!row || row.deleted_at || row.lifecycle_revision !== (input.expectedLifecycleRevision ?? 0) || row.version !== input.expectedVersion || row.draft_revision !== input.expectedDraftRevision) throw conflict();
     const configuration = sourceConfigurationSchema.parse(JSON.parse(row.draft_json));
     const download = configuration.type === "cloud" ? this.downloads.previews.start({ accountId: configuration.accountId, remoteRef: configuration.remoteRef, targetGrantId: configuration.downloadRootId, requestKey: input.requestKey, filters: configuration.filters, layout: "drive" }) : null;
-    const id = randomUUID();
-    db.prepare("INSERT INTO source_rule_preview(id,source_id,version,draft_revision,request_key,configuration_json,download_preview_id,state,expires_at,created_at,lifecycle_revision) VALUES(?,?,?,?,?,?,?,'READY',?,?,?)")
-      .run(id, row.id, row.version, row.draft_revision, input.requestKey, row.draft_json, download?.id ?? null, this.now() + 15 * 60 * 1000, new Date(this.now()).toISOString(), row.lifecycle_revision);
+    const id = randomUUID(), automaticSample = this.automaticConsents.sample(row.id, configuration);
+    db.prepare("INSERT INTO source_rule_preview(id,source_id,version,draft_revision,request_key,configuration_json,download_preview_id,state,expires_at,created_at,lifecycle_revision,automatic_preview_id) VALUES(?,?,?,?,?,?,?,'READY',?,?,?,?)")
+      .run(id, row.id, row.version, row.draft_revision, input.requestKey, row.draft_json, download?.id ?? null, this.now() + 15 * 60 * 1000, new Date(this.now()).toISOString(), row.lifecycle_revision, automaticSample?.previewId ?? null);
     return this.getPreview(id)!;
   }
   getPreview(id: string): SourceRulePreview | null {
@@ -228,14 +230,16 @@ export class SourceRules {
     const underlying = row.download_preview_id ? this.downloads.previews.row(row.download_preview_id) : undefined;
     const download = underlying ? this.downloads.previews.get(underlying.request_key) : null;
     const conflicts = row.state === "APPLIED" ? [] : organizationConflicts(this.database, row.source_id, configuration);
-    const state = row.state === "APPLIED" ? "APPLIED" : row.expires_at <= this.now() || row.state === "EXPIRED" || source?.deleted_at || source?.lifecycle_revision !== row.lifecycle_revision || source?.version !== row.version || source.draft_revision !== row.draft_revision ? "EXPIRED" : conflicts.length ? "FAILED" : configuration.type === "cloud" ? download?.state === "BUILDING" ? "BUILDING" : download?.state === "READY" && download.complete && download.conflicts === 0 ? "READY" : "FAILED" : "READY";
-    return { id: row.id, sourceId: row.source_id, version: row.version, draftRevision: row.draft_revision, lifecycleRevision: row.lifecycle_revision, configuration, state, expiresAt: row.expires_at, download, organizationConflicts: conflicts };
+    const automaticSample = row.automatic_preview_id ? this.automaticConsents.sample(row.source_id, configuration, row.automatic_preview_id) : null;
+    const automaticBlockedReason = configuration.organization?.automatic && !automaticSample ? "请先在待处理生成当前范围与目标的 COPY 预览，再重新预览配置并核对自动整理说明" : null;
+    const state = row.state === "APPLIED" ? "APPLIED" : row.expires_at <= this.now() || row.state === "EXPIRED" || source?.deleted_at || source?.lifecycle_revision !== row.lifecycle_revision || source?.version !== row.version || source.draft_revision !== row.draft_revision ? "EXPIRED" : conflicts.length || automaticBlockedReason ? "FAILED" : configuration.type === "cloud" ? download?.state === "BUILDING" ? "BUILDING" : download?.state === "READY" && download.complete && download.conflicts === 0 ? "READY" : "FAILED" : "READY";
+    return { id: row.id, sourceId: row.source_id, version: row.version, draftRevision: row.draft_revision, lifecycleRevision: row.lifecycle_revision, configuration, state, expiresAt: row.expires_at, download, organizationConflicts: conflicts, automaticSample, automaticBlockedReason };
   }
   apply(input: CoreInput<"source-rules.apply">, grants?: SourceRuleGrants): Promise<SourceRule> {
     const task = this.queue.catch(() => {}).then(() => this.applyOnce(input, grants)); this.queue = task; return task;
   }
   private async applyOnce(input: CoreInput<"source-rules.apply">, grants?: SourceRuleGrants) {
-    this.writable(); const signature = hash({ operation: "apply", previewId: input.previewId, requestKey: input.requestKey, ...(input.runOnce ? { runOnce: true } : {}) }), repeated = this.previous(input.requestKey, signature);
+    this.writable(); const signature = hash({ operation: "apply", previewId: input.previewId, requestKey: input.requestKey, ...(input.runOnce ? { runOnce: true } : {}), ...(input.automaticConsent ? { automaticConsent: input.automaticConsent } : {}) }), repeated = this.previous(input.requestKey, signature);
     if (repeated) return this.get(repeated)!;
     const preview = this.getPreview(input.previewId);
     if (!preview || !["READY", "APPLIED"].includes(preview.state)) throw conflict("来源预览未完成、已经过期或存在冲突，请重新预览");
@@ -268,6 +272,8 @@ export class SourceRules {
       this.database.connection.transaction(() => {
         this.writable(); const current = this.row(row.id), checked = this.getPreview(preview.id);
         if (!current || current.deleted_at || current.lifecycle_revision !== row.lifecycle_revision || current.version !== preview.version || current.draft_revision !== preview.draftRevision || current.paused !== row.paused || checked?.state !== "READY") throw conflict();
+        if (configuration.organization?.automatic && (!input.automaticConsent || input.automaticConsent.previewId !== preview.automaticSample?.previewId)) throw conflict("请核对首次 COPY 预览与自动整理说明后确认配置");
+        const automaticConsent = this.automaticConsents.prepare(row.id, configuration, input.automaticConsent?.previewId);
         const installed = prepared?.commit(), subscriptionId = subscription?.commit() ?? null, nextVersion = preview.version + 1, stamp = new Date(this.now()).toISOString();
         this.database.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,subscription_id,ingestion_source_id,target_root_id,created_at) VALUES(?,?,?,?,?,?,?,?)")
           .run(row.id, nextVersion, JSON.stringify(configuration), configuration.type === "local" ? physicalId : null, subscriptionId, configuration.type === "cloud" ? physicalId : null, installed?.targetRootId ?? null, stamp);
@@ -275,6 +281,7 @@ export class SourceRules {
           .run(nextVersion, configuration.type === "local" ? physicalId : null, subscriptionId, configuration.type === "cloud" ? physicalId : null, stamp, row.id);
         this.database.connection.prepare("UPDATE source_rule_run SET state='ABANDONED',updated_at=? WHERE source_id=? AND source_version!=? AND state IN ('QUEUED','SCANNING')").run(stamp, row.id, nextVersion);
         this.database.connection.prepare("UPDATE source_rule_preview SET state=CASE WHEN id=? THEN 'APPLIED' ELSE 'EXPIRED' END WHERE source_id=? AND state='READY'").run(preview.id, row.id);
+        automaticConsent.commit();
         this.receipt(input.requestKey, row.id, "apply", signature);
         if (input.runOnce) this.runs.enqueue({ id: row.id, expectedVersion: nextVersion, expectedLifecycleRevision: row.lifecycle_revision, requestKey: input.requestKey });
         this.database.connection.prepare("UPDATE source_rule_legacy_reference SET status='MAPPED',reason='NONE' WHERE source_id=? AND kind IN ('local-source','subscription')").run(row.id);

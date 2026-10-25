@@ -1,7 +1,8 @@
 import { z } from "zod";
 const id = z.uuid(), empty = z.strictObject({});
 export const ingestionConfigureSchema = z.strictObject({ downloadRootId: id, name: z.string().trim().min(1).max(100), targetPath: z.string().min(1).max(4096), mediaType: z.enum(["AUTO", "MOVIE", "TV_SHOW"]).default("AUTO") });
-export const candidateSchema = z.strictObject({ id, sourceId: id, relativePath: z.string().max(16384), size: z.number().int().nonnegative(), state: z.enum(["OBSERVING", "READY", "UNAVAILABLE", "SUPERSEDED", "QUEUED", "PROCESSED", "SKIPPED"]), requiresConfirmation: z.literal(true), taskId: id.nullable(), reason: z.string().max(500).nullable(), updatedAt: z.string() });
+export const automaticStatusSchema = z.strictObject({ id, state: z.enum(["PENDING", "RECOGNIZING", "PREVIEWING", "CONFIRMING", "SUBMITTED", "NEEDS_REVIEW"]), reason: z.string().max(500).nullable(), operationId: id.nullable() });
+export const candidateSchema = z.strictObject({ id, sourceId: id, relativePath: z.string().max(16384), size: z.number().int().nonnegative(), state: z.enum(["OBSERVING", "READY", "UNAVAILABLE", "SUPERSEDED", "QUEUED", "PROCESSED", "SKIPPED"]), requiresConfirmation: z.boolean(), automation: automaticStatusSchema.nullable().optional(), taskId: id.nullable(), reason: z.string().max(500).nullable(), updatedAt: z.string() });
 export type IngestionCandidate = z.infer<typeof candidateSchema>;
 export const selectionSchema = z.strictObject({ tmdbId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), mediaType: z.enum(["MOVIE", "TV_SHOW"]), season: z.number().int().min(0).max(999).nullable().default(null), episode: z.number().int().min(1).max(10000).nullable().default(null), episodeEnd: z.number().int().min(1).max(10000).nullable().default(null) });
 export const episodeCheckSchema = z.discriminatedUnion("state", [

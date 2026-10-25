@@ -20,13 +20,30 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v27 保留既有来源与候选，自动授权和执行表为空，旧 v26 核心拒绝新库", async () => {
+    const path = await temporary(), old = await CoreDatabase.open(path, migrations.slice(0, 26)), source = randomUUID(), stamp = new Date().toISOString(), configuration = JSON.stringify({ type: "local", name: "保留人工来源", client: "quark", sourcePath: "/原来源", organization: { targetPath: "/原媒体", automatic: false } });
+    old.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'保留人工来源','quark','/原来源','/原媒体','AUTO','COPY',?)").run(source, stamp);
+    old.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,local_source_id,created_at,updated_at) VALUES(?,'local',1,1,?,?,?,?)").run(source, configuration, source, stamp, stamp); old.close();
+    const db = await CoreDatabase.open(path); expect(db.schemaVersion).toBe(27); expect(db.connection.prepare("SELECT draft_json FROM source_rule WHERE id=?").get(source)).toEqual({ draft_json: configuration });
+    for (const table of ["source_automatic_consent", "ingestion_automatic"]) expect(db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    expect(db.connection.prepare("SELECT automatic FROM desktop_source WHERE id=?").get(source)).toEqual({ automatic: 0 }); expect(db.connection.pragma("foreign_key_check")).toEqual([]); db.close();
+    const backup = new Database(path + ".before-v27.bak", { readonly: true }); expect(backup.pragma("user_version", { simple: true })).toBe(26); backup.close();
+    await expect(CoreDatabase.open(path, migrations.slice(0, 26))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
+  it("v27 失败撤销 ALTER 与全部自动表，原 v26 设置及备份可重试", async () => {
+    const path = await temporary(), old = await CoreDatabase.open(path, migrations.slice(0, 26)); old.connection.prepare("INSERT INTO app_setting VALUES('原配置','保持人工')").run(); old.close();
+    await expect(CoreDatabase.open(path, [...migrations.slice(0, 26), { ...migrations[26]!, sql: migrations[26]!.sql + "SELECT missing_automatic_migration();" }])).rejects.toThrow();
+    const before = await CoreDatabase.open(path, migrations.slice(0, 26)); expect(before.connection.prepare("SELECT name FROM sqlite_master WHERE name IN ('source_automatic_consent','ingestion_automatic')").all()).toEqual([]); expect(before.connection.pragma("table_info(source_rule_preview)").some((row) => (row as { name: string }).name === "automatic_preview_id")).toBe(false); before.close();
+    const current = await CoreDatabase.open(path); expect(current.connection.prepare("SELECT value FROM app_setting WHERE key='原配置'").get()).toEqual({ value: "保持人工" }); current.close();
+    const backup = new Database(path + ".before-v27.bak", { readonly: true }); expect(backup.pragma("user_version", { simple: true })).toBe(26); backup.close();
+  });
   it("v26 扫描迁移保留原来源、健康诊断与任务，旧核心拒绝新库且升级不产生扫描", async () => {
     const path = await temporary(), old = await CoreDatabase.open(path, migrations.slice(0, 25)), id = randomUUID(), task = randomUUID(), stamp = new Date().toISOString(), config = JSON.stringify({ type: "local", name: "迁移保留", client: "baidu", sourcePath: "/原输入", organization: { targetPath: "/原目标" } }), health = JSON.stringify({ sourceId: id, version: 2, lifecycleRevision: 0, checkedAt: stamp, input: { state: "UNAVAILABLE", reason: "PERMISSION_DENIED" }, target: { state: "AVAILABLE" } });
     old.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,paused,created_at) VALUES(?,'迁移保留','baidu','/原输入','/原目标','AUTO','COPY',1,?)").run(id, stamp);
     old.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,local_source_id,paused,created_at,updated_at) VALUES(?,'local',2,2,?,?,1,?,?)").run(id, config, id, stamp, stamp);
     old.connection.prepare("INSERT INTO source_rule_local_health VALUES(?,2,0,?,?)").run(id, stamp, health);
     old.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'DONE',?,?)").run(task, id, "/原输入/保留.mp4", stamp, stamp); old.close();
-    const db = await CoreDatabase.open(path); try { expect(db.schemaVersion).toBe(26); expect(db.connection.prepare("SELECT draft_json,version,paused FROM source_rule").get()).toEqual({ draft_json: config, version: 2, paused: 1 }); expect(db.connection.prepare("SELECT snapshot_json FROM source_rule_local_health").get()).toEqual({ snapshot_json: health }); expect(db.connection.prepare("SELECT id,status FROM media_task").get()).toEqual({ id: task, status: "DONE" }); for (const table of ["ingestion_source_scan", "ingestion_source_scan_request", "ingestion_source_scan_issue"]) expect(db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 }); expect(db.connection.pragma("foreign_key_check")).toEqual([]); } finally { db.close(); }
+    const db = await CoreDatabase.open(path, migrations.slice(0, 26)); try { expect(db.schemaVersion).toBe(26); expect(db.connection.prepare("SELECT draft_json,version,paused FROM source_rule").get()).toEqual({ draft_json: config, version: 2, paused: 1 }); expect(db.connection.prepare("SELECT snapshot_json FROM source_rule_local_health").get()).toEqual({ snapshot_json: health }); expect(db.connection.prepare("SELECT id,status FROM media_task").get()).toEqual({ id: task, status: "DONE" }); for (const table of ["ingestion_source_scan", "ingestion_source_scan_request", "ingestion_source_scan_issue"]) expect(db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 }); expect(db.connection.pragma("foreign_key_check")).toEqual([]); } finally { db.close(); }
     const backup = new Database(`${path}.before-v26.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(25); expect(backup.prepare("SELECT snapshot_json FROM source_rule_local_health").get()).toEqual({ snapshot_json: health }); } finally { backup.close(); }
     await expect(CoreDatabase.open(path, migrations.slice(0, 25))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
   });

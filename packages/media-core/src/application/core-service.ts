@@ -33,6 +33,7 @@ function contains(parent: string, child: string): boolean {
 }
 interface SourceRow {
   mode?: "local" | "managed";
+  effective_automatic?: number;
   download_root_id?: string | null;
   id: string;
   name: string;
@@ -55,7 +56,7 @@ function sourceDto(row: SourceRow): DesktopSource {
     targetPath: row.target_path,
     mediaType: row.media_type,
     operation: "COPY",
-    automatic: false,
+    automatic: Boolean(row.effective_automatic),
     version: row.version,
     paused: Boolean(row.paused),
     health: row.health,
@@ -95,7 +96,7 @@ export class CoreService {
       schemaVersion: this.database.schemaVersion,
       sourceCount: count("source_rule"),
       taskCount: count("media_task"),
-      mode: "manual-only",
+      mode: this.database.connection.prepare("SELECT 1 FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.deleted_at IS NULL AND s.review_required=0 AND json_extract(v.configuration_json,'$.organization.automatic')=1 LIMIT 1").get() ? "automatic-enabled" : "manual-only",
       parser: this.components.parserReady() ? "ready" : "unavailable",
       correctionFiles: this.components.correctionFilesReady?.() ? "ready" : "unavailable",
     };
@@ -104,7 +105,7 @@ export class CoreService {
     return (
       this.database.connection
         .prepare(
-          "SELECT s.*,i.mode,i.download_root_id FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id WHERE NOT EXISTS(SELECT 1 FROM source_rule r WHERE r.local_source_id=s.id AND r.deleted_at IS NOT NULL) ORDER BY s.created_at,s.id LIMIT 1000",
+          "SELECT s.*,i.mode,i.download_root_id,EXISTS(SELECT 1 FROM source_rule r JOIN source_rule_version v ON v.source_id=r.id AND v.version=r.version WHERE r.deleted_at IS NULL AND r.review_required=0 AND (r.local_source_id=s.id OR r.ingestion_source_id=s.id) AND json_extract(v.configuration_json,'$.organization.automatic')=1) AS effective_automatic FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id WHERE NOT EXISTS(SELECT 1 FROM source_rule r WHERE r.local_source_id=s.id AND r.deleted_at IS NOT NULL) ORDER BY s.created_at,s.id LIMIT 1000",
         )
         .all() as SourceRow[]
     ).map(sourceDto);

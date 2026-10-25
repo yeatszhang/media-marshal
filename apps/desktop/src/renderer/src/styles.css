@@ -101,16 +101,21 @@
 .source-filter-content { display: grid; gap: 14px; margin-top: 16px; }
 .source-option { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .source-option.is-enabled { border-color: #aecdbd; }
-.source-rule-fields .source-option-label { display: flex; align-items: flex-start; gap: 12px; padding: 16px; cursor: pointer; }
+.source-rule-editor .source-option-label { display: flex; align-items: flex-start; gap: 12px; padding: 16px; cursor: pointer; }
 .source-option-label > input[type="checkbox"] { flex: 0 0 18px; width: 18px; min-width: 18px; height: 18px; margin: 2px 0 0; padding: 0; accent-color: var(--primary); }
 .source-option-label > span { min-width: 0; flex: 1; }
 .source-option-label strong { display: block; font-size: 14px; line-height: 22px; }
 .source-option-label small { display: block; color: var(--muted-foreground); font-weight: 400; font-size: 13px; line-height: 1.7; margin-top: 4px; }
 .source-option-content { display: grid; gap: 16px; padding: 18px 16px; border-top: 1px solid var(--border); background: #fbfdfc; }
 .source-option-content > label { max-width: 320px; }
+.source-rule-editor .source-option-content .path { white-space: normal; overflow-wrap: anywhere; line-height: 1.7; }
 .source-explanation { padding: 14px 16px; background: #f0f6f3; border-radius: 8px; font-size: 12px; line-height: 1.8; color: var(--muted-foreground); }
 .source-explanation strong { display: block; margin-bottom: 4px; color: var(--foreground); font-size: 13px; }
-.source-explanation p + p { margin-top: 6px; }
+.source-explanation dl { display: grid; gap: 10px; margin: 10px 0 0; }
+.source-explanation dl > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; }
+.source-explanation dt { color: var(--foreground); font-weight: 550; }
+.source-explanation dd { margin: 0; overflow-wrap: anywhere; }
+.source-option-prerequisite { padding: 0 16px 16px 46px; color: var(--muted-foreground); font-size: 12px; line-height: 1.7; }
 .source-only-download { padding: 12px 16px; background: #f4f7f5; border-radius: 8px; color: #3d6b57; font-size: 13px; line-height: 1.7; }
 .source-behavior-note { color: var(--muted-foreground); font-size: 12px; line-height: 1.7; }
 .source-behavior-note summary { cursor: pointer; width: fit-content; }

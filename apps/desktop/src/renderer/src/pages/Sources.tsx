@@ -47,7 +47,7 @@ export function Sources() {
         <div className="cloud-browser-toolbar"><h3 title={configuration.name}>{configuration.name}</h3><span className="badge">{row.type === "cloud" ? "网盘来源" : "本地来源"}</span></div>
         <p className="source-card-status">{row.version ? `生效版本 v${row.version}` : "草稿，尚未确认"}{row.paused && row.version > 0 ? " · 来源已暂停" : ""}{row.reviewRequired ? " · 归属待核对" : ""}</p>
         {configuration.type === "cloud" ? <><p className="cloud-root-path">{state.accounts.find((value) => value.id === configuration.accountId)?.name ?? "账号需核对"} · {row.remoteName ?? "远端范围需核对"} → {downloadRoot?.path ?? "下载目录待授权"}</p><p className="cloud-hint">{configuration.periodic.enabled ? `每 ${configuration.periodic.intervalSeconds / 60} 分钟扫描` : "仅手动执行，不开启周期扫描"} · {configuration.organization ? "下载后整理到媒体库" : "只下载，未启用整理"}</p></> : <p className="cloud-root-path">{sourceClients[configuration.client]} · {configuration.sourcePath}</p>}
-        {configuration.organization && <p className="cloud-root-path">整理目标：{configuration.organization.targetPath} · COPY · 人工确认</p>}
+        {configuration.organization && <p className="cloud-root-path">整理目标：{configuration.organization.targetPath} · COPY · {configuration.organization.automatic ? "自动策略已开启，证据不足转人工" : "人工确认"}</p>}
         {configuration.type === "local" && <>
           <p className="cloud-hint">{configuration.client === "quark" ? "请先用夸克官方客户端下载到输入目录，再在待处理核对作品并确认整理。" : configuration.client === "custom" ? "使用已有本地文件，按普通目录观察并等待人工确认。" : "此为保留的历史客户端标签，行为未验证；按普通本地目录观察，仍需人工确认。"}</p>
           <LocalSourceHealthPanel row={row} health={state.localHealth[row.id]} busy={state.healthBusy.includes(row.id)} blocked={state.healthBusy.length > 0} onCheck={() => { void model.checkLocalSourceHealth(row); }} />

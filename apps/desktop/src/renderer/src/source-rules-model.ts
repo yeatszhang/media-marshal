@@ -9,7 +9,7 @@ export interface SourceEditor {
   ignoreMode: "default" | "none" | "custom"; ignoredFilePatterns: string;
   accountId: string; remoteRef: string; remoteName: string; remoteType: "file" | "directory" | null; downloadRootId: string;
   extensions: string; names: string; periodic: boolean; intervalSeconds: number;
-  organize: boolean; targetPath: string; mediaType: "AUTO" | "MOVIE" | "TV_SHOW";
+  organize: boolean; automatic: boolean; targetPath: string; mediaType: "AUTO" | "MOVIE" | "TV_SHOW";
 }
 export interface SourceViewState {
   items: SourceRule[]; archived: SourceRule[]; accounts: CloudAccount[]; roots: ManagedDownloadRoot[]; subscriptions: CloudSubscription[];
@@ -30,9 +30,9 @@ export function sourceView(remote: SourceRemoteState & SourceComputed, draft: So
 const emptyDraft = emptySourceDraft();
 interface DraftBinding { read(): SourceDraftState; update(patch: Partial<SourceDraftState>): void }
 const errorText = (error: unknown) => error instanceof Error ? error.message : "操作失败，请重试";
-const emptyEditor = (accountId = ""): SourceEditor => ({ id: crypto.randomUUID(), version: 0, draftRevision: 0, lifecycleRevision: 0, archived: false, type: "cloud", name: "", client: "custom", sourcePath: "", ignoreMode: "default", ignoredFilePatterns: "", accountId, remoteRef: "", remoteName: "", remoteType: null, downloadRootId: "", extensions: "", names: "", periodic: false, intervalSeconds: 900, organize: false, targetPath: "", mediaType: "AUTO" });
+const emptyEditor = (accountId = ""): SourceEditor => ({ id: crypto.randomUUID(), version: 0, draftRevision: 0, lifecycleRevision: 0, archived: false, type: "cloud", name: "", client: "custom", sourcePath: "", ignoreMode: "default", ignoredFilePatterns: "", accountId, remoteRef: "", remoteName: "", remoteType: null, downloadRootId: "", extensions: "", names: "", periodic: false, intervalSeconds: 900, organize: false, automatic: false, targetPath: "", mediaType: "AUTO" });
 function fromSource(row: SourceRule): SourceEditor {
-  const configuration = row.draft, common = { ...emptyEditor(), id: row.id, version: row.version, draftRevision: row.draftRevision, lifecycleRevision: row.lifecycleRevision ?? 0, archived: !!row.deletedAt, type: row.type, name: configuration.name, organize: !!configuration.organization, targetPath: configuration.organization?.targetPath ?? "", mediaType: configuration.organization?.mediaType ?? "AUTO" };
+  const configuration = row.draft, common = { ...emptyEditor(), id: row.id, version: row.version, draftRevision: row.draftRevision, lifecycleRevision: row.lifecycleRevision ?? 0, archived: !!row.deletedAt, type: row.type, name: configuration.name, organize: !!configuration.organization, automatic: configuration.organization?.automatic ?? false, targetPath: configuration.organization?.targetPath ?? "", mediaType: configuration.organization?.mediaType ?? "AUTO" };
   return configuration.type === "local" ? { ...common, client: configuration.client, sourcePath: configuration.sourcePath, ignoreMode: configuration.ignoredFilePatterns == null ? "default" : configuration.ignoredFilePatterns.length ? "custom" : "none", ignoredFilePatterns: configuration.ignoredFilePatterns?.join("\n") ?? "" } : { ...common, accountId: configuration.accountId, remoteRef: configuration.remoteRef, remoteName: row.remoteName ?? "已保存的远端范围", downloadRootId: configuration.downloadRootId, extensions: configuration.filters.extensions.join(","), names: configuration.filters.names.join("\n"), periodic: configuration.periodic.enabled, intervalSeconds: configuration.periodic.intervalSeconds };
 }
 
@@ -149,14 +149,14 @@ export class SourceRulesViewModel extends StatefulService<SourceRemoteState, Sou
     const editor = this.view.editor; if (!editor || editor.archived || this.view.pending) return;
     if (patch.type && patch.type !== editor.type && editor.draftRevision) { this.updateView({ error: "已保存来源的类型不能切换，请新建另一类型来源。" }); return; }
     this.previewIntent = undefined;
-    this.updateView({ editor: { ...editor, ...patch }, dirty: true, preview: null, error: null, notice: null });
+    this.updateView({ editor: { ...editor, ...patch, ...(patch.organize === false || patch.type && patch.type !== editor.type ? { automatic: false } : {}) }, dirty: true, preview: null, error: null, notice: null });
   }
   changeAccount(accountId: string) { ++this.navigation; this.change({ accountId, remoteRef: "", remoteName: "", remoteType: null, periodic: false }); this.updateView({ picker: false }); }
   private configuration(): SourceConfiguration {
     const editor = this.view.editor; if (!editor) throw new Error("请先选择来源");
     if (editor.archived) throw new Error("来源已删除，请先从已删除来源中恢复");
     if (!editor.name.trim()) throw new Error("请填写来源名称");
-    const organization = { targetPath: editor.targetPath, mediaType: editor.mediaType, operation: "COPY", automatic: false };
+    const organization = { targetPath: editor.targetPath, mediaType: editor.mediaType, operation: "COPY", automatic: editor.automatic };
     if (editor.type === "local" && (!editor.sourcePath || !editor.targetPath)) throw new Error("请选择本地输入目录和整理目标目录");
     if (editor.type === "cloud" && (!editor.accountId || !editor.remoteRef || !editor.downloadRootId)) throw new Error("请选择账号、远端范围和本地下载目录");
     if (editor.type === "cloud" && editor.organize && !editor.targetPath) throw new Error("请选择整理目标目录");
@@ -201,11 +201,13 @@ export class SourceRulesViewModel extends StatefulService<SourceRemoteState, Sou
     const preview = await this.client.previewSourceRule({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, ...(row.lifecycleRevision ? { expectedLifecycleRevision: row.lifecycleRevision } : {}), requestKey: this.previewIntent.key });
     if (!this.stopped) this.updateView({ preview, notice: null }); return preview;
   }); }
-  confirm(runOnce = false) { return this.mutate("apply", async () => {
+  confirm(runOnce = false, automaticAccepted = false) { return this.mutate("apply", async () => {
     const preview = this.view.preview; if (!preview || preview.state !== "READY" || this.view.dirty) throw new Error("请等待完整预览或重新预览当前草稿");
+    if (preview.configuration.organization?.automatic && (!automaticAccepted || !preview.automaticSample)) throw new Error("请核对首次 COPY 预览并勾选自动整理说明");
+    const automaticConsent = preview.configuration.organization?.automatic ? { previewId: preview.automaticSample!.previewId, accepted: true as const } : undefined;
     let requestKey = this.confirmations.get(preview.id); if (!requestKey) { requestKey = crypto.randomUUID(); this.confirmations.set(preview.id, requestKey); }
     let row: SourceRule;
-    try { row = await this.client.applySourceRule({ previewId: preview.id, requestKey, runOnce }); }
+    try { row = await this.client.applySourceRule({ previewId: preview.id, requestKey, runOnce, ...(automaticConsent ? { automaticConsent } : {}) }); }
     catch (error) {
       const [saved, checked] = await Promise.all([this.client.getSourceRule(preview.sourceId).catch(() => null), this.client.getSourceRulePreview(preview.id).catch(() => null)]);
       if (!saved || saved.deletedAt || (saved.lifecycleRevision ?? 0) !== (preview.lifecycleRevision ?? 0) || checked?.state !== "APPLIED" || saved.version !== preview.version + 1 || JSON.stringify(saved.configuration) !== JSON.stringify(preview.configuration)) throw error;

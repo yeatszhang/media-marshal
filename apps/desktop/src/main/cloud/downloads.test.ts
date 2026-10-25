@@ -20,6 +20,8 @@ import { CloudSubscriptions } from "../../../../../packages/media-core/src/cloud
 import { SourceRules } from "../../../../../packages/media-core/src/sources/rules";
 import { IngestionPipeline } from "../../../../../packages/media-core/src/ingestion/pipeline";
 import { MediaConnections } from "../../../../../packages/media-core/src/application/media-connections";
+import { MediaNetworkError } from "../../../../../packages/media-core/src/infrastructure/json-http";
+import { AutomaticPolicies } from "../../../../../packages/media-core/src/ingestion/automatic-policy";
 import { normalizeParse } from "../../../../../packages/media-core/src/domain/media";
 import { SourceRoot } from "../../../../../packages/media-core/src/files/source-root";
 import { DownloadCommits } from "../../../../../packages/media-core/src/cloud/commits";
@@ -107,11 +109,143 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     };
     return { ...f, rules, configure, preview, pipeline, connections };
   }
-  async function organized(f: Awaited<ReturnType<typeof setup>>, name: string, remoteRef: string, target: Awaited<ReturnType<typeof probeManagedVolume>> | null, extensions: string[] = []) {
-    const draft = f.rules.configure({ id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: randomUUID(), configuration: { type: "cloud", name, accountId: f.account.id, remoteRef, downloadRootId: f.grant.id, filters: { extensions }, organization: target ? { targetPath: target.path, mediaType: "MOVIE" } : null } });
+  async function organized(f: Awaited<ReturnType<typeof setup>>, name: string, remoteRef: string, target: Awaited<ReturnType<typeof probeManagedVolume>> | null, extensions: string[] = [], mediaType: "AUTO" | "MOVIE" | "TV_SHOW" = "MOVIE") {
+    const draft = f.rules.configure({ id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: randomUUID(), configuration: { type: "cloud", name, accountId: f.account.id, remoteRef, downloadRootId: f.grant.id, filters: { extensions }, organization: target ? { targetPath: target.path, mediaType } : null } });
     const p = await f.preview(draft), source = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() }, target ? { source: f.grant, target } : undefined);
     return { p, source, job: await f.downloads.confirm({ previewId: p.download!.id, requestKey: randomUUID() }) };
   }
+  async function automaticFixture() {
+    const f = await setup(new Map([["目录/测试剧集.S01E01.mkv", Buffer.from("首次人工预览原片")]])), targetPath = join(f.path, "自动整理媒体库"); await mkdir(targetPath);
+    const target = await probeManagedVolume(targetPath), first = await organized(f, "单来源自动整理", f.account.rootRef!, target, ["mkv"], "TV_SHOW");
+    f.downloads.start(); await expect.poll(() => f.state(first.job.jobId).state, { timeout: 10000 }).toBe("COMPLETED");
+    await expect.poll(() => (Reflect.get(f.downloads, "active") as Map<string, unknown>).size, { timeout: 10000 }).toBe(0);
+    const bootstrap = f.pipeline.bootstrap()[0]!; await f.pipeline.close();
+    const server = createServer((request, response) => {
+      response.setHeader("Content-Type", "application/json"); const path = new URL(request.url!, "http://localhost").pathname, tv = { id: 1, name: "测试剧集", original_name: "Fixture Show", first_air_date: "2026-01-01", seasons: [{ season_number: 1 }] };
+      if (path.startsWith("/search/")) response.end(JSON.stringify({ results: [tv] }));
+      else if (path === "/tv/1") response.end(JSON.stringify(tv));
+      else if (path === "/tv/1/season/1") response.end(JSON.stringify({ episodes: [1, 26, 27, 28].map((episode_number) => ({ season_number: 1, episode_number, name: "分集" + episode_number })) }));
+      else response.writeHead(404).end("{}");
+    }); await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); cleanup.push(() => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }));
+    const connections = new MediaConnections(f.db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" }), { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` }); cleanup.push(() => connections.close()); connections.install({ tmdb: "isolated-automatic-fixture", emby: null });
+    let wall = Date.now(), monotonic = 0; const parser = { ready: true, parse: async (name: string) => { const season = Number(/S(\d+)/.exec(name)?.[1] ?? 1), episode = /E(\d+)(?:-E?(\d+))?/.exec(name), start = Number(episode?.[1] ?? 1), end = Number(episode?.[2] ?? start); return normalizeParse({ title: "测试剧集", year: 2026, type: "episode", season, episode: end === start ? start : Array.from({ length: end - start + 1 }, (_, index) => start + index) }, name); } };
+    const controlledWatch = (() => Object.assign(new EventEmitter(), { close() {} })) as unknown as typeof watch;
+    const pipeline = new IngestionPipeline(f.db, () => parser, connections, () => wall, () => monotonic, controlledWatch); cleanup.push(() => pipeline.close());
+    await pipeline.authorizeTarget(target); await pipeline.authorizeManagedSource({ sourceId: bootstrap.sourceId, sourceVersion: bootstrap.sourceVersion, source: bootstrap.source });
+    const rules = new SourceRules(f.db, f.downloads, f.subscriptions, pipeline, () => wall); cleanup.push(() => rules.close());
+    const observe = async () => { await pipeline.scan(bootstrap.sourceId); for (let i = 0; i < 12; i++) { wall += 10000; monotonic += 10000; await pipeline.scan(bootstrap.sourceId); } };
+    await observe(); const sample = pipeline.list({}).items.find((row) => row.relativePath.endsWith("S01E01.mkv"))!;
+    const manual = await pipeline.recognize({ candidateId: sample.id, requestKey: randomUUID() }); await pipeline.tick();
+    const samplePreview = await pipeline.preview({ taskId: manual.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "TV_SHOW", season: 1, episode: 1 }, includeAccessories: false });
+    const draft = rules.configure({ id: first.source.id, expectedVersion: 1, expectedDraftRevision: 1, requestKey: randomUUID(), configuration: { ...first.source.configuration!, organization: { ...first.source.configuration!.organization!, automatic: true } } });
+    const configPreview = rules.preview({ id: draft.id, expectedVersion: 1, expectedDraftRevision: 2, requestKey: randomUUID() });
+    await expect.poll(() => rules.getPreview(configPreview.id)?.state, { timeout: 10000 }).toBe("READY"); expect(rules.getPreview(configPreview.id)?.automaticSample?.previewId).toBe(samplePreview.id);
+    await expect(rules.apply({ previewId: configPreview.id, requestKey: randomUUID() }, { source: f.grant, target })).rejects.toMatchObject({ code: "CONFLICT" });
+    const enabled = await rules.apply({ previewId: configPreview.id, requestKey: randomUUID(), automaticConsent: { previewId: samplePreview.id, accepted: true } }, { source: f.grant, target });
+    expect(enabled.configuration?.organization?.automatic).toBe(true); expect(pipeline.automatic.status(sample.id)).toBeNull(); expect(await readdir(targetPath)).toEqual([".media-marshal"]);
+    const downloadNext = async (name = "测试剧集.S03E26-E28.mkv") => {
+      f.input.set("目录/" + name, Buffer.from("后续正式下载原片 " + name));
+      // 范围枚举和提交跨多个 500ms 调度周期，使用有界等待而非默认的一秒。
+      const run = rules.runs.enqueue({ id: enabled.id, expectedVersion: 2, requestKey: randomUUID() }); rules.runs.start();
+      await expect.poll(() => rules.runs.get(run.id)?.state, { timeout: 10000 }).toBe("SUBMITTED"); const jobId = rules.runs.get(run.id)!.jobId!;
+      await expect.poll(() => f.state(jobId).state, { timeout: 10000 }).toBe("COMPLETED"); await expect.poll(() => (Reflect.get(f.downloads, "active") as Map<string, unknown>).size, { timeout: 10000 }).toBe(0);
+      await observe(); return pipeline.list({}).items.find((row) => row.relativePath.endsWith(name))!;
+    };
+    return { ...f, target, targetPath, pipeline, rules, connections, enabled, manual, samplePreview, downloadNext, observe, parser, bootstrap, tickClock() { wall += 10000; monotonic += 10000; }, wall: () => wall, monotonic: () => monotonic, controlledWatch };
+  }
+  it("首次真实预览授权后，后续受管剧集自动唯一换季 COPY，原人工任务保留且重复 tick 不重做", async () => {
+    const f = await automaticFixture(), candidate = await f.downloadNext(); expect(f.pipeline.automatic.status(candidate.id)).toBeNull(); await f.pipeline.tick();
+    const status = f.pipeline.automatic.status(candidate.id); expect(status).toMatchObject({ state: "SUBMITTED", reason: null, operationId: expect.any(String) });
+    const task = f.pipeline.task(f.pipeline.describeCandidate(candidate.id).taskId!); expect(task.state).toBe("DONE");
+    const row = f.db.connection.prepare("SELECT plan_json FROM ingestion_operation WHERE id=?").get(status!.operationId) as { plan_json: string }, plan = JSON.parse(row.plan_json);
+    expect(plan.selection).toMatchObject({ tmdbId: 1, mediaType: "TV_SHOW", season: 1, episode: 26, episodeEnd: 28 });
+    expect(f.pipeline.task(f.manual.taskId).state).toBe("AWAITING_CONFIRMATION"); expect(f.pipeline.describeCandidate(candidate.id).requiresConfirmation).toBe(false);
+    const path = join(plan.target.path, ...plan.targetSegments), original = join(plan.source.path, ...plan.sourceSegments), inode = (await lstat(path)).ino;
+    expect(await readFile(path)).toEqual(await readFile(original)); await f.pipeline.tick(); await f.pipeline.tick(); expect((await lstat(path)).ino).toBe(inode);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM emby_delivery").get()).toEqual({ n: 1 });
+  });
+  it("自动入口保留真实特别篇 S0，不把它映射成正片季", async () => {
+    const f = await automaticFixture(), candidate = await f.downloadNext("测试剧集.S00E26-E28.mkv");
+    vi.spyOn(f.connections.tmdb, "detail").mockResolvedValue({ tmdbId: 1, mediaType: "TV_SHOW", title: "测试剧集", originalTitle: null, year: 2026, seasons: [0, 1] });
+    const episodes = vi.spyOn(f.connections.tmdb, "episodes").mockImplementation(async (_id, season) => [1, 26, 27, 28].map((episode) => ({ season, episode, title: null }))); cleanup.push(() => episodes.mockRestore());
+    await f.pipeline.tick(); const status = f.pipeline.automatic.status(candidate.id)!; expect(status.state).toBe("SUBMITTED");
+    const row = f.db.connection.prepare("SELECT plan_json FROM ingestion_operation WHERE id=?").get(status.operationId) as { plan_json: string }; expect(JSON.parse(row.plan_json).selection).toMatchObject({ season: 0, episode: 26, episodeEnd: 28 });
+  });
+  it("自动入口阻断已整理坐标的新版本，不覆盖旧成果或重复记交付", async () => {
+    const f = await automaticFixture(), first = await f.downloadNext(); await f.pipeline.tick(); const receipt = f.pipeline.automatic.status(first.id)!;
+    const original = f.db.connection.prepare("SELECT plan_json FROM ingestion_operation WHERE id=?").get(receipt.operationId) as { plan_json: string }, plan = JSON.parse(original.plan_json), path = join(plan.target.path, ...plan.targetSegments), inode = (await lstat(path)).ino;
+    const duplicate = await f.downloadNext("测试剧集.S03E26-E28.1080p.mkv"); await f.pipeline.tick();
+    expect(f.pipeline.automatic.status(duplicate.id)).toMatchObject({ state: "NEEDS_REVIEW", reason: expect.stringContaining("重复或重叠") }); expect((await lstat(path)).ino).toBe(inode);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM emby_delivery").get()).toEqual({ n: 1 });
+  });
+  it("自动预览重新核对真实分集，不把先前通过的候选预检当作执行授权", async () => {
+    const f = await automaticFixture(), candidate = await f.downloadNext();
+    const episodes = [1, 26, 27, 28].map((episode) => ({ season: 1, episode, title: null }));
+    vi.spyOn(f.connections.tmdb, "episodes").mockResolvedValueOnce(episodes).mockResolvedValue(episodes.filter((value) => value.episode !== 27));
+    await f.pipeline.tick(); expect(f.pipeline.automatic.status(candidate.id)).toMatchObject({ state: "NEEDS_REVIEW", reason: expect.stringContaining("没有唯一正片季") });
+    expect(f.pipeline.task(f.pipeline.describeCandidate(candidate.id).taskId!).matches[0]!.episodeCheck?.state).toBe("VALID");
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM emby_delivery").get()).toEqual({ n: 0 });
+  });
+  it.each([
+    { label: "合并集缺集", season: 3, lists: { 1: [26, 28] }, reason: "没有唯一正片季" },
+    { label: "跨季歧义", season: 3, lists: { 1: [26, 27, 28], 2: [26, 27, 28] }, reason: "多个正片季" },
+    { label: "特殊集不映射正片", season: 0, lists: { 1: [26, 27, 28] }, reason: "没有唯一正片季" },
+    { label: "必要分集请求失败", season: 3, lists: { 1: [26, 27, 28], 2: "failed" as const }, reason: "分集列表获取失败" },
+  ])("自动入口 $label 同样转人工，不提交 COPY 或 Emby", async ({ season, lists, reason }) => {
+    const f = await automaticFixture(), candidate = await f.downloadNext(`测试剧集.S0${season}E26-E28.mkv`);
+    vi.spyOn(f.connections.tmdb, "detail").mockResolvedValue({ tmdbId: 1, mediaType: "TV_SHOW", title: "测试剧集", originalTitle: null, year: 2026, seasons: Object.keys(lists).map(Number) });
+    const spy = vi.spyOn(f.connections.tmdb, "episodes").mockImplementation(async (_id, number) => { const entries = (lists as Record<number, number[] | "failed">)[number]; if (entries === "failed") throw new MediaNetworkError("NETWORK_UNAVAILABLE"); return (entries ?? []).map((episode) => ({ season: number, episode, title: null })); }); cleanup.push(() => spy.mockRestore());
+    await f.pipeline.tick(); expect(f.pipeline.automatic.status(candidate.id)).toMatchObject({ state: "NEEDS_REVIEW", reason: expect.stringContaining(reason) });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM emby_delivery").get()).toEqual({ n: 0 });
+  });
+  it("人工先领取已登记自动候选时，自动意图转人工且不接管该任务", async () => {
+    const f = await automaticFixture(), candidate = await f.downloadNext(), intent = new AutomaticPolicies(f.db).capture(candidate.id)!; f.pipeline.automatic.enqueue(intent);
+    const manual = await f.pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    expect(f.pipeline.automatic.status(candidate.id)).toMatchObject({ state: "NEEDS_REVIEW", reason: expect.stringContaining("人工领取") }); expect(f.pipeline.task(manual.taskId).state).toBe("AWAITING_CONFIRMATION");
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 2 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
+  it.each([false, true])("自动预览暂停恢复保留原意图，人工编辑=%s 时重新核对", async (edited) => {
+    const f = await automaticFixture(), candidate = await f.downloadNext(), target = f.pipeline.targets.get(f.target.id), check = target.check.bind(target);
+    let release!: () => void, entered!: () => void; const gate = new Promise<void>((done) => { release = done; }), ready = new Promise<void>((done) => { entered = done; }); cleanup.push(() => release());
+    const spy = vi.spyOn(target, "check").mockImplementationOnce(async () => { entered(); await gate; return check(); }); cleanup.push(() => spy.mockRestore());
+    const flight = f.pipeline.tick(); await ready; f.rules.control({ id: f.enabled.id, expectedVersion: 2, operation: "pause", requestKey: randomUUID() }); release(); await flight; spy.mockRestore();
+    const before = f.pipeline.automatic.status(candidate.id)!; expect(before).toMatchObject({ state: "PREVIEWING", operationId: null }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+    f.rules.control({ id: f.enabled.id, expectedVersion: 2, operation: "resume", requestKey: randomUUID() }); await f.pipeline.tick(); expect(f.pipeline.automatic.status(candidate.id)?.operationId).toBeNull();
+    if (edited) {
+      const taskId = f.pipeline.describeCandidate(candidate.id).taskId!, edit = { items: [{ taskId, expectedRevision: 0 }], patch: { title: "人工复核的作品" } }, preview = f.pipeline.recognitionEdits.preview(edit);
+      f.pipeline.recognitionEdits.save({ ...edit, fingerprint: preview.fingerprint, requestKey: randomUUID(), rematch: false });
+    }
+    await f.observe(); await f.pipeline.tick(); expect(f.pipeline.automatic.status(candidate.id)).toMatchObject({ id: before.id, state: edited ? "NEEDS_REVIEW" : "SUBMITTED" }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: edited ? 0 : 1 });
+  });
+  it("恢复成果复核期间自动意图等待，核对完成并重新稳定后沿原意图继续", async () => {
+    const f = await automaticFixture(), candidate = await f.downloadNext(), intent = new AutomaticPolicies(f.db).capture(candidate.id)!; f.pipeline.automatic.enqueue(intent);
+    const root = f.roots.files.get(f.grant.id), inspect = root.inspectCompleted.bind(root); let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((done) => { release = done; }), ready = new Promise<void>((done) => { entered = done; }); cleanup.push(() => release());
+    const spy = vi.spyOn(root, "inspectCompleted").mockImplementationOnce(async (...args) => { entered(); await gate; return inspect(...args); }); cleanup.push(() => spy.mockRestore());
+    f.downloads.quiesce(); f.downloads.reconcileRestored(); await ready;
+    const before = f.pipeline.automatic.status(candidate.id)!;
+    try { await f.pipeline.automatic.tick(); expect(f.pipeline.automatic.status(candidate.id)).toMatchObject({ state: "PENDING", reason: expect.stringContaining("正在恢复核验") }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); }
+    finally { release(); }
+    await expect.poll(() => (f.db.connection.prepare("SELECT state FROM download_item WHERE id=(SELECT managed_item_id FROM ingestion_candidate WHERE id=?)").get(candidate.id) as { state: string }).state, { timeout: 10000 }).toBe("COMPLETED"); spy.mockRestore();
+    f.pipeline.resetObservations(); await f.pipeline.tick(); expect(f.pipeline.automatic.status(candidate.id)?.state).toBe("PENDING"); await f.observe(); await f.pipeline.tick();
+    expect(f.pipeline.automatic.status(candidate.id)).toMatchObject({ id: before.id, state: "SUBMITTED" }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 });
+  });
+  it("恢复成果核验明确失败后转人工，不将终止的核验显示为仍在等待", async () => {
+    const f = await automaticFixture(), candidate = await f.downloadNext(), policies = new AutomaticPolicies(f.db), intent = policies.capture(candidate.id)!;
+    await writeFile(join(f.rootPath, ...candidate.relativePath.split("/")), "隔离成果已被外部替换，不能自动复制"); f.downloads.quiesce(); f.downloads.reconcileRestored();
+    await expect.poll(() => (f.db.connection.prepare("SELECT failure_code FROM download_item WHERE id=(SELECT managed_item_id FROM ingestion_candidate WHERE id=?)").get(candidate.id) as { failure_code: string | null }).failure_code, { timeout: 10000 }).toBe("CONFLICT");
+    expect(policies.check(intent.candidateId, intent.sourceId, intent.context)).toMatchObject({ state: "MANUAL", reason: expect.stringContaining("恢复核验未通过") });
+    f.pipeline.automatic.enqueue(intent); await f.pipeline.automatic.tick(); expect(f.pipeline.automatic.status(candidate.id)?.state).toBe("NEEDS_REVIEW"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
+  it("自动领取后核心重建保留任务和请求收据，重新观察后只提交一个文件计划", async () => {
+    const f = await automaticFixture(), candidate = await f.downloadNext(), intent = new AutomaticPolicies(f.db).capture(candidate.id)!; f.pipeline.automatic.enqueue(intent); await f.pipeline.automatic.tick();
+    const before = f.db.connection.prepare("SELECT id,task_id,recognition_key,preview_key,confirmation_key FROM ingestion_automatic WHERE candidate_id=?").get(candidate.id); await f.pipeline.close();
+    const restored = new IngestionPipeline(f.db, () => f.parser, f.connections, f.wall, f.monotonic, f.controlledWatch); cleanup.push(() => restored.close()); await restored.authorizeTarget(f.target); await restored.authorizeManagedSource({ sourceId: f.bootstrap.sourceId, sourceVersion: f.bootstrap.sourceVersion, source: f.bootstrap.source });
+    await restored.tick(); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+    for (let index = 0; index < 12; index++) { f.tickClock(); await restored.scan(f.bootstrap.sourceId); } await restored.tick();
+    expect(restored.automatic.status(candidate.id)?.state).toBe("SUBMITTED"); expect(f.db.connection.prepare("SELECT id,task_id,recognition_key,preview_key,confirmation_key FROM ingestion_automatic WHERE candidate_id=?").get(candidate.id)).toEqual(before);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 2 });
+  });
   it("删除废弃未提交执行和旧预览，恢复保持暂停且不会重放原意图", async () => {
     const f = await setup(), p = await f.preview(f.configure()), source = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() }, undefined);
     const execution = await f.rules.executions.start({ id: source.id, expectedVersion: 1, requestKey: randomUUID() });

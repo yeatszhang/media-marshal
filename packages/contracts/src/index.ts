@@ -67,6 +67,7 @@ export const sourceDraftSchema = z.strictObject({
 });
 export type SourceDraft = z.infer<typeof sourceDraftSchema>;
 export const sourceSchema = sourceDraftSchema.extend({
+  automatic: z.boolean().default(false),
   mode: z.enum(["local", "managed"]).optional(),
   downloadRootId: z.uuid().nullable().optional(),
   id: z.uuid(),
@@ -147,7 +148,7 @@ export const coreStatusSchema = z.strictObject({
   schemaVersion: z.number().int().nonnegative(),
   sourceCount: z.number().int().nonnegative(),
   taskCount: z.number().int().nonnegative(),
-  mode: z.literal("manual-only"),
+  mode: z.enum(["manual-only", "automatic-enabled"]),
   parser: z.enum(["unavailable", "ready"]),
   correctionFiles: z.enum(["unavailable", "ready"]).default("unavailable"),
 });

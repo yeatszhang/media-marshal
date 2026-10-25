@@ -6,7 +6,7 @@ const organization = z.strictObject({
   targetPath: path,
   mediaType: z.enum(["AUTO", "MOVIE", "TV_SHOW"]).default("AUTO"),
   operation: z.literal("COPY").default("COPY"),
-  automatic: z.literal(false).default(false),
+  automatic: z.boolean().default(false),
 });
 export const sourceConfigurationSchema = z.discriminatedUnion("type", [
   z.strictObject({
@@ -52,15 +52,18 @@ export const sourceRuleDraftSchema = z.strictObject({
   expectedLifecycleRevision: version.optional(),
   configuration: sourceConfigurationSchema,
 });
+export const automaticSampleSchema = z.strictObject({ previewId: id, title: z.string().max(500), sourcePath: z.string().max(16384), targetPath: z.string().max(16384), size: z.number().int().positive() });
+export type AutomaticSample = z.infer<typeof automaticSampleSchema>;
 export const sourceRulePreviewSchema = z.strictObject({
   id, sourceId: id, version, draftRevision: version, configuration: sourceConfigurationSchema,
   lifecycleRevision: version.optional(),
   state: z.enum(["BUILDING", "READY", "FAILED", "EXPIRED", "APPLIED"]), expiresAt: z.number().int(),
   download: downloadPreviewSchema.nullable(),
+  automaticSample: automaticSampleSchema.nullable().optional(), automaticBlockedReason: z.string().max(500).nullable().optional(),
   organizationConflicts: z.array(z.strictObject({ sourceId: id, name: z.string().max(100) })).max(1000),
 });
 export type SourceRulePreview = z.output<typeof sourceRulePreviewSchema>;
-export const sourceRuleApplySchema = z.strictObject({ previewId: id, requestKey: id, runOnce: z.boolean().default(false) });
+export const sourceRuleApplySchema = z.strictObject({ previewId: id, requestKey: id, runOnce: z.boolean().default(false), automaticConsent: z.strictObject({ previewId: id, accepted: z.literal(true) }).optional() });
 export const sourceLegacyReferenceSchema = z.strictObject({
   kind: z.enum(["local-source", "subscription", "managed-binding", "download-job"]), id, sourceId: id.nullable(),
   status: z.enum(["MAPPED", "REVIEW_REQUIRED", "HISTORICAL"]),

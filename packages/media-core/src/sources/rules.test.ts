@@ -15,6 +15,7 @@ import { MediaConnections } from "../application/media-connections";
 import { IngestionPipeline } from "../ingestion/pipeline";
 import { SourceRules } from "./rules";
 import { SourceRoot } from "../files/source-root";
+import { AutomaticPolicies } from "../ingestion/automatic-policy";
 import { LocalSourceHealthChecks } from "./local-health";
 
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
@@ -38,6 +39,60 @@ async function fixture() {
   const preview = (row: SourceRule) => rules.preview({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, requestKey: randomUUID() });
   return { directory, sourcePath, targetPath, db, rules, grants, draft, pipeline, preview, advance(ms: number) { clock += ms; } };
 }
+async function consentFixture() {
+  const f = await fixture(), draft = f.rules.configure(f.draft), preview = f.preview(draft), enabled = await f.rules.apply({ previewId: preview.id, requestKey: randomUUID() }, f.grants);
+  const taskId = randomUUID(), candidateId = randomUUID(), sampleId = randomUUID(), stamp = new Date().toISOString(), info = await lstat(join(f.sourcePath, "保留.mp4"), { bigint: true }), snapshot = { device: String(info.dev), inode: String(info.ino), birthtimeNs: String(info.birthtimeNs), modifiedNs: String(info.mtimeNs), changedNs: String(info.ctimeNs), size: Number(info.size) };
+  f.db.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,parsed_json,created_at,updated_at) VALUES(?,?,?,'AWAITING_CONFIRMATION','{}',?,?)").run(taskId, enabled.localSourceId, join(f.sourcePath, "保留.mp4"), stamp, stamp);
+  f.db.connection.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,attribute_key,is_current,snapshot_json,state,task_id,created_at,updated_at) VALUES(?,?,?,'fixture-version','fixture-attributes',1,?,'QUEUED',?,?,?)").run(candidateId, enabled.localSourceId, JSON.stringify(["保留.mp4"]), JSON.stringify(snapshot), taskId, stamp, stamp);
+  const plan = { sourceVersion: 1, recognitionRevision: 0, source: f.grants.source, target: f.grants.target, sourceSegments: ["保留.mp4"], targetSegments: ["示例作品", "示例作品.mp4"], snapshot, selection: { tmdbId: 1, mediaType: "MOVIE", season: null, episode: null, episodeEnd: null }, metadata: { title: "示例作品" }, sourceLifecycles: [{ id: enabled.id, revision: 0 }] };
+  f.db.connection.prepare("INSERT INTO ingestion_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,'fixture',?,?)").run(sampleId, randomUUID(), taskId, JSON.stringify(plan), Date.now() + 600000);
+  const automatic = () => { const draft = f.rules.configure({ id: enabled.id, expectedVersion: 1, expectedDraftRevision: 1, requestKey: randomUUID(), configuration: { ...enabled.configuration!, organization: { ...enabled.configuration!.organization!, automatic: true } } }); return f.preview(draft); };
+  return { ...f, enabled, taskId, candidateId, sampleId, plan, automatic };
+}
+describe("首次人工预览与自动策略授权", () => {
+  it("未配置来源或没有可归属预览时不能启用自动策略，不产生部分生效", async () => {
+    const f = await fixture(), draft = f.rules.configure({ ...f.draft, configuration: { ...f.draft.configuration, organization: { ...f.draft.configuration.organization!, automatic: true } } }), preview = f.preview(draft);
+    expect(preview).toMatchObject({ state: "FAILED", automaticSample: null, automaticBlockedReason: expect.stringContaining("COPY 预览") });
+    await expect(f.rules.apply({ previewId: preview.id, requestKey: randomUUID() }, f.grants)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.rules.get(draft.id)?.version).toBe(0); expect(f.pipeline.bootstrap()).toEqual([]); expect(f.db.connection.prepare("SELECT count(*) AS n FROM source_automatic_consent").get()).toEqual({ n: 0 });
+  });
+  it("必须明确确认冻结的真实预览，授权与版本同事务提交；本地未知行为仍转人工", async () => {
+    const f = await consentFixture(), preview = f.automatic(); expect(preview).toMatchObject({ state: "READY", automaticSample: { previewId: f.sampleId, title: "示例作品", sourcePath: join(f.sourcePath, "保留.mp4") } });
+    for (const automaticConsent of [undefined, { previewId: randomUUID(), accepted: true as const }]) await expect(f.rules.apply({ previewId: preview.id, requestKey: randomUUID(), ...(automaticConsent ? { automaticConsent } : {}) }, f.grants)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.rules.get(f.enabled.id)?.version).toBe(1); const result = await f.rules.apply({ previewId: preview.id, requestKey: randomUUID(), automaticConsent: { previewId: f.sampleId, accepted: true } }, f.grants); expect(result.configuration?.organization?.automatic).toBe(true);
+    const policies = new AutomaticPolicies(f.db), intent = policies.capture(f.candidateId)!; expect(policies.check(intent.candidateId, intent.sourceId, intent.context)).toMatchObject({ state: "MANUAL", reason: expect.stringContaining("尚未完整验证") });
+    f.pipeline.automatic.enqueue(intent); await f.pipeline.automatic.tick(); expect(f.pipeline.automatic.status(f.candidateId)).toMatchObject({ state: "NEEDS_REVIEW" });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(await readFile(join(f.sourcePath, "保留.mp4"), "utf8")).toBe("preserve-original");
+  });
+  it("未填写与 null 都表示默认忽略，不误判为新范围；显式空列表仍改变范围", async () => {
+    const f = await consentFixture(), original = f.enabled.configuration!;
+    if (original.type !== "local") throw new Error("隔离来源应为本地");
+    const withDefault = f.rules.configure({ id: f.enabled.id, expectedVersion: 1, expectedDraftRevision: 1, requestKey: randomUUID(), configuration: { ...original, ignoredFilePatterns: null, organization: { ...original.organization, automatic: true } } });
+    expect(f.preview(withDefault)).toMatchObject({ state: "READY", automaticSample: { previewId: f.sampleId } });
+    const withoutIgnore = f.rules.configure({ id: f.enabled.id, expectedVersion: 1, expectedDraftRevision: 2, requestKey: randomUUID(), configuration: { ...original, ignoredFilePatterns: [], organization: { ...original.organization, automatic: true } } });
+    expect(f.preview(withoutIgnore)).toMatchObject({ state: "FAILED", automaticSample: null });
+  });
+  it("自动预览本身不能授权首次自动策略，同一路径更换卷身份不复用旧样例", async () => {
+    const f = await consentFixture();
+    f.db.connection.prepare("INSERT INTO ingestion_automatic(id,candidate_id,source_id,context,state,recognition_key,preview_key,confirmation_key,created_at,updated_at) SELECT ?,?,?,'context','PREVIEWING',?,request_key,?,?,? FROM ingestion_preview WHERE id=?")
+      .run(randomUUID(), f.candidateId, f.enabled.id, randomUUID(), randomUUID(), new Date().toISOString(), new Date().toISOString(), f.sampleId);
+    expect(f.automatic().automaticSample).toBeNull(); f.db.connection.prepare("DELETE FROM ingestion_automatic").run();
+    const configuration = f.rules.get(f.enabled.id)!.draft;
+    expect(f.rules.automaticConsents.sample(f.enabled.id, configuration)?.previewId).toBe(f.sampleId);
+    f.db.connection.prepare("UPDATE media_target_root SET grant_json=? WHERE id=?").run(JSON.stringify({ ...f.grants.target, volume: { ...f.grants.target.volume, volumeId: randomUUID() } }), f.grants.target.id);
+    expect(f.rules.automaticConsents.sample(f.enabled.id, configuration)).toBeNull();
+  });
+  it("授权落库失败整体回滚；已接受范围可重用样例，范围变更须先人工预览", async () => {
+    const f = await consentFixture(), preview = f.automatic(), input = { previewId: preview.id, requestKey: randomUUID(), automaticConsent: { previewId: f.sampleId, accepted: true as const } };
+    f.db.connection.exec("CREATE TRIGGER fail_auto_consent BEFORE INSERT ON source_automatic_consent BEGIN SELECT RAISE(ABORT,'受控授权写入失败'); END;");
+    await expect(f.rules.apply(input, f.grants)).rejects.toThrow("受控授权"); expect(f.rules.get(f.enabled.id)?.version).toBe(1); expect(f.db.connection.prepare("SELECT count(*) AS n FROM source_automatic_consent").get()).toEqual({ n: 0 });
+    f.db.connection.exec("DROP TRIGGER fail_auto_consent"); const enabled = await f.rules.apply(input, f.grants); f.advance(610000);
+    const renamed = f.rules.configure({ id: enabled.id, expectedVersion: 2, expectedDraftRevision: 2, requestKey: randomUUID(), configuration: { ...enabled.configuration!, name: "只改名称" } });
+    expect(f.preview(renamed).automaticSample?.previewId).toBe(f.sampleId);
+    const changed = f.rules.configure({ id: enabled.id, expectedVersion: 2, expectedDraftRevision: 3, requestKey: randomUUID(), configuration: { ...enabled.configuration!, type: "local", sourcePath: join(f.directory, "另一个范围") } });
+    expect(f.preview(changed)).toMatchObject({ state: "FAILED", automaticSample: null });
+  });
+});
 describe("统一来源配置与真实 SQLite 事务", () => {
   it("手动补扫先持久返回身份，读取中暂停不提交迟到候选，恢复沿原意图重新观察", async () => {
     const f = await fixture(), draft = f.rules.configure(f.draft), source = await f.rules.apply({ previewId: f.preview(draft).id, requestKey: randomUUID() }, f.grants);
