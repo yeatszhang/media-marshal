@@ -5,6 +5,8 @@ import { cloudActions, cloudCredentialDraftSchema, cloudLoginDraftSchema, cloudD
 export * from "./cloud/index.js";
 import { ingestionActions, ingestionConfigureSchema } from "./ingestion.js";
 export * from "./ingestion.js";
+import { correctionActions } from "./corrections.js";
+export * from "./corrections.js";
 import { embyActions } from "./emby.js";
 export * from "./emby.js";
 import { sourceRuleActions } from "./source-rules.js";
@@ -108,6 +110,9 @@ export const taskSchema = z.strictObject({
   status: taskStatusSchema,
   deliveryStatus: deliveryStatusSchema,
   targetPath: z.string().nullable(),
+  correctedFromId: z.uuid().nullable().optional(),
+  correctedToId: z.uuid().nullable().optional(),
+  activeCorrectionId: z.uuid().nullable().optional(),
   updatedAt: z.string(),
 });
 export type MediaTask = z.infer<typeof taskSchema>;
@@ -150,6 +155,7 @@ export type DesktopRuntime = z.infer<typeof runtimeSchema>;
 
 const empty = z.strictObject({});
 export const coreActions = {
+  ...correctionActions,
   ...sourceRuleActions,
   ...ingestionActions,
   ...embyActions,

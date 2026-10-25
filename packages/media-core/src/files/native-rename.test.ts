@@ -65,4 +65,7 @@ describe.skipIf(process.platform !== "darwin")("修正文件组件的资源完�
     await symlink(work, join(f.path, "跳转")); await expect(f.root.inspectForRelocation(["跳转", "外部.mkv"])).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" });
     const file = await f.root.inspectForRelocation(["视频.mkv"]); await rename(f.path, f.path + "-原根"); await mkdir(f.path); await expect(f.root.renameForRelocation(["视频.mkv"], f.root, ["修正.mkv"], file.snapshot, native)).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" }); expect(await readFile(join(f.path + "-原根", "视频.mkv"), "utf8")).toBe("保留");
   });
+  it("规划即拒绝不能原样表示为 UTF-8 的名称，合法非 BMP 字符保持原样", async () => {
+    const f = await fixture(); expect(() => f.root.segments(["坏名称\ud800.mkv"])).toThrow(expect.objectContaining({ code: "UNSUPPORTED_CAPABILITY" })); expect(() => f.root.segments(["坏名称\udc00.mkv"])).toThrow(); expect(f.root.segments(["合法影片🎬.mkv"])).toEqual(["合法影片🎬.mkv"]);
+  });
 });

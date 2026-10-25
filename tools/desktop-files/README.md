@@ -53,7 +53,7 @@ Core 的 `files/native-rename.ts` 校验 Main 私有启动参数指定的 manife
 
 ## 文件日志组件验证
 
-schema v21 的 `FileRelocations` 已在内部组件层连接上述原语，冻结逐文件计划、执行同卷隔离／改名或 COPY／发布／旧目标回收，并在历史记账前保留位置占用和暂存锚点。它不自行建立业务历史或 Emby 交付，也尚未进入客户端修正入口和安装包。
+schema v21 的 `FileRelocations` 已在内部组件层连接上述原语，冻结逐文件计划、执行同卷隔离／改名或 COPY／发布／旧目标回收，并在历史记账前保留位置占用和暂存锚点。它不自行建立业务历史或 Emby 交付；schema v22 的上层 `Corrections` 已接入 Core 命令、历史和交付事务，客户端修正页面和安装包仍待接入。
 
 ```sh
 npm run build -w @media-marshal/contracts
@@ -63,3 +63,6 @@ ELECTRON_RUN_AS_NODE=1 node_modules/.bin/electron tools/desktop-files/check-relo
 ```
 
 日志测试的六个独立进程检查点使用 `relocation-crash-child.mjs`，父测试只对自己启动并已到达检查点的进程发 SIGKILL，核对退出后才打开原库恢复。单元 COPY 分支使用不同授权卷身份，真实跨设备另由 HFS+ 自有映像工具验证 APFS → HFS+、HFS+ → APFS 和 HFS+ 本卷改名；双向 COPY 都核对新文件后才回收旧媒体，并保留下载原件。工具先关闭所属资源，核对映像与设备归属后卸载，未确认卸载时保留目录而不递归删除。脱敏结果为 `fixtures/mac-relocation-journal-2026-10-26.json`，不代替修正界面、附属文件、批量历史或签名安装验收。
+
+
+schema v22 的上层业务测试为 `npm test -- packages/media-core/src/ingestion/corrections.test.ts`。`correction-crash-child.mjs` 仅用于该测试的两个独立进程检查点：父测试核对检查点后 SIGKILL，重建不恢复下载来源、不注入个人凭据，只按已确认媒体目标计划补历史或清理。Core 的私有启动参数可传入经完整性校验的原语；Main／worker 资源接线和客户端页面仍未完成，不据此宣称安装态修正可用。

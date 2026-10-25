@@ -20,6 +20,13 @@ const request = (action = "runtime.get", payload: unknown = {}) => ({
   payload,
 });
 describe("受限进程契约", () => {
+  it("修正只接受任务与已授权目标身份，完整文件清单确认不可省略，不接受路径或证据注入", () => {
+    const taskId = randomUUID(), requestKey = randomUUID(), previewId = randomUUID(), input = { taskId, requestKey, selection: { tmdbId: 9, mediaType: "MOVIE" } };
+    expect(parseCoreRequest(request("corrections.preview", input))).toMatchObject({ payload: { includeAccessories: true, selection: { season: null, episode: null, episodeEnd: null } } });
+    for (const extra of [{ targetPath: "/任意目标" }, { sourcePath: "/任意来源" }, { nativeFiles: { manifestPath: "/任意模块" } }, { expected: { sha256: "a".repeat(64) } }]) expect(() => parseCoreRequest(request("corrections.preview", { ...input, ...extra }))).toThrow();
+    for (const extra of [{}, { filesComplete: false }, { filesComplete: true, overwrite: true }]) expect(() => parseCoreRequest(request("corrections.confirm", { previewId, requestKey, ...extra }))).toThrow(); expect(parseCoreRequest(request("corrections.confirm", { previewId, requestKey, filesComplete: true }))).toMatchObject({ payload: { filesComplete: true } });
+    expect(() => parseCoreRequest(request("corrections.list", { page: 1000001 }))).toThrow(); expect(() => parseCoreRequest(request("corrections.retry", { id: "../其他任务" }))).toThrow();
+  });
   it("批量整理只接收已有任务、版本与作品选择，明确文件完整才能确认，分页和数量有界", () => {
     const id = randomUUID(), requestKey = randomUUID(), item = { taskId: randomUUID(), expectedRevision: 0, selection: { tmdbId: 7, mediaType: "TV_SHOW", season: 1, episode: 2 } };
     expect(parseCoreRequest(request("ingestion.preview-organize-batch", { requestKey, items: [item] }))).toMatchObject({ payload: { includeAccessories: true } });

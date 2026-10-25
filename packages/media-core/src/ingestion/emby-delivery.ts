@@ -11,10 +11,10 @@ import type { IngestionPipeline } from "./pipeline.js";
 
 interface Connection { id: string; version: number; server_id: string; base_url: string; valid: number }
 interface Library { target_root_id: string; library_id: string; library_path: string }
-interface Delivery { task_id: string; operation_id: string; state: string; refresh_attempts: number; check_started_at: number | null; target_path: string; target_root_id: string; evidence_json: string; plan_json: string }
+interface Delivery { task_id: string; operation_id: string | null; correction_id: string | null; state: string; refresh_attempts: number; check_started_at: number | null; target_path: string; target_root_id: string; evidence_json: string; plan_json: string }
 interface DeliveryPlan { targetSegments: string[]; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null } }
 const contains = (parent: string, child: string) => { const part = relative(parent, child); return !part || (part !== ".." && !part.startsWith(".." + sep) && !isAbsolute(part)); };
-const query = "SELECT d.*,t.target_path,o.target_root_id,o.evidence_json,o.plan_json FROM emby_delivery d JOIN media_task t ON t.id=d.task_id AND t.status='DONE' JOIN ingestion_operation o ON o.id=d.operation_id AND o.phase='RECORDED'";
+const query = "SELECT d.*,t.target_path,o.target_root_id,o.evidence_json,o.plan_json FROM emby_delivery d JOIN media_task t ON t.id=d.task_id AND t.status='DONE' AND NOT EXISTS(SELECT 1 FROM correction_item ci WHERE ci.task_id=t.id AND ci.state IN ('PENDING','RUNNING','NEEDS_ATTENTION')) JOIN (SELECT id,task_id,target_root_id,evidence_json,plan_json,'ingestion' AS kind FROM ingestion_operation WHERE phase='RECORDED' UNION ALL SELECT id,new_task_id AS task_id,target_root_id,evidence_json,plan_json,'correction' AS kind FROM media_correction_operation WHERE phase='RECORDED') o ON o.task_id=d.task_id AND ((o.kind='ingestion' AND o.id=d.operation_id) OR (o.kind='correction' AND o.id=d.correction_id))";
 
 /** 只推进交付，不调用 COPY。网络失败与文件完成状态完全分开。 */
 export class EmbyDelivery {
@@ -28,6 +28,7 @@ export class EmbyDelivery {
     const db = database.connection, connection = this.current();
     db.transaction(() => {
       db.prepare("INSERT INTO emby_delivery(task_id,operation_id,connection_id,connection_version,state,next_attempt_at,updated_at) SELECT o.task_id,o.id,?,?,'REFRESH_PENDING',?,? FROM ingestion_operation o JOIN media_task t ON t.id=o.task_id WHERE o.phase='RECORDED' AND t.status='DONE' AND NOT EXISTS(SELECT 1 FROM emby_delivery d WHERE d.task_id=o.task_id)").run(connection?.id ?? null, connection?.version ?? null, now() + 30000, new Date(now()).toISOString());
+      db.prepare("INSERT INTO emby_delivery(task_id,correction_id,connection_id,connection_version,state,next_attempt_at,updated_at) SELECT o.new_task_id,o.id,?,?,'REFRESH_PENDING',?,? FROM media_correction_operation o JOIN media_task t ON t.id=o.new_task_id WHERE o.phase='RECORDED' AND t.status='DONE' AND NOT EXISTS(SELECT 1 FROM emby_delivery d WHERE d.task_id=o.new_task_id)").run(connection?.id ?? null, connection?.version ?? null, now() + 30000, new Date(now()).toISOString());
       db.prepare("UPDATE media_task SET delivery_status='REFRESH_PENDING' WHERE id IN (SELECT task_id FROM emby_delivery WHERE state='REFRESH_PENDING') AND status='DONE'").run();
     })();
   }
@@ -139,6 +140,7 @@ export class EmbyDelivery {
     db.transaction(() => { db.prepare("UPDATE emby_connection SET valid=0").run(); db.prepare("UPDATE emby_delivery SET state='NEEDS_ATTENTION',emby_item_id=NULL,last_failure=?").run(reason); db.prepare("UPDATE media_task SET delivery_status='NEEDS_ATTENTION' WHERE id IN (SELECT task_id FROM emby_delivery)").run(); })();
   }
   retry(taskId: string) {
+    if (!this.database.connection.prepare("SELECT 1 FROM media_task t WHERE t.id=? AND t.status='DONE' AND NOT EXISTS(SELECT 1 FROM correction_item ci WHERE ci.task_id=t.id AND ci.state IN ('PENDING','RUNNING','NEEDS_ATTENTION'))").get(taskId)) throw new DesktopError("CONFLICT", "任务已被修正、正在修正或文件尚未完成，请查看最新任务与修正作业");
     const connection = this.current(); if (!connection || !this.isVerified(connection)) throw new DesktopError("CONFLICT", "请先在设置页验证 Emby 连接");
     const result = this.database.connection.prepare("UPDATE emby_delivery SET connection_id=?,connection_version=?,state='REFRESH_PENDING',refresh_attempts=0,next_attempt_at=?,check_started_at=NULL,last_failure=NULL,emby_item_id=NULL WHERE task_id=?").run(connection.id, connection.version, this.now() + 30000, taskId);
     if (!result.changes) throw new DesktopError("CONFLICT", "文件尚未完成，不能重试交付");
@@ -148,19 +150,19 @@ export class EmbyDelivery {
     return this.publicRequest(() => this.verifiedItemUrl(taskId));
   }
   private async verifiedItemUrl(taskId: string) {
-    const connection = this.current(), row = this.database.connection.prepare("SELECT d.* FROM emby_delivery d JOIN media_task t ON t.id=d.task_id AND t.status='DONE' JOIN ingestion_operation o ON o.id=d.operation_id AND o.phase='RECORDED' WHERE d.task_id=? AND d.state='COLLECTED'").get(taskId) as { connection_id: string; connection_version: number; emby_item_id: string | null } | undefined;
+    const connection = this.current(), row = this.database.connection.prepare(query + " WHERE d.task_id=? AND d.state='COLLECTED'").get(taskId) as { connection_id: string; connection_version: number; emby_item_id: string | null } | undefined;
     if (!row?.emby_item_id || !connection || !this.isVerified(connection) || row.connection_id !== connection.id || row.connection_version !== connection.version) throw new DesktopError("CONFLICT", "收录证据尚未通过，请先核对交付");
     const revision = this.connections.version, client = this.client(), info = await client.info(this.lifetime.signal);
     if (this.closed) throw new DesktopError("INTERRUPTED", "交付服务正在停止", true);
     const latest = this.current();
-    if (revision !== this.connections.version || !latest || !this.isVerified(latest) || latest.id !== connection.id || latest.version !== connection.version || !this.database.connection.prepare("SELECT 1 FROM emby_delivery d JOIN media_task t ON t.id=d.task_id AND t.status='DONE' JOIN ingestion_operation o ON o.id=d.operation_id AND o.phase='RECORDED' WHERE d.task_id=? AND d.state='COLLECTED' AND d.connection_id=? AND d.connection_version=? AND d.emby_item_id=?").get(taskId, connection.id, connection.version, row.emby_item_id)) throw new DesktopError("CONFLICT", "收录或连接状态已变化，请重新核对交付");
+    if (revision !== this.connections.version || !latest || !this.isVerified(latest) || latest.id !== connection.id || latest.version !== connection.version || !this.database.connection.prepare(query + " WHERE d.task_id=? AND d.state='COLLECTED' AND d.connection_id=? AND d.connection_version=? AND d.emby_item_id=?").get(taskId, connection.id, connection.version, row.emby_item_id)) throw new DesktopError("CONFLICT", "收录或连接状态已变化，请重新核对交付");
     if (info.Id !== connection.server_id) { this.invalidate(); throw new DesktopError("CONFLICT", "服务器身份已变化，请重新验证"); }
     return client.itemUrl(row.emby_item_id, connection.server_id);
   }
   start() { if (!this.timer && !this.closed) { this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 1000); void this.tick().catch(() => {}); } }
   tick(): Promise<void> { if (this.closed) return Promise.resolve(); return this.flight ??= this.run().finally(() => { this.flight = undefined; }); }
   private update(taskId: string, state: "REFRESH_PENDING" | "WAITING_LIBRARY" | "COLLECTED" | "NEEDS_ATTENTION", failure: string | null, next: number, itemId: string | null = null) {
-    if (!this.database.connection.prepare("SELECT 1 FROM media_task t JOIN ingestion_operation o ON o.task_id=t.id WHERE t.id=? AND t.status='DONE' AND o.phase='RECORDED'").get(taskId)) return;
+    if (!this.database.connection.prepare(query + " WHERE d.task_id=?").get(taskId)) return;
     const db = this.database.connection; db.transaction(() => { db.prepare("UPDATE emby_delivery SET state=?,last_failure=?,next_attempt_at=?,emby_item_id=?,updated_at=? WHERE task_id=?").run(state, failure, next, itemId, new Date(this.now()).toISOString(), taskId); db.prepare("UPDATE media_task SET delivery_status=? WHERE id=? AND status='DONE'").run(state, taskId); })();
   }
   private refreshed(connection: Connection, rows: Delivery[]) {

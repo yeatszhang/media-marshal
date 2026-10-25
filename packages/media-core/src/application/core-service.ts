@@ -273,7 +273,7 @@ export class CoreService {
     ).count;
     const items = this.database.connection
       .prepare(
-        `SELECT id,source_id AS sourceId,source_path AS sourcePath,title,status,delivery_status AS deliveryStatus,target_path AS targetPath,updated_at AS updatedAt FROM media_task${where} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`,
+        `SELECT id,source_id AS sourceId,source_path AS sourcePath,title,status,delivery_status AS deliveryStatus,target_path AS targetPath,corrected_from_id AS correctedFromId,corrected_to_id AS correctedToId,(SELECT o.id FROM media_correction_operation o WHERE (o.original_task_id=media_task.id OR o.new_task_id=media_task.id) AND (o.phase!='RECORDED' OR EXISTS(SELECT 1 FROM app_setting s WHERE s.key='correction.restore.audit.'||o.id)) ORDER BY o.created_at DESC LIMIT 1) AS activeCorrectionId,updated_at AS updatedAt FROM media_task${where} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`,
       )
       .all(
         ...params,

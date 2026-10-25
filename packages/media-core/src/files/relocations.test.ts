@@ -70,10 +70,18 @@ describe.skipIf(process.platform !== "darwin")("持久修正文件步骤（真�
     const f = await fixture(true, api); path = f.fromPath; const row = f.engine.plan(f.input), paused = await f.engine.run(row.id); expect(paused).toMatchObject({ phase: "PUBLISHED", failure_code: "LOCAL_UNAVAILABLE" }); const published = (await lstat(join(f.toPath, ...f.input.to.segments))).ino;
     await rename(path + "-离线", path); f.engine.retry(row.id); expect(await f.engine.run(row.id)).toMatchObject({ phase: "DONE" }); expect((await lstat(join(f.toPath, ...f.input.to.segments))).ino).toBe(published);
   });
+  it("核验旧隔离文件期间新目标被改写，删除前复核保留旧媒体，不把先前摘要当作当前证据", async () => {
+    const f = await fixture(true), source = f.roots.get(f.fromGrant.id), remove = source.removeRelocation.bind(source); vi.spyOn(source, "removeRelocation").mockImplementationOnce(async (...args) => { await writeFile(join(f.toPath, ...f.input.to.segments), "新目标已被外部改写"); return remove(...args); }); const row = f.engine.plan(f.input);
+    expect(await f.engine.run(row.id)).toMatchObject({ phase: "NEEDS_ATTENTION", resume_phase: "REMOVING_OLD" }); expect(await readFile(join(f.fromPath, ...source.relocationSegments(row.id)))).toEqual(f.bytes); expect(await readFile(join(f.toPath, ...f.input.to.segments), "utf8")).toBe("新目标已被外部改写"); expect(await readFile(join(f.path, "下载原件.mkv"))).toEqual(f.bytes);
+  });
   it("复制中取消保留原媒体和持久阶段，恢复使用新 attempt 而不追加损坏的半文件", async () => {
     const f = await fixture(true, native, Buffer.alloc(3 * 1024 * 1024, 37)), controller = new AbortController(), original = SourceRoot.prototype.digest; let aborted = false;
     vi.spyOn(SourceRoot.prototype, "digest").mockImplementation(function (this: SourceRoot, handle, size, signal, consume) { return original.call(this, handle, size, signal, async (bytes) => { await consume?.(bytes); if (!aborted) { aborted = true; controller.abort(); } }); });
     const row = f.engine.plan(f.input), stopped = await f.engine.run(row.id, controller.signal); expect(stopped).toMatchObject({ phase: "COPYING", failure_code: "INTERRUPTED" }); expect(await readFile(join(f.fromPath, "原视频.mkv"))).toEqual(f.bytes); vi.restoreAllMocks(); f.engine.retry(row.id); const done = await f.engine.run(row.id); expect(done.phase).toBe("DONE"); expect(done.attempt_id).not.toBe(stopped.attempt_id); expect(await readFile(join(f.toPath, ...f.input.to.segments))).toEqual(f.bytes);
+  });
+  it("复制完成后的暂存核验也可暂停，未校验的文件不发布，恢复沿新尝试继续", async () => {
+    const f = await fixture(true), target = f.roots.get(f.toGrant.id), verify = target.verifyStage.bind(target); vi.spyOn(target, "verifyStage").mockImplementationOnce(async (...args) => { f.engine.interrupt(); return verify(...args); });
+    const row = f.engine.plan(f.input), stopped = await f.engine.run(row.id); expect(stopped).toMatchObject({ phase: "COPYING", failure_code: "INTERRUPTED" }); await expect(lstat(join(f.toPath, ...f.input.to.segments))).rejects.toMatchObject({ code: "ENOENT" }); expect(await readFile(join(f.fromPath, "原视频.mkv"))).toEqual(f.bytes); f.engine.retry(row.id); expect(await f.engine.run(row.id)).toMatchObject({ phase: "DONE" });
   });
   it("全局暂停停止下一文件步骤，不动已计划文件；未登记的媒体根不能用于修正", async () => {
     const f = await fixture(), paused = new FileRelocations(f.db, f.roots, native, Date.now, () => false); cleanup.push(() => paused.close()); const row = paused.plan(f.input); expect(await paused.run(row.id)).toMatchObject({ phase: "PENDING", failure_code: "INTERRUPTED" }); expect(await readFile(join(f.fromPath, "原视频.mkv"))).toEqual(f.bytes);

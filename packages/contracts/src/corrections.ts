@@ -1,0 +1,17 @@
+import { z } from "zod";
+import { selectionSchema } from "./ingestion.js";
+const id = z.uuid(), page = z.number().int().min(1).max(1000000).default(1);
+export const correctionFileSchema = z.strictObject({ id, kind: z.enum(["MAIN", "ACCESSORY"]), fromPath: z.string().max(16384), toPath: z.string().max(16384), recoveryPath: z.string().max(16384).nullable(), stagingPath: z.string().max(16384).nullable(), size: z.number().int().nonnegative(), action: z.enum(["NONE", "MOVE", "COPY", "KEEP"]), phase: z.string().max(64).nullable(), reason: z.string().max(2000).nullable() });
+export const correctionPreviewSchema = z.strictObject({ id, taskId: id, title: z.string().max(500), selection: selectionSchema, targetId: id, targetPath: z.string().max(16384), expiresAt: z.number().int(), state: z.enum(["READY", "EXPIRED", "CONFIRMED"]), operationId: id.nullable(), files: z.array(correctionFileSchema).min(1).max(201), warnings: z.array(z.string().max(2000)).max(201) });
+export type CorrectionPreview = z.infer<typeof correctionPreviewSchema>;
+export const correctionOperationSchema = z.strictObject({ id, jobId: id, originalTaskId: id, newTaskId: id, state: z.enum(["PLANNED", "RUNNING", "NEEDS_ATTENTION", "RECORDED"]), title: z.string().max(500), total: z.number().int().nonnegative(), done: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), waitingReason: z.string().max(2000).nullable(), failure: z.string().max(2000).nullable(), cleanupPending: z.boolean(), createdAt: z.string(), updatedAt: z.string() });
+export type CorrectionOperation = z.infer<typeof correctionOperationSchema>;
+export const correctionActions = {
+  "corrections.task": { input: z.strictObject({ taskId: id }), output: z.strictObject({ taskId: id, status: z.string().max(64), targetPath: z.string().max(16384).nullable(), selection: selectionSchema.nullable(), previousTaskId: id.nullable(), nextTaskId: id.nullable(), active: correctionOperationSchema.nullable(), targets: z.array(z.strictObject({ id, path: z.string().max(4096), available: z.boolean() })).max(10000), available: z.boolean() }) },
+  "corrections.preview": { input: z.strictObject({ taskId: id, requestKey: id, selection: selectionSchema, targetId: id.optional(), template: z.string().min(1).max(16384).optional(), includeAccessories: z.boolean().default(true) }), output: correctionPreviewSchema },
+  "corrections.get-preview": { input: z.strictObject({ id }), output: correctionPreviewSchema },
+  "corrections.confirm": { input: z.strictObject({ previewId: id, requestKey: id, filesComplete: z.literal(true) }), output: correctionOperationSchema },
+  "corrections.list": { input: z.strictObject({ page }), output: z.strictObject({ items: z.array(correctionOperationSchema).max(25), total: z.number().int().nonnegative() }) },
+  "corrections.get": { input: z.strictObject({ id }), output: z.strictObject({ operation: correctionOperationSchema, files: z.array(correctionFileSchema).max(201), warnings: z.array(z.string().max(2000)).max(201) }) },
+  "corrections.retry": { input: z.strictObject({ id }), output: correctionOperationSchema },
+} as const;

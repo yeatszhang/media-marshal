@@ -48,7 +48,7 @@ export class ManagedRoot {
   segments(input: readonly string[]): string[] {
     if (!input.length || input.length > 128) throw new CloudError("INVALID_REQUEST");
     for (const part of input) {
-      if (!part || /[\0/]/.test(part) || part === "." || part === ".." || isManagedPrivatePath([part]) || Buffer.byteLength(part) > 255) throw new CloudError("UNSUPPORTED_CAPABILITY");
+      if (!part || /[\0/]/.test(part) || part === "." || part === ".." || isManagedPrivatePath([part]) || Buffer.byteLength(part) > 255 || Buffer.from(part, "utf8").toString("utf8") !== part) throw new CloudError("UNSUPPORTED_CAPABILITY");
       if (process.platform === "win32" && (/[\\:<>"|?*\x01-\x1f]/.test(part) || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) throw new CloudError("UNSUPPORTED_CAPABILITY");
     }
     if (Buffer.byteLength(join(this.grant.path, ".media-marshal", "staging", "0".repeat(36), ...input)) >= this.grant.volume.pathMaxBytes) throw new CloudError("UNSUPPORTED_CAPABILITY");
@@ -165,8 +165,9 @@ export class ManagedRoot {
     const path = await this.relocationPath(parts); await this.syncDirectory(join(path, ".."));
     const current = await this.hashWithSnapshot(path, undefined, signal); if (!fingerprint(current.evidence, expected)) throw new CloudError("CONFLICT"); return current.evidence;
   }
-  async renameForRelocation(from: readonly string[], target: ManagedRoot, to: readonly string[], expected: NativeFileSnapshot, native: NativeRenameApi) {
+  async renameForRelocation(from: readonly string[], target: ManagedRoot, to: readonly string[], expected: NativeFileSnapshot, native: NativeRenameApi, signal?: AbortSignal) {
     const sourceNames = this.validateRelocationPath(from), targetNames = target.validateRelocationPath(to); await this.check(); await target.check();
+    if (signal?.aborted) throw new CloudError("INTERRUPTED");
     const result = await native.renameBeneath(this.handle.fd, sourceNames, target.handle.fd, targetNames, expected);
     // 已改名后授权或父目录变化仍不能当成未执行；交给日志恢复核对。
     try { await this.check(); await target.check(); } catch (error) { if (result.moved) return { state: "UNCERTAIN" as const, code: "UNAVAILABLE" as const, moved: true, osError: 0 }; throw error; }
@@ -183,14 +184,17 @@ export class ManagedRoot {
     if (result.state !== "PUBLISHED") throw new CloudError(result.code === "UNAVAILABLE" || result.code === "SYNC_FAILED" ? "LOCAL_UNAVAILABLE" : "CONFLICT");
     return this.confirmRelocation(names, expected, signal);
   }
-  async removeRelocation(id: string, expected: LocalFileEvidence) {
-    const parts = this.relocationSegments(id), path = await this.relocationPath(parts), current = await this.hash(path);
-    if (!fingerprint(current, expected)) throw new CloudError("CONFLICT");
+  async removeRelocation(id: string, expected: LocalFileEvidence, beforeRemove?: () => Promise<void>, signal?: AbortSignal) {
+    const parts = this.relocationSegments(id), path = await this.relocationPath(parts), current = await this.hashWithSnapshot(path, undefined, signal);
+    if (!fingerprint(current.evidence, expected)) throw new CloudError("CONFLICT");
+    // 旧媒体的完整读取可能耗时较长，新目标须在其后重新核对，再检查私有文件仍是刚才的对象。
+    await beforeRemove?.(); if (signal?.aborted) throw new CloudError("INTERRUPTED"); await this.check(); const latest = await lstat(path, { bigint: true });
+    if (!latest.isFile() || latest.isSymbolicLink() || (["dev", "ino", "size", "birthtimeNs", "mtimeNs", "ctimeNs"] as const).some((field) => latest[field] !== current.snapshot[field])) throw new CloudError("CONFLICT");
     // 只回收本步骤独占的私有隔离文件；共享媒体位置只能先用独占改名隔离。
     await this.check(); await rm(path); await this.syncDirectory(join(path, ".."));
   }
-  async verifyStage(attemptId: string, segments: readonly string[], expectedSize: number, remoteHash?: Extract<VersionEvidence, { kind: "hash" }>) {
-    const result = await this.hash(await this.filePath("staging", segments, attemptId), remoteHash);
+  async verifyStage(attemptId: string, segments: readonly string[], expectedSize: number, remoteHash?: Extract<VersionEvidence, { kind: "hash" }>, signal?: AbortSignal) {
+    const result = (await this.hashWithSnapshot(await this.filePath("staging", segments, attemptId), remoteHash, signal)).evidence;
     if (result.size !== expectedSize) throw new CloudError("REMOTE_CHANGED"); return result;
   }
   async inspectCompleted(segments: readonly string[]) { return this.hash(await this.filePath("completed", segments)); }

@@ -13,7 +13,7 @@ import { ManagedRoot, ManagedRoots, pathsOverlap, sameVolumeRoot, assertSpaceBud
 import type { ManagedIngestionSink } from "../cloud/outbox.js";
 import type { MediaConnections } from "../application/media-connections.js";
 import { mergeParentEvidence, parentContext, searchMatches, type MediaMatch, type MetadataWork } from "../domain/matching.js";
-import { assertUniqueEpisodes, reconcileEpisodes, resolveSeason, RecognitionError, type ParsedMedia } from "../domain/media.js";
+import { reconcileEpisodes, resolveSeason, RecognitionError, type ParsedMedia } from "../domain/media.js";
 import { MediaNetworkError } from "../infrastructure/json-http.js";
 import { templatePath } from "../domain/template.js";
 import { titleInitial } from "../domain/title-initial.js";
@@ -24,6 +24,9 @@ import { RecognitionEdits } from "./recognition-edits.js";
 import { IngestionDirectories } from "./directories.js";
 import { RecognitionBatches, type BatchAvailability } from "./recognition-batches.js";
 import { OrganizeBatches, type BatchManifest } from "./organize-batches.js";
+import { assertMediaCoordinates } from "./coordinates.js";
+import { assertCorrectionTarget } from "./correction-assets.js";
+import { previewFailure } from "./preview-errors.js";
 
 type Authorization = PrivateCoreInput<"media.sources.authorize">;
 interface SourceRow { source_id: string; mode: "local" | "managed"; download_root_id: string | null; source_grant_json: string; target_root_id: string; source_version: number; available: number; paused: number; version: number; source_path: string; target_path: string; media_type: "AUTO" | "MOVIE" | "TV_SHOW"; policy_key?: string }
@@ -74,6 +77,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private readonly observations = new Map<string, Observation>();
   private readonly accessoryObservations = new Map<string, Observation>();
   private readonly ignorePolicies = new Map<string, { version: number; ignored: ReturnType<typeof discoveryIgnore> }>();
+  private readonly correctionLeases = new Set<string>();
   private readonly activeWork = new Map<AbortController, { sourceId: string; candidateId: string }>();
   private timer?: ReturnType<typeof setInterval>; private flight?: Promise<void>; private closed = false; private controller?: AbortController;
   private configurationQueue: Promise<unknown> = Promise.resolve();
@@ -174,14 +178,15 @@ export class IngestionPipeline implements ManagedIngestionSink {
   reconcileRestored() {
     const db = this.database.connection;
     db.transaction(() => {
-      db.prepare("INSERT OR IGNORE INTO app_setting(key,value) SELECT 'ingestion.restore.audit.'||o.id,'0' FROM ingestion_operation o JOIN media_task t ON t.id=o.task_id WHERE o.phase='RECORDED' AND t.status='DONE'").run();
+      db.prepare("DELETE FROM app_setting WHERE key IN (SELECT 'ingestion.restore.audit.'||o.id FROM ingestion_operation o JOIN media_task t ON t.id=o.task_id WHERE t.status='CORRECTED' OR EXISTS(SELECT 1 FROM correction_item ci WHERE ci.task_id=t.id AND ci.state IN ('PENDING','RUNNING','NEEDS_ATTENTION')))").run();
+      db.prepare("INSERT OR IGNORE INTO app_setting(key,value) SELECT 'ingestion.restore.audit.'||o.id,'0' FROM ingestion_operation o JOIN media_task t ON t.id=o.task_id WHERE o.phase='RECORDED' AND t.status='DONE' AND NOT EXISTS(SELECT 1 FROM correction_item ci WHERE ci.task_id=t.id AND ci.state IN ('PENDING','RUNNING','NEEDS_ATTENTION'))").run();
       db.prepare("UPDATE media_task SET status='PROCESSING',delivery_status='NOT_READY',updated_at=? WHERE id IN (SELECT o.task_id FROM ingestion_operation o JOIN app_setting s ON s.key='ingestion.restore.audit.'||o.id)").run(timestamp(this.now));
       db.prepare("UPDATE ingestion_candidate SET reason='恢复备份后等待核对现存目标，不会重新复制' WHERE id IN (SELECT o.candidate_id FROM ingestion_operation o JOIN app_setting s ON s.key='ingestion.restore.audit.'||o.id)").run();
     })();
   }
   private async auditRestored() {
     const db = this.database.connection;
-    const rows = db.prepare("SELECT o.* FROM ingestion_operation o JOIN app_setting s ON s.key='ingestion.restore.audit.'||o.id WHERE o.phase='RECORDED' ORDER BY CAST(s.value AS INTEGER),o.id LIMIT 4").all() as OperationRow[];
+    const rows = db.prepare("SELECT o.* FROM ingestion_operation o JOIN app_setting s ON s.key='ingestion.restore.audit.'||o.id JOIN media_task t ON t.id=o.task_id WHERE o.phase='RECORDED' AND t.status IN ('DONE','PROCESSING') AND NOT EXISTS(SELECT 1 FROM correction_item ci WHERE ci.task_id=t.id AND ci.state IN ('PENDING','RUNNING','NEEDS_ATTENTION')) ORDER BY CAST(s.value AS INTEGER),o.id LIMIT 4").all() as OperationRow[];
     const unavailable = (error: unknown) => ["LOCAL_UNAVAILABLE", "EACCES", "EPERM", "EROFS", "EIO", "ENXIO", "ESTALE", "EBADF"].includes((error as { code?: string }).code ?? "");
     const verify = async (row: OperationRow) => {
       const plan = JSON.parse(row.plan_json) as Plan, expected = localFileEvidenceSchema.parse(JSON.parse(row.evidence_json!)), root = this.targets.get(plan.target.id);
@@ -199,11 +204,13 @@ export class IngestionPipeline implements ManagedIngestionSink {
         try { await verify(asset); } catch (error) { if (unavailable(error)) { deferred = true; break; } changedAccessories.push(asset.id); }
       }
       if (this.closed) return;
+      if (db.prepare("SELECT 1 FROM media_task t WHERE t.id=? AND (t.status='CORRECTED' OR EXISTS(SELECT 1 FROM correction_item ci WHERE ci.task_id=t.id AND ci.state IN ('PENDING','RUNNING','NEEDS_ATTENTION')))").get(row.task_id)) { db.prepare("DELETE FROM app_setting WHERE key=?").run("ingestion.restore.audit." + row.id); continue; }
       if (deferred) {
         db.prepare("UPDATE app_setting SET value=? WHERE key=?").run(String(this.now()), "ingestion.restore.audit." + row.id);
         db.prepare("UPDATE ingestion_candidate SET reason='恢复备份后目标暂不可访问，等待原卷及权限恢复；不会重建或覆盖文件' WHERE id=?").run(row.candidate_id); continue;
       }
       db.transaction(() => {
+        if (db.prepare("SELECT 1 FROM media_task t WHERE t.id=? AND (t.status='CORRECTED' OR EXISTS(SELECT 1 FROM correction_item ci WHERE ci.task_id=t.id AND ci.state IN ('PENDING','RUNNING','NEEDS_ATTENTION')))").get(row.task_id)) { db.prepare("DELETE FROM app_setting WHERE key=?").run("ingestion.restore.audit." + row.id); return; }
         if (!db.prepare("SELECT 1 FROM app_setting s JOIN ingestion_operation o ON s.key='ingestion.restore.audit.'||o.id WHERE o.id=? AND o.phase='RECORDED'").get(row.id)) return;
         const stamp = timestamp(this.now);
         if (primaryChanged) db.prepare("UPDATE ingestion_operation SET phase='NEEDS_ATTENTION',failure_code='CONFLICT',updated_at=? WHERE id=?").run(stamp, row.id);
@@ -336,7 +343,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     return {};
   }); }
   libraries(): CoreOutput<"media.libraries"> {
-    const rows = this.database.connection.prepare("SELECT t.id,t.grant_json,t.available,r.media_type FROM media_library_route r JOIN media_target_root t ON t.id=r.target_root_id UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(v.configuration_json,'$.organization.mediaType') AS media_type FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version JOIN media_target_root t ON t.id=v.target_root_id WHERE s.deleted_at IS NULL AND json_extract(v.configuration_json,'$.organization') IS NOT NULL UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM emby_delivery d JOIN ingestion_operation o ON o.id=d.operation_id JOIN media_target_root t ON t.id=o.target_root_id WHERE d.state!='COLLECTED' LIMIT 2000").all() as { id: string; grant_json: string; available: number; media_type: "AUTO" | "MOVIE" | "TV_SHOW" }[];
+    const rows = this.database.connection.prepare("SELECT t.id,t.grant_json,t.available,r.media_type FROM media_library_route r JOIN media_target_root t ON t.id=r.target_root_id UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(v.configuration_json,'$.organization.mediaType') AS media_type FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version JOIN media_target_root t ON t.id=v.target_root_id WHERE s.deleted_at IS NULL AND json_extract(v.configuration_json,'$.organization') IS NOT NULL UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM emby_delivery d JOIN ingestion_operation o ON o.id=d.operation_id JOIN media_target_root t ON t.id=o.target_root_id WHERE d.state!='COLLECTED' UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM media_correction_operation o JOIN media_task mt ON mt.id=o.new_task_id JOIN media_target_root t ON t.id=o.target_root_id WHERE o.phase='RECORDED' AND mt.status='DONE' LIMIT 2000").all() as { id: string; grant_json: string; available: number; media_type: "AUTO" | "MOVIE" | "TV_SHOW" }[];
     const targets = new Map<string, CoreOutput<"media.libraries">[number]>();
     for (const row of rows) { const previous = targets.get(row.id); targets.set(row.id, { targetId: row.id, mediaType: previous && previous.mediaType !== row.media_type ? "AUTO" : row.media_type, path: managedRootGrantSchema.parse(JSON.parse(row.grant_json)).path, available: !!row.available }); }
     return [...targets.values()];
@@ -535,6 +542,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     return { ...source, policy_key: policy.policy_key, media_type: configuration.mediaType, target_root_id: policy.target_root_id, target_path: configuration.targetPath };
   }
   private operationRunnable(operation: OperationRow) {
+    if (this.correctionLeases.has(operation.task_id) || this.database.connection.prepare("SELECT 1 FROM correction_item WHERE task_id=? AND state IN ('PENDING','RUNNING','NEEDS_ATTENTION')").get(operation.task_id) || this.database.connection.prepare("SELECT 1 FROM media_task WHERE id=? AND status='CORRECTED'").get(operation.task_id)) return false;
     const candidate = this.candidate(operation.candidate_id);
     if (this.contentReviews.active(candidate.source_id)) return false;
     return this.managedCandidateEnabled(candidate) || (!!candidate.managed_item_id && !this.candidatePolicy(candidate) && ["COPYING", "VERIFIED", "FILE_COMMITTED"].includes(operation.phase));
@@ -792,6 +800,9 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (original?.length ? !original.some((prior) => current.some((row) => row.id === prior.id && row.revision === prior.revision)) : current.some((row) => row.revision > 0)) throw conflict("来源已经删除或恢复，请重新预览整理范围");
   }
   async preview(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">> {
+    try { return await this.buildPreview(input); } catch (error) { throw previewFailure(error); }
+  }
+  private async buildPreview(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">> {
     const db = this.database.connection, digest = fingerprint(input), existing = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (existing) { if (existing.input_hash !== digest) throw conflict("预览请求键已用于不同内容"); return this.previewDto(existing); }
     const row = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id WHERE t.id=? AND t.status='AWAITING_CONFIRMATION'").get(input.taskId) as CandidateRow | undefined;
@@ -808,10 +819,11 @@ export class IngestionPipeline implements ManagedIngestionSink {
       const checked = await reconcileEpisodes({ season: selection.season, episode: selection.episode, episodeEnd: selection.episodeEnd }, metadata.seasons, (season) => this.connections.tmdb.episodes(selection.tmdbId, season));
       Object.assign(selection, { season: checked.season, episode: checked.episode, episodeEnd: checked.episodeEnd }); episodeTitle = checked.episodeTitle;
     } else Object.assign(selection, { season: null, episode: null, episodeEnd: null });
-    const variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(parsed.originalFilename).slice(1) };
+    this.assertCoordinates(selection, row.id);
+    const variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(parsed.originalFilename).slice(1) };
     const template = input.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}");
-    const segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments); await target.assertVacant(segments); await target.check();
-    const accessories = input.includeAccessories === false ? [] : await this.accessories(source, row, segments); target.assertMappings([segments, ...accessories.map((asset) => asset.targetSegments)]);
+    const segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments); assertCorrectionTarget(this.database, target, segments, input.taskId); await target.assertVacant(segments); await target.check();
+    const accessories = input.includeAccessories === false ? [] : await this.accessories(source, row, segments); target.assertMappings([segments, ...accessories.map((asset) => asset.targetSegments)]); for (const asset of accessories) assertCorrectionTarget(this.database, target, asset.targetSegments, input.taskId);
     if (connectionVersion !== this.connections.version || this.candidateSource(row).version !== source.version || !await this.observe(row)) throw conflict();
     this.assertCandidateCurrent(row);
     this.assertCoordinates(selection, row.id);
@@ -824,17 +836,15 @@ export class IngestionPipeline implements ManagedIngestionSink {
     db.prepare("INSERT INTO ingestion_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(result.id, result.request_key, result.task_id, result.input_hash, result.plan_json, result.expires_at); return this.previewDto(result);
   }
   private assertCoordinates(selection: Plan["selection"], candidateId: string) {
-    if (selection.mediaType !== "TV_SHOW") return;
-    const rows = this.database.connection.prepare("SELECT plan_json FROM ingestion_operation WHERE candidate_id!=?").all(candidateId) as { plan_json: string }[];
-    const current = JSON.parse(this.candidate(candidateId).relative_json) as string[];
-    for (const row of rows) {
-      const prior = JSON.parse(row.plan_json) as Plan, other = prior.selection;
-      if (other.mediaType !== "TV_SHOW" || other.tmdbId !== selection.tmdbId || other.season !== selection.season) continue;
-      const start = Math.max(other.episode!, selection.episode!), end = Math.min(other.episodeEnd ?? other.episode!, selection.episodeEnd ?? selection.episode!);
-      if (start <= end) throw conflict(`「${current.at(-1)!.slice(0, 100)}」与已领取计划「${prior.sourceSegments.at(-1)!.slice(0, 100)}」重复或重叠：S${selection.season} E${start}${end > start ? `–${end}` : ""}；请修改季集或取消重复文件后重新预览`);
-    }
-    const values = [...rows.map((row) => (JSON.parse(row.plan_json) as Plan).selection).filter((entry) => entry.mediaType === "TV_SHOW" && entry.tmdbId === selection.tmdbId), selection];
-    assertUniqueEpisodes(values.map((value) => ({ tmdbId: value.tmdbId, season: value.season!, episode: value.episode!, episodeEnd: value.episodeEnd })));
+    const candidate = this.candidate(candidateId), current = JSON.parse(candidate.relative_json) as string[];
+    assertMediaCoordinates(this.database, selection, candidate.task_id ?? "", current.at(-1)!);
+  }
+  async withCorrectionLease<T>(taskId: string, work: () => Promise<T>): Promise<T> {
+    if (this.closed || this.correctionLeases.has(taskId)) throw conflict("此任务正在核对修正，请等待当前请求完成");
+    if (this.database.connection.prepare("SELECT 1 FROM app_setting s JOIN ingestion_operation o ON s.key='ingestion.restore.audit.'||o.id WHERE o.task_id=?").get(taskId)) throw conflict("恢复备份后的原目标尚待核对，请等待原卷恢复后再预览修正");
+    const candidate = this.database.connection.prepare("SELECT id FROM ingestion_candidate WHERE task_id=?").get(taskId) as { id: string } | undefined;
+    if (candidate && [...this.activeWork.values()].some((active) => active.candidateId === candidate.id)) throw conflict("此任务的附属文件仍在处理，请等待当前步骤到达安全点后重新预览修正");
+    this.correctionLeases.add(taskId); try { return await work(); } finally { this.correctionLeases.delete(taskId); }
   }
   async confirm(input: CoreInput<"ingestion.confirm">, ownerBatchId?: string) {
     const owner = this.database.connection.prepare("SELECT i.batch_id FROM ingestion_organize_batch_item i JOIN ingestion_preview p ON p.request_key=i.request_key WHERE p.id=?").get(input.previewId) as { batch_id: string } | undefined;
@@ -861,6 +871,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       if (plan.expectedSha256 !== this.candidate(candidate.id).expected_sha256) throw conflict("内容复核证据已更新，请重新预览后确认");
       if (db.prepare("SELECT 1 FROM ingestion_operation WHERE candidate_id=?").get(candidate.id)) throw conflict("此文件已有整理计划");
       this.assertCoordinates(plan.selection, candidate.id);
+      for (const parts of [plan.targetSegments, ...(plan.accessories ?? []).map((asset) => asset.targetSegments)]) assertCorrectionTarget(this.database, target, parts, receipt.task_id);
       db.prepare("INSERT INTO ingestion_operation(id,candidate_id,task_id,request_key,target_root_id,target_slot,plan_json,attempt_id,phase,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'PLANNED',?,?)").run(id, candidate.id, receipt.task_id, input.requestKey, plan.target.id, target.slotKey(plan.targetSegments), receipt.plan_json, randomUUID(), current, current);
       db.prepare("UPDATE ingestion_preview SET operation_id=? WHERE id=?").run(id, receipt.id);
       db.prepare("UPDATE media_task SET status='PROCESSING',confirmed_json=?,metadata_json=?,title=?,updated_at=? WHERE id=?").run(JSON.stringify(plan.selection), JSON.stringify(plan.metadata), plan.metadata.title, current, receipt.task_id);
@@ -924,6 +935,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   }
   private accessoryJobState(operationId: string) { const rows = this.database.connection.prepare("SELECT phase FROM ingestion_accessory WHERE operation_id=?").all(operationId) as { phase: string }[]; this.database.connection.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(rows.every((row) => row.phase === "RECORDED") ? "DONE" : rows.some((row) => row.phase === "NEEDS_ATTENTION") ? "PARTIAL_FAILED" : "COPYING_ACCESSORIES", timestamp(this.now), operationId); }
   retry(taskId: string) {
+    if (this.database.connection.prepare("SELECT 1 FROM media_correction_operation WHERE new_task_id=?").get(taskId) || this.correctionLeases.has(taskId) || this.database.connection.prepare("SELECT 1 FROM media_task WHERE id=? AND status='CORRECTED'").get(taskId) || this.database.connection.prepare("SELECT 1 FROM correction_item WHERE task_id=? AND state IN ('PENDING','RUNNING','NEEDS_ATTENTION')").get(taskId)) throw conflict("此任务已被修正或正在修正，不能重放旧附属文件计划；请查看最新任务与修正作业");
     if (this.database.connection.prepare("SELECT 1 FROM app_setting s JOIN ingestion_operation o ON s.key='ingestion.restore.audit.'||o.id WHERE o.task_id=?").get(taskId)) throw conflict("恢复备份后的目标文件尚待核对，请等待原卷和权限恢复");
     const db = this.database.connection, candidate = db.prepare("SELECT * FROM ingestion_candidate WHERE task_id=?").get(taskId) as CandidateRow | undefined; if (!candidate) throw conflict(); this.candidateSource(candidate);
     if (this.contentReviews.active(candidate.source_id)) throw conflict("该来源正在全量复核内容，请等待完成或取消后重试");

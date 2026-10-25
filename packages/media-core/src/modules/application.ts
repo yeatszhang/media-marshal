@@ -33,9 +33,18 @@ import { MediaConnections, MediaConnectionsToken } from "../application/media-co
 import { IngestionPipeline } from "../ingestion/pipeline.js";
 import { EmbyDelivery } from "../ingestion/emby-delivery.js";
 import { SourceRules } from "../sources/rules.js";
+import { Corrections } from "../ingestion/corrections.js";
+import { loadNativeRename, type NativeRenameLaunch } from "../files/native-rename.js";
 
 declare module "@yeatz/app-framework/command" {
   interface Commands {
+    "media.corrections.task": (input: CoreInput<"corrections.task">) => CoreOutput<"corrections.task">;
+    "media.corrections.preview": (input: CoreInput<"corrections.preview">) => Promise<CoreOutput<"corrections.preview">>;
+    "media.corrections.get-preview": (input: CoreInput<"corrections.get-preview">) => CoreOutput<"corrections.get-preview">;
+    "media.corrections.confirm": (input: CoreInput<"corrections.confirm">) => Promise<CoreOutput<"corrections.confirm">>;
+    "media.corrections.list": (input: CoreInput<"corrections.list">) => CoreOutput<"corrections.list">;
+    "media.corrections.get": (input: CoreInput<"corrections.get">) => CoreOutput<"corrections.get">;
+    "media.corrections.retry": (input: CoreInput<"corrections.retry">) => CoreOutput<"corrections.retry">;
     "media.source-rules.resolve-legacy": (input: CoreInput<"source-rules.resolve-legacy">) => CoreOutput<"source-rules.resolve-legacy">;
     "media.source-rules.control": (input: CoreInput<"source-rules.control">) => CoreOutput<"source-rules.control">;
     "media.source-rules.preview-execution": (input: CoreInput<"source-rules.preview-execution">) => CoreOutput<"source-rules.preview-execution">;
@@ -122,7 +131,7 @@ declare module "@yeatz/app-framework/command" {
 export function createMediaApplication(
   databasePath: string,
   extraModules: ApplicationModule[] = [],
-  options: { host?: CoreHostGateway; ingestion?: ManagedIngestionSink; parser?: ParserLaunch; cancelHostRequests?: () => void } = {},
+  options: { host?: CoreHostGateway; ingestion?: ManagedIngestionSink; parser?: ParserLaunch; nativeFiles?: NativeRenameLaunch; cancelHostRequests?: () => void } = {},
 ) {
   let accepting = true, stopFlight: Promise<void> | undefined, quiescence: Promise<PromiseSettledResult<unknown>[]> | undefined;
   const ensureAccepting = () => { if (!accepting) throw new DesktopError("INTERRUPTED", "核心正在停止", true); };
@@ -168,7 +177,7 @@ export function createMediaApplication(
   const commands: ApplicationModule = {
     id: "media.commands",
     dependencies: ["media.services", "media.parser"],
-    start(ctx) {
+    async start(ctx) {
       ensureAccepting();
       const service = ctx.get(CoreService);
       connections = new MediaConnections(ctx.get(DatabaseToken), () => service.getSettings());
@@ -182,8 +191,17 @@ export function createMediaApplication(
       ctx.disposables.add(() => outbox.close());
       delivery = new EmbyDelivery(ctx.get(DatabaseToken), connections, () => service.getSettings(), ingestion);
       ctx.disposables.add(() => delivery.close());
+      const native = options.nativeFiles ? await loadNativeRename(options.nativeFiles).catch(() => undefined) : undefined; ensureAccepting();
+      corrections = new Corrections(ctx.get(DatabaseToken), ingestion, connections, native); ctx.disposables.add(() => corrections.close());
       const registry = ctx.commandRegistry;
       const add = (dispose: () => void) => ctx.disposables.add(dispose);
+      add(registry.register("media.corrections.task", (_, input) => corrections.describe(input)));
+      add(registry.register("media.corrections.preview", (_, input) => corrections.preview(input)));
+      add(registry.register("media.corrections.get-preview", (_, input) => corrections.getPreview(input.id)));
+      add(registry.register("media.corrections.confirm", (_, input) => corrections.confirm(input)));
+      add(registry.register("media.corrections.list", (_, input) => corrections.list(input)));
+      add(registry.register("media.corrections.get", (_, input) => corrections.details(input)));
+      add(registry.register("media.corrections.retry", (_, input) => corrections.retry(input)));
       add(registry.register("media.source-rules.resolve-legacy", (_, input) => sourceRules.resolveLegacy(input)));
       add(registry.register("media.source-rules.control", (_, input) => sourceRules.control(input)));
       add(registry.register("media.source-rules.preview-execution", (_, input) => sourceRules.executions.start(input)));
@@ -192,7 +210,7 @@ export function createMediaApplication(
       add(registry.register("media.source-rules.run-once", (_, input) => sourceRules.runs.enqueue(input)));
       add(registry.register("media.source-rules.runs", (_, input) => sourceRules.runs.list(input)));
       add(registry.register("media.ingestion.pause-status", () => ingestion.pauseStatus()));
-      add(registry.register("media.ingestion.set-paused", (_, input) => ingestion.setPaused(input)));
+      add(registry.register("media.ingestion.set-paused", (_, input) => { const result = ingestion.setPaused(input); if (input.paused) corrections.interrupt(); return result; }));
       add(registry.register("media.source-rules.legacy", (_, input) => sourceRules.legacy(input)));
       add(registry.register("media.source-rules.configure", (_, input) => sourceRules.configure(input)));
       add(registry.register("media.source-rules.list", (_, input) => sourceRules.list(input.includeDeleted)));
@@ -285,8 +303,8 @@ export function createMediaApplication(
       );
     },
   };
-  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); } };
-  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules;
+  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); } };
+  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections;
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],
   });
@@ -300,7 +318,7 @@ export function createMediaApplication(
     // 取消等待不等同于文件回滚或写入者已停止；后者仍由 Main／Host 回收证明。
     let cancelFailure: unknown;
     try { options.cancelHostRequests?.(); } catch (error) { cancelFailure = error; }
-    return quiescence = Promise.allSettled([sourceRules?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
+    return quiescence = Promise.allSettled([sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
   }
   return {
     app,
@@ -312,7 +330,7 @@ export function createMediaApplication(
       const payload = privateCoreActions[request.action].input.parse(request.payload);
       const task = (async () => {
         if (request.action === "media.observations.reset") { ingestion.resetObservations(); return {}; }
-        if (request.action === "desktop.state.reconcile-restored") { ingestion.reconcileRestored(); downloads.reconcileRestored(); return {}; }
+        if (request.action === "desktop.state.reconcile-restored") { ingestion.reconcileRestored(); corrections.reconcileRestored(); downloads.reconcileRestored(); return {}; }
         if (request.action === "source-rules.apply") { const input = privateCoreActions["source-rules.apply"].input.parse(payload); return sourceRules.apply({ previewId: input.previewId, requestKey: input.requestKey, runOnce: input.runOnce }, input.grants); }
         if (request.action === "media.targets.find") return ingestion.targetGrant((payload as { path: string }).path);
         if (request.action === "media.targets.bootstrap") return ingestion.targetBootstrap();
