@@ -484,11 +484,13 @@ describe.skipIf(process.platform !== "darwin")("下载成果独立投递", () =>
   });
   it("未接入接收端不消费事件，确认落库失败后重复投递只保留一个候选", async () => {
     const f = await fixture(), job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
+    // 先等待下载阶段收尾，再单独注入投递确认故障，避免与后台下载调度混在一起。
+    await f.downloads.close();
     await new IngestionOutbox(f.db, f.roots).deliver(); expect(f.db.connection.prepare("SELECT state,delivery_attempts FROM ingestion_outbox").get()).toEqual({ state: "PENDING", delivery_attempts: 0 });
     f.db.connection.exec("CREATE TABLE test_ingestion_candidate(id TEXT PRIMARY KEY,item_id TEXT,version_key TEXT,UNIQUE(item_id,version_key)); CREATE TRIGGER test_ack_fault BEFORE UPDATE OF state ON ingestion_outbox WHEN NEW.state='ACKNOWLEDGED' BEGIN SELECT RAISE(ABORT,'模拟确认前崩溃'); END;");
     let calls = 0;
     const outbox = new IngestionOutbox(f.db, f.roots, { async accept(item) { calls++; f.db.connection.prepare("INSERT OR IGNORE INTO test_ingestion_candidate VALUES(?,?,?)").run(randomUUID(), item.itemId, item.versionKey); return { candidateId: (f.db.connection.prepare("SELECT id FROM test_ingestion_candidate WHERE item_id=? AND version_key=?").get(item.itemId, item.versionKey) as { id: string }).id }; } }); cleanup.push(() => outbox.close());
-    await outbox.deliver(); expect(f.db.connection.prepare("SELECT state FROM ingestion_outbox").get()).toEqual({ state: "PENDING" });
+    await outbox.deliver(); expect(calls).toBe(1); expect(f.db.connection.prepare("SELECT state,delivery_attempts,failure_code FROM ingestion_outbox").get()).toEqual({ state: "PENDING", delivery_attempts: 1, failure_code: "INTERNAL_ERROR" });
     f.db.connection.exec("DROP TRIGGER test_ack_fault; UPDATE ingestion_outbox SET next_attempt_at=NULL;"); await outbox.deliver(); await outbox.deliver();
     expect(calls).toBe(2); expect(f.db.connection.prepare("SELECT count(*) AS n FROM test_ingestion_candidate").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT state FROM ingestion_outbox").get()).toEqual({ state: "ACKNOWLEDGED" });
     expect(f.state(job.jobId).state).toBe("COMPLETED"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
