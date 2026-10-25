@@ -172,10 +172,15 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const sourcePath = input.mode === "managed" ? join(input.source.path, "completed") : input.source.path;
     if (!source || source.version !== input.sourceVersion || source.source_path !== sourcePath || source.target_path !== input.target.path) throw conflict();
     if (pathsOverlap(input.source.path, input.target.path, input.target.volume)) throw new DesktopError("UNSAFE_PATH", "来源和目标不能相互包含");
-    const others = db.prepare("SELECT id,source_path,target_path FROM desktop_source WHERE id!=?").all(input.sourceId) as { source_path: string; target_path: string }[];
-    if (others.some((row) => pathsOverlap(row.source_path, input.source.path, input.target.volume) || pathsOverlap(row.source_path, input.target.path, input.target.volume) || pathsOverlap(row.target_path, input.source.path, input.target.volume) || (row.target_path !== input.target.path && pathsOverlap(row.target_path, input.target.path, input.target.volume)))) throw new DesktopError("UNSAFE_PATH", "目录与其他来源或目标重叠");
+    const others = db.prepare("SELECT id,name,source_path,target_path FROM desktop_source WHERE id!=?").all(input.sourceId) as { id: string; name: string; source_path: string; target_path: string }[];
+    const overlap = others.find((row) => pathsOverlap(row.source_path, input.source.path, input.target.volume) || pathsOverlap(row.source_path, input.target.path, input.target.volume) || pathsOverlap(row.target_path, input.source.path, input.target.volume) || (row.target_path !== input.target.path && pathsOverlap(row.target_path, input.target.path, input.target.volume)));
+    if (overlap) {
+      const sourceOverlap = pathsOverlap(overlap.source_path, input.source.path, input.target.volume) || pathsOverlap(overlap.source_path, input.target.path, input.target.volume);
+      throw new DesktopError("UNSAFE_PATH", `所选目录与来源「${overlap.name.slice(0, 100)}」的${sourceOverlap ? "输入目录" : "媒体目标"}重叠，请修改对应来源或选择独立目录（关联来源：${overlap.id}）`, false, undefined, { reason: sourceOverlap ? "SOURCE_OVERLAP" : "TARGET_OVERLAP", conflict: { kind: "source", id: overlap.id } });
+    }
     const roots = db.prepare("SELECT id,canonical_path FROM managed_download_root").all() as { id: string; canonical_path: string }[];
-    if (roots.some((root) => pathsOverlap(root.canonical_path, input.target.path, input.target.volume) || (root.id !== input.downloadRootId && pathsOverlap(root.canonical_path, input.source.path, input.source.volume)))) throw new DesktopError("UNSAFE_PATH", "目录与其他受管下载目录重叠");
+    const downloadOverlap = roots.find((root) => pathsOverlap(root.canonical_path, input.target.path, input.target.volume) || (root.id !== input.downloadRootId && pathsOverlap(root.canonical_path, input.source.path, input.source.volume)));
+    if (downloadOverlap) throw new DesktopError("UNSAFE_PATH", `所选目录与受管下载目录重叠，请在对应网盘来源配置整理或选择独立目录（关联下载目录：${downloadOverlap.id}）`, false, undefined, { reason: "DOWNLOAD_ROOT_OVERLAP", conflict: { kind: "download-root", id: downloadOverlap.id } });
     if (input.mode === "managed") {
       const root = db.prepare("SELECT * FROM managed_download_root WHERE id=? AND state='AVAILABLE'").get(input.downloadRootId) as { canonical_path: string; volume_identity: string } | undefined;
       if (!root || root.canonical_path !== input.source.path || !sameVolumeRoot(JSON.parse(root.volume_identity), input.source.volume)) throw new DesktopError("LOCAL_UNAVAILABLE", "受管下载原卷尚未就绪", true);
@@ -185,7 +190,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const existing = db.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(input.target.id) as { grant_json: string } | undefined;
     if (existing && (JSON.parse(existing.grant_json).path !== input.target.path || !sameVolumeRoot(JSON.parse(existing.grant_json).volume, input.target.volume))) throw new DesktopError("LOCAL_UNAVAILABLE", "目标原卷身份不一致", true);
     const storedTargets = db.prepare("SELECT id,grant_json FROM media_target_root WHERE id!=?").all(input.target.id) as { id: string; grant_json: string }[];
-    if (storedTargets.some((row) => pathsOverlap(JSON.parse(row.grant_json).path, input.target.path, input.target.volume))) throw conflict("目标与历史操作保留的目录重叠，请使用原有目标授权或独立目录");
+    const targetOverlap = storedTargets.find((row) => pathsOverlap(JSON.parse(row.grant_json).path, input.target.path, input.target.volume));
+    if (targetOverlap) throw new DesktopError("CONFLICT", `目标与历史操作保留的目录重叠，请使用原有目标授权或独立目录（关联目标：${targetOverlap.id}）`, false, undefined, { reason: "TARGET_OVERLAP", conflict: { kind: "media-target", id: targetOverlap.id } });
   }
   authorize(input: Authorization): Promise<{}> { return this.serialize(() => this.install(input)); }
   /** 异步取得资源后再提交配置；调用者在同一事务中写来源版本和执行关联。 */
@@ -407,6 +413,12 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const previous = this.scans.get(sourceId); if (previous) return previous;
     const pending = this.scanSource(sourceId).finally(() => { if (this.scans.get(sourceId) === pending) this.scans.delete(sourceId); }); this.scans.set(sourceId, pending); return pending;
   }
+  private unavailableSource(sourceId: string) {
+    const db = this.database.connection;
+    for (const row of db.prepare("SELECT id FROM ingestion_candidate WHERE source_id=?").all(sourceId) as { id: string }[]) this.observations.delete(row.id);
+    for (const key of this.accessoryObservations.keys()) if (key.startsWith(sourceId + ":")) this.accessoryObservations.delete(key);
+    db.prepare("UPDATE ingestion_candidate SET state='UNAVAILABLE',reason='来源目录不可访问，请连接原磁盘并检查权限；文件记录仍保留',updated_at=? WHERE source_id=? AND state IN ('OBSERVING','READY','UNAVAILABLE','QUEUED')").run(timestamp(this.now), sourceId);
+  }
   private async scanSource(sourceId: string) {
     const row = this.source(sourceId); let discovered = 0;
     try {
@@ -431,7 +443,11 @@ export class IngestionPipeline implements ManagedIngestionSink {
         }
       }
       this.database.connection.prepare("UPDATE desktop_source SET health='available' WHERE id=?").run(sourceId);
-    } catch (error) { this.database.connection.prepare("UPDATE desktop_source SET health='unavailable' WHERE id=?").run(sourceId); throw error; }
+    } catch (error) {
+      this.database.connection.prepare("UPDATE desktop_source SET health='unavailable' WHERE id=?").run(sourceId);
+      if (error instanceof Error && "code" in error && ["LOCAL_UNAVAILABLE", "ENOENT", "ENOTDIR", "EACCES", "EPERM", "ENODEV", "ENXIO", "ESTALE", "EIO"].includes(String(error.code))) this.unavailableSource(sourceId);
+      throw error;
+    }
     return { discovered };
   }
   list(input: CoreInput<"ingestion.candidates">): CoreOutput<"ingestion.candidates"> {

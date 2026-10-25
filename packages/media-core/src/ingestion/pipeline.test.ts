@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, readFile, writeFile, appendFile, rm, realpath, lstat, statfs, readdir, rename, chmod, open } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, appendFile, rm, realpath, lstat, statfs, readdir, rename, chmod, open, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname, basename } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -47,6 +47,44 @@ async function fixture(options: { ignoredFilePatterns?: string[] | null; watchFi
   return { directory, source, target, db, pipeline, sourceId, sourceGrant, targetGrant, connections, file, bytes, advance, ready, preview, calls: () => calls, jump(ms: number) { monotonic += ms; clock += ms; }, wallJump(ms: number) { clock += ms; } };
 }
 describe("持久候选、人工确认与真实 COPY", () => {
+  it("来源整目录短暂失联也保留候选并重置窗口，原目录恢复后重新观察 120 秒", async () => {
+    const f = await fixture(), candidate = await f.ready(), detached = f.source + "-暂时离线"; await rename(f.source, detached);
+    try {
+      await expect(f.pipeline.scan(f.sourceId)).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" });
+      expect(f.pipeline.list({ sourceId: f.sourceId }).items).toMatchObject([{ id: candidate.id, state: "UNAVAILABLE", reason: expect.stringContaining("来源目录不可访问") }]);
+      expect(f.db.connection.prepare("SELECT health FROM desktop_source WHERE id=?").get(f.sourceId)).toEqual({ health: "unavailable" });
+      await expect(lstat(f.source)).rejects.toMatchObject({ code: "ENOENT" }); f.jump(10000);
+    } finally { await rename(detached, f.source); }
+    await f.pipeline.scan(f.sourceId); await f.advance(110000);
+    expect(f.pipeline.list({ sourceId: f.sourceId }).items).toMatchObject([{ id: candidate.id, state: "OBSERVING" }]);
+    await f.advance(10000); expect(f.pipeline.list({ sourceId: f.sourceId }).items).toMatchObject([{ id: candidate.id, state: "READY", requiresConfirmation: true }]);
+    expect(f.calls()).toBe(0); expect(await readFile(f.file)).toEqual(f.bytes); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  });
+  it("失联后同名替代目录不能被认领，不扫描替代文件或删除原候选", async () => {
+    const f = await fixture(), candidate = await f.ready(), detached = f.source + "-原目录"; await rename(f.source, detached); await mkdir(f.source); await writeFile(join(f.source, "替代文件.mp4"), "foreign-file");
+    try {
+      await expect(f.pipeline.scan(f.sourceId)).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" });
+      expect(f.pipeline.list({ sourceId: f.sourceId }).items).toMatchObject([{ id: candidate.id, state: "UNAVAILABLE" }]);
+      expect(await readdir(f.source)).toEqual(["替代文件.mp4"]); expect(f.calls()).toBe(0); expect(await readdir(f.target)).toEqual([".media-marshal"]);
+    } finally { await rm(f.source, { recursive: true }); await rename(detached, f.source); }
+    expect(await readFile(f.file)).toEqual(f.bytes);
+  });
+  it.runIf(process.platform === "darwin")("来源目录权限撤销保留已知文件，恢复权限也须重新建立观察窗口", async () => {
+    const f = await fixture(), candidate = await f.ready(); await chmod(f.source, 0);
+    try { await expect(f.pipeline.scan(f.sourceId)).rejects.toMatchObject({ code: "EACCES" }); expect(f.pipeline.list({ sourceId: f.sourceId }).items).toMatchObject([{ id: candidate.id, state: "UNAVAILABLE" }]); }
+    finally { await chmod(f.source, 0o700); }
+    await f.pipeline.scan(f.sourceId); expect(f.pipeline.list({ sourceId: f.sourceId }).items).toMatchObject([{ id: candidate.id, state: "OBSERVING" }]);
+    expect(await readFile(f.file)).toEqual(f.bytes); expect(f.calls()).toBe(0);
+  });
+  it("来源子目录与文件符号链接不会逃逸，直接复核也拒绝链接路径", async () => {
+    const f = await fixture(), outside = join(f.directory, "未授权目录"); await mkdir(outside); await writeFile(join(outside, "外部视频.mp4"), "outside-content");
+    await symlink(outside, join(f.source, "逃逸目录")); await symlink(join(outside, "外部视频.mp4"), join(f.source, "链接视频.mp4")); await f.pipeline.scan(f.sourceId);
+    expect(f.pipeline.list({ sourceId: f.sourceId }).items).toMatchObject([{ relativePath: "测试电影.2026.mp4" }]);
+    const root = await SourceRoot.open(f.sourceGrant);
+    try { for (const parts of [["逃逸目录", "外部视频.mp4"], ["链接视频.mp4"]]) await expect(root.inspect(parts)).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" }); }
+    finally { await root.close(); }
+    expect(await readFile(join(outside, "外部视频.mp4"), "utf8")).toBe("outside-content"); expect(f.calls()).toBe(0);
+  });
   it("启动与周期补扫在监听不可用时继续发现，所有文件仍从观察状态开始", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const f = await fixture({ watchFiles: () => { throw new Error("本环境不提供目录事件"); } });

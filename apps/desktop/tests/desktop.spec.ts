@@ -105,6 +105,34 @@ test("统一来源草稿、原生授权确认及 Core 重启保留同一配置�
   expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
 });
 
+test("本地来源重叠在界面定位原规则，改选独立目录后可重新预览确认", async () => {
+  test.skip(process.platform !== "darwin");
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), source = join(canonical, "边界原输入"), target = join(canonical, "边界原媒体库"), independentSource = join(canonical, "独立输入"), independentTarget = join(canonical, "独立媒体库");
+  for (const path of [source, target, independentSource, independentTarget]) await mkdir(path);
+  await writeFile(join(source, "保留.mp4"), "original-media");
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [source, target, source, independentTarget, independentSource]);
+  const original = await window.evaluate(async ({ source, target }) => {
+    await window.desktopApi.chooseDirectory("source"); await window.desktopApi.chooseDirectory("target");
+    const draft = await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: "边界原来源_" + "A".repeat(80), sourcePath: source, organization: { targetPath: target } } });
+    const preview = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: draft.version, expectedDraftRevision: draft.draftRevision, requestKey: crypto.randomUUID() });
+    return window.desktopApi.applySourceRule({ previewId: preview.id, requestKey: crypto.randomUUID() });
+  }, { source, target });
+  await window.getByRole("link", { name: "来源", exact: true }).click(); await window.getByRole("button", { name: "添加来源", exact: true }).click();
+  await window.getByLabel("来源类型", { exact: true }).selectOption("local"); await window.getByLabel("来源名称").fill("待修复来源");
+  await window.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await window.getByRole("button", { name: "选择整理目标目录", exact: true }).click();
+  await window.getByRole("button", { name: "预览配置", exact: true }).click(); await window.getByRole("button", { name: "确认配置生效", exact: true }).click();
+  await expect(window.getByRole("alert")).toContainText("边界原来源"); await expect(window.getByRole("alert")).toContainText(original.id); await expect(window.getByRole("alert")).toContainText("选择独立目录");
+  expect((await window.evaluate(() => window.desktopApi.listSources())).length).toBe(1); expect(await readdir(independentTarget)).toEqual([]);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  expect(await window.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await window.getByRole("alert").scrollIntoViewIfNeeded(); await window.screenshot({ path: "test-results/desktop/source-overlap-recovery.png" });
+  await window.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await expect(window.getByRole("alert")).toHaveCount(0);
+  await window.getByRole("button", { name: "预览配置", exact: true }).click(); await window.getByRole("button", { name: "确认配置生效", exact: true }).click();
+  await expect.poll(() => window.evaluate(() => window.desktopApi.listSources())).toHaveLength(2); expect(await readFile(join(source, "保留.mp4"), "utf8")).toBe("original-media");
+  expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
+});
+
 test("旧 schema 来源迁入统一页面，订阅旧链接定位原身份且重启不生成下载", async () => {
   const initialWindow = await application.firstWindow();
   await expect(initialWindow.getByText("核心已连接", { exact: true })).toBeVisible();

@@ -500,6 +500,8 @@ main {
 }
 .notice-error > span {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .notice-success {
   color: #397765;

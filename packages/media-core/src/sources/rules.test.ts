@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, realpath, rm, lstat, statfs, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, lstat, statfs, writeFile, readFile, readdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -37,6 +37,48 @@ async function fixture() {
   return { directory, sourcePath, targetPath, db, rules, grants, draft, pipeline, preview, advance(ms: number) { clock += ms; } };
 }
 describe("统一来源配置与真实 SQLite 事务", () => {
+  it.each(["相同目录", "目标在来源内", "来源在目标内"])("真实目录授权拒绝%s，不创建执行配置或管理标记", async (relation) => {
+    const f = await fixture(); let sourcePath = f.sourcePath, targetPath = f.targetPath, source = f.grants.source, target = f.grants.target;
+    if (relation === "相同目录") { targetPath = sourcePath; target = await grant(targetPath); }
+    if (relation === "目标在来源内") { targetPath = join(sourcePath, "内层媒体库"); await mkdir(targetPath); target = await grant(targetPath); }
+    if (relation === "来源在目标内") { sourcePath = join(targetPath, "内层输入"); await mkdir(sourcePath); source = await grant(sourcePath); }
+    const row = f.rules.configure({ ...f.draft, configuration: { ...f.draft.configuration, type: "local", sourcePath, organization: { targetPath } } }), preview = f.preview(row);
+    await expect(f.rules.apply({ previewId: preview.id, requestKey: randomUUID() }, { source, target })).rejects.toMatchObject({ code: "UNSAFE_PATH", message: expect.stringContaining("不能相互包含") });
+    expect(f.rules.get(row.id)).toMatchObject({ version: 0, paused: true, configuration: null });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_source").get()).toEqual({ n: 0 });
+    expect((await readdir(targetPath)).includes(".media-marshal")).toBe(false);
+    expect(await readFile(join(f.sourcePath, "保留.mp4"), "utf8")).toBe("preserve-original");
+  });
+  it.each(["相同输入", "子输入", "祖先输入", "目标在原输入内", "输入在原目标内"])("跨规则%s阻断并定位可信来源，原配置和媒体保持", async (relation) => {
+    const f = await fixture(), first = f.rules.configure(f.draft), initial = f.preview(first); await f.rules.apply({ previewId: initial.id, requestKey: randomUUID() }, f.grants);
+    let sourcePath = join(f.directory, "另一输入"), targetPath = join(f.directory, "另一媒体库");
+    if (relation === "相同输入") sourcePath = f.sourcePath;
+    if (relation === "子输入") sourcePath = join(f.sourcePath, "内层输入");
+    if (relation === "祖先输入") { sourcePath = f.directory; targetPath = await realpath(await mkdtemp(join(tmpdir(), "marshal-independent-target-"))); const independent = targetPath; cleanup.push(() => rm(independent, { recursive: true, force: true })); }
+    if (relation === "目标在原输入内") targetPath = join(f.sourcePath, "冲突目标");
+    if (relation === "输入在原目标内") sourcePath = join(f.targetPath, "冲突输入");
+    await mkdir(sourcePath, { recursive: true }); await mkdir(targetPath, { recursive: true });
+    const row = f.rules.configure({ ...f.draft, id: randomUUID(), requestKey: randomUUID(), configuration: { ...f.draft.configuration, type: "local", name: "冲突来源", sourcePath, organization: { targetPath } } }), preview = f.preview(row);
+    await expect(f.rules.apply({ previewId: preview.id, requestKey: randomUUID() }, { source: await grant(sourcePath), target: await grant(targetPath) })).rejects.toMatchObject({ code: "UNSAFE_PATH", message: expect.stringContaining("本地夸克来源"), directoryIssue: { conflict: { kind: "source", id: first.id } } });
+    expect(f.rules.get(first.id)).toMatchObject({ version: 1, localSourceId: first.id }); expect(f.rules.get(row.id)).toMatchObject({ version: 0 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_source").get()).toEqual({ n: 1 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
+    expect(await readFile(join(f.sourcePath, "保留.mp4"), "utf8")).toBe("preserve-original");
+  });
+  it("独立输入可复用同一个已授权媒体目标，不误判为重复接管来源", async () => {
+    const f = await fixture(), first = f.rules.configure(f.draft), initial = f.preview(first); await f.rules.apply({ previewId: initial.id, requestKey: randomUUID() }, f.grants);
+    const sourcePath = join(f.directory, "另一独立输入"); await mkdir(sourcePath);
+    const second = f.rules.configure({ ...f.draft, id: randomUUID(), requestKey: randomUUID(), configuration: { ...f.draft.configuration, type: "local", sourcePath } }), preview = f.preview(second);
+    await f.rules.apply({ previewId: preview.id, requestKey: randomUUID() }, { source: await grant(sourcePath), target: f.grants.target });
+    expect(f.rules.list().filter((row) => row.version === 1)).toHaveLength(2); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_target_root").get()).toEqual({ n: 1 });
+  });
+  it("来源根符号链接不能冒充原生真实路径授权，不接管链接指向的文件", async () => {
+    const f = await fixture(), alias = join(f.directory, "来源软链接"); await symlink(f.sourcePath, alias);
+    const row = f.rules.configure({ ...f.draft, configuration: { ...f.draft.configuration, type: "local", sourcePath: alias } }), preview = f.preview(row);
+    await expect(f.rules.apply({ previewId: preview.id, requestKey: randomUUID() }, { source: { ...f.grants.source, path: alias }, target: f.grants.target })).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" });
+    expect(f.rules.get(row.id)).toMatchObject({ version: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_source").get()).toEqual({ n: 0 });
+    expect(await readFile(join(f.sourcePath, "保留.mp4"), "utf8")).toBe("preserve-original");
+  });
   it("忽略规则存入来源版本，草稿编辑不改变扫描，确认后显式空列表才开放样片目录", async () => {
     const f = await fixture(); await mkdir(join(f.sourcePath, "Sample")); await writeFile(join(f.sourcePath, "Sample", "普通视频.mp4"), "保留样本");
     const original = f.rules.configure(f.draft), preview = f.preview(original); await f.rules.apply({ previewId: preview.id, requestKey: randomUUID() }, f.grants);
