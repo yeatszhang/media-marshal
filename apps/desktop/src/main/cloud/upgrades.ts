@@ -7,7 +7,7 @@ import { DesktopError } from "@media-marshal/contracts";
 import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files";
 
 // 仅备份应用持有的状态；下载根、媒体库、浏览器与普通诊断均不属于此集合。
-const names = ["desktop.sqlite3", "desktop.sqlite3-wal", "desktop.sqlite3-shm", "desktop.sqlite3-journal", "credentials.json", "sidecars", "runtime-version.json"] as const;
+const names = ["desktop.sqlite3", "desktop.sqlite3-wal", "desktop.sqlite3-shm", "desktop.sqlite3-journal", "credentials.json", "sidecars", "runtime-version.json", "runtime-start.json"] as const;
 const versionSchema = z.strictObject({ appVersion: z.string().max(80), schemaVersion: z.number().int().nonnegative(), target: z.string().regex(/^(darwin|win32)-(arm64|x64)$/), components: z.record(z.string().max(80), z.string().max(128)) });
 export type RuntimeVersion = z.infer<typeof versionSchema>;
 const fileSchema = z.strictObject({ path: z.string().max(4096).refine((value) => !value.includes("\\") && !value.includes("\0") && !value.split("/").some((part) => !part || part === "." || part === "..") && names.some((name) => value === name || value.startsWith(name + "/"))), size: z.number().int().nonnegative(), sha256: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -108,9 +108,12 @@ export class ManagedUpgradeBackups {
   async reconciliationNeeded() { return exists(join(this.root, "reconcile-needed.json")); }
   async acknowledgeReconciliation() { await rm(join(this.root, "reconcile-needed.json"), { force: true }); await syncDirectory(this.root); }
   async previousVersion(): Promise<RuntimeVersion | null> {
+    // Core 可能已迁移数据库、但未完成 ready 元数据；此时不能把旧元数据当作真实 Schema。
+    if (await exists(join(this.data, "runtime-start.json"))) return null;
     const path = join(this.data, "runtime-version.json"); if (!await exists(path)) return null;
     await ensurePrivateFile(path); return versionSchema.parse(JSON.parse(await readFile(path, "utf8")));
   }
   async hasDatabase() { return exists(join(this.data, "desktop.sqlite3")); }
-  async recordVersion(value: RuntimeVersion) { await json(join(this.data, "runtime-version.json"), versionSchema.parse(value)); }
+  async markCoreStarting() { await json(join(this.data, "runtime-start.json"), { pending: true }); }
+  async recordVersion(value: RuntimeVersion) { await json(join(this.data, "runtime-version.json"), versionSchema.parse(value)); await rm(join(this.data, "runtime-start.json"), { force: true }); await syncDirectory(this.data); }
 }

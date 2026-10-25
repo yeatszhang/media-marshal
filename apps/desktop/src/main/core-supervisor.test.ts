@@ -65,6 +65,21 @@ afterEach(async () => {
 });
 
 describe("Core 生命周期与恢复栅栏", () => {
+  it("启动前备份失败不创建 Core，显式重启重新检查且不能绕过失败", async () => {
+    const supervisor = fixture(), check = vi.fn(async () => { throw new Error("模拟备份不可写"); }); supervisor.beforeStart = check;
+    await expect(supervisor.start()).rejects.toThrow("模拟备份不可写");
+    expect(supervisor.state).toBe("failed"); expect(harness.fork).not.toHaveBeenCalled();
+    await expect(supervisor.request("sources.list", {})).rejects.toMatchObject({ code: "CORE_UNAVAILABLE" });
+    await expect(supervisor.restart()).rejects.toThrow("模拟备份不可写"); expect(check).toHaveBeenCalledTimes(2); expect(harness.fork).not.toHaveBeenCalled();
+    supervisor.beforeStart = vi.fn(async () => {}); await supervisor.restart(); expect(harness.fork).toHaveBeenCalledTimes(1); expect(supervisor.state).toBe("ready");
+    harness.children[0]!.emit("exit", 1); await vi.advanceTimersByTimeAsync(1000); expect(supervisor.beforeStart).toHaveBeenCalledTimes(2); expect(harness.fork).toHaveBeenCalledTimes(2);
+  });
+  it("备份检查期间退出后，迟到检查成功也不能创建 Core", async () => {
+    const supervisor = fixture(); let release!: () => void;
+    supervisor.beforeStart = () => new Promise<void>((resolve) => { release = resolve; });
+    const starting = expect(supervisor.start()).rejects.toMatchObject({ code: "INTERRUPTED" });
+    await supervisor.stop(); release(); await starting; expect(harness.fork).not.toHaveBeenCalled(); expect(supervisor.state).toBe("stopping");
+  });
   it("停止期间迟到握手不能恢复 ready，强杀确认退出后才允许显式恢复", async () => {
     harness.autoReady = false;
     const supervisor = fixture(); supervisor.onReady = vi.fn(async () => {});

@@ -48,7 +48,7 @@ model {
     guardian = process 'Guardian'
     openlist = process 'OpenList · v4.2.7'
     rclone = process 'Rclone CLI · v1.75.2'
-    database = storage '业务 SQLite · v14'
+    database = storage '业务 SQLite · v15'
     vault = storage '系统保护的凭据密文'
     backups = storage '受限升级备份'
     managed = storage '已授权原卷' {

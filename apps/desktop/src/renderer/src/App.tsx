@@ -99,7 +99,7 @@ function Shell() {
         </header>
         <main>
           <ErrorNotice
-            message={error || (!ready ? (runtime?.detail ?? null) : null)}
+            message={error || runtime?.detail || null}
             retry={() => {
               void model.restart();
             }}

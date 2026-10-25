@@ -4,11 +4,12 @@ import { bindingRefSchema, implementationIdSchema, managedRootGrantSchema, remot
 import { sourceRuleApplySchema, sourceRuleSchema } from "../source-rules.js";
 import { rpcErrorSchema } from "../index.js";
 
-export const CORE_DATA_SCHEMA_VERSION = 14;
+export const CORE_DATA_SCHEMA_VERSION = 15;
 const id = z.uuid(), empty = z.strictObject({});
 const configuredBinding = z.strictObject({ binding: bindingRefSchema.extend({ implementationId: implementationIdSchema }), credentialRef: id });
 export const privateCoreActions = {
   "media.observations.reset": { input: empty, output: empty },
+  "desktop.state.reconcile-restored": { input: empty, output: empty },
   "source-rules.apply": { input: sourceRuleApplySchema.extend({ grants: z.strictObject({ source: managedRootGrantSchema, target: managedRootGrantSchema }).optional() }), output: sourceRuleSchema },
   "media.targets.find": { input: z.strictObject({ path: z.string().min(1).max(4096) }), output: managedRootGrantSchema.nullable() },
   "media.targets.bootstrap": { input: empty, output: z.array(managedRootGrantSchema).max(10000) },

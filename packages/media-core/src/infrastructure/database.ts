@@ -62,6 +62,8 @@ export const migrations: readonly Migration[] = [
   { version: 13, sql: sourceExecutionPreviewMigrationSql },
   // 来源 JSON 增加可配置忽略语义；保留旧快照原文，阻止旧核心误读新配置。
   { version: 14, sql: "SELECT 1;" },
+  // 恢复核对中的 RECORDED 操作可暂为 PROCESSING；旧核心不得忽略持久核对队列。
+  { version: 15, sql: "SELECT 1;" },
 ];
 
 export class CoreDatabase {

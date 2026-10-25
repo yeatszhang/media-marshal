@@ -46,6 +46,12 @@ import { parserLaunchSchema } from "@media-marshal/contracts/internal";
 import { createHash } from "node:crypto";
 import { probeManagedVolume, probeReadOnlyVolume } from "./cloud/volume-probe";
 
+async function installServiceCredentials(supervisor: CoreSupervisor, vault: Credentials) {
+  const { values, unavailable } = await vault.readServices();
+  await supervisor.requestPrivate("media.credentials.install", values);
+  supervisor.detail = unavailable.length ? `${unavailable.map((kind) => kind === "tmdb" ? "TMDB" : "Emby").join("、")} 的本机凭据无法解密，请进入设置重新保存对应密钥。原密文已保留；其他可用连接可继续使用。` : null;
+}
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "marshal",
@@ -262,15 +268,16 @@ async function bootstrap() {
             await supervisor.requestPrivate("media.sources.authorize", { ...previous, source, target });
           } catch { /* 原卷或授权未恢复时保持未验证，不重新绑定相同路径的新硬盘。 */ }
         }
-        if (await backups.reconciliationNeeded()) { await supervisor.requestPrivate("cloud.downloads.reconcile-restored", {}); await backups.acknowledgeReconciliation(); }
+        if (await backups.reconciliationNeeded()) { await supervisor.requestPrivate("desktop.state.reconcile-restored", {}); await backups.acknowledgeReconciliation(); }
         await accounts.restore();
         await supervisor.requestPrivate("cloud.runtime.wake", { hostGeneration: ctx.get(sidecarToken).generation });
       })().finally(() => { recovering = undefined; });
       supervisor.onReady = async () => {
+        // ready 已证明 Core 完成数据库迁移；服务或账号恢复失败不能留下旧 Schema 元数据。
+        await backups.recordVersion(await runtimeVersion());
         const vault = ctx.get(credentialToken);
-        const [tmdb, emby] = await Promise.all([vault.readService("tmdb"), vault.readService("emby")]);
-        await supervisor.requestPrivate("media.credentials.install", { tmdb, emby });
-        await recover(); await backups.recordVersion(await runtimeVersion());
+        await installServiceCredentials(supervisor, vault);
+        await recover();
       };
       let capacityMaintenance: Promise<void> | undefined;
       const host = ctx.get(sidecarToken);
@@ -295,17 +302,22 @@ async function bootstrap() {
       ctx.disposables.add(() => accounts.stop());
       ctx.disposables.add(() => quarkLogin.stop());
       ctx.disposables.add(() => supervisor.stop());
+      // 首次、显式及自动重启共用同一栅栏；备份失败不能通过“重启核心”绕过。
+      supervisor.beforeStart = async () => {
+        await backups.recover();
+        if (exiting || ctx.signal.aborted) throw new DesktopError("INTERRUPTED", "客户端正在停止", true);
+        const version = await runtimeVersion(), previous = await backups.previousVersion();
+        if ((previous && JSON.stringify(previous) !== JSON.stringify(version)) || (!previous && await backups.hasDatabase())) {
+          host.retainForBackup(); await host.prepareOfflineBackup(); await ctx.get(credentialToken).drain();
+          await backups.capture(previous ?? { ...version, appVersion: "legacy", schemaVersion: 0, components: {} }); await host.releaseBackupState();
+        }
+        if (exiting || ctx.signal.aborted) throw new DesktopError("INTERRUPTED", "客户端正在停止", true);
+        await backups.markCoreStarting();
+      };
       // 启动受跟踪但不阻挡窗口，失败由状态页提供重试入口。
       void ctx.effects.run(
         async () => {
           try {
-            await backups.recover();
-            if (exiting || ctx.signal.aborted) return;
-            const version = await runtimeVersion(), previous = await backups.previousVersion();
-            if ((previous && JSON.stringify(previous) !== JSON.stringify(version)) || (!previous && await backups.hasDatabase())) {
-              const host = ctx.get(sidecarToken); host.retainForBackup(); await host.prepareOfflineBackup(); await ctx.get(credentialToken).drain();
-              await backups.capture(previous ?? { ...version, appVersion: "legacy", schemaVersion: 0, components: {} }); await host.releaseBackupState();
-            }
             if (exiting || ctx.signal.aborted) return;
             await supervisor.start();
           } catch { if (!exiting && !ctx.signal.aborted) { supervisor.state = "failed"; supervisor.detail = "启动或升级检查失败。请使用应用菜单恢复匹配备份，或检查安装包。"; } }
@@ -414,8 +426,7 @@ async function bootstrap() {
                 value: string;
               };
               await vault.save(kind, value);
-              const [tmdb, emby] = await Promise.all([vault.readService("tmdb"), vault.readService("emby")]);
-              await supervisor.requestPrivate("media.credentials.install", { tmdb, emby });
+              await installServiceCredentials(supervisor, vault);
               return { ok: true, result: null };
             }
             if (action === "desktop.ingestion.configure") throw new DesktopError("CONFLICT", "整理绑定已并入来源配置，请重新预览确认");
@@ -547,7 +558,7 @@ async function bootstrap() {
     if (restore) {
       const choices = (await backups.list()).slice(0, 8);
       if (!choices.length) { await dialog.showMessageBox({ type: "info", message: "没有可恢复的升级备份。" }); return; }
-      const pick = await dialog.showMessageBox({ type: "question", title: "恢复升级备份", message: "选择与待运行客户端匹配的数据备份。下载文件和媒体库会保留。", buttons: [...choices.map((item) => `${item.appVersion} · 数据 v${item.schemaVersion} · ${new Date(item.createdAt).toLocaleString()}`), "取消"], cancelId: choices.length, defaultId: choices.length });
+      const pick = await dialog.showMessageBox({ type: "question", title: "恢复升级备份", message: "选择与待运行客户端匹配的数据备份。下载文件和媒体库会保留。", buttons: [...choices.map((item) => `${item.appVersion} · ${item.schemaVersion ? `数据 v${item.schemaVersion}` : "数据版本待核对"} · ${new Date(item.createdAt).toLocaleString()}`), "取消"], cancelId: choices.length, defaultId: choices.length });
       chosen = choices[pick.response]?.id; if (!chosen) return;
       const confirm = await dialog.showMessageBox({ type: "question", title: "确认恢复并退出", message: "将先停写并备份当前数据，再恢复所选业务库、凭据密文与组件状态。", detail: "应用随后退出。安装匹配版本后再打开；恢复后会核对现存下载文件，不删除或覆盖媒体文件。", buttons: ["取消", "恢复并退出"], defaultId: 0, cancelId: 0 }); if (confirm.response !== 1) return;
     }

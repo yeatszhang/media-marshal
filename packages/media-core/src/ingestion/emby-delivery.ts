@@ -101,7 +101,7 @@ export class EmbyDelivery {
   revalidate(): Promise<void> {
     if (this.validationFlight) return this.validationFlight;
     const row = this.current();
-    if (this.closed || !this.connections.installed || !row?.valid || row.base_url !== this.settings().embyUrl) return Promise.resolve();
+    if (this.closed || !this.connections.installed || !this.connections.embyKey || !row?.valid || row.base_url !== this.settings().embyUrl) return Promise.resolve();
     const db = this.database.connection;
     const pending = db.prepare("SELECT count(*) AS count,min(next_attempt_at) AS due,sum(CASE WHEN last_failure IS NULL THEN 1 ELSE 0 END) AS fresh FROM emby_delivery WHERE connection_id=? AND connection_version=? AND state IN ('REFRESH_PENDING','WAITING_LIBRARY')").get(row.id, row.version) as { count: number; due: number | null; fresh: number | null };
     const window = db.prepare("SELECT next_refresh_at FROM emby_refresh_window WHERE connection_id=? AND connection_version=?").get(row.id, row.version) as { next_refresh_at: number } | undefined;
@@ -148,18 +148,19 @@ export class EmbyDelivery {
     return this.publicRequest(() => this.verifiedItemUrl(taskId));
   }
   private async verifiedItemUrl(taskId: string) {
-    const connection = this.current(), row = this.database.connection.prepare("SELECT * FROM emby_delivery WHERE task_id=? AND state='COLLECTED'").get(taskId) as { connection_id: string; connection_version: number; emby_item_id: string | null } | undefined;
+    const connection = this.current(), row = this.database.connection.prepare("SELECT d.* FROM emby_delivery d JOIN media_task t ON t.id=d.task_id AND t.status='DONE' JOIN ingestion_operation o ON o.id=d.operation_id AND o.phase='RECORDED' WHERE d.task_id=? AND d.state='COLLECTED'").get(taskId) as { connection_id: string; connection_version: number; emby_item_id: string | null } | undefined;
     if (!row?.emby_item_id || !connection || !this.isVerified(connection) || row.connection_id !== connection.id || row.connection_version !== connection.version) throw new DesktopError("CONFLICT", "收录证据尚未通过，请先核对交付");
     const revision = this.connections.version, client = this.client(), info = await client.info(this.lifetime.signal);
     if (this.closed) throw new DesktopError("INTERRUPTED", "交付服务正在停止", true);
     const latest = this.current();
-    if (revision !== this.connections.version || !latest || !this.isVerified(latest) || latest.id !== connection.id || latest.version !== connection.version || !this.database.connection.prepare("SELECT 1 FROM emby_delivery WHERE task_id=? AND state='COLLECTED' AND connection_id=? AND connection_version=? AND emby_item_id=?").get(taskId, connection.id, connection.version, row.emby_item_id)) throw new DesktopError("CONFLICT", "收录或连接状态已变化，请重新核对交付");
+    if (revision !== this.connections.version || !latest || !this.isVerified(latest) || latest.id !== connection.id || latest.version !== connection.version || !this.database.connection.prepare("SELECT 1 FROM emby_delivery d JOIN media_task t ON t.id=d.task_id AND t.status='DONE' JOIN ingestion_operation o ON o.id=d.operation_id AND o.phase='RECORDED' WHERE d.task_id=? AND d.state='COLLECTED' AND d.connection_id=? AND d.connection_version=? AND d.emby_item_id=?").get(taskId, connection.id, connection.version, row.emby_item_id)) throw new DesktopError("CONFLICT", "收录或连接状态已变化，请重新核对交付");
     if (info.Id !== connection.server_id) { this.invalidate(); throw new DesktopError("CONFLICT", "服务器身份已变化，请重新验证"); }
     return client.itemUrl(row.emby_item_id, connection.server_id);
   }
   start() { if (!this.timer && !this.closed) { this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 1000); void this.tick().catch(() => {}); } }
   tick(): Promise<void> { if (this.closed) return Promise.resolve(); return this.flight ??= this.run().finally(() => { this.flight = undefined; }); }
   private update(taskId: string, state: "REFRESH_PENDING" | "WAITING_LIBRARY" | "COLLECTED" | "NEEDS_ATTENTION", failure: string | null, next: number, itemId: string | null = null) {
+    if (!this.database.connection.prepare("SELECT 1 FROM media_task t JOIN ingestion_operation o ON o.task_id=t.id WHERE t.id=? AND t.status='DONE' AND o.phase='RECORDED'").get(taskId)) return;
     const db = this.database.connection; db.transaction(() => { db.prepare("UPDATE emby_delivery SET state=?,last_failure=?,next_attempt_at=?,emby_item_id=?,updated_at=? WHERE task_id=?").run(state, failure, next, itemId, new Date(this.now()).toISOString(), taskId); db.prepare("UPDATE media_task SET delivery_status=? WHERE id=? AND status='DONE'").run(state, taskId); })();
   }
   private refreshed(connection: Connection, rows: Delivery[]) {
@@ -186,7 +187,7 @@ export class EmbyDelivery {
     }); return matches.length === 1 ? matches[0]!.Id : null;
   }
   private async run() {
-    const connection = this.current(); if (!this.connections.installed || !connection?.valid || connection.base_url !== this.settings().embyUrl) return;
+    const connection = this.current(); if (!this.connections.installed || !this.connections.embyKey || !connection?.valid || connection.base_url !== this.settings().embyUrl) return;
     if (!this.isVerified(connection)) {
       if (this.validationRevision !== this.connections.version || this.now() >= this.validationDue) await this.revalidate();
       if (!this.isVerified(connection)) return;

@@ -33,6 +33,13 @@ async function vault() {
 }
 afterEach(async () => { await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 describe("账号级系统保护保险箱", () => {
+  it("单个服务密文无法解密时保留原文，仍恢复另一可用服务并定位需要修复的对象", async () => {
+    const f = await vault(); await f.store.save("emby", "fixture-valid-emby");
+    const values = JSON.parse(await readFile(f.path, "utf8")); values.tmdb = Buffer.from("损坏的测试密文").toString("base64"); await writeFile(f.path, JSON.stringify(values));
+    expect(await f.store.readServices()).toEqual({ values: { tmdb: null, emby: "fixture-valid-emby" }, unavailable: ["tmdb"] });
+    expect(JSON.parse(await readFile(f.path, "utf8"))).toEqual(values);
+    await f.store.save("tmdb", "fixture-repaired-tmdb"); expect((await f.store.readServices()).unavailable).toEqual([]);
+  });
   it("服务凭据通过系统保护跨实例恢复，公开配置只有布尔状态，缺失时无需解密", async () => {
     const { store, path, crypto } = await vault();
     crypto.available = false; expect(await store.readService("tmdb")).toBeNull(); crypto.available = true;

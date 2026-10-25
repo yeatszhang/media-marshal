@@ -73,6 +73,53 @@ export class IngestionPipeline implements ManagedIngestionSink {
     db.prepare("UPDATE media_task SET status='PENDING' WHERE status='PROCESSING' AND id IN (SELECT task_id FROM ingestion_candidate) AND id NOT IN (SELECT task_id FROM ingestion_operation)").run();
   }
   start() { if (!this.timer && !this.closed) { this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 10000); void this.tick().catch(() => {}); } }
+  /** 恢复旧业务库后重新核对已有成果，只读目标，不重放 COPY。队列随数据库持久化。 */
+  reconcileRestored() {
+    const db = this.database.connection;
+    db.transaction(() => {
+      db.prepare("INSERT OR IGNORE INTO app_setting(key,value) SELECT 'ingestion.restore.audit.'||o.id,'0' FROM ingestion_operation o JOIN media_task t ON t.id=o.task_id WHERE o.phase='RECORDED' AND t.status='DONE'").run();
+      db.prepare("UPDATE media_task SET status='PROCESSING',delivery_status='NOT_READY',updated_at=? WHERE id IN (SELECT o.task_id FROM ingestion_operation o JOIN app_setting s ON s.key='ingestion.restore.audit.'||o.id)").run(timestamp(this.now));
+      db.prepare("UPDATE ingestion_candidate SET reason='恢复备份后等待核对现存目标，不会重新复制' WHERE id IN (SELECT o.candidate_id FROM ingestion_operation o JOIN app_setting s ON s.key='ingestion.restore.audit.'||o.id)").run();
+    })();
+  }
+  private async auditRestored() {
+    const db = this.database.connection;
+    const rows = db.prepare("SELECT o.* FROM ingestion_operation o JOIN app_setting s ON s.key='ingestion.restore.audit.'||o.id WHERE o.phase='RECORDED' ORDER BY CAST(s.value AS INTEGER),o.id LIMIT 4").all() as OperationRow[];
+    const unavailable = (error: unknown) => ["LOCAL_UNAVAILABLE", "EACCES", "EPERM", "EROFS", "EIO", "ENXIO", "ESTALE", "EBADF"].includes((error as { code?: string }).code ?? "");
+    const verify = async (row: OperationRow) => {
+      const plan = JSON.parse(row.plan_json) as Plan, expected = localFileEvidenceSchema.parse(JSON.parse(row.evidence_json!)), root = this.targets.get(plan.target.id);
+      if (!sameVolumeRoot(root.grant.volume, plan.target.volume)) throw conflict();
+      const actual = await root.inspectCompleted(plan.targetSegments);
+      if ((["volumeId", "inode", "birthtimeNs", "modifiedNs", "size", "sha256"] as const).some((field) => actual[field] !== expected[field])) throw conflict();
+    };
+    for (const row of rows) {
+      if (this.closed) return;
+      let primaryChanged = false, deferred = false;
+      const changedAccessories: string[] = [];
+      try { await verify(row); } catch (error) { if (unavailable(error)) deferred = true; else primaryChanged = true; }
+      if (!primaryChanged && !deferred) for (const asset of db.prepare("SELECT * FROM ingestion_accessory WHERE operation_id=? AND phase='RECORDED'").all(row.id) as OperationRow[]) {
+        if (this.closed) return;
+        try { await verify(asset); } catch (error) { if (unavailable(error)) { deferred = true; break; } changedAccessories.push(asset.id); }
+      }
+      if (this.closed) return;
+      if (deferred) {
+        db.prepare("UPDATE app_setting SET value=? WHERE key=?").run(String(this.now()), "ingestion.restore.audit." + row.id);
+        db.prepare("UPDATE ingestion_candidate SET reason='恢复备份后目标暂不可访问，等待原卷及权限恢复；不会重建或覆盖文件' WHERE id=?").run(row.candidate_id); continue;
+      }
+      db.transaction(() => {
+        if (!db.prepare("SELECT 1 FROM app_setting s JOIN ingestion_operation o ON s.key='ingestion.restore.audit.'||o.id WHERE o.id=? AND o.phase='RECORDED'").get(row.id)) return;
+        const stamp = timestamp(this.now);
+        if (primaryChanged) db.prepare("UPDATE ingestion_operation SET phase='NEEDS_ATTENTION',failure_code='CONFLICT',updated_at=? WHERE id=?").run(stamp, row.id);
+        for (const id of changedAccessories) db.prepare("UPDATE ingestion_accessory SET phase='NEEDS_ATTENTION',failure_code='CONFLICT',updated_at=? WHERE id=? AND phase='RECORDED'").run(stamp, id);
+        db.prepare("UPDATE media_task SET status=?,delivery_status=?,updated_at=? WHERE id=?").run(primaryChanged ? "FAILED" : "DONE", primaryChanged ? "NEEDS_ATTENTION" : "REFRESH_PENDING", stamp, row.task_id);
+        db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(primaryChanged ? "恢复备份后目标证据不符，已保留现存文件；请核对后处理" : changedAccessories.length ? "恢复备份后部分附属文件证据不符，已保留现存文件；请核对后处理" : null, row.candidate_id);
+        if (primaryChanged) db.prepare("UPDATE emby_delivery SET state='NEEDS_ATTENTION',last_failure='TARGET_CHANGED',emby_item_id=NULL,updated_at=? WHERE task_id=?").run(stamp, row.task_id);
+        else db.prepare("UPDATE emby_delivery SET state='REFRESH_PENDING',next_attempt_at=max(next_attempt_at,?),check_started_at=NULL,emby_item_id=NULL,updated_at=? WHERE task_id=?").run(this.now() + 30000, stamp, row.task_id);
+        if (primaryChanged) db.prepare("UPDATE desktop_job SET state='NEEDS_ATTENTION',updated_at=? WHERE id=?").run(stamp, row.id); else this.accessoryJobState(row.id);
+        db.prepare("DELETE FROM app_setting WHERE key=?").run("ingestion.restore.audit." + row.id);
+      })();
+    }
+  }
   pauseStatus() { return { paused: (this.database.connection.prepare("SELECT value FROM app_setting WHERE key='ingestion.paused'").get() as { value: string } | undefined)?.value === "true" }; }
   setPaused(input: CoreInput<"ingestion.set-paused">) {
     if (this.closed) throw new DesktopError("INTERRUPTED", "整理正在停止", true);
@@ -636,6 +683,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   }
   private accessoryJobState(operationId: string) { const rows = this.database.connection.prepare("SELECT phase FROM ingestion_accessory WHERE operation_id=?").all(operationId) as { phase: string }[]; this.database.connection.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(rows.every((row) => row.phase === "RECORDED") ? "DONE" : rows.some((row) => row.phase === "NEEDS_ATTENTION") ? "PARTIAL_FAILED" : "COPYING_ACCESSORIES", timestamp(this.now), operationId); }
   retry(taskId: string) {
+    if (this.database.connection.prepare("SELECT 1 FROM app_setting s JOIN ingestion_operation o ON s.key='ingestion.restore.audit.'||o.id WHERE o.task_id=?").get(taskId)) throw conflict("恢复备份后的目标文件尚待核对，请等待原卷和权限恢复");
     const db = this.database.connection, candidate = db.prepare("SELECT * FROM ingestion_candidate WHERE task_id=?").get(taskId) as CandidateRow | undefined; if (!candidate) throw conflict(); this.candidateSource(candidate);
     const operation = db.prepare("SELECT * FROM ingestion_operation WHERE task_id=?").get(taskId) as OperationRow | undefined;
     if (operation?.phase === "RECORDED") {
@@ -647,6 +695,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   }
   tick(): Promise<void> { if (this.closed) return Promise.resolve(); return this.flight ??= this.run().finally(() => { this.flight = undefined; }); }
   private async run() {
+    await this.auditRestored();
     if (this.pauseStatus().paused) return;
     const db = this.database.connection, controller = new AbortController(); this.controller = controller;
     try {

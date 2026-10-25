@@ -4,7 +4,7 @@ import {
   _electron,
   type ElectronApplication,
 } from "@playwright/test";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, readdir, writeFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { createServer as createHttpServer } from "node:http";
@@ -184,7 +184,7 @@ db.close(); console.log(JSON.stringify({localId,subscriptionId}));
   expect(await window.evaluate((id) => window.desktopApi.resolveSourceLegacy({ kind: "subscription", id }), ids.subscriptionId)).toMatchObject({ sourceId: ids.subscriptionId, status: "MAPPED" });
   await expect(stat(join(profile, `desktop.sqlite3.before-v${CORE_DATA_SCHEMA_VERSION}.bak`))).resolves.toMatchObject({ size: expect.any(Number) });
 });
-test("服务密钥经系统保险箱注入，窗口重载和核心重启后恢复且查询与命令行不回显", async () => {
+test("服务密钥经系统保险箱注入，窗口／核心／整应用重启后恢复且查询与命令行不回显", async () => {
   const secret = "fixture-service-private-key", requests: string[] = [];
   const server = createHttpServer((req, res) => {
     requests.push(req.headers["x-emby-token"] as string);
@@ -196,13 +196,22 @@ test("服务密钥经系统保险箱注入，窗口重载和核心重启后恢�
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
-    const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+    let window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
     const address = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
     await window.evaluate(async ({ address, secret }) => { await window.desktopApi.saveSettings({ language: "zh-CN", embyUrl: address, tmdbProxy: "" }); await window.desktopApi.saveCredential("emby", secret); }, { address, secret });
     const read = () => window.evaluate(async () => { try { return (await window.desktopApi.listEmbyLibraries()).serverId; } catch { return "pending"; } });
     await expect.poll(read).toBe("fixture-server");
     await window.reload(); await expect.poll(read).toBe("fixture-server");
     await window.evaluate(() => window.desktopApi.restartCore()); await expect.poll(read).toBe("fixture-server");
+    await application.close();
+    const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+    application = await _electron.launch({ ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}), args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${join(directory, "data")}`], env });
+    window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await expect.poll(read).toBe("fixture-server");
+    const credentialFile = join(directory, "data", "credentials.json"), values = JSON.parse(await readFile(credentialFile, "utf8")); values.tmdb = Buffer.from("损坏的测试服务密文").toString("base64"); await writeFile(credentialFile, JSON.stringify(values));
+    await window.evaluate(() => window.desktopApi.restartCore()); await expect.poll(read).toBe("fixture-server");
+    await expect(window.getByRole("alert")).toContainText("TMDB 的本机凭据无法解密");
+    expect(JSON.parse(await readFile(credentialFile, "utf8")).tmdb).toBe(values.tmdb);
+    await window.evaluate(() => window.desktopApi.saveCredential("tmdb", "fixture-repaired-tmdb")); await expect.poll(async () => (await window.evaluate(() => window.desktopApi.getRuntime())).detail).toBeNull();
     const settings = await window.evaluate(() => window.desktopApi.getSettings()); expect(settings.embyKeyConfigured).toBe(true); expect(JSON.stringify(settings)).not.toContain(secret);
     for (const name of ["desktop.sqlite3", "desktop.sqlite3-wal", "credentials.json"]) { const bytes = await readFile(join(directory, "data", name)).catch(() => Buffer.alloc(0)); expect(bytes.includes(Buffer.from(secret)), name).toBe(false); }
     const pids = await application.evaluate(({ app }) => [process.pid, ...app.getAppMetrics().filter((row) => row.name === "Media Marshal Core").map((row) => row.pid)]);
@@ -348,6 +357,30 @@ test("云端全局暂停独立于本地来源，重载与 Core 重启保留状�
   await window.getByRole("link", { name: "云端下载", exact: true }).click(); await window.getByRole("button", { name: "恢复全部云端下载", exact: true }).click();
   await expect.poll(async () => window.evaluate(() => window.desktopApi.getCloudDownloadPause())).toEqual({ paused: false, pausing: false });
   await window.screenshot({ path: "test-results/desktop/subscription-pause.png" });
+});
+test("升级备份失败阻断接入和核心重试，修复私有目录后才能恢复", async () => {
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  await window.evaluate(() => window.desktopApi.saveSettings({ language: "zh-CN", embyUrl: "", tmdbProxy: "http://127.0.0.1:8892" }));
+  const profile = join(directory, "data"), runtimeFile = join(profile, "runtime-version.json"), backupRoot = join(profile, "private-backups");
+  await expect.poll(async () => JSON.parse(await readFile(runtimeFile, "utf8")).schemaVersion).toBe(CORE_DATA_SCHEMA_VERSION);
+  await application.close();
+  const previous = JSON.parse(await readFile(runtimeFile, "utf8")); previous.appVersion = "升级前测试版本"; await writeFile(runtimeFile, JSON.stringify(previous));
+  await rename(backupRoot, backupRoot + ".held"); await writeFile(backupRoot, "占用备份目录的测试文件", { flag: "wx", mode: 0o600 });
+  const databaseBefore = await readFile(join(profile, "desktop.sqlite3"));
+  const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  application = await _electron.launch({ ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}), args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${profile}`], env });
+  const failed = await application.firstWindow();
+  await expect.poll(() => failed.evaluate(async () => (await window.desktopApi.getRuntime()).core)).toBe("failed");
+  await expect(failed.evaluate(() => window.desktopApi.listSources())).rejects.toThrow();
+  await expect(failed.evaluate(() => window.desktopApi.restartCore())).rejects.toThrow();
+  expect((await failed.evaluate(() => window.desktopApi.getRuntime())).core).toBe("failed");
+  expect((await readFile(join(profile, "desktop.sqlite3"))).equals(databaseBefore)).toBe(true);
+  expect(await readFile(backupRoot, "utf8")).toBe("占用备份目录的测试文件");
+  await expect(failed.getByText(/启动前检查未完成/)).toBeVisible(); await failed.screenshot({ path: "test-results/desktop/upgrade-backup-blocked.png" });
+  await rm(backupRoot); await rename(backupRoot + ".held", backupRoot);
+  await failed.evaluate(() => window.desktopApi.restartCore()); await expect(failed.getByText("核心已连接", { exact: true })).toBeVisible();
+  expect((await failed.evaluate(() => window.desktopApi.getSettings())).tmdbProxy).toBe("http://127.0.0.1:8892");
+  await expect.poll(async () => (await readdir(backupRoot)).filter((id) => /^[a-f0-9-]{36}$/.test(id)).length).toBe(1);
 });
 test("整包升级停写备份和原生恢复保留现存文件，重开核对数据", async () => {
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();

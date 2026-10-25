@@ -52,6 +52,13 @@ async function fixture(options: { mediaType?: "AUTO" | "MOVIE" | "TV_SHOW"; subd
   return { directory, path, libraryPath, existingMedia, db, delivery, configure, add, state, restored, setItems(value: EmbyItem[]) { items = value; }, setSeries(value: EmbyItem[]) { seriesItems = value; }, setStatus(code: number) { status = code; }, setPermission(kind: "read" | "refresh", code: number) { if (kind === "read") readStatus = code; else refreshStatus = code; }, setLibraryType(type: string | null) { libraryType = type; }, setLibraryPaths(paths: string[]) { listedPaths = paths; }, setServerId(id: string) { serverId = id; }, refreshes: () => refreshes, requests: () => requests, pages: () => pages, jump(ms: number) { clock += ms; }, pipeline, connections, settings };
 }
 describe("独立 Emby 交付、合并与核对", () => {
+  it("本机服务密钥未恢复时不请求 Emby，也不将持久绑定误判为远端认证失效", async () => {
+    const f = await fixture(); await f.configure(); const item = await f.add(), requests = f.requests();
+    f.connections.install({ tmdb: null, emby: null }); f.jump(30000); await f.delivery.tick(); await f.delivery.revalidate();
+    expect(f.requests()).toBe(requests); expect(f.db.connection.prepare("SELECT valid FROM emby_connection").get()).toEqual({ valid: 1 });
+    expect(f.state(item.taskId)).toMatchObject({ state: "REFRESH_PENDING", last_failure: null }); expect(f.delivery.configuration()?.verified).toBe(false);
+    f.connections.install({ tmdb: null, emby: "fixture-emby-private-key" }); await f.delivery.tick(); expect(f.requests()).toBeGreaterThan(requests); expect(f.delivery.configuration()?.verified).toBe(true);
+  });
   it("复核的合并刷新只推进已到期交付，不解除其他任务的持久退避", async () => {
     const f = await fixture(); await f.configure(); const a = await f.add(), b = await f.add();
     f.db.connection.prepare("UPDATE emby_delivery SET last_failure='NETWORK_UNAVAILABLE',next_attempt_at=next_attempt_at+300000 WHERE task_id=?").run(b.taskId);
@@ -129,16 +136,30 @@ describe("独立 Emby 交付、合并与核对", () => {
     expect(f.state(item.taskId).state).toBe(["重复剧集", "非请求剧集"].includes(change) ? "NEEDS_ATTENTION" : "WAITING_LIBRARY");
     await expect(f.delivery.openUrl(item.taskId)).rejects.toMatchObject({ code: "CONFLICT" });
   });
-  it.each(["连接变更", "重试交付"])("打开条目核对期间%s，迟到响应不能返回旧链接", async (change) => {
+  it.each(["连接变更", "重试交付", "恢复文件核对"])("打开条目核对期间%s，迟到响应不能返回旧链接", async (change) => {
     const f = await fixture(); await f.configure(); const item = await f.add();
     f.setItems([{ Id: "collected", Type: "Movie", Path: item.path, ProviderIds: { Tmdb: "1" } }]);
     f.jump(30000); await f.delivery.tick(); f.jump(15000); await f.delivery.tick();
     let release!: (value: { Id: string; Version: string }) => void;
     vi.spyOn(EmbyClient.prototype, "info").mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const opening = f.delivery.openUrl(item.taskId), result = expect(opening).rejects.toMatchObject({ code: "CONFLICT" });
-    if (change === "连接变更") await f.configure(); else f.delivery.retry(item.taskId);
+    if (change === "连接变更") await f.configure();
+    else if (change === "恢复文件核对") f.db.connection.prepare("UPDATE media_task SET status='PROCESSING',delivery_status='NOT_READY' WHERE id=?").run(item.taskId);
+    else f.delivery.retry(item.taskId);
     release({ Id: "fixture-server-id", Version: "4.9-fixture" }); await result;
     expect(await readFile(item.path, "utf8")).toBe("fixture-video");
+    if (change === "恢复文件核对") { const requests = f.requests(); await expect(f.delivery.openUrl(item.taskId)).rejects.toMatchObject({ code: "CONFLICT" }); expect(f.requests()).toBe(requests); }
+  });
+  it("收录响应到达前进入恢复文件核对，迟到结果不能改回已收录", async () => {
+    const f = await fixture(); await f.configure(); const item = await f.add(); f.jump(30000); await f.delivery.tick();
+    let release!: (items: EmbyItem[]) => void, reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    vi.spyOn(EmbyClient.prototype, "items").mockImplementationOnce(() => { reached(); return new Promise((resolve) => { release = resolve; }); });
+    f.jump(15000); const checking = f.delivery.tick(); await waiting;
+    f.db.connection.prepare("UPDATE media_task SET status='PROCESSING',delivery_status='NOT_READY' WHERE id=?").run(item.taskId);
+    release([{ Id: "old-receipt", Type: "Movie", Path: item.path, ProviderIds: { Tmdb: "1" } }]); await checking;
+    expect(f.state(item.taskId).state).toBe("WAITING_LIBRARY"); expect(f.db.connection.prepare("SELECT status,delivery_status FROM media_task WHERE id=?").get(item.taskId)).toEqual({ status: "PROCESSING", delivery_status: "NOT_READY" });
+    const requests = f.requests(); await f.delivery.tick(); expect(f.requests()).toBe(requests);
   });
   it("公开连接与读取错误保留可操作分类，不转发服务器正文或泛化为内部错误", async () => {
     const f = await fixture(); f.setStatus(503);

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, writeFile, rm, stat, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, stat, symlink, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import ts from "typescript";
+import Database from "better-sqlite3";
 import { CoreDatabase, migrations } from "../../../../../packages/media-core/src/infrastructure/database";
 import { ManagedUpgradeBackups, type RuntimeVersion } from "./upgrades";
 const directories: string[] = [];
@@ -19,6 +20,36 @@ async function fixture() {
   return { path, data, media, backups: new ManagedUpgradeBackups(data) };
 }
 describe("停写后的整包状态快照与恢复", () => {
+  it("Core 启动中断不能沿用旧 Schema 元数据，ready 后才确认新版本", async () => {
+    const f = await fixture(); await f.backups.recordVersion(version); expect(await f.backups.previousVersion()).toEqual(version);
+    await f.backups.markCoreStarting(); const reopened = new ManagedUpgradeBackups(f.data); expect(await reopened.previousVersion()).toBeNull();
+    const snapshot = await reopened.capture({ ...version, appVersion: "legacy", schemaVersion: 0 }); expect(snapshot.schemaVersion).toBe(0);
+    await reopened.recordVersion({ ...version, schemaVersion: 15 }); expect(await new ManagedUpgradeBackups(f.data).previousVersion()).toEqual({ ...version, schemaVersion: 15 });
+    await expect(stat(join(f.data, "runtime-start.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("崩溃遗留 WAL 的完整私有快照恢复后仍包含已提交记录", async () => {
+    const f = await fixture(), database = join(f.data, "desktop.sqlite3"), script = join(f.path, "wal-writer.mjs");
+    const require = createRequire(resolve("package.json"));
+    await writeFile(script, `import Database from ${JSON.stringify(pathToFileURL(require.resolve("better-sqlite3")).href)};
+const db=new Database(process.argv[2]); db.pragma('journal_mode = WAL');db.pragma('wal_autocheckpoint = 0');db.pragma('wal_checkpoint(TRUNCATE)');
+db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();process.stdout.write('WAL_READY\\n');process.stdin.resume();`);
+    const child = spawn(process.execPath, [script, database], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["pipe", "pipe", "ignore"] });
+    const exited = new Promise<void>((done) => child.once("close", () => done()));
+    try {
+      await new Promise<void>((done, fail) => { let output = ""; const timer = setTimeout(() => fail(new Error("WAL 写入进程未就绪")), 5000); child.stdout.on("data", (chunk) => { output += chunk; if (output.includes("WAL_READY\n")) { clearTimeout(timer); done(); } }); child.once("error", (error) => { clearTimeout(timer); fail(error); }); child.once("exit", () => { clearTimeout(timer); fail(new Error("WAL 写入进程提前退出")); }); });
+      child.kill("SIGKILL"); await exited;
+      expect((await stat(database + "-wal")).size).toBeGreaterThan(32);
+      const mainOnly = join(f.path, "main-only.sqlite3"); await copyFile(database, mainOnly);
+      const incomplete = new Database(mainOnly, { readonly: true }); try { expect(incomplete.prepare("SELECT value FROM app_setting WHERE key='preserved'").get()).toEqual({ value: "before" }); } finally { incomplete.close(); }
+      const backup = await f.backups.capture({ ...version, schemaVersion: 4 });
+      const manifest = JSON.parse(await readFile(join(f.backups.root, backup.id, "manifest.json"), "utf8")); expect(manifest.files.some((file: { path: string }) => file.path === "desktop.sqlite3-wal")).toBe(true);
+      const changed = await CoreDatabase.open(database, migrations.slice(0, 4)); changed.connection.prepare("UPDATE app_setting SET value='after' WHERE key='preserved'").run(); changed.close();
+      await f.backups.restore(backup.id, version);
+      const restored = await CoreDatabase.open(database, migrations.slice(0, 4));
+      try { expect(restored.connection.prepare("SELECT value FROM app_setting WHERE key='preserved'").get()).toEqual({ value: "in-wal" }); } finally { restored.close(); }
+      expect(await f.backups.reconciliationNeeded()).toBe(true); expect(await readFile(join(f.media, "保留.mp4"), "utf8")).toBe("现存成果");
+    } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); await exited; }
+  });
   it("快照包含匹配私有状态，旧 Core 拒绝新版库；恢复数据不改动下载成果", async () => {
     const f = await fixture(), backup = await f.backups.capture({ ...version, appVersion: "0.1.0", schemaVersion: 4 });
     const db = await CoreDatabase.open(join(f.data, "desktop.sqlite3")); db.connection.prepare("UPDATE app_setting SET value='after'").run(); db.close();
@@ -58,6 +89,7 @@ describe("停写后的整包状态快照与恢复", () => {
     const f = await fixture(), backup = await f.backups.capture({ ...version, schemaVersion: 4 });
     await writeFile(join(f.backups.root, backup.id, "credentials.json"), "被替换的备份"); await expect(f.backups.restore(backup.id, version)).rejects.toMatchObject({ code: "STORAGE_ERROR" }); expect(await readFile(join(f.data, "credentials.json"), "utf8")).toBe("仅测试的密文占位");
     const future = await f.backups.capture({ ...version, schemaVersion: 999 }); await expect(f.backups.restore(future.id, version)).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+    const otherArchitecture = await f.backups.capture({ ...version, schemaVersion: 4, target: "darwin-x64" }); await expect(f.backups.restore(otherArchitecture.id, version)).rejects.toMatchObject({ code: "STORAGE_ERROR" });
     const linked = await f.backups.capture({ ...version, schemaVersion: 4 }); await rm(join(f.backups.root, linked.id, "credentials.json")); await symlink(join(f.data, "credentials.json"), join(f.backups.root, linked.id, "credentials.json")); await expect(f.backups.restore(linked.id, version)).rejects.toMatchObject({ code: "STORAGE_ERROR" });
   });
 });

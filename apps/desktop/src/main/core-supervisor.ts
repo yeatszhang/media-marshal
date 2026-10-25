@@ -40,6 +40,7 @@ export class CoreSupervisor {
   private starting?: Promise<void>;
   state: DesktopRuntime["core"] = "starting";
   detail: string | null = null;
+  beforeStart?: () => Promise<void>;
   onReady?: () => Promise<void>;
   constructor(
     private readonly workerPath: string,
@@ -64,6 +65,12 @@ export class CoreSupervisor {
     if (this.child) throw new DesktopError("CONFLICT", "旧核心尚未退出");
     this.state = "starting";
     this.detail = null;
+    try { await this.beforeStart?.(); }
+    catch (error) {
+      if (!this.stopping) { this.state = "failed"; this.detail = "启动前检查未完成，请检查升级备份，或从应用菜单恢复匹配备份"; }
+      throw error;
+    }
+    if (this.stopping) throw new DesktopError("INTERRUPTED", "核心启动已停止", true);
     const parser = await this.parser?.();
     if (this.stopping) throw new DesktopError("INTERRUPTED", "核心启动已停止", true);
     const child = utilityProcess.fork(this.workerPath, [], {

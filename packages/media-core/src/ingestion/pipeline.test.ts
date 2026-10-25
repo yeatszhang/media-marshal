@@ -47,6 +47,55 @@ async function fixture(options: { ignoredFilePatterns?: string[] | null; watchFi
   return { directory, source, target, db, pipeline, sourceId, sourceGrant, targetGrant, connections, file, bytes, advance, ready, preview, calls: () => calls, jump(ms: number) { monotonic += ms; clock += ms; }, wallJump(ms: number) { clock += ms; } };
 }
 describe("持久候选、人工确认与真实 COPY", () => {
+  it("恢复核对幂等且不重放 COPY，主文件与字幕通过后重新等待 Emby 核对", async () => {
+    const f = await fixture(); await writeFile(join(f.source, "测试电影.2026.zh.srt"), "字幕内容");
+    const preview = await f.preview(); await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    const paths = [preview.targetPath, f.pipeline.task(preview.taskId).accessories![0]!.targetPath], identities = await Promise.all(paths.map((path) => lstat(path, { bigint: true }).then((entry) => entry.ino)));
+    f.db.connection.prepare("UPDATE emby_delivery SET state='COLLECTED',emby_item_id='旧收录证据'").run();
+    const stage = vi.spyOn(f.pipeline.targets.get(f.targetGrant.id), "prepareStage"), readSource = vi.spyOn(SourceRoot.prototype, "read");
+    f.pipeline.reconcileRestored(); f.pipeline.reconcileRestored();
+    expect(f.pipeline.task(preview.taskId)).toMatchObject({ state: "PROCESSING", failure: expect.stringContaining("不会重新复制") });
+    expect(() => f.pipeline.retry(preview.taskId)).toThrow("尚待核对"); await f.pipeline.tick();
+    expect(f.pipeline.task(preview.taskId).state).toBe("DONE"); expect(f.db.connection.prepare("SELECT state,emby_item_id FROM emby_delivery").get()).toEqual({ state: "REFRESH_PENDING", emby_item_id: null });
+    expect(await Promise.all(paths.map((path) => lstat(path, { bigint: true }).then((entry) => entry.ino)))).toEqual(identities);
+    expect(stage).not.toHaveBeenCalled(); expect(readSource).not.toHaveBeenCalled(); expect((await readFile(f.file)).equals(f.bytes)).toBe(true);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM app_setting WHERE key LIKE 'ingestion.restore.audit.%'").get()).toEqual({ n: 0 });
+  });
+  it.each(["原文件被改写", "同内容被另一文件替换", "文件已删除"])("恢复核对发现%s时保留现状，不从来源重建目标", async (variant) => {
+    const f = await fixture(), preview = await f.preview(); await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    if (variant === "原文件被改写") await writeFile(preview.targetPath, Buffer.alloc(f.bytes.length, 65));
+    else if (variant === "同内容被另一文件替换") { const foreign = join(f.directory, "替换文件"); await writeFile(foreign, f.bytes); await rename(foreign, preview.targetPath); }
+    else await rm(preview.targetPath);
+    const preserved = variant === "文件已删除" ? null : await readFile(preview.targetPath), identity = preserved ? (await lstat(preview.targetPath, { bigint: true })).ino : null;
+    const stage = vi.spyOn(f.pipeline.targets.get(f.targetGrant.id), "prepareStage"); f.pipeline.reconcileRestored(); await f.pipeline.tick();
+    expect(f.pipeline.task(preview.taskId)).toMatchObject({ state: "FAILED", failure: expect.stringContaining("目标证据不符") });
+    expect(f.db.connection.prepare("SELECT phase,failure_code FROM ingestion_operation").get()).toEqual({ phase: "NEEDS_ATTENTION", failure_code: "CONFLICT" });
+    expect(f.db.connection.prepare("SELECT state FROM emby_delivery").get()).toEqual({ state: "NEEDS_ATTENTION" }); expect(stage).not.toHaveBeenCalled();
+    if (preserved) { expect((await readFile(preview.targetPath)).equals(preserved)).toBe(true); expect((await lstat(preview.targetPath, { bigint: true })).ino).toBe(identity); }
+    else await expect(lstat(preview.targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readFile(f.file)).equals(f.bytes)).toBe(true);
+  });
+  it("恢复核对中字幕冲突独立标记，主视频保持完成且不被重新复制", async () => {
+    const f = await fixture(); await writeFile(join(f.source, "测试电影.2026.zh.srt"), "原字幕");
+    const preview = await f.preview(); await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    const asset = f.pipeline.task(preview.taskId).accessories![0]!, inode = (await lstat(preview.targetPath, { bigint: true })).ino; await writeFile(asset.targetPath, "用户修改的字幕");
+    f.pipeline.reconcileRestored(); await f.pipeline.tick();
+    expect(f.pipeline.task(preview.taskId)).toMatchObject({ state: "DONE", accessories: [{ state: "NEEDS_ATTENTION", failure: "CONFLICT" }] });
+    expect(f.db.connection.prepare("SELECT state FROM desktop_job").get()).toEqual({ state: "PARTIAL_FAILED" });
+    expect((await lstat(preview.targetPath, { bigint: true })).ino).toBe(inode); expect(await readFile(asset.targetPath, "utf8")).toBe("用户修改的字幕");
+  });
+  it("恢复核对队列跨数据库重开保留，目标缺盘不丢证据，原目标授权后只读核对", async () => {
+    const f = await fixture(), preview = await f.preview(); await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await f.pipeline.tick();
+    const inode = (await lstat(preview.targetPath, { bigint: true })).ino;
+    f.pipeline.setPaused({ paused: true, requestKey: randomUUID() }); f.pipeline.reconcileRestored(); await f.pipeline.close(); f.connections.close(); f.db.close();
+    const db = await CoreDatabase.open(join(f.directory, "core.sqlite3")); cleanup.push(() => db.close());
+    const connections = new MediaConnections(db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" })); cleanup.push(() => connections.close());
+    const restored = new IngestionPipeline(db, () => undefined, connections); cleanup.push(() => restored.close());
+    await restored.tick(); expect(restored.task(preview.taskId)).toMatchObject({ state: "PROCESSING", failure: expect.stringContaining("暂不可访问") });
+    expect(db.connection.prepare("SELECT count(*) AS n FROM app_setting WHERE key LIKE 'ingestion.restore.audit.%'").get()).toEqual({ n: 1 });
+    await restored.authorizeTarget(f.targetGrant); await restored.tick(); expect(restored.task(preview.taskId).state).toBe("DONE");
+    expect(restored.pauseStatus().paused).toBe(true); expect((await lstat(preview.targetPath, { bigint: true })).ino).toBe(inode); expect((await readFile(f.file)).equals(f.bytes)).toBe(true);
+  });
   it("来源整目录短暂失联也保留候选并重置窗口，原目录恢复后重新观察 120 秒", async () => {
     const f = await fixture(), candidate = await f.ready(), detached = f.source + "-暂时离线"; await rename(f.source, detached);
     try {

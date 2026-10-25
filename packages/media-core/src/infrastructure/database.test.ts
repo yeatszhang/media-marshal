@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, rm, copyFile, stat, chmod } from "node:fs/promises";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { CoreDatabase, migrations, SCHEMA_VERSION } from "./database";
@@ -20,7 +20,7 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
-  it("v13 来源快照原文升级后保持，默认忽略兼容；旧核心拒绝 v14", async () => {
+  it("v13 来源快照原文升级后保持，默认忽略兼容；旧核心拒绝新版本", async () => {
     const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 13)), id = randomUUID(), stamp = new Date().toISOString();
     const configuration = JSON.stringify({ type: "local", name: "既有来源", client: "baidu", sourcePath: "/既有输入", organization: { targetPath: "/既有目标" } });
     first.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,paused,created_at) VALUES(?,'既有来源','baidu','/既有输入','/既有目标','AUTO','COPY',1,?)").run(id, stamp);
@@ -28,16 +28,16 @@ describe("显式数据库迁移", () => {
     first.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,created_at) VALUES(?,1,?,?,?)").run(id, configuration, id, stamp); first.close();
     const upgraded = await CoreDatabase.open(path);
     try {
-      expect(upgraded.schemaVersion).toBe(14);
+      expect(upgraded.schemaVersion).toBe(SCHEMA_VERSION);
       expect(upgraded.connection.prepare("SELECT draft_json,paused,local_source_id FROM source_rule").get()).toEqual({ draft_json: configuration, paused: 1, local_source_id: id });
       expect(upgraded.connection.prepare("SELECT configuration_json FROM source_rule_version").get()).toEqual({ configuration_json: configuration });
       expect(sourceConfigurationSchema.parse(JSON.parse(configuration))).not.toHaveProperty("ignoredFilePatterns");
       expect(upgraded.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
     } finally { upgraded.close(); }
-    const backup = new Database(`${path}.before-v14.bak`, { readonly: true });
+    const backup = new Database(`${path}.before-v${SCHEMA_VERSION}.bak`, { readonly: true });
     try { expect(backup.pragma("user_version", { simple: true })).toBe(13); expect(backup.prepare("SELECT draft_json FROM source_rule").get()).toEqual({ draft_json: configuration }); }
     finally { backup.close(); }
-    await expect(CoreDatabase.open(path, migrations.slice(0, 13))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+    await expect(CoreDatabase.open(path, migrations.slice(0, 14))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
   });
   it("生产连接独占所有权，旧所有者释放后才能重新打开", async () => {
     const path = await temporary();
@@ -68,19 +68,36 @@ describe("显式数据库迁移", () => {
   it("桌面旧版升级前备份包含 WAL 中的已提交数据", async () => {
     const path = await temporary();
     const first = await CoreDatabase.open(path, migrations.slice(0, 1));
-    first.connection
-      .prepare("INSERT INTO app_setting VALUES('backup','present')")
-      .run();
-    first.close();
-    const upgraded = await CoreDatabase.open(path);
-    expect(upgraded.schemaVersion).toBe(SCHEMA_VERSION);
-    upgraded.close();
+    try {
+      first.connection.pragma("wal_autocheckpoint = 0"); first.connection.pragma("wal_checkpoint(TRUNCATE)");
+      first.connection.prepare("INSERT INTO app_setting VALUES('backup','present')").run();
+      expect((await stat(path + "-wal")).size).toBeGreaterThan(32);
+      // 保留原连接使 WAL 不被关闭时自动 checkpoint；仅复制主文件确实缺少这条记录。
+      const mainOnly = path + ".main-only"; await copyFile(path, mainOnly);
+      const incomplete = new Database(mainOnly, { readonly: true });
+      try { expect(incomplete.prepare("SELECT value FROM app_setting WHERE key='backup'").get()).toBeUndefined(); } finally { incomplete.close(); }
+      const upgraded = await CoreDatabase.open(path);
+      try { expect(upgraded.schemaVersion).toBe(SCHEMA_VERSION); } finally { upgraded.close(); }
+    } finally { first.close(); }
     const backup = new Database(`${path}.before-v${SCHEMA_VERSION}.bak`, { readonly: true });
     expect(backup.pragma("user_version", { simple: true })).toBe(1);
     expect(
       backup.prepare("SELECT value FROM app_setting WHERE key='backup'").get(),
     ).toEqual({ value: "present" });
     backup.close();
+  });
+  it.runIf(process.platform !== "win32")("升级备份不可写时不迁移，恢复权限后才能继续", async () => {
+    const path = await temporary(), directory = dirname(path);
+    const first = await CoreDatabase.open(path, migrations.slice(0, 1)); first.connection.prepare("INSERT INTO app_setting VALUES('preserved','before')").run(); first.close();
+    try { await chmod(directory, 0o500); await expect(CoreDatabase.open(path)).rejects.toThrow(); }
+    finally { await chmod(directory, 0o700); }
+    const untouched = new Database(path);
+    try {
+      expect(untouched.pragma("user_version", { simple: true })).toBe(1);
+      expect(untouched.prepare("SELECT value FROM app_setting WHERE key='preserved'").get()).toEqual({ value: "before" });
+      expect(untouched.prepare("SELECT name FROM sqlite_master WHERE name='cloud_account'").get()).toBeUndefined();
+    } finally { untouched.close(); }
+    const retried = await CoreDatabase.open(path); try { expect(retried.schemaVersion).toBe(SCHEMA_VERSION); } finally { retried.close(); }
   });
   it("迁移失败回滚该步，不继续运行调度", async () => {
     const path = await temporary();

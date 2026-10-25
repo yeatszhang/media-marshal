@@ -267,6 +267,7 @@ export function createMediaApplication(
       const payload = privateCoreActions[request.action].input.parse(request.payload);
       const task = (async () => {
         if (request.action === "media.observations.reset") { ingestion.resetObservations(); return {}; }
+        if (request.action === "desktop.state.reconcile-restored") { ingestion.reconcileRestored(); downloads.reconcileRestored(); return {}; }
         if (request.action === "source-rules.apply") { const input = privateCoreActions["source-rules.apply"].input.parse(payload); return sourceRules.apply({ previewId: input.previewId, requestKey: input.requestKey, runOnce: input.runOnce }, input.grants); }
         if (request.action === "media.targets.find") return ingestion.targetGrant((payload as { path: string }).path);
         if (request.action === "media.targets.bootstrap") return ingestion.targetBootstrap();

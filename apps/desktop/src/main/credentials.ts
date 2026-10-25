@@ -62,6 +62,13 @@ export class Credentials {
     if (kind !== "tmdb" && kind !== "emby") throw new DesktopError("INVALID_REQUEST", "凭据类型无效");
     return this.readKey(kind);
   }
+  async readServices() {
+    const kinds = ["tmdb", "emby"] as const, results = await Promise.allSettled(kinds.map((kind) => this.readService(kind)));
+    return {
+      values: { tmdb: results[0]!.status === "fulfilled" ? results[0]!.value : null, emby: results[1]!.status === "fulfilled" ? results[1]!.value : null },
+      unavailable: kinds.filter((_kind, index) => results[index]!.status === "rejected"),
+    };
+  }
   private async readKey(key: string): Promise<string | null> {
     await this.queue.catch(() => {});
     const values = await this.read();
