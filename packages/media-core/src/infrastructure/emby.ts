@@ -2,10 +2,15 @@ import { z } from "zod";
 import { requestJson, MediaNetworkError } from "./json-http.js";
 
 const identifier = z.string().regex(/^[a-zA-Z0-9-]{1,128}$/), path = z.string().min(1).max(16384);
-const librarySchema = z.object({ ItemId: identifier.optional(), Id: identifier.optional(), Name: z.string().max(500), Locations: z.array(path).max(100), CollectionType: z.string().max(100).optional() }).refine((row) => !!(row.ItemId ?? row.Id));
+const librarySchema = z.object({ ItemId: identifier.optional(), Id: identifier.optional(), Name: z.string().max(500), Locations: z.array(path).max(100), CollectionType: z.string().max(100).nullable().optional() }).refine((row) => !!(row.ItemId ?? row.Id));
 const itemSchema = z.object({ Id: identifier, Path: path.optional(), Type: z.string().max(100).optional(), ProviderIds: z.record(z.string().max(100), z.string().max(500)).optional(), ParentIndexNumber: z.number().int().nonnegative().optional(), IndexNumber: z.number().int().positive().optional(), IndexNumberEnd: z.number().int().positive().nullable().optional(), SeriesId: identifier.optional(), MediaSources: z.array(z.object({ Path: path.optional() })).max(100).optional() });
 export type EmbyItem = z.infer<typeof itemSchema>;
 export interface EmbyLibrary { id: string; name: string; paths: string[]; type: string | null }
+/** Emby 未指定 CollectionType 表示电影／剧集混合库；其他媒体类型不能承接视频整理。 */
+export function acceptsMediaType(libraryType: string | null, mediaType: "AUTO" | "MOVIE" | "TV_SHOW") {
+  const type = libraryType?.trim().toLowerCase() || null;
+  return type === null || (mediaType === "MOVIE" && type === "movies") || (mediaType === "TV_SHOW" && type === "tvshows");
+}
 /** 连接只使用显式地址和请求头；绝不继承 TMDB 代理、环境代理或服务端返回的其他地址。 */
 export class EmbyClient {
   readonly base: URL;
@@ -46,7 +51,9 @@ export class EmbyClient {
   async series(ids: readonly string[], signal?: AbortSignal) {
     if (!ids.length) return [];
     if (ids.length > 100) throw new MediaNetworkError("INVALID_RESPONSE"); ids.forEach((id) => identifier.parse(id));
-    return (await this.get("Items", z.object({ Items: z.array(itemSchema).max(100), TotalRecordCount: z.number().int().min(0).max(100) }), signal, { Ids: ids.join(","), Fields: "ProviderIds", EnableImages: "false", EnableUserData: "false", Limit: "100" })).Items;
+    const page = await this.get("Items", z.object({ Items: z.array(itemSchema).max(100), TotalRecordCount: z.number().int().min(0).max(100) }), signal, { Ids: ids.join(","), Fields: "ProviderIds", EnableImages: "false", EnableUserData: "false", Limit: "100" });
+    if (page.Items.length !== page.TotalRecordCount || new Set(page.Items.map((row) => row.Id)).size !== page.Items.length || page.Items.some((row) => !ids.includes(row.Id))) throw new MediaNetworkError("INVALID_RESPONSE");
+    return page.Items;
   }
   itemUrl(itemId: string, serverId: string) { identifier.parse(itemId); identifier.parse(serverId); const url = new URL("web/index.html", this.base); url.hash = "!/item?id=" + encodeURIComponent(itemId) + "&serverId=" + encodeURIComponent(serverId); return url.href; }
 }

@@ -33,7 +33,7 @@ import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core
 import { ManagedUpgradeBackups, type RuntimeVersion } from "./cloud/upgrades";
 import { CoreSupervisor } from "./core-supervisor";
 import { Credentials } from "./credentials";
-import { APP_ORIGIN, assetPath, requireTrustedRequest } from "./security";
+import { APP_ORIGIN, assetPath, requireEmbyItemUrl, requireTrustedRequest } from "./security";
 import { trayIcon } from "./tray-icon";
 import { SidecarSupervisor } from "./cloud/sidecar-supervisor";
 import { AccountCredentials } from "./cloud/account-credentials";
@@ -420,8 +420,7 @@ async function bootstrap() {
             }
             if (action === "desktop.emby.open") {
               const { taskId } = nativeActions["desktop.emby.open"].parse(parsed.data), address = await supervisor.requestPrivate("media.emby.open-url", { taskId });
-              const saved = await supervisor.request("settings.get", {}), url = new URL(address), base = new URL(saved.embyUrl);
-              if (!["http:", "https:"].includes(url.protocol) || url.origin !== base.origin || url.username || url.password || url.search || !url.pathname.endsWith("/web/index.html")) throw new DesktopError("FORBIDDEN", "Emby 页面地址未通过核验");
+              const saved = await supervisor.request("settings.get", {}), url = requireEmbyItemUrl(address, saved.embyUrl);
               await shell.openExternal(url.href); return { ok: true, result: null };
             }
             if (action === "desktop.settings")

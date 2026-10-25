@@ -14,7 +14,15 @@
 
 文件 DONE 与 Emby 交付独立。连接验证读取服务器身份、库路径和读取权限，并实际验证刷新权限；电影与剧集目录分别绑定服务端库。服务端路径必须在这台 Mac 上可访问并包含目标，不自动猜容器或远程 NAS 映射。接受刷新不代表收录成功，Emby 请求不继承 TMDB 代理。
 
+连接保存后，新的 Core 仍须重新验证身份、库路径、类型和读取／刷新权限，不能把旧进程的有效标记直接当作当前证据。有效复核保留原绑定版本。暂时离线保留绑定，至少三十秒后再试；认证失败或服务器／库配置变化使旧证据失效，等待用户修复。单个目标缺盘仍按目标独立等待，不把路径不可达解释为需要重装服务器。
+
+电影目标接受电影库或混合库，剧集目标接受剧集库或混合库；同一目标按 AUTO 接收两类媒体时需要混合库。`CollectionType` 未指定表示混合内容，依据 [Emby 官方说明](https://dev.emby.media/doc/restapi/Browsing-the-Library.html)。其他库类型被拒绝；运行期间也复查类型，不能只在第一次连接时核对。根目录与合法子目录均可使用，目录不必为空，绑定不创建整理任务或移动原有媒体。
+
 交付意图与文件记账在同一事务中写入，启动也补建缺失意图。按连接版本在三十秒窗口合并刷新，故障退避从三十秒增长到十五分钟并持久保存；认证失败暂停整个连接，修复后重新验证。每十五秒分页核对限定库，最多等待十分钟。核对同时匹配目标路径、电影/剧集类型、作品 TMDB 标识和季集；集级 TMDB ID 不冒充剧集作品 ID，须读取其 Series 的 ProviderIds。证据缺失、冲突或超时保留待处理，重试交付不调用 COPY。打开 Emby 前再次检查服务器身份，地址不携带密钥。
+
+有待交付记录时，Core 重启复核也遵守已保存的刷新窗口和故障退避。复核实际发送的刷新由同版本已到期交付共享，之后直接等待收录，不在同一轮再次发送；尚未到期的任务保留自己的等待时间。复核失败同样持久累加退避，反复重启不会将其归零。
+
+同库一轮任务共享分页结果，分页总数变化、重复成员或缺页不能作为部分成功；Series 批量响应也拒绝重复或非请求成员。多版本用 `MediaSources.Path` 定位，仍需唯一作品与目标文件证据。条目身份核对期间连接版本、凭据或交付状态变化会拒绝迟到结果；Main 再限定 HTTP(S) 服务器、精确子路径和条目参数，禁止重定向传递密钥及额外凭据参数。
 
 接口依据：[服务器身份](https://dev.emby.media/reference/RestAPI/SystemService/getSystemInfo.html)、[媒体库分页](https://dev.emby.media/reference/RestAPI/LibraryStructureService/getLibraryVirtualfoldersQuery.html)、[限定库条目分页](https://dev.emby.media/reference/RestAPI/ItemsService/getItems.html)、[刷新权限](https://dev.emby.media/reference/RestAPI/LibraryService/postLibraryRefresh.html)。
 
