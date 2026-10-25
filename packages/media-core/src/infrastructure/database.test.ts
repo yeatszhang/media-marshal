@@ -20,6 +20,14 @@ afterEach(async () => {
   );
 });
 describe("显式数据库迁移", () => {
+  it("v17 识别编辑迁移不重写已有字段或排队任务，保留备份并阻止旧核心写新库", async () => {
+    const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 17)), source = randomUUID(), task = randomUUID(), stamp = new Date().toISOString(), parsed = '{"title":"原作品","year":2026}';
+    first.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'保留来源','custom','/输入','/媒体库','AUTO','COPY',?)").run(source, stamp);
+    first.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,parsed_json,created_at,updated_at) VALUES(?,?,?,'AWAITING_CONFIRMATION',?,?,?)").run(task, source, "/输入/原文件.mp4", parsed, stamp, stamp); first.close();
+    const upgraded = await CoreDatabase.open(path); try { expect(upgraded.schemaVersion).toBe(18); expect(upgraded.connection.prepare("SELECT id,status,parsed_json FROM media_task").get()).toEqual({ id: task, status: "AWAITING_CONFIRMATION", parsed_json: parsed }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM ingestion_recognition_edit").get()).toEqual({ n: 0 }); expect(upgraded.connection.prepare("SELECT count(*) AS n FROM ingestion_recognition_command").get()).toEqual({ n: 0 }); } finally { upgraded.close(); }
+    const backup = new Database(`${path}.before-v18.bak`, { readonly: true }); try { expect(backup.pragma("user_version", { simple: true })).toBe(17); expect(backup.prepare("SELECT parsed_json FROM media_task WHERE id=?").get(task)).toEqual({ parsed_json: parsed }); } finally { backup.close(); }
+    await expect(CoreDatabase.open(path, migrations.slice(0, 17))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
   it("v16 删除迁移保留来源、任务与外键，历史路径可复用且旧核心拒绝打开", async () => {
     const path = await temporary(), first = await CoreDatabase.open(path, migrations.slice(0, 16)), id = randomUUID(), task = randomUUID(), stamp = new Date().toISOString();
     const configuration = JSON.stringify({ type: "local", name: "历史来源", client: "custom", sourcePath: "/旧输入", organization: { targetPath: "/旧目标" } });
@@ -27,7 +35,7 @@ describe("显式数据库迁移", () => {
     first.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,local_source_id,created_at,updated_at) VALUES(?,'local',1,2,?,?,?,?)").run(id, configuration, id, stamp, stamp);
     first.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,created_at) VALUES(?,1,?,?,?)").run(id, configuration, id, stamp);
     first.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,created_at,updated_at) VALUES(?,?,?,'DONE',?,?)").run(task, id, "/旧输入/原文件.mp4", stamp, stamp); first.close();
-    const upgraded = await CoreDatabase.open(path);
+    const upgraded = await CoreDatabase.open(path, migrations.slice(0, 17));
     try {
       const db = upgraded.connection; expect(upgraded.schemaVersion).toBe(17); expect(db.pragma("foreign_keys", { simple: true })).toBe(1); expect(db.pragma("foreign_key_check")).toEqual([]);
       expect(db.prepare("SELECT version,draft_revision,draft_json,deleted_at,lifecycle_revision FROM source_rule").get()).toEqual({ version: 1, draft_revision: 2, draft_json: configuration, deleted_at: null, lifecycle_revision: 0 });

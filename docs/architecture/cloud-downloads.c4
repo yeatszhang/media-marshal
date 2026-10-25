@@ -34,7 +34,7 @@ model {
         description '范围预览、领取、原卷校验、不覆盖提交和持久化 outbox'
       }
       ingestion = component 'IngestionPipeline' {
-        description '统一候选与资产版本；只读内容复核、稳定观察及沿策略快照 COPY'
+        description '统一候选与资产版本；只读内容复核、人工识别字段、稳定观察及沿策略快照 COPY'
       }
       delivery = component 'EmbyDelivery' {
         description '连接与库类型复核；独立交付意图、合并刷新、重试及收录核对'
@@ -48,7 +48,7 @@ model {
     guardian = process 'Guardian'
     openlist = process 'OpenList · v4.2.7'
     rclone = process 'Rclone CLI · v1.75.2'
-    database = storage '业务 SQLite · v17'
+    database = storage '业务 SQLite · v18'
     vault = storage '系统保护的凭据密文'
     backups = storage '受限升级备份'
     managed = storage '已授权原卷' {

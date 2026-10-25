@@ -20,12 +20,13 @@ import { titleInitial } from "../domain/title-initial.js";
 import { discoveryIgnore, sampleVideos } from "../domain/discovery.js";
 import { resolveManagedOrganization, type ManagedOrganization, type OrganizationConfiguration } from "../sources/organization.js";
 import { ContentReviews } from "./content-reviews.js";
+import { RecognitionEdits } from "./recognition-edits.js";
 
 type Authorization = PrivateCoreInput<"media.sources.authorize">;
 interface SourceRow { source_id: string; mode: "local" | "managed"; download_root_id: string | null; source_grant_json: string; target_root_id: string; source_version: number; available: number; paused: number; version: number; source_path: string; target_path: string; media_type: "AUTO" | "MOVIE" | "TV_SHOW"; policy_key?: string }
 interface CandidateRow { id: string; source_id: string; relative_json: string; version_key: string; attribute_key: string; is_current: number; snapshot_json: string; expected_sha256: string | null; managed_item_id: string | null; managed_version_key: string | null; state: CoreOutput<"ingestion.candidates">["items"][number]["state"]; task_id: string | null; reason: string | null; created_at: string; updated_at: string }
 interface Accessory { sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null }
-interface Plan { taskId: string; candidateId: string; sourceId: string; sourceVersion: number; sourceLifecycles?: { id: string; revision: number }[]; connectionVersion: number; source: ManagedRootGrant; target: ManagedRootGrant; sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null; parsed: ParsedMedia; metadata: MetadataWork; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null }; episodeTitle: string | null; accessories?: Accessory[] }
+interface Plan { taskId: string; candidateId: string; sourceId: string; sourceVersion: number; recognitionRevision?: number; sourceLifecycles?: { id: string; revision: number }[]; connectionVersion: number; source: ManagedRootGrant; target: ManagedRootGrant; sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null; parsed: ParsedMedia; metadata: MetadataWork; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null }; episodeTitle: string | null; accessories?: Accessory[] }
 interface PreviewRow { id: string; request_key: string; task_id: string; input_hash: string; plan_json: string; expires_at: number; operation_id: string | null }
 interface OperationRow { id: string; task_id: string; candidate_id: string; target_root_id: string; plan_json: string; attempt_id: string; phase: string; evidence_json: string | null }
 interface Observation { since: number; last: number; wall: number; version: string }
@@ -62,6 +63,7 @@ class SourceWorkInterrupted extends DesktopError {
 export class IngestionPipeline implements ManagedIngestionSink {
   readonly targets = new ManagedRoots("direct");
   readonly contentReviews: ContentReviews;
+  readonly recognitionEdits: RecognitionEdits;
   private readonly sources = new Map<string, SourceRoot>();
   private readonly observations = new Map<string, Observation>();
   private readonly accessoryObservations = new Map<string, Observation>();
@@ -73,6 +75,12 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private readonly watches = new Map<string, { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout> }>();
   constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly watchFiles: typeof watch = watch) {
     const db = database.connection;
+    this.recognitionEdits = new RecognitionEdits(database, (id) => {
+      if (this.closed) throw new DesktopError("INTERRUPTED", "识别服务正在停止，请等待核心恢复");
+      const candidate = this.candidate(id); this.assertCandidateCurrent(candidate);
+      if (!candidate.managed_item_id && db.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? AND deleted_at IS NOT NULL").get(candidate.source_id)) throw conflict("所属来源已删除，请先恢复来源再编辑识别信息");
+      if (candidate.managed_item_id && candidate.managed_version_key) { const policy = resolveManagedOrganization(database, candidate.managed_item_id, candidate.managed_version_key); if (!["ENABLED", "PAUSED", "LEGACY"].includes(policy.state)) throw conflict("下载项的整理归属已变化，请先核对所属来源"); }
+    }, now);
     db.prepare("UPDATE media_target_root SET available=0").run(); db.prepare("UPDATE ingestion_source SET available=0").run();
     db.prepare("UPDATE desktop_source SET health='unverified' WHERE id IN (SELECT source_id FROM ingestion_source)").run();
     this.resetObservations();
@@ -652,27 +660,28 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const parsed = row.parsed_json ? JSON.parse(row.parsed_json) as ParsedMedia : null;
     const matches = this.database.connection.prepare("SELECT metadata_json FROM task_candidate WHERE task_id=? ORDER BY confidence DESC,id LIMIT 100").all(taskId) as { metadata_json: string }[];
     const accessories = (this.database.connection.prepare("SELECT a.* FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id WHERE o.task_id=? ORDER BY a.id LIMIT 100").all(taskId) as (OperationRow & { failure_code: string | null })[]).map((asset) => { const plan = JSON.parse(asset.plan_json) as Plan; return { id: asset.id, sourcePath: join(plan.source.path, ...plan.sourceSegments), targetPath: join(plan.target.path, ...plan.targetSegments), state: asset.phase as NonNullable<CoreOutput<"ingestion.task">["accessories"]>[number]["state"], failure: asset.failure_code }; });
-    return { taskId, candidateId: row.candidate_id, state: row.status, parsed: parsed ? { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, episodeEnd: parsed.episodeEnd, type: parsed.type } : null, matches: matches.map((entry) => { const match = JSON.parse(entry.metadata_json) as MediaMatch; return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, explanation: match.parentOnlyCapped ? "父目录证据不足，仅供人工选择" : `名称 ${Math.round(match.score.titleScore * 100)}%，年份 ${Math.round(match.score.yearScore * 100)}%，${match.evidence === "both" ? "父目录与名称一致" : "请核对作品"}` }; }), failure: row.reason, accessories };
+    return { taskId, candidateId: row.candidate_id, revision: this.recognitionEdits.revision(taskId), matchesStale: this.recognitionEdits.matchesStale(taskId), state: row.status, parsed: parsed ? { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, episodeEnd: parsed.episodeEnd, type: parsed.type } : null, matches: matches.map((entry) => { const match = JSON.parse(entry.metadata_json) as MediaMatch; return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, explanation: match.evidence === "manual" ? "根据已保存的人工识别字段重新匹配，请核对作品" : match.parentOnlyCapped ? "父目录证据不足，仅供人工选择" : `名称 ${Math.round(match.score.titleScore * 100)}%，年份 ${Math.round(match.score.yearScore * 100)}%，${match.evidence === "both" ? "父目录与名称一致" : "请核对作品"}` }; }), failure: row.reason, accessories };
   }
   private async identify(row: CandidateRow, signal: AbortSignal) {
     this.assertCandidateCurrent(row);
     const db = this.database.connection;
     if (!await this.observe(row)) return;
-    const source = this.candidateSource(row), parser = this.parser(); if (!parser) throw new DesktopError("COMPONENT_UNAVAILABLE", "名称解析器尚未就绪，请重试", true);
+    const source = this.candidateSource(row), parser = this.parser(), edited = this.recognitionEdits.saved(row.task_id!), recognitionRevision = this.recognitionEdits.revision(row.task_id!); if (!parser && !edited) throw new DesktopError("COMPONENT_UNAVAILABLE", "名称解析器尚未就绪，请重试", true);
     const connectionVersion = this.connections.version, relative: string[] = JSON.parse(row.relative_json);
     db.prepare("UPDATE media_task SET status='PROCESSING',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id);
-    const parsed = await parser.parse(relative.at(-1)!, signal); if (source.media_type !== "AUTO") parsed.type = source.media_type;
+    const parsed = edited ?? await parser!.parse(relative.at(-1)!, signal); if (!edited && source.media_type !== "AUTO") parsed.type = source.media_type;
     parsed.season = parsed.type === "TV_SHOW" ? resolveSeason(parsed.season, null, relative.slice(0, -1)) : null;
-    let matches = await searchMatches(parsed, this.connections.tmdb, signal);
+    let matches = await searchMatches(parsed, this.connections.tmdb, signal, !!edited);
     const parent = relative.slice(0, -1).reverse().map((part) => parentContext(part, parsed)).find(Boolean);
-    if (parent) { const context = await parser.parse(parent.folderName, signal); context.type = parsed.type; context.season = parsed.season; matches = mergeParentEvidence(matches, await searchMatches(context, this.connections.tmdb, signal)); }
-    if (signal.aborted || connectionVersion !== this.connections.version || this.candidateSource(row).version !== source.version) throw conflict();
+    if (parent && !edited) { const context = await parser!.parse(parent.folderName, signal); context.type = parsed.type; context.season = parsed.season; matches = mergeParentEvidence(matches, await searchMatches(context, this.connections.tmdb, signal)); }
+    if (signal.aborted || recognitionRevision !== this.recognitionEdits.revision(row.task_id!) || connectionVersion !== this.connections.version || this.candidateSource(row).version !== source.version) throw conflict();
     this.assertCandidateCurrent(row);
     db.transaction(() => {
       db.prepare("DELETE FROM task_candidate WHERE task_id=?").run(row.task_id);
       for (const match of matches) db.prepare("INSERT INTO task_candidate(id,task_id,metadata_json,confidence) VALUES(?,?,?,?)").run(randomUUID(), row.task_id, JSON.stringify(match), match.score.confidence);
       db.prepare("UPDATE media_task SET parsed_json=?,status='AWAITING_CONFIRMATION',title=?,updated_at=? WHERE id=?").run(JSON.stringify(parsed), parsed.title, timestamp(this.now), row.task_id);
       db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(matches.length ? null : "没有可靠候选，请手动输入 TMDB ID 预览", row.id);
+      this.recognitionEdits.matched(row.task_id!, recognitionRevision);
     })();
   }
   private async observeAccessory(sourceId: string, relative: string[], expected?: SourceSnapshot, policyKey = "local") {
@@ -716,6 +725,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const db = this.database.connection, digest = fingerprint(input), existing = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (existing) { if (existing.input_hash !== digest) throw conflict("预览请求键已用于不同内容"); return this.previewDto(existing); }
     const row = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id WHERE t.id=? AND t.status='AWAITING_CONFIRMATION'").get(input.taskId) as CandidateRow | undefined;
+    const recognitionRevision = this.recognitionEdits.revision(input.taskId);
     if (!row || !await this.observe(row)) throw conflict("任务或文件尚未就绪");
     this.assertCandidateCurrent(row);
     const source = this.candidateSource(row), sourceLifecycles = this.previewScope(row), target = this.targetFor(source, input.selection.mediaType), connectionVersion = this.connections.version;
@@ -736,7 +746,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     this.assertCandidateCurrent(row);
     this.assertCoordinates(selection, row.id);
     this.assertPreviewScope(row, sourceLifecycles);
-    const plan: Plan = { taskId: input.taskId, candidateId: row.id, sourceId: row.source_id, sourceVersion: source.version, sourceLifecycles, connectionVersion, source: JSON.parse(source.source_grant_json), target: target.grant, sourceSegments: JSON.parse(row.relative_json), targetSegments: segments, snapshot: JSON.parse(row.snapshot_json), expectedSha256: row.expected_sha256, parsed, metadata, selection, episodeTitle, accessories };
+    if (recognitionRevision !== this.recognitionEdits.revision(input.taskId)) throw conflict("识别信息已变化，请重新预览整理范围");
+    const plan: Plan = { taskId: input.taskId, candidateId: row.id, sourceId: row.source_id, sourceVersion: source.version, recognitionRevision, sourceLifecycles, connectionVersion, source: JSON.parse(source.source_grant_json), target: target.grant, sourceSegments: JSON.parse(row.relative_json), targetSegments: segments, snapshot: JSON.parse(row.snapshot_json), expectedSha256: row.expected_sha256, parsed, metadata, selection, episodeTitle, accessories };
     const result: PreviewRow = { id: randomUUID(), request_key: input.requestKey, task_id: input.taskId, input_hash: digest, plan_json: JSON.stringify(plan), expires_at: this.now() + 10 * 60 * 1000, operation_id: null };
     const concurrent = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (concurrent) { if (concurrent.input_hash !== digest) throw conflict(); return this.previewDto(concurrent); }
@@ -755,6 +766,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!receipt) throw conflict("预览不存在"); if (receipt.operation_id) return { operationId: receipt.operation_id };
     const plan = JSON.parse(receipt.plan_json) as Plan, candidate = this.candidate(plan.candidateId), source = this.candidateSource(candidate);
     this.assertPreviewScope(candidate, plan.sourceLifecycles);
+    if ((plan.recognitionRevision ?? 0) !== this.recognitionEdits.revision(receipt.task_id)) throw conflict("识别信息已变化，请重新预览整理范围");
     this.assertCandidateCurrent(candidate);
     if (plan.expectedSha256 !== candidate.expected_sha256) throw conflict("内容复核证据已更新，请重新预览后确认");
     if (receipt.expires_at <= this.now() || source.version !== plan.sourceVersion || this.targetFor(source, plan.selection.mediaType).grant.id !== plan.target.id || this.connections.version !== plan.connectionVersion || candidate.task_id !== receipt.task_id || !["QUEUED", "READY"].includes(candidate.state) || !await this.observe(candidate)) throw conflict("预览已过期或文件变化，请重新预览");
@@ -765,6 +777,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     db.transaction(() => {
       if (this.candidateSource(candidate).version !== plan.sourceVersion || this.connections.version !== plan.connectionVersion) throw conflict();
       this.assertPreviewScope(candidate, plan.sourceLifecycles);
+      if ((plan.recognitionRevision ?? 0) !== this.recognitionEdits.revision(receipt.task_id)) throw conflict("识别信息已变化，请重新预览整理范围");
       this.assertCandidateCurrent(candidate);
       if (plan.expectedSha256 !== this.candidate(candidate.id).expected_sha256) throw conflict("内容复核证据已更新，请重新预览后确认");
       if (db.prepare("SELECT 1 FROM ingestion_operation WHERE candidate_id=?").get(candidate.id)) throw conflict("此文件已有整理计划");

@@ -5,6 +5,13 @@ import { sourceConfigurationSchema, sourceRuleDraftSchema, parseCoreRequest } fr
 const cloud = { type: "cloud", name: "网盘来源", accountId: randomUUID(), remoteRef: randomUUID(), downloadRootId: randomUUID() };
 const local = { type: "local", name: "本地来源", sourcePath: "/input", organization: { targetPath: "/library" } };
 describe("统一来源受限契约", () => {
+  it("识别编辑限制任务数量、字段与并发版本，不接收路径、凭据或自动整理开关", () => {
+    const payload = { items: [{ taskId: randomUUID(), expectedRevision: 0 }], patch: { title: "人工标题" } }, request = { kind: "request", protocolVersion: 1, requestId: randomUUID(), action: "ingestion.preview-recognition-edit", payload };
+    expect(parseCoreRequest(request).action).toBe(request.action);
+    for (const patch of [{ title: "" }, { title: "line\nsecret" }, { sourcePath: "/任意路径" }, { tmdbKey: "fixture-private" }, { automatic: true }, { year: 2026.5 }, { episode: 0 }]) expect(() => parseCoreRequest({ ...request, payload: { ...payload, patch } })).toThrow();
+    for (const items of [[], Array(101).fill(payload.items[0]), [{ taskId: randomUUID() }]]) expect(() => parseCoreRequest({ ...request, payload: { ...payload, items } })).toThrow();
+    expect(() => parseCoreRequest({ ...request, action: "ingestion.save-recognition-edit" })).toThrow();
+  });
   it("删除和恢复要求配置、草稿与生命周期版本，只接受固定 ID", () => {
     const payload = { id: randomUUID(), expectedVersion: 1, expectedDraftRevision: 2, expectedLifecycleRevision: 0, requestKey: randomUUID() };
     for (const action of ["source-rules.remove", "source-rules.restore"]) {

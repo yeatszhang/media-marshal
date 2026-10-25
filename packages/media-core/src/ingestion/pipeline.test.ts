@@ -55,6 +55,30 @@ async function fixture(options: { ignoredFilePatterns?: string[] | null; watchFi
   const preview = async () => { const candidate = await ready(); const task = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick(); return pipeline.preview({ taskId: task.taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" } }); };
   return { directory, source, target, db, pipeline, sourceId, sourceGrant, targetGrant, connections, parser, file, bytes, advance, ready, preview, calls: () => calls, jump(ms: number) { monotonic += ms; clock += ms; }, wallJump(ms: number) { clock += ms; } };
 }
+describe("识别字段编辑与实际文件边界", () => {
+  it("保存字段保留原匹配候选但标记过期，不创建文件操作；旧整理预览失效", async () => {
+    const f = await fixture(), p = await f.preview(), before = f.pipeline.task(p.taskId), request = { items: [{ taskId: p.taskId, expectedRevision: 0 }], patch: { title: "人工修订作品" } }, checked = f.pipeline.recognitionEdits.preview(request);
+    const result = f.pipeline.recognitionEdits.save({ ...request, fingerprint: checked.fingerprint, requestKey: randomUUID(), rematch: false }); expect(result.updated).toBe(1);
+    const saved = f.pipeline.task(p.taskId); expect(saved).toMatchObject({ revision: 1, matchesStale: true, parsed: { title: "人工修订作品" }, matches: before.matches, state: "AWAITING_CONFIRMATION" });
+    await expect(f.pipeline.confirm({ previewId: p.id, requestKey: randomUUID() })).rejects.toThrow("识别信息已变化"); await f.pipeline.tick(); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(await readFile(f.file)).toEqual(f.bytes); await expect(lstat(p.targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("保存并重新匹配使用人工标题且不再解析原文件名，网络失败保留编辑和逐项错误，原任务重试可恢复", async () => {
+    const f = await fixture(), p = await f.preview(), request = { items: [{ taskId: p.taskId, expectedRevision: 0 }], patch: { title: "人工修订作品" } }, checked = f.pipeline.recognitionEdits.preview(request);
+    f.pipeline.recognitionEdits.save({ ...request, fingerprint: checked.fingerprint, requestKey: randomUUID(), rematch: true });
+    const parser = vi.spyOn(f.parser, "parse"), search = vi.spyOn(f.connections.tmdb, "search").mockRejectedValueOnce(new MediaNetworkError("AUTH_REQUIRED"));
+    await f.pipeline.tick(); expect(f.pipeline.task(p.taskId)).toMatchObject({ parsed: { title: "人工修订作品" }, revision: 1, state: "AWAITING_CONFIRMATION", failure: expect.stringContaining("密钥") }); expect(parser).not.toHaveBeenCalled();
+    await f.pipeline.retry(p.taskId); await f.pipeline.tick(); expect(f.pipeline.task(p.taskId)).toMatchObject({ parsed: { title: "人工修订作品" }, revision: 1, matchesStale: false, state: "AWAITING_CONFIRMATION", failure: null });
+    expect(search.mock.calls.every((call) => call[0] === "人工修订作品")).toBe(true); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(await readFile(f.file)).toEqual(f.bytes);
+  });
+  it("目标检查等待期间保存识别字段，迟到的整理确认被版本栅栏阻止", async () => {
+    const f = await fixture(), p = await f.preview(), target = f.pipeline.targets.get(f.targetGrant.id), check = target.check.bind(target); let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; }), gate = new Promise<void>((resolve) => { release = resolve; }); cleanup.push(() => release());
+    vi.spyOn(target, "check").mockImplementationOnce(async () => { const result = await check(); entered(); await gate; return result; });
+    const confirmation = f.pipeline.confirm({ previewId: p.id, requestKey: randomUUID() }), rejected = expect(confirmation).rejects.toThrow("识别信息已变化"); await ready;
+    const request = { items: [{ taskId: p.taskId, expectedRevision: 0 }], patch: { title: "检查期间编辑" } }, preview = f.pipeline.recognitionEdits.preview(request); f.pipeline.recognitionEdits.save({ ...request, fingerprint: preview.fingerprint, requestKey: randomUUID(), rematch: false }); release(); await rejected;
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(await readFile(f.file)).toEqual(f.bytes);
+  });
+});
 describe("显式全量内容复核与资产版本", () => {
   function coarseAttributes(f: Awaited<ReturnType<typeof fixture>>) {
     const snapshot = JSON.parse((f.db.connection.prepare("SELECT snapshot_json FROM ingestion_candidate WHERE is_current=1").get() as { snapshot_json: string }).snapshot_json) as SourceSnapshot;

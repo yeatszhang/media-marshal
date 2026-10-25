@@ -5,7 +5,7 @@ export interface TitleQuery { query: string; type: QueryType; weight: number }
 export interface SearchPlan { originalFilename: string; guessitTitle: string | null; titleRegion: string | null; queries: TitleQuery[] }
 export interface MetadataWork { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; title: string; originalTitle: string | null; year: number | null; overview?: string; genres?: string[]; country?: string | null }
 export interface MatchScore { confidence: number; bestQuery: string | null; queryType: QueryType | null; titleScore: number; yearScore: number; mediaTypeScore: number; structureBonus: number }
-export interface MediaMatch extends MetadataWork { score: MatchScore; evidence: "filename" | "parent" | "both"; filenameConfidence?: number; parentConfidence?: number; parentOnlyCapped?: boolean }
+export interface MediaMatch extends MetadataWork { score: MatchScore; evidence: "filename" | "parent" | "both" | "manual"; filenameConfidence?: number; parentConfidence?: number; parentOnlyCapped?: boolean }
 const hasHan = (value: string) => /\p{Script=Han}/u.test(value), hasAscii = (value: string | null) => /[A-Za-z]/.test(value ?? "");
 const normalize = (value: string | null | undefined): string | null => value?.replace(/[._]+/g, " ").replace(/[\[\]【】()（）]/g, " ").replace(/\s+/g, " ").trim() || null;
 const trim = (value: string) => value.replace(/^[\s._-]+|[\s._-]+$/g, "");
@@ -35,8 +35,9 @@ function unbracketed(value: string | null): string[] {
   }
   return chinese.length && english.length ? [chinese.join(" "), english.join(" "), normalize(chinese.join(" ") + " " + english.join(" "))!] : [value];
 }
-export function buildSearchPlan(parsed: ParsedMedia): SearchPlan {
+export function buildSearchPlan(parsed: ParsedMedia, manualTitle = false): SearchPlan {
   if (parsed.originalFilename.length > 16384) throw new RecognitionError("PARSE_INVALID", "名称过长，请手动核对");
+  if (manualTitle) return { originalFilename: parsed.originalFilename, guessitTitle: parsed.title, titleRegion: parsed.title, queries: parsed.title?.trim() ? [{ query: parsed.title.trim(), type: "GUESSIT", weight: 1 }] : [] };
   let region = stripMetadata(parsed.originalFilename.replace(/\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|iso)$/i, ""), parsed);
   const markers = [releaseMarker.exec(region)?.index, yearMarker.exec(region)?.index];
   if (parsed.season !== null) markers.push(new RegExp(`(?:^|[. _-])s${String(parsed.season).padStart(2, "0")}`, "i").exec(region)?.index);
@@ -92,8 +93,8 @@ export function mergeParentEvidence(filename: readonly MediaMatch[], parent: rea
   return [...merged.values()].sort((a, b) => b.score.confidence - a.score.confidence);
 }
 export interface MetadataSearch { search(query: string, type: "MOVIE" | "TV_SHOW", year: number | null, signal?: AbortSignal): Promise<MetadataWork[]> }
-export async function searchMatches(parsed: ParsedMedia, source: MetadataSearch, signal?: AbortSignal): Promise<MediaMatch[]> {
-  const plan = buildSearchPlan(parsed), merged = new Map<string, MediaMatch>();
+export async function searchMatches(parsed: ParsedMedia, source: MetadataSearch, signal?: AbortSignal, manualTitle = false): Promise<MediaMatch[]> {
+  const plan = buildSearchPlan(parsed, manualTitle), merged = new Map<string, MediaMatch>();
   const types = parsed.type ? [parsed.type] : ["MOVIE", "TV_SHOW"] as const;
   for (const type of types) for (const query of plan.queries) {
     signal?.throwIfAborted(); const year = type === "TV_SHOW" && parsed.season !== null && parsed.season >= 2 ? null : parsed.year;
@@ -102,7 +103,7 @@ export async function searchMatches(parsed: ParsedMedia, source: MetadataSearch,
     for (const candidate of results) {
       if (parsed.type && candidate.mediaType !== parsed.type) continue;
       const score = scoreMatch(parsed, candidate, plan, query, results.length), key = `${candidate.mediaType}:${candidate.tmdbId}`;
-      if (!merged.has(key) || merged.get(key)!.score.confidence < score.confidence) merged.set(key, { ...candidate, score, evidence: "filename", filenameConfidence: score.confidence });
+      if (!merged.has(key) || merged.get(key)!.score.confidence < score.confidence) merged.set(key, { ...candidate, score, evidence: manualTitle ? "manual" : "filename", filenameConfidence: manualTitle ? undefined : score.confidence });
     }
   }
   return [...merged.values()].sort((a, b) => b.score.confidence - a.score.confidence).slice(0, 100);

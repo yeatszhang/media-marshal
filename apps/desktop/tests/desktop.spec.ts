@@ -391,6 +391,37 @@ db.close();
   expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 36 });
   expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 });
 });
+test("单条与批量识别字段通过真实 IPC 预览保存，重载和 Core 重启不创建文件操作", async () => {
+  test.skip(!!process.env.MARSHAL_EXECUTABLE, "识别字段夹具使用当前工作区构建");
+  const initial = await application.firstWindow(); await expect(initial.getByText("核心已连接", { exact: true })).toBeVisible(); await application.close();
+  const profile = join(directory, "recognition-data"), seed = join(directory, "seed-recognition.mjs");
+  await writeFile(seed, `
+import { CoreDatabase } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/infrastructure/database.js")).href)};
+import { normalizeParse } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/domain/media.js")).href)};
+import { randomUUID } from 'node:crypto'; import { mkdir,writeFile,lstat } from 'node:fs/promises'; import { join } from 'node:path';
+const profile=process.argv[2], sourcePath=join(profile,'中文来源_'+ '长目录'.repeat(12)), targetPath=join(profile,'独立媒体库'); await mkdir(sourcePath,{recursive:true}); await mkdir(targetPath);
+const db=await CoreDatabase.open(join(profile,'desktop.sqlite3')), sql=db.connection, source=randomUUID(), stamp=new Date().toISOString();
+sql.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,paused,created_at) VALUES(?,'识别编辑夹具','custom',?,?,'AUTO','COPY',1,?)").run(source,sourcePath,targetPath,stamp);
+for(const episode of [2,10]) {const id=randomUUID(), candidate=randomUUID(), name='中文作品.S01E'+episode+'.mp4', path=join(sourcePath,name); await writeFile(path,'保留原视频 '+episode); const info=await lstat(path,{bigint:true}), snapshot={device:String(info.dev),inode:String(info.ino),birthtimeNs:String(info.birthtimeNs),modifiedNs:String(info.mtimeNs),changedNs:String(info.ctimeNs),size:Number(info.size)}, parsed=normalizeParse({title:'原作品',type:'episode',season:1,episode,year:2026},name);
+sql.prepare("INSERT INTO media_task(id,source_id,source_path,title,status,parsed_json,created_at,updated_at) VALUES(?,?,?,'原作品','AWAITING_CONFIRMATION',?,?,?)").run(id,source,path,JSON.stringify(parsed),stamp,stamp);
+sql.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,attribute_key,is_current,snapshot_json,state,task_id,created_at,updated_at) VALUES(?,?,?,?,?,1,?,'QUEUED',?,?,?)").run(candidate,source,JSON.stringify([name]),id,id,JSON.stringify(snapshot),id,stamp,stamp); }
+db.close();
+`);
+  await new Promise<void>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [seed, profile], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (error) => error ? fail(error) : done()));
+  application = await _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${profile}`] }); const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.getByRole("link", { name: "待处理", exact: true }).click();
+  const tasks = (await window.evaluate(() => window.desktopApi.listTasks({}))).items; expect(tasks).toHaveLength(2);
+  for (const name of ["中文作品.S01E2.mp4", "中文作品.S01E10.mp4"]) await window.getByRole("checkbox", { name: `选择识别任务 ${name}`, exact: true }).check();
+  await window.getByRole("button", { name: "编辑选中识别（2）", exact: true }).click(); const editor = window.getByRole("region", { name: "编辑识别信息", exact: true });
+  await editor.getByRole("checkbox", { name: "修改解析标题", exact: true }).check(); await editor.getByLabel("新解析标题", { exact: true }).fill("人工修订作品");
+  expect((await window.evaluate(() => window.desktopApi.listTasks({}))).items.every((task) => task.title === "原作品")).toBe(true);
+  await editor.getByRole("checkbox", { name: "按自然文件名生成集号", exact: true }).check(); await editor.getByLabel("顺序起始集号", { exact: true }).fill("5"); await editor.getByRole("button", { name: "预览识别字段变化", exact: true }).click(); await expect(editor).toContainText("S1 E5"); await expect(editor).toContainText("S1 E6");
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await expect.poll(() => window.evaluate(() => innerWidth)).toBe(920); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); expect(await editor.evaluate((element) => element.getBoundingClientRect().right <= innerWidth)).toBe(true); await editor.screenshot({ path: "test-results/desktop/recognition-edit-preview.png" });
+  await editor.getByRole("button", { name: "仅保存识别信息", exact: true }).click(); await expect(editor).toContainText("已保存 2 项识别信息");
+  const saved = await window.evaluate(async (ids) => Promise.all(ids.map((id) => window.desktopApi.getIngestionTask(id))), tasks.map((row) => row.id)); expect(saved.every((row) => row.revision === 1 && row.matchesStale && row.parsed?.title === "人工修订作品")).toBe(true); expect(saved.map((row) => row.parsed?.episode).sort()).toEqual([5, 6]);
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  for (const task of tasks) { expect(await readFile(task.sourcePath, "utf8")).toMatch(/^保留原视频 /); expect(await window.evaluate((id) => window.desktopApi.getIngestionTask(id), task.id)).toMatchObject({ revision: 1, state: "AWAITING_CONFIRMATION", parsed: { title: "人工修订作品" } }); }
+  expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]); expect(await readdir(join(profile, "独立媒体库"))).toEqual([]);
+});
 
 test("真实窗口、核心握手与沙盒边界", async () => {
   const window = await application.firstWindow();

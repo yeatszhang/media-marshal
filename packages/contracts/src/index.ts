@@ -278,6 +278,8 @@ export interface DesktopApi {
   listContentReviewFiles(input: CoreInput<"ingestion.content-review-files">): Promise<CoreOutput<"ingestion.content-review-files">>;
   cancelContentReview(id: string): Promise<CoreOutput<"ingestion.cancel-content-review">>;
   recognizeIngestion(input: CoreInput<"ingestion.recognize">): Promise<CoreOutput<"ingestion.recognize">>;
+  previewRecognitionEdit(input: CoreInput<"ingestion.preview-recognition-edit">): Promise<CoreOutput<"ingestion.preview-recognition-edit">>;
+  saveRecognitionEdit(input: CoreInput<"ingestion.save-recognition-edit">): Promise<CoreOutput<"ingestion.save-recognition-edit">>;
   getIngestionTask(taskId: string): Promise<CoreOutput<"ingestion.task">>;
   previewOrganize(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">>;
   confirmOrganize(input: CoreInput<"ingestion.confirm">): Promise<CoreOutput<"ingestion.confirm">>;

@@ -14,6 +14,7 @@ import { sourceExecutionMigrationSql } from "./source-execution-migration.js";
 import { sourceOrganizationMigrationSql } from "./source-organization-migration.js";
 import { sourceExecutionPreviewMigrationSql } from "./source-execution-preview-migration.js";
 import { sourceLifecycleMigrationSql } from "./source-lifecycle-migration.js";
+import { recognitionEditMigrationSql } from "./recognition-edit-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
@@ -68,6 +69,7 @@ export const migrations: readonly Migration[] = [
   { version: 15, sql: "SELECT 1;" },
   { version: 16, sql: ingestionContentReviewMigrationSql },
   { version: 17, sql: sourceLifecycleMigrationSql, rebuildsReferencedTables: true },
+  { version: 18, sql: recognitionEditMigrationSql },
 ];
 
 export class CoreDatabase {

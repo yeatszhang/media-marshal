@@ -67,6 +67,8 @@ declare module "@yeatz/app-framework/command" {
     "media.ingestion.cancel-content-review": (input: CoreInput<"ingestion.cancel-content-review">) => CoreOutput<"ingestion.cancel-content-review">;
     "media.ingestion.recognize": (input: CoreInput<"ingestion.recognize">) => Promise<CoreOutput<"ingestion.recognize">>;
     "media.ingestion.task": (input: CoreInput<"ingestion.task">) => CoreOutput<"ingestion.task">;
+    "media.ingestion.preview-recognition-edit": (input: CoreInput<"ingestion.preview-recognition-edit">) => CoreOutput<"ingestion.preview-recognition-edit">;
+    "media.ingestion.save-recognition-edit": (input: CoreInput<"ingestion.save-recognition-edit">) => CoreOutput<"ingestion.save-recognition-edit">;
     "media.ingestion.preview": (input: CoreInput<"ingestion.preview">) => Promise<CoreOutput<"ingestion.preview">>;
     "media.ingestion.confirm": (input: CoreInput<"ingestion.confirm">) => Promise<CoreOutput<"ingestion.confirm">>;
     "media.ingestion.retry": (input: CoreInput<"ingestion.retry">) => CoreOutput<"ingestion.retry">;
@@ -211,6 +213,8 @@ export function createMediaApplication(
         return ingestion.scan(physicalId);
       }));
       add(registry.register("media.ingestion.recognize", (_, input) => ingestion.recognize(input)));
+      add(registry.register("media.ingestion.preview-recognition-edit", (_, input) => ingestion.recognitionEdits.preview(input)));
+      add(registry.register("media.ingestion.save-recognition-edit", (_, input) => ingestion.recognitionEdits.save(input)));
       add(registry.register("media.ingestion.task", (_, input) => ingestion.task(input.taskId)));
       add(registry.register("media.ingestion.preview", (_, input) => ingestion.preview(input)));
       add(registry.register("media.ingestion.confirm", (_, input) => ingestion.confirm(input)));
