@@ -136,3 +136,5 @@ export type LocalFileEvidence = z.infer<typeof localFileEvidenceSchema>;
 // 仅内部使用：未知旧写入者不能被普通失败或退出状态掩盖。
 export class ExecutionUncertainError extends CloudError { constructor() { super("COMPONENT_UNAVAILABLE"); } }
 export { parserLaunchSchema, parserManifestSchema, type ParserLaunch } from "./parser.js";
+
+export * from "./native-files.js";

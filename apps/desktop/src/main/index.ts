@@ -32,6 +32,7 @@ import {
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 import { ManagedUpgradeBackups, type RuntimeVersion } from "./cloud/upgrades";
 import { CoreSupervisor } from "./core-supervisor";
+import { nativeFilesLaunch } from "./native-files";
 import { Credentials } from "./credentials";
 import { APP_ORIGIN, assetPath, requireEmbyItemUrl, requireTrustedRequest } from "./security";
 import { trayIcon } from "./tray-icon";
@@ -88,13 +89,14 @@ async function bootstrap() {
     try { const data = await readFile(join(directory, "manifest.json")); if (data.length > 1024 * 1024) return undefined; return parserLaunchSchema.parse({ root: app.isPackaged ? join(process.resourcesPath, "parser") : join(directory, "runtime"), manifest: JSON.parse(data.toString("utf8")) }); }
     catch { return undefined; }
   };
+  const nativeFiles = () => nativeFilesLaunch(app.getAppPath(), process.resourcesPath, app.isPackaged);
   const runtimeVersion = async (): Promise<RuntimeVersion> => {
     const target = `${process.platform}-${process.arch}`, root = app.isPackaged ? join(app.getAppPath(), "resources/sidecars") : join(app.getAppPath(), "resources/sidecars", target);
     try {
       const [manifest, guardian] = await Promise.all([readFile(join(root, "manifest.json"), "utf8"), readFile(join(root, "guardian.json"), "utf8")]);
       const resource = JSON.parse(manifest), guard = JSON.parse(guardian);
-      const parser = await parserLaunch();
-      return { appVersion: app.getVersion(), schemaVersion: CORE_DATA_SCHEMA_VERSION, target, components: { openlist: resource.components.openlist.binary.sha256, rclone: resource.components.rclone.binary.sha256, guardian: guard.binary.sha256, ...(parser ? { parser: createHash("sha256").update(JSON.stringify(parser.manifest)).digest("hex") } : {}) } };
+      const parser = await parserLaunch(), files = await nativeFiles();
+      return { appVersion: app.getVersion(), schemaVersion: CORE_DATA_SCHEMA_VERSION, target, components: { ...(files ? { nativeFiles: files.manifestSha256 } : {}), openlist: resource.components.openlist.binary.sha256, rclone: resource.components.rclone.binary.sha256, guardian: guard.binary.sha256, ...(parser ? { parser: createHash("sha256").update(JSON.stringify(parser.manifest)).digest("hex") } : {}) } };
     } catch (error) {
       if (app.isPackaged || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return { appVersion: app.getVersion(), schemaVersion: CORE_DATA_SCHEMA_VERSION, target, components: {} };
@@ -233,6 +235,7 @@ async function bootstrap() {
           app.getPath("userData"),
           undefined,
           parserLaunch,
+          nativeFiles,
         ),
       );
     },

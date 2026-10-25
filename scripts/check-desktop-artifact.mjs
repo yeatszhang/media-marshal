@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, lstatSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { createHash } from "node:crypto";
 import { strict as assert } from "node:assert";
+import { nativeFileManifestSchema } from "@media-marshal/contracts/internal";
 
 const directory =
   process.platform === "win32"
@@ -63,6 +64,17 @@ for (const [file, checksum] of Object.entries(distribution.materials)) { assert(
 assert(!files.some((file) => /sidecars\/(?:darwin-|win32-)|credentials(?:\.enc)?\.json|\.sqlite3?(?:$|-)|rclone\.conf|config\.json|app-update\.yml/.test(file)), "ASAR 混入其他平台或用户配置/更新入口");
 assert(!existsSync(join(resources, "app-update.yml")));
 const walk = (root) => readdirSync(root, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? walk(join(root, entry.name)) : [join(root, entry.name)]);
+if (process.platform === "darwin") {
+  const root = join(resources, "native-files"), trusted = extractFile(archive, "resources/native-files/manifest.json"), manifest = nativeFileManifestSchema.parse(JSON.parse(trusted.toString())), binaryPath = join(root, manifest.binary.name), binary = readFileSync(binaryPath);
+  assert.equal(manifest.target, target); assert.equal(manifest.releaseStatus, "unsigned-preview"); assert.equal(manifest.napi, 8); assert.equal(manifest.electronHeaders, lock.packages["node_modules/electron"].version);
+  assert.deepEqual(readFileSync(join(root, "manifest.json")), trusted, "安全修正模块包内外清单不一致"); assert(lstatSync(binaryPath).isFile() && !lstatSync(binaryPath).isSymbolicLink()); assert.equal(binary.length, manifest.binary.size); assert.equal(sha(binary), manifest.binary.sha256); assert.equal(binary.readUInt32LE(0), 0xfeedfacf); assert.equal(binary.readUInt32LE(4), process.arch === "arm64" ? 0x100000c : 0x1000007);
+  const distribution = JSON.parse(extractFile(archive, "resources/native-files/distribution.json").toString()); assert.deepEqual(JSON.parse(readFileSync(join(root, "distribution.json"), "utf8")), distribution); assert.equal(distribution.target, target); assert.equal(distribution.releaseStatus, "unsigned-preview"); assert.equal(distribution.originalSha256, manifest.binary.sha256); assert.equal(distribution.packagedSha256, manifest.binary.sha256); assert.equal(distribution.developerIdSignedSha256, null);
+  assert.deepEqual(Object.keys(distribution.materials).sort(), ["SOURCE-NOTICE.txt", "licenses/media-marshal.LICENSE", "sources/rename-exclusive.c"]);
+  for (const [path, digest] of Object.entries(distribution.materials)) { const info = lstatSync(join(root, path)); assert(info.isFile() && !info.isSymbolicLink()); assert.equal(sha(readFileSync(join(root, path))), digest); }
+  assert.equal(distribution.materials["sources/rename-exclusive.c"], manifest.source.sha256); assert.equal(manifest.source.sha256, sha(readFileSync(manifest.source.path))); assert.equal(distribution.materials["licenses/media-marshal.LICENSE"], sha(readFileSync("apps/desktop/resources/media-marshal.LICENSE")));
+  assert.deepEqual(walk(root).sort(), ["manifest.json", "distribution.json", "rename-exclusive.node", ...Object.keys(distribution.materials)].map((path) => join(root, path)).sort(), "安全修正组件资源混入未知文件");
+  assert.deepEqual(walk(resources).filter((path) => path.endsWith(".node")).sort(), [archive + ".unpacked" + native, binaryPath].sort(), "安装包包含未列入白名单的原生模块");
+}
 assert(walk(sidecars).every((file) => !/\.exe$|\.dll$|\.sqlite3?$|credentials|rclone\.conf/.test(file)), "Mac 组件材料混入其他平台二进制或个人配置");
 assert.equal(
   provenance.integrity,

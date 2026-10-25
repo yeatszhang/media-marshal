@@ -2,7 +2,7 @@
 
 本目录提供 `renameatx_np(..., RENAME_EXCL)` 的 Node-API 8 绑定，作为后续单条／批量修正的底层能力。Apple 将独占改名定义为文件系统能力，不能从普通 `rename` 或词法预检推断支持：[Apple 文档](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsexclusiverenaming)。Node-API 的接口版本与 Electron 的普通 C++ 模块 ABI 分开，实际可加载性仍须按目标运行验证：[Node-API 文档](https://nodejs.org/api/n-api.html)。
 
-当前用于隔离测试和下方内部文件日志组件，**尚未接入客户端修正入口，也没有进入安装包**。不改变当前 COPY、来源授权或已有媒体文件。任务 5.6／5.7 保持未完成；修正预览、持久日志、历史链、跨卷 COPY、旧目标回收、安装态和签名仍须接入及验收。
+当前已接入 Main 私有资源定位、Utility Process 与固定 Preload 方法，并进入 Mac 按架构准备和打包资源。Core 修正的文件计划、历史及 Emby 编排见下文；修正页面、批量作业和正式签名仍待完成，任务 5.6／5.7 保持未勾选。
 
 ## 构建与验证
 
@@ -15,9 +15,9 @@ npm test -- packages/media-core/src/files/rename-exclusive.test.ts
 node tools/desktop-files/check-filesystems.mjs
 ```
 
-输出位于忽略的 `build-artifacts/desktop-files/darwin-{arm64,x64}`。构建记录源码和四份 Node-API 头文件的 SHA-256、Electron 头文件版本、SDK、编译器、架构及二进制摘要；构建期间输入变化则失败。每次临时编译后核对 Mach-O CPU，再发布到开发输出目录。未承诺跨机器或临时链接标识的逐字节可复现构建。
+准备命令输出位于忽略的 `apps/desktop/resources/native-files/darwin-{arm64,x64}`，同时准备对应源码、GPL 许可和发行材料清单。`desktop:build` 与 builder 的 `beforePack` 都会调用准备入口；运行中的应用不编译模块。构建记录源码和四份 Node-API 头文件的 SHA-256、Electron 头文件版本、SDK、编译器、架构及二进制摘要；构建期间输入变化则失败。每次临时编译后核对 Mach-O CPU，再发布到开发输出目录。未承诺跨机器或临时链接标识的逐字节可复现构建。
 
-`build.mjs --headers <目录> --out <隔离输出> --arch <架构>` 可用于已准备 SDK 的离线编译。开发输出标记 `unintegrated-development`；目前不修改 Electron builder 的原生模块白名单或资源装载路径。将来接入必须补齐 Main／Core 的可信资源定位、摘要验证、ASAR 解包、架构白名单、Developer ID 签名与安装态验证。
+`build.mjs --headers <目录> --out <隔离输出> --arch <架构>` 可用于已准备 SDK 的离线编译。单独调用 `build.mjs` 默认仍输出 `build-artifacts/desktop-files/darwin-{arm64,x64}`，标记 `unintegrated-development`；准备入口发布为 `unsigned-preview`。这是无 Developer ID 的内测状态，clang 可能给 Mach-O 附加 linker ad-hoc 签名，不能据此宣称 Developer ID 或公证完成。
 
 ## 内部契约与恢复边界
 
@@ -37,7 +37,7 @@ node tools/desktop-files/check-filesystems.mjs
 
 `linkBeneath` 使用相同参数和目录约束，把目标卷中的已验证暂存文件以不覆盖硬链接发布；来源暂存锚点保留。返回 `PUBLISHED`／`NOT_PUBLISHED`／`UNCERTAIN` 与 `published`，不能将发布当作旧媒体已回收。该入口只服务已明确规划的跨卷复制发布，不是独占改名不受支持时的自动降级。
 
-Core 的 `files/native-rename.ts` 校验 Main 私有启动参数指定的 manifest 摘要、严格字段、平台架构、Node-API 版本、固定二进制名、大小、SHA-256 和 Mach-O CPU 后加载组件；资源符号链接被拒绝。尚未接到 Main／worker 或安装包，不能从 Renderer 传入资源路径。`ManagedRoot` 提供完整摘要与原生快照、私有 UUID 隔离、发布锚点及证据一致时的清理；恢复补记重新同步目录，内容相同但 inode 不同的外部目标仍是冲突。这些接口不拥有业务文件，也不代替持久计划。
+Core 的 `files/native-rename.ts` 校验 Main 私有启动参数指定的 manifest 摘要、严格字段、平台架构、Node-API 版本、固定二进制名、大小、SHA-256 和 Mach-O CPU 后加载组件；资源符号链接被拒绝。Main 从开发目录或 ASAR 内清单计算可信摘要，仅在初始化私有通道传给 worker；安装包模块及清单位于 ASAR 外 `Contents/Resources/native-files`。Renderer 不能提供资源路径。`ManagedRoot` 提供完整摘要与原生快照、私有 UUID 隔离、发布锚点及证据一致时的清理；恢复补记重新同步目录，内容相同但 inode 不同的外部目标仍是冲突。这些接口不拥有业务文件，也不代替持久计划。
 
 原文件的 ctime 用于改名前核对，改名后允许内核更新 ctime；摘要和文件的业务归属由上层另行证明。原语不提供“取消后必未执行”的承诺。调用前必须先持久化完整计划，调用后等待确定结果；Core 被强杀时应从日志核对旧／新位置，不重放普通覆盖式改名。返回 `CROSS_VOLUME` 或 `UNSUPPORTED` 不执行 COPY、硬链接降级或旧目标删除。同路径或仅大小写改名的计划应由上层明确判定，必要时使用可恢复中间计划。
 
@@ -53,7 +53,7 @@ Core 的 `files/native-rename.ts` 校验 Main 私有启动参数指定的 manife
 
 ## 文件日志组件验证
 
-schema v21 的 `FileRelocations` 已在内部组件层连接上述原语，冻结逐文件计划、执行同卷隔离／改名或 COPY／发布／旧目标回收，并在历史记账前保留位置占用和暂存锚点。它不自行建立业务历史或 Emby 交付；schema v22 的上层 `Corrections` 已接入 Core 命令、历史和交付事务，客户端修正页面和安装包仍待接入。
+schema v21 的 `FileRelocations` 已在内部组件层连接上述原语，冻结逐文件计划、执行同卷隔离／改名或 COPY／发布／旧目标回收，并在历史记账前保留位置占用和暂存锚点。它不自行建立业务历史或 Emby 交付；schema v22 的上层 `Corrections` 已接入 Core 命令、历史和交付事务，客户端修正页面仍待接入；资源和宿主接线的验证见下文。
 
 ```sh
 npm run build -w @media-marshal/contracts
@@ -65,6 +65,23 @@ ELECTRON_RUN_AS_NODE=1 node_modules/.bin/electron tools/desktop-files/check-relo
 日志测试的六个独立进程检查点使用 `relocation-crash-child.mjs`，父测试只对自己启动并已到达检查点的进程发 SIGKILL，核对退出后才打开原库恢复。单元 COPY 分支使用不同授权卷身份，真实跨设备另由 HFS+ 自有映像工具验证 APFS → HFS+、HFS+ → APFS 和 HFS+ 本卷改名；双向 COPY 都核对新文件后才回收旧媒体，并保留下载原件。工具先关闭所属资源，核对映像与设备归属后卸载，未确认卸载时保留目录而不递归删除。脱敏结果为 `fixtures/mac-relocation-journal-2026-10-26.json`，不代替修正界面、附属文件、批量历史或签名安装验收。
 
 
-schema v22 的上层业务测试为 `npm test -- packages/media-core/src/ingestion/corrections.test.ts`。`correction-crash-child.mjs` 仅用于该测试的两个独立进程检查点：父测试核对检查点后 SIGKILL，重建不恢复下载来源、不注入个人凭据，只按已确认媒体目标计划补历史或清理。Core 的私有启动参数可传入经完整性校验的原语；Main／worker 资源接线和客户端页面仍未完成，不据此宣称安装态修正可用。
+schema v22 的上层业务测试为 `npm test -- packages/media-core/src/ingestion/corrections.test.ts`。`correction-crash-child.mjs` 仅用于该测试的两个独立进程检查点：父测试核对检查点后 SIGKILL，重建不恢复下载来源、不注入个人凭据，只按已确认媒体目标计划补历史或清理。Core 的私有启动参数可传入经完整性校验的原语；Main／worker 已传递经验证的私有资源；这些底层检查不替代客户端页面验收。
 
-大文件核验：schema v23 将公开预览／确认动作改为先返回持久核验编号，`corrections.preparation` 查询当前文件读取进度，`corrections.cancel-preparation` 传递取消信号；Core 内部仍可直接等待核验方法，测试不会以该内部方法冒充 IPC 立即返回。核验队列、请求合并、取消、停止及恢复收据测试位于 `packages/media-core/src/ingestion/correction-preparations.test.ts`。Main／页面接线仍待完成。
+大文件核验：schema v23 将公开预览／确认动作改为先返回持久核验编号，`corrections.preparation` 查询当前文件读取进度，`corrections.cancel-preparation` 传递取消信号；Core 内部仍可直接等待核验方法，测试不会以该内部方法冒充 IPC 立即返回。核验队列、请求合并、取消、停止及恢复收据测试位于 `packages/media-core/src/ingestion/correction-preparations.test.ts`。修正页面仍待完成。
+
+## 宿主、目录包与完整性核验
+
+Main 的 `nativeFilesLaunch` 只读固定的当前架构清单；打包时可信清单留在 ASAR，Core 读取 ASAR 外副本并要求摘要匹配，再核对固定模块、大小、SHA-256、Node-API 与 Mach-O CPU。`runtime.get.correctionFiles` 表示 Core 是否已加载组件，不代表某个文件操作成功。升级版本记录同时保存原生组件清单摘要。Preload 只暴露任务、预览、确认、核验查询／取消、作业查询和重试，不暴露资源路径或通用 invoke。
+
+Mac 包只新增一个固定的外部 `.node`，原 ASAR SQLite 架构白名单保持不变；包内外清单、二进制和源码／许可均检查摘要，其他架构及未知文件不能混入。`afterSign` 发现模块摘要改变时拒绝产物，当前尚未实施 Developer ID 最终摘要流程。
+
+```sh
+CSC_IDENTITY_AUTO_DISCOVERY=false npm run desktop:pack
+node scripts/check-desktop-artifact.mjs
+node tools/desktop-files/check-packaged-native.mjs
+npm run test:desktop -- --grep '修正原生组件经 Main|真实窗口、核心握手'
+```
+
+实际打包窗口使用 `MARSHAL_APP_PATH` 指向目录包可执行文件并设置 `MARSHAL_EXECUTABLE=1`。2026-10-26 在 macOS 26.5.2／arm64 验证开发构建和 arm64 目录包各两项检查：经真实 Main 授权、Utility Process 和 Preload 完成视频／字幕改名、历史及重启查询，保留原下载文件和 inode。`seed-host-correction.mjs` 仅在隔离 Main 退出后，沿原生授权准备真实 COPY 收据与离线元数据；受控时钟和目录对话框替身不作为真实客户端就绪或 OS 对话框验收。
+
+`check-packaged-native.mjs` 复制自有目录包，在中文／空格路径与最小 PATH 下启动；先核对正常组件，再同时改写副本的外部模块和清单，验证 ASAR 可信摘要仍阻止加载，普通核心和 parser 保持可用，不产生修正作业。原目录包不改写，退出后移除副本。脱敏摘要见 `fixtures/mac-native-host-2026-10-26.json`。x64 当前仅交叉编译和 Mach-O 检查，未声明 Intel 运行；修正页面、完整故障矩阵和正式发行仍未完成。

@@ -27,7 +27,13 @@ mac:
     - from: resources/parser/darwin-${arch}
       to: resources/parser
       filter: [manifest.json]
+    - from: resources/native-files/darwin-${arch}
+      to: resources/native-files
+      filter: [manifest.json, distribution.json]
   extraResources:
+    - from: resources/native-files/darwin-${arch}
+      to: native-files
+      filter: [manifest.json, distribution.json, rename-exclusive.node, SOURCE-NOTICE.txt, 'sources/**', 'licenses/**']
     - from: resources/parser/darwin-${arch}/runtime
       to: parser
       filter: ['**/*']

@@ -6,11 +6,13 @@ import { readFile, writeFile, mkdir, copyFile, readdir } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareParser } from "../desktop-parser/prepare.mjs";
+import { prepareNativeFiles } from "../desktop-files/prepare.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../.."), run = promisify(execFile), sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export default async function prepareBundle(context) {
   const target = `${context.electronPlatformName}-${Arch[context.arch]}`;
   if (!["darwin-arm64", "darwin-x64", "win32-x64"].includes(target)) throw new Error("此架构尚未配置随包组件");
   await prepareParser(target);
+  await prepareNativeFiles(target);
   await run("python3", [join(root, "tools/desktop-sidecars/prepare.py"), "--target", target, "--include-sources"], { cwd: root, timeout: 180000, maxBuffer: 1024 * 1024, shell: false });
   await run("python3", [join(root, "tools/desktop-sidecars/prepare_guardian.py"), "--target", target], { cwd: root, timeout: 120000, maxBuffer: 1024 * 1024, shell: false });
   const prepared = join(root, "apps/desktop/resources/sidecars", target), manifest = JSON.parse(await readFile(join(prepared, "manifest.json"), "utf8")), guardian = JSON.parse(await readFile(join(prepared, "guardian.json"), "utf8"));

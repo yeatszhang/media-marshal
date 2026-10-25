@@ -167,7 +167,7 @@ export function createMediaApplication(
     dependencies: ["media.storage"],
     register(bind) {
       bind(CoreService).toSelf().inSingletonScope();
-      bind(ComponentsToken).toConstantValue({ parserReady: () => parser?.ready ?? false });
+      bind(ComponentsToken).toConstantValue({ parserReady: () => parser?.ready ?? false, correctionFilesReady: () => !!corrections?.files });
     },
   };
   const parsing: ApplicationModule = { id: "media.parser", dependencies: ["media.storage"], async start(ctx) {

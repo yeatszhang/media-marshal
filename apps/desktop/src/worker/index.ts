@@ -9,7 +9,7 @@ import {
 import { privateCoreRequestSchema } from "@media-marshal/contracts/internal/core";
 import { z } from "zod";
 import { RestrictedHostClient } from "@media-marshal/contracts/internal/rpc";
-import { parserLaunchSchema } from "@media-marshal/contracts/internal";
+import { nativeFileLaunchSchema, parserLaunchSchema } from "@media-marshal/contracts/internal";
 
 process.parentPort.once("message", (event) => {
   const port = event.ports[0];
@@ -32,7 +32,7 @@ process.parentPort.once("message", (event) => {
     context(bindingGeneration, attemptId) { return { coreGeneration, hostGeneration, bindingGeneration, attemptId }; },
     request: (action, payload, context, key) => host.request(action, payload, context, key),
     observe: (handle, context, listener) => host.observe(handle, context, listener),
-  }, cancelHostRequests: () => { hostOnline = false; host.invalidate(); }, ...(input.parser ? { parser: parserLaunchSchema.parse(input.parser) } : {}) });
+  }, cancelHostRequests: () => { hostOnline = false; host.invalidate(); }, ...(input.parser ? { parser: parserLaunchSchema.parse(input.parser) } : {}), ...(input.nativeFiles ? { nativeFiles: nativeFileLaunchSchema.parse(input.nativeFiles) } : {}) });
   let stopping: Promise<void> | undefined;
   let parentHeartbeat = Date.now();
   const shutdown = () =>

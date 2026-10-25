@@ -30,6 +30,8 @@ Mac 首次运行测试前，先执行 `npm run desktop:prepare-native-files`。�
 
 原生模块需要匹配目标平台、架构和运行时。`npm test` 通过仓库运行器使用 Electron 内置 Node，`test:electron-node` 是兼容别名；SQLite 二进制必须先匹配桌面 ABI。当前 SQLite 包提供平台预编译文件，产物检查核对它在 ASAR 外可用，实际加载仍以窗口测试为准。不要用另一系统 Node ABI 直接加载已经重建的 SQLite 模块。`desktop:build` 只编译，不启动旧服务。
 
+Mac 的 `desktop:build` 及 `beforePack` 准备 Node-API 8 安全修正组件，需 Xcode Command Line Tools；运行中的应用不下载或编译原语。Main 从当前架构开发目录或 ASAR 内清单计算可信摘要，Core 校验 ASAR 外模块后加载，`runtime.get.correctionFiles` 可查询可用性。按架构资源、源码／许可和完整性验证命令见 `tools/desktop-files/README.md`；x64 交叉编译不作为 Intel 运行验收。
+
 `desktop:pack` 生成当前系统的应用目录包；正式 DMG/NSIS、签名、公证和其他架构须在对应目标环境验收。未配置开发者证书时的本地原型可使用 `CSC_IDENTITY_AUTO_DISCOVERY=false npm run desktop:pack`，该产物不能作为正式发行完成的证据。运行已打包的应用测试时，将 `MARSHAL_APP_PATH` 设为可执行文件并使用 `MARSHAL_EXECUTABLE=1`；具体路径以构建输出为准。
 
 当前平台目录包可直接使用 `npm run test:packaged` 验证，它先检查许可、原生库和框架来源，再运行真实窗口测试。`.github/workflows/desktop-prototype.yml` 预置 macOS arm64、macOS Intel 和 Windows x64 矩阵；尚未远端运行时不能据此宣称三平台通过。
@@ -55,7 +57,7 @@ legacy 装饰器由 TypeScript 统一转换，参数使用显式 `@inject(Token)
 
 桌面数据位于 Electron 用户数据目录的 `desktop.sqlite3`，敏感凭据单独由 safeStorage 保护；查询不返回密钥。测试只使用临时数据目录。数据库使用 `user_version`、短事务和升级前 SQLite backup；未知或更高版本停止写入，旧 Java 无版本表不会被接管。
 
-当前 schema v23 增加修正预览／确认的持久后台核验收据，停止等待不撤销文件作业；v22 的修正预览、确认收据和历史操作继续保留，Emby 交付可引用 COPY 或修正二者之一；旧 v22 Core 拒绝该库。v21 的不可变逐文件计划与位置占用继续保留。Core 单条修正服务已接入内部命令，Main／页面和安装态仍待完成；迁移不会自动搬动媒体。v20 的持久批量整理预览、成员与确认收据继续保留；v19 的批量识别意图与逐项提交记录继续保留；v18 的人工识别字段、匹配版本和编辑请求收据继续保留；v17 的来源可恢复删除及生命周期并发检查继续保留；v16 建立的本地资产当前版本约束和持久内容复核作业继续保留；v15 建立的恢复后媒体核对队列继续保留。首次、手动和自动启动 Core 共用备份检查，失败不能通过重启绕过；整包恢复先处理日志，再复核下载成果及已整理主文件／附属文件。WAL 与中断的具体保证见[升级备份与恢复验收](./mac-upgrade-recovery-validation.md)，内容复核见[整理流水线](./desktop-ingestion.md#本地资产版本与全量内容复核)。
+当前 schema v23 增加修正预览／确认的持久后台核验收据，停止等待不撤销文件作业；v22 的修正预览、确认收据和历史操作继续保留，Emby 交付可引用 COPY 或修正二者之一；旧 v22 Core 拒绝该库。v21 的不可变逐文件计划与位置占用继续保留。Core 单条修正服务已接入内部命令及 Main／worker／Preload，arm64 目录包资源已验证，修正页面和完整安装态仍待完成；迁移不会自动搬动媒体。v20 的持久批量整理预览、成员与确认收据继续保留；v19 的批量识别意图与逐项提交记录继续保留；v18 的人工识别字段、匹配版本和编辑请求收据继续保留；v17 的来源可恢复删除及生命周期并发检查继续保留；v16 建立的本地资产当前版本约束和持久内容复核作业继续保留；v15 建立的恢复后媒体核对队列继续保留。首次、手动和自动启动 Core 共用备份检查，失败不能通过重启绕过；整包恢复先处理日志，再复核下载成果及已整理主文件／附属文件。WAL 与中断的具体保证见[升级备份与恢复验收](./mac-upgrade-recovery-validation.md)，内容复核见[整理流水线](./desktop-ingestion.md#本地资产版本与全量内容复核)。
 
 长任务必须返回持久化作业 ID。框架 CommandService 的注册等待超时不代表执行取消；业务请求和文件任务的取消分别实现。退出先阻止新接入并等待受管操作安全点，再清理框架和数据库。窗口关闭保留托盘，显式退出才停止应用。
 

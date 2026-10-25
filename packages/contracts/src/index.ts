@@ -142,6 +142,7 @@ export const coreStatusSchema = z.strictObject({
   taskCount: z.number().int().nonnegative(),
   mode: z.literal("manual-only"),
   parser: z.enum(["unavailable", "ready"]),
+  correctionFiles: z.enum(["unavailable", "ready"]).default("unavailable"),
 });
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
 export const runtimeSchema = z.strictObject({
@@ -251,6 +252,15 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  getCorrectionTask(taskId: string): Promise<CoreOutput<"corrections.task">>;
+  previewCorrection(input: CoreInput<"corrections.preview">): Promise<CoreOutput<"corrections.preview">>;
+  getCorrectionPreview(id: string): Promise<CoreOutput<"corrections.get-preview">>;
+  confirmCorrection(input: CoreInput<"corrections.confirm">): Promise<CoreOutput<"corrections.confirm">>;
+  getCorrectionPreparation(id: string): Promise<CoreOutput<"corrections.preparation">>;
+  cancelCorrectionPreparation(id: string): Promise<CoreOutput<"corrections.cancel-preparation">>;
+  listCorrections(input: CoreInput<"corrections.list">): Promise<CoreOutput<"corrections.list">>;
+  getCorrection(id: string): Promise<CoreOutput<"corrections.get">>;
+  retryCorrection(id: string): Promise<CoreOutput<"corrections.retry">>;
   previewSourceExecution(input: CoreInput<"source-rules.preview-execution">): Promise<CoreOutput<"source-rules.preview-execution">>;
   getSourceExecutionPreview(id: string): Promise<CoreOutput<"source-rules.get-execution-preview">>;
   executeSourcePreview(input: CoreInput<"source-rules.execute">): Promise<CoreOutput<"source-rules.execute">>;

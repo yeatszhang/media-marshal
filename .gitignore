@@ -20,6 +20,7 @@ tools/desktop-parser/dist/
 tools/desktop-parser/*.spec
 apps/desktop/resources/sidecars/
 apps/desktop/resources/parser/
+apps/desktop/resources/native-files/
 test-results/
 playwright-report/
 frontend/.env.local

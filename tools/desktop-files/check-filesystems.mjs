@@ -8,7 +8,7 @@ import { tmpdir, release, version } from "node:os";
 import { resolve, join } from "node:path";
 import assert from "node:assert/strict";
 if (process.platform !== "darwin") throw new Error("文件系统实测仅在 macOS 执行");
-const binary = resolve(process.argv[2] ?? `build-artifacts/desktop-files/darwin-${process.arch}/rename-exclusive.node`), manifest = JSON.parse(await readFile(join(binary, "../manifest.json"), "utf8"));
+const binary = resolve(process.argv[2] ?? `apps/desktop/resources/native-files/darwin-${process.arch}/rename-exclusive.node`), manifest = JSON.parse(await readFile(join(binary, "../manifest.json"), "utf8"));
 const bytes = await readFile(binary); assert.equal(manifest.binary.sha256, createHash("sha256").update(bytes).digest("hex")); assert.equal(manifest.target, `darwin-${process.arch}`);
 const native = createRequire(import.meta.url)(binary), run = promisify(execFile), work = await realpath(await mkdtemp(join(tmpdir(), "marshal-exclusive-volumes-"))), volumes = [];
 const plist = (text) => new Promise((done, fail) => { const child = spawn("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], { stdio: ["pipe", "pipe", "pipe"] }); let output = ""; child.stdout.on("data", (bytes) => { output += bytes; }); child.stderr.resume(); child.on("error", fail); child.on("exit", (code) => { if (code) fail(new Error("无法核对磁盘映像归属")); else { try { done(JSON.parse(output)); } catch (error) { fail(error); } } }); child.stdin.end(text); });

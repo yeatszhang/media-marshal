@@ -22,7 +22,7 @@ import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
 export const DatabaseToken = createIdentifier<CoreDatabase>(
   "media-core.database",
 );
-export interface CoreComponents { parserReady(): boolean }
+export interface CoreComponents { parserReady(): boolean; correctionFilesReady?(): boolean }
 export const ComponentsToken = createIdentifier<CoreComponents>("media-core.components");
 function contains(parent: string, child: string): boolean {
   const rest = relative(parent, child);
@@ -97,6 +97,7 @@ export class CoreService {
       taskCount: count("media_task"),
       mode: "manual-only",
       parser: this.components.parserReady() ? "ready" : "unavailable",
+      correctionFiles: this.components.correctionFilesReady?.() ? "ready" : "unavailable",
     };
   }
   listSources(): DesktopSource[] {

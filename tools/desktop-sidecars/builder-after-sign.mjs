@@ -11,4 +11,9 @@ export default async function verifyBundle(context) {
     const hash = createHash("sha256").update(await readFile(join(resources, binary.path))).digest("hex");
     if (hash !== binary.packagedSha256 || binary.developerIdSignedSha256 !== null) throw new Error("签名改变了组件摘要；须先完成正式签名清单流程");
   }
+  if (context.electronPlatformName === "darwin") {
+    const directory = join(resources, "native-files"), files = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")), distribution = JSON.parse(await readFile(join(directory, "distribution.json"), "utf8")), binary = await readFile(join(directory, "rename-exclusive.node"));
+    const digest = createHash("sha256").update(binary).digest("hex");
+    if (files.target !== manifest.target || files.releaseStatus !== "unsigned-preview" || distribution.releaseStatus !== "unsigned-preview" || distribution.target !== files.target || distribution.originalSha256 !== digest || distribution.packagedSha256 !== digest || distribution.developerIdSignedSha256 !== null || files.binary.name !== "rename-exclusive.node" || files.binary.sha256 !== digest || files.binary.size !== binary.length) throw new Error("安全修正组件的签名或最终摘要不符；须完善受信签名清单后才能发行");
+  }
 }

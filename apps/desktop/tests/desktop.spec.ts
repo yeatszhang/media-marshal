@@ -60,6 +60,27 @@ test.afterEach(async () => {
   if (application) await application.close().catch(() => {});
   if (directory) await rm(directory, { recursive: true, force: true });
 });
+test("修正原生组件经 Main 私有资源、Utility Process 与固定 Preload 完成真实文件和历史变更", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(60000);
+  let window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), source = join(canonical, "修正来源 中文"), target = join(canonical, "媒体目标 中文"), fileName = "宿主原片.mkv", bytes = Buffer.from("原下载文件保持不变，媒体目标只按确认计划改名。".repeat(200)); await mkdir(source); await mkdir(target); await writeFile(join(source, fileName), bytes); await writeFile(join(source, "宿主原片.zh.srt"), "字幕夹具"); await writeFile(join(source, "poster.jpg"), "通用封面夹具");
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [source, target]);
+  const row = await window.evaluate(async ({ source, target }) => {
+    await window.desktopApi.chooseDirectory("source"); await window.desktopApi.chooseDirectory("target"); await window.desktopApi.saveCredential("tmdb", "isolated-native-host-fixture");
+    const draft = await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: "原生修正验收", client: "custom", sourcePath: source, organization: { targetPath: target } } }); const preview = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: 0, expectedDraftRevision: 1, requestKey: crypto.randomUUID() }); return window.desktopApi.applySourceRule({ previewId: preview.id, requestKey: crypto.randomUUID() });
+  }, { source, target });
+  await application.close(); const config = join(canonical, "seed-correction.json"); await writeFile(config, JSON.stringify({ database: join(directory, "data/desktop.sqlite3"), sourceId: row.localSourceId ?? row.ingestionSourceId, sourcePath: source, targetPath: target, fileName }));
+  const seeded = await new Promise<{ stdout: string }>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [resolve("tools/desktop-files/seed-host-correction.mjs"), config], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 20000 }, (error, stdout) => error ? fail(error) : done({ stdout }))), original = JSON.parse(seeded.stdout.trim()) as { taskId: string; targetPath: string; inode: string };
+  const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${join(directory, "data")}`], env }); window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  expect((await window.evaluate((taskId) => window.desktopApi.getCorrectionTask(taskId), original.taskId)).available).toBe(true);
+  const pending = await window.evaluate((taskId) => window.desktopApi.previewCorrection({ taskId, requestKey: crypto.randomUUID(), selection: { tmdbId: 2, mediaType: "MOVIE" } }), original.taskId); expect(pending.state).toBe("PENDING");
+  await expect.poll(async () => (await window.evaluate((id) => window.desktopApi.getCorrectionPreparation(id), pending.id)).state).toBe("READY"); const ready = await window.evaluate((id) => window.desktopApi.getCorrectionPreparation(id), pending.id), preview = await window.evaluate((id) => window.desktopApi.getCorrectionPreview(id), ready.previewId!);
+  expect(preview.files.filter((file) => file.action === "MOVE")).toHaveLength(2); expect(preview.files.some((file) => file.action === "KEEP" && file.fromPath.endsWith("poster.jpg"))).toBe(true); expect(await readFile(original.targetPath)).toEqual(bytes);
+  const confirmation = await window.evaluate((previewId) => window.desktopApi.confirmCorrection({ previewId, requestKey: crypto.randomUUID(), filesComplete: true }), preview.id); await expect.poll(async () => (await window.evaluate((id) => window.desktopApi.getCorrectionPreparation(id), confirmation.id)).state).toBe("READY"); const receipt = await window.evaluate((id) => window.desktopApi.getCorrectionPreparation(id), confirmation.id), id = receipt.operationId!;
+  await expect.poll(async () => (await window.evaluate((id) => window.desktopApi.getCorrection(id), id)).operation.state).toBe("RECORDED"); const operation = (await window.evaluate((id) => window.desktopApi.getCorrection(id), id)).operation;
+  expect(await readFile(preview.targetPath)).toEqual(bytes); expect(String((await stat(preview.targetPath, { bigint: true })).ino)).toBe(original.inode); await expect(stat(original.targetPath)).rejects.toMatchObject({ code: "ENOENT" }); expect(await readFile(preview.targetPath.replace(/\.mkv$/, ".zh.srt"), "utf8")).toBe("字幕夹具"); expect(await readFile(join(source, fileName))).toEqual(bytes);
+  await window.reload(); await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); expect((await window.evaluate((taskId) => window.desktopApi.getCorrectionTask(taskId), original.taskId))).toMatchObject({ status: "CORRECTED", nextTaskId: operation.newTaskId, available: true }); expect((await window.evaluate((taskId) => window.desktopApi.getCorrectionTask(taskId), operation.newTaskId))).toMatchObject({ status: "DONE", previousTaskId: original.taskId }); expect(await window.evaluate(() => window.desktopApi.listCorrections({}))).toMatchObject({ total: 1, items: [{ id, state: "RECORDED" }] }); expect(await readFile(join(source, fileName))).toEqual(bytes);
+});
 test("目录批量识别经真实稳定窗口与 IPC 提交，重启保留逐项匹配失败且不复制文件", async () => {
   test.skip(process.platform !== "darwin"); test.setTimeout(230000);
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
@@ -465,6 +486,10 @@ test("真实窗口、核心握手与沙盒边界", async () => {
   const runtime = await window.evaluate(() => window.desktopApi.getRuntime());
   expect(runtime.status?.schemaVersion).toBe(CORE_DATA_SCHEMA_VERSION);
   expect(runtime.status?.parser).toBe("ready");
+  if (process.platform === "darwin") expect(runtime.status?.correctionFiles).toBe("ready");
+  expect(await window.evaluate(() => window.desktopApi.listCorrections({}))).toEqual({ items: [], total: 0 });
+  const forbiddenCorrection = await window.evaluate(async () => { try { await window.desktopApi.previewCorrection({ taskId: crypto.randomUUID(), requestKey: crypto.randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, nativeFiles: { manifestPath: "/不允许提供的模块", manifestSha256: "a".repeat(64) } } as any); return null; } catch (error) { return { code: (error as { code: string }).code, message: (error as Error).message }; } });
+  expect(forbiddenCorrection).toMatchObject({ message: "业务参数无效" });
   expect(
     await window.evaluate(async () => {
       try {

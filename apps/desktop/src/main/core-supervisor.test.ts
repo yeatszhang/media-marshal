@@ -65,6 +65,11 @@ afterEach(async () => {
 });
 
 describe("Core 生命周期与恢复栅栏", () => {
+  it("原生资源仅进入初始化私有通道，资源准备期间停止后不能拉起迟到核心", async () => {
+    const launch = { manifestPath: "/fixture/resources/native-files/manifest.json", manifestSha256: "a".repeat(64) }, supervisor = new CoreSupervisor("/fixture/worker.js", "/fixture/profile", undefined, undefined, async () => launch); supervisors.push(supervisor); await supervisor.start();
+    expect(harness.children[0]!.postMessage.mock.calls[0]![0]).toMatchObject({ kind: "initialize", nativeFiles: launch }); await supervisor.stop();
+    let release!: (value: typeof launch) => void; const late = new CoreSupervisor("/fixture/worker.js", "/fixture/profile", undefined, undefined, () => new Promise((done) => { release = done; })); supervisors.push(late); const starting = expect(late.start()).rejects.toMatchObject({ code: "INTERRUPTED" }); await vi.waitFor(() => expect(release).toBeTypeOf("function")); await late.stop(); release(launch); await starting; expect(harness.fork).toHaveBeenCalledTimes(1);
+  });
   it("启动前备份失败不创建 Core，显式重启重新检查且不能绕过失败", async () => {
     const supervisor = fixture(), check = vi.fn(async () => { throw new Error("模拟备份不可写"); }); supervisor.beforeStart = check;
     await expect(supervisor.start()).rejects.toThrow("模拟备份不可写");

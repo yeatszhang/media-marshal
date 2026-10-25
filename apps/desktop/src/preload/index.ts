@@ -25,6 +25,15 @@ async function invoke(action: string, payload: unknown): Promise<any> {
 }
 // 此对象仅暴露具体动作，不暴露 invoke、通道名或 Electron 对象。
 const api: DesktopApi = {
+  getCorrectionTask: (taskId) => invoke("corrections.task", { taskId }),
+  previewCorrection: (input) => invoke("corrections.preview", input),
+  getCorrectionPreview: (id) => invoke("corrections.get-preview", { id }),
+  confirmCorrection: (input) => invoke("corrections.confirm", input),
+  getCorrectionPreparation: (id) => invoke("corrections.preparation", { id }),
+  cancelCorrectionPreparation: (id) => invoke("corrections.cancel-preparation", { id }),
+  listCorrections: (input) => invoke("corrections.list", input),
+  getCorrection: (id) => invoke("corrections.get", { id }),
+  retryCorrection: (id) => invoke("corrections.retry", { id }),
   previewSourceExecution: (input) => invoke("source-rules.preview-execution", input),
   getSourceExecutionPreview: (id) => invoke("source-rules.get-execution-preview", { id }),
   executeSourcePreview: (input) => invoke("source-rules.execute", input),

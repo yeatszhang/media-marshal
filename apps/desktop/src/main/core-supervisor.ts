@@ -21,7 +21,7 @@ import {
 import type { CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
 import { privateCoreActions, privateCoreResponseSchema, type PrivateCoreAction, type PrivateCoreInput, type PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
 import { CloudError, cloudErrorCodeSchema } from "@media-marshal/contracts";
-import type { ParserLaunch } from "@media-marshal/contracts/internal";
+import type { NativeFileLaunch, ParserLaunch } from "@media-marshal/contracts/internal";
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -47,6 +47,7 @@ export class CoreSupervisor {
     private readonly dataDir: string,
     private hostBridge?: CoreHostBridge,
     private readonly parser?: () => Promise<ParserLaunch | undefined>,
+    private readonly nativeFiles?: () => Promise<NativeFileLaunch | undefined>,
   ) {}
   attachHostBridge(bridge: CoreHostBridge): void {
     if (this.child || this.starting) throw new DesktopError("CONFLICT", "核心运行期间不能更换宿主通道");
@@ -72,6 +73,8 @@ export class CoreSupervisor {
     }
     if (this.stopping) throw new DesktopError("INTERRUPTED", "核心启动已停止", true);
     const parser = await this.parser?.();
+    if (this.stopping) throw new DesktopError("INTERRUPTED", "核心启动已停止", true);
+    const nativeFiles = await this.nativeFiles?.();
     if (this.stopping) throw new DesktopError("INTERRUPTED", "核心启动已停止", true);
     const child = utilityProcess.fork(this.workerPath, [], {
       serviceName: "Media Marshal Core",
@@ -209,6 +212,7 @@ export class CoreSupervisor {
           databasePath: join(this.dataDir, "desktop.sqlite3"),
           coreGeneration, hostGeneration,
           ...(parser ? { parser } : {}),
+          ...(nativeFiles ? { nativeFiles } : {}),
         },
         [port2],
       );

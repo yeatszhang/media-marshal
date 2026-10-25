@@ -76,7 +76,7 @@ schema v16 将本地候选的属性键 `attribute_key` 与资产版本 `version_
 
 根内版本逐层进入目录 FD，拒绝父级符号链接及跨设备子挂载；来源身份失效或根跨卷时不创建目标目录。跨卷复制另用 `linkBeneath` 发布目标卷暂存文件，保留原暂存锚点供日志恢复；它不是改名不受支持时的降级路径。资源加载核对 manifest／二进制摘要与 Mach-O 架构。`ManagedRoot` 已提供私有隔离、完整摘要、发布恢复与仅按原证据回收私有文件的接口；同内容的外部文件不能代替原 inode。2026-10-26 的 16 项 Electron Node 文件测试及 APFS／HFS+／exFAT 自有映像结果见原语目录，exFAT 两项均返回不支持，未执行回退操作。
 
-上述原语已用于下方文件日志和 Core 单条修正服务，尚未接入客户端页面或安装包。任务 5.6／5.7 继续保持未完成；Main 资源注入、修正界面、批量范围调度、x64 运行和签名安装均须后续验收。构建入口为 `npm run desktop:prepare-native-files`，原生测试为 `npm test -- packages/media-core/src/files/rename-exclusive.test.ts`；完整开发契约和脱敏结果位于 `tools/desktop-files/README.md` 与该目录 `fixtures/`。
+上述原语已用于下方文件日志和 Core 单条修正服务，Main／worker 私有资源及按架构打包已接通，修正页面尚未完成。任务 5.6／5.7 继续保持未完成；修正界面、批量范围调度、x64 运行和签名安装均须后续验收。构建入口为 `npm run desktop:prepare-native-files`，原生测试为 `npm test -- packages/media-core/src/files/rename-exclusive.test.ts`；完整开发契约和脱敏结果位于 `tools/desktop-files/README.md` 与该目录 `fixtures/`。
 
 ## 修正文件的持久步骤
 
@@ -113,4 +113,4 @@ schema v23 的 `Corrections` 保留 v22 的文件与历史计划，注册 `corre
 
 本机真实 SQLite／隔离文件用例包含来源离线、过期与重启预览、原收据缺失、成员变化、部分字幕失败、同路径和连续历史、真实分集及与整理入口共享坐标、完整类型模板变量、恢复只读核对、原生组件缺失查询。两个独立执行进程在文件完成但历史未提交、以及历史已提交而暂存未清理时实际收到 SIGKILL，重建后文件 inode 不变、历史和新交付只有一条；另有本地固定 Emby 响应的刷新／收录／打开链接验证。Core 组装测试通过私有原生资源和离线元数据夹具实际调用受限命令，不新增生产测试端点，也不将其称作 Main／Utility Process／Renderer 的完整窗口链路。
 
-目前 Core 服务只接受宿主私有原生资源参数，Main 和 worker 尚未传入该参数，因此当前客户端不会自动开放修正文件操作。下一步仍需接资源准备和架构校验、Preload 固定方法、修正页面与修复交互、真实窗口及安装态检查；批量范围由 5.7 继续完成。5.6／5.7 保持未完成。
+Main／worker 现在从固定开发资源或 ASAR 可信清单注入私有原生资源，Preload 已提供固定修正方法；`runtime.get.correctionFiles` 可核对组件是否成功加载。2026-10-26 的开发构建及 arm64 目录包实际 IPC 检查完成视频／字幕改名、历史和 Core 重启查询，下载原件保留；正常目录包在最小 PATH／中文空格路径可加载，外部模块与其清单一起变化仍被 ASAR 摘要拒绝，普通 Core 和 parser 继续可用。对应工具与脱敏证据见 `tools/desktop-files/README.md`。这些检查通过 API 执行，修正页面和修复交互仍待完成；批量范围、完整安装矩阵及正式签名仍分别验收。5.6／5.7 保持未完成。
