@@ -305,6 +305,8 @@ export interface DesktopApi {
   getOrganizeBatchAssets(input: CoreInput<"ingestion.organize-batch-assets">): Promise<CoreOutput<"ingestion.organize-batch-assets">>;
   confirmOrganizeBatch(input: CoreInput<"ingestion.confirm-organize-batch">): Promise<CoreOutput<"ingestion.confirm-organize-batch">>;
   cancelOrganizeBatch(id: string): Promise<CoreOutput<"ingestion.cancel-organize-batch">>;
+  listIngestionSeasons(input: CoreInput<"ingestion.seasons">): Promise<CoreOutput<"ingestion.seasons">>;
+  getIngestionSeason(input: CoreInput<"ingestion.season">): Promise<CoreOutput<"ingestion.season">>;
   listIngestionDirectories(input: CoreInput<"ingestion.directories">): Promise<CoreOutput<"ingestion.directories">>;
   getIngestionDirectory(input: CoreInput<"ingestion.directory">): Promise<CoreOutput<"ingestion.directory">>;
   recognizeIngestionBatch(input: CoreInput<"ingestion.recognize-batch">): Promise<CoreOutput<"ingestion.recognize-batch">>;

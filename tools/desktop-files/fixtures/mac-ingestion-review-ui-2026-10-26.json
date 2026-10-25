@@ -1,0 +1,109 @@
+{
+  "capturedAt": "2026-10-25T20:14:52.969055+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "schema": 24,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "2e5435c35f36079b9c11a23f2832aa9718754de95cbf226ede983fd97f0c76a5",
+  "nativeManifestSha256": "f9bf20689e15e342f12457ef8e10347b93f761219b5233760ec73b179d5e0537",
+  "source": {
+    "packages/media-core/src/ingestion/seasons.ts": "b28edbc52c84e5c4a57efaff80fbcf9055a264d84a2ac788287f26016e3eb0d5",
+    "packages/media-core/src/ingestion/seasons.test.ts": "eb415165c7a8b013cf29645c6ebc1a91dd6b2ac14a4d33c548783debbc0a7e43",
+    "packages/media-core/src/ingestion/pipeline.ts": "00a228f95559eb1ac9616ed6825c33a85d89076da77e3d025e73d2799535f9d7",
+    "packages/media-core/src/modules/application.ts": "e1b79b75e88738dcefa13fd35d9419095154f3aa902031d4803bd197c0849505",
+    "packages/contracts/src/ingestion.ts": "0a70eca81dc8a3101790f05c83c40dc50375fdc9f892a1409988712edd845033",
+    "packages/contracts/src/index.ts": "29731338891a10a63740be22c2aad1b3bc0606612c4ca7eca29d6efdf125d260",
+    "packages/contracts/src/contracts.test.ts": "60e99b600552a0a37f2e54f22a2018d61dada7a0f38ab9f455ee7154657f1fb8",
+    "apps/desktop/src/preload/index.ts": "3c72da2abe8071e8699277280664d65e6d59cf8cf5367dcf4c8a81a931fa87c0",
+    "apps/desktop/src/renderer/src/seasons-model.ts": "1ecc02c6db96a050c52a468926a1552007e634c3fdac0b7de3f9ab443d92f483",
+    "apps/desktop/src/renderer/src/components/SeasonQueuePanel.tsx": "390bc71e91cef3797777c053726fe4a2f0de8644ca36284817f3d17f0be64f5b",
+    "apps/desktop/src/renderer/src/pages/Ingestion.tsx": "afd7f9382657cb58168029abba325382b1e4484ddf845680da99f54b8f4af46f",
+    "apps/desktop/src/renderer/src/services.ts": "f634a823a7f7b1ca97b19f12e0b6c793e60c481cae7388d935908532f5b90c69",
+    "apps/desktop/src/renderer/src/styles.css": "cb7a356da7fc4ee9abe05ed4ea9d033471c8b146c4c28eca85d74b7db8ef56c8",
+    "apps/desktop/src/renderer/src/seasons.test.tsx": "faaae05c8d1da8f0436430bb36fadd8a11d8db38b6e61b5b3d2730ef0b223ec1",
+    "apps/desktop/src/renderer/src/ingestion-review.test.tsx": "1b18734ab0f5b22abbbda6e8634dd244e7254b723e421655a72415b1a7ad4047",
+    "apps/desktop/tests/desktop.spec.ts": "44ce5d3dc8b2d9e60ae88178e94cc6cb2d83046450c155672c5b02bf52a1f2b7",
+    "apps/desktop/src/main/cloud/downloads.test.ts": "fd811a0c25cebf0fce9293481c68f3fd0b16432c740ab46d97c20d2d4b450a23"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 745,
+      "skipped": 13
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "artifactWhitelist": true,
+    "likec4Export": {
+      "version": "1.60.0",
+      "views": 4
+    },
+    "finalPackagedUiWindows": 7,
+    "openSpecProgress": {
+      "total": 109,
+      "complete": 91,
+      "remaining": 18
+    }
+  },
+  "assertions": {
+    "seasonIndexReadOnly": true,
+    "sourceAndPolicyIsolation": true,
+    "crossDirectorySeasonGroup": true,
+    "duplicateMatchDoesNotDoubleCount": true,
+    "specialSeasonAndMergedRangeRetained": true,
+    "staleMatchesAndSupersededVersionsExcluded": true,
+    "memberPaginationTestSize": 101,
+    "explicitPageSelectionOnly": true,
+    "draftEditDoesNotCopy": true,
+    "openingBatchDraftClearsSinglePreview": true,
+    "expiredSinglePreviewRequiresNewPreviewAndAcknowledgement": true,
+    "real120SecondObservationInDirectoryAndSeasonWindows": true,
+    "overlappingEpisodesBlockBatch": true,
+    "customTemplateReflectedInTargetPaths": true,
+    "explicitCompletenessAcknowledgementBeforeCopy": true,
+    "copyReceiptsRetainedAcrossReloadAndCoreRestart": true,
+    "singleAndBatchCorrectionHistory": true,
+    "subtitleConflictDoesNotOverwriteForeignFile": true,
+    "failedMemberRetryKeepsOriginalOperationIds": true,
+    "completedMemberInodePreserved": true,
+    "downloadOriginalPreserved": true,
+    "minimumWindowHorizontalOverflow": false
+  },
+  "fixtureBoundaries": {
+    "directories": "隔离临时目录；未操作个人媒体和凭据",
+    "nativeDialog": "受控目录对话框替身，只验证 Main 授权桥和页面行为",
+    "metadata": "季集用例在应用退出后准备待确认任务及固定 TMDB 缓存；修正用例准备原始 COPY 收据及受控就绪时钟",
+    "expiry": "组件和 Core 使用受控时钟；实际修正窗口通过 Core 重启验证预览失效与重做，不声称等待物理十分钟",
+    "observation": "目录识别与季集整理窗口使用生产 120 秒连续观察",
+    "notCovered": [
+      "真实 OS 目录对话框",
+      "官方客户端下载行为矩阵",
+      "本轮真实 Emby 收录",
+      "Intel Mac 运行",
+      "完整安装及卸载矩阵",
+      "Developer ID 签名及公证",
+      "全部 test:packaged 矩阵"
+    ]
+  },
+  "regressionNote": "初次全量有一项共享根字幕策略测试报告未稳定；原单文件 52 passed／1 skipped。修订夹具为同时推进墙上与单调时钟后，五种策略场景和最终全量通过；未修改生产稳定窗口或测试跳过条件。",
+  "screenshots": {
+    "correction-batch-conflict-minimum.png": "5babb4f5f0fba9d8339515a05b3d58980b7652f34f03015c268636a39d01108e",
+    "correction-batch-draft-minimum.png": "bb1afc3e9f0e3fe62b2f0d31bcfd164875c8f2350e1e291b3d02ef2d608ca562",
+    "correction-batch-preview-minimum.png": "442b2d5e54e2a63a2b28f7a1ad6d3d2e69082871ec38b86406cfcb12efee6d64",
+    "correction-batch-recovered-minimum.png": "e55294ac52a214b5ab99a2e27b7dd7a206cc1a0b77cfb4c1d134bf96718d4ab9",
+    "correction-preview-minimum.png": "74856ee491c9474a78cf906e2ffcad15372dd8891ff257c6946b2a3e56c010b9",
+    "correction-recovered-minimum.png": "c85749360cd994d00dc6140046c0aa632e9c7334b8fbaac008da302967df35ea",
+    "correction-subtitle-conflict-minimum.png": "de423afee8dc51315cc0c2568a79fab3b40958e4066363b88f75415a5c3cd929",
+    "directory-batch-recognition.png": "08e668bf99339a7fc3942d04d1690973cca8d1a66daa505d90bdbe3f7c815b24",
+    "organize-batch-conflict.png": "76186b3cf223616e8bb063cfd2ebc66051e5a99ffcd084bddb2c598b9f161a99",
+    "organize-batch-ready.png": "03a1d9b6ec76bd3efbb24905ddd0e3bbee463bb022ccc4c07461083b386e7671",
+    "season-candidates-selection.png": "103e29b6d95a5fa0992e47afa7187a407d293273e71be88b26873f5ad31a8d97",
+    "source-form-cloud-download.png": "80d337f3563e760929db3cf051d43139714234c13d12a82b03e464b5960f5b18",
+    "source-form-cloud-organize-minimum.png": "2f24f1af1e615f775f9798a5dc4461c15c08f7006a4c091dec981e0a175d0705",
+    "source-form-local-minimum.png": "3d440d69261a405cffe10b21757ec60a61cb6e2fbfa917a5e13c29a3b9e5c341"
+  }
+}

@@ -88,6 +88,8 @@ declare module "@yeatz/app-framework/command" {
     "media.ingestion.organize-batch-assets": (input: CoreInput<"ingestion.organize-batch-assets">) => CoreOutput<"ingestion.organize-batch-assets">;
     "media.ingestion.confirm-organize-batch": (input: CoreInput<"ingestion.confirm-organize-batch">) => CoreOutput<"ingestion.confirm-organize-batch">;
     "media.ingestion.cancel-organize-batch": (input: CoreInput<"ingestion.cancel-organize-batch">) => CoreOutput<"ingestion.cancel-organize-batch">;
+    "media.ingestion.seasons": (input: CoreInput<"ingestion.seasons">) => CoreOutput<"ingestion.seasons">;
+    "media.ingestion.season": (input: CoreInput<"ingestion.season">) => CoreOutput<"ingestion.season">;
     "media.ingestion.directories": (input: CoreInput<"ingestion.directories">) => CoreOutput<"ingestion.directories">;
     "media.ingestion.directory": (input: CoreInput<"ingestion.directory">) => CoreOutput<"ingestion.directory">;
     "media.ingestion.recognize-batch": (input: CoreInput<"ingestion.recognize-batch">) => CoreOutput<"ingestion.recognize-batch">;
@@ -264,6 +266,8 @@ export function createMediaApplication(
       add(registry.register("media.ingestion.organize-batch-assets", (_, input) => ingestion.organizeBatches.assets(input)));
       add(registry.register("media.ingestion.confirm-organize-batch", (_, input) => ingestion.organizeBatches.confirm(input)));
       add(registry.register("media.ingestion.cancel-organize-batch", (_, input) => ingestion.organizeBatches.cancel(input.id)));
+      add(registry.register("media.ingestion.seasons", (_, input) => ingestion.seasons.list(input)));
+      add(registry.register("media.ingestion.season", (_, input) => ingestion.seasons.get(input)));
       add(registry.register("media.ingestion.directories", (_, input) => ingestion.directories.list(input)));
       add(registry.register("media.ingestion.directory", (_, input) => ingestion.directories.get(input)));
       add(registry.register("media.ingestion.recognize-batch", (_, input) => ingestion.recognitionBatches.create(input)));

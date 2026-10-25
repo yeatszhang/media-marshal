@@ -97,3 +97,6 @@ schema v24 的批量修正服务已接通完整范围快照、后台预览／复
 批量页面验收命令为 `npm run test:desktop -- --grep '批量修正页面'`；当前页面覆盖完整范围、参数恢复、过期重做、整批确认、历史导航，以及字幕冲突后的 Core 重启和原成员独立重试。截图分别保存为 `correction-batch-preview-minimum.png`、`correction-batch-conflict-minimum.png`、`correction-batch-recovered-minimum.png`，均为隔离目录、离线元数据夹具与当前实际窗口；它们不证明真实 Emby 收录或官方客户端下载行为。
 
 批量页面闭环及最终 arm64 目录包证据见 `fixtures/mac-correction-batch-ui-2026-10-26.json`；范围表单另存 `correction-batch-draft-minimum.png`，最小窗口检查实际核对复选框宽度和文字间距。5.7 已完成功能验收，Intel、正式签名与完整安装矩阵仍未完成。
+
+
+待处理确认页面的季集分组与 7.5 闭环证据见 `fixtures/mac-ingestion-review-ui-2026-10-26.json`。最终 arm64 未签名目录包执行 `npm run test:desktop -- --grep '单条修正页面|批量修正页面|目录批量识别经真实|季集分组跨目录选择|来源表单按文件去向分组'` 的七项窗口用例；目录／季集使用真实 120 秒观察，修正初始收据与元数据为隔离夹具。来源／目标均在测试临时目录，系统对话框使用受控替身；该记录不替代第三方客户端下载、真实 Emby、Intel、完整安装或正式签名验收。

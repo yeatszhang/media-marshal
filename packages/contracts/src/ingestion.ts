@@ -25,6 +25,8 @@ export type RecognitionEditPreview = z.infer<typeof recognitionEditPreviewSchema
 const directoryId = z.string().regex(/^[a-f0-9]{64}$/);
 export const ingestionDirectorySchema = z.strictObject({ id: directoryId, sourceId: id, sourceName: z.string().max(100), relativePath: z.string().max(16384), total: z.number().int().nonnegative(), ready: z.number().int().nonnegative(), awaiting: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() });
 export type IngestionDirectory = z.infer<typeof ingestionDirectorySchema>;
+export const ingestionSeasonSchema = z.strictObject({ id: directoryId, sourceId: id, sourceName: z.string().max(100), tmdbId: z.number().int().positive().safe(), title: z.string().max(500), season: z.number().int().min(0).max(999), total: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() });
+export type IngestionSeason = z.infer<typeof ingestionSeasonSchema>;
 const recognitionBatchItemSchema = z.strictObject({ candidateId: id, relativePath: z.string().max(16384), state: z.enum(["PENDING", "SUBMITTED", "FAILED"]), taskId: id.nullable(), taskState: z.string().max(64).nullable(), failure: z.string().max(500).nullable(), waitingReason: z.string().max(500).nullable() });
 export const recognitionBatchSchema = z.strictObject({ id, state: z.enum(["PENDING", "SUBMITTED", "PARTIAL_FAILED", "CANCELLED"]), total: z.number().int().nonnegative(), submitted: z.number().int().nonnegative(), recognitionFailed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), pending: z.number().int().nonnegative(), createdAt: z.string(), updatedAt: z.string() });
 export type RecognitionBatch = z.infer<typeof recognitionBatchSchema>;
@@ -35,6 +37,8 @@ export const contentReviewSchema = z.strictObject({ id, sourceId: id, sourceVers
 export type ContentReview = z.infer<typeof contentReviewSchema>;
 const reviewFile = z.strictObject({ relativePath: z.string().max(16384), state: z.enum(["PENDING", "UNCHANGED", "BASELINED", "CHANGED", "FAILED"]), candidateId: id.nullable(), failure: z.string().max(500).nullable() });
 export const ingestionActions = {
+  "ingestion.seasons": { input: z.strictObject({ page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(ingestionSeasonSchema).max(25), total: z.number().int().nonnegative() }) },
+  "ingestion.season": { input: z.strictObject({ id: directoryId, sourceId: id, page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ season: ingestionSeasonSchema, items: z.array(z.strictObject({ candidate: candidateSchema, task: recognitionSchema })).max(100) }) },
   "ingestion.preview-organize-batch": { input: z.strictObject({ requestKey: id, items: z.array(z.strictObject({ taskId: id, expectedRevision: z.number().int().nonnegative(), selection: selectionSchema })).min(1).max(100), template: z.string().min(1).max(16384).optional(), includeAccessories: z.boolean().default(true) }), output: organizeBatchSchema },
   "ingestion.organize-batches": { input: z.strictObject({ page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ items: z.array(organizeBatchSchema).max(25), total: z.number().int().nonnegative() }) },
   "ingestion.organize-batch": { input: z.strictObject({ id, page: z.number().int().min(1).max(1000000).default(1) }), output: z.strictObject({ batch: organizeBatchSchema, items: z.array(organizeBatchItemSchema).max(25), page: z.number().int().positive() }) },

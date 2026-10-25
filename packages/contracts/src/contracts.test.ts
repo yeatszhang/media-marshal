@@ -37,6 +37,10 @@ describe("受限进程契约", () => {
     for (const extra of [{ fingerprint: "x".repeat(64) }, { filesComplete: false }, { overwrite: true }]) expect(() => parseCoreRequest(request("corrections.confirm-batch", { ...confirmation, ...extra }))).toThrow();
     expect(() => parseCoreRequest(request("corrections.batch", { id: taskId, page: 1000001 }))).toThrow();
   });
+  it("季集候选查询只接受应用身份与有界分页，不能传路径、候选或季号冒认分组", () => {
+    const sourceId = randomUUID(), id = "a".repeat(64); expect(parseCoreRequest(request("ingestion.seasons", {}))).toMatchObject({ payload: { page: 1 } }); expect(parseCoreRequest(request("ingestion.season", { sourceId, id, page: 2 }))).toMatchObject({ payload: { page: 2 } });
+    for (const extra of [{ path: "/任意目录" }, { tmdbId: 7 }, { season: 1 }, { page: 1000001 }]) expect(() => parseCoreRequest(request("ingestion.season", { sourceId, id, ...extra }))).toThrow();
+  });
   it("批量整理只接收已有任务、版本与作品选择，明确文件完整才能确认，分页和数量有界", () => {
     const id = randomUUID(), requestKey = randomUUID(), item = { taskId: randomUUID(), expectedRevision: 0, selection: { tmdbId: 7, mediaType: "TV_SHOW", season: 1, episode: 2 } };
     expect(parseCoreRequest(request("ingestion.preview-organize-batch", { requestKey, items: [item] }))).toMatchObject({ payload: { includeAccessories: true } });

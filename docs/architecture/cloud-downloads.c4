@@ -34,7 +34,7 @@ model {
         description '范围预览、领取、原卷校验、不覆盖提交和持久化 outbox'
       }
       ingestion = component 'IngestionPipeline' {
-        description '统一候选与资产版本；只读内容复核、目录摘要、持久批量识别与逐文件预览确认、稳定观察及沿策略快照 COPY'
+        description '统一候选与资产版本；只读内容复核、目录及跨目录季集索引、持久批量识别与逐文件预览确认、稳定观察及沿策略快照 COPY'
       }
       corrections = component 'Corrections / CorrectionBatches' {
         description '已整理目标强收据；单条／完整同季同剧范围预览；原子登记执行意图，逐成员完整清单确认、逐文件恢复与独立重试'

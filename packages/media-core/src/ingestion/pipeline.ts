@@ -21,6 +21,7 @@ import { discoveryIgnore, sampleVideos } from "../domain/discovery.js";
 import { resolveManagedOrganization, type ManagedOrganization, type OrganizationConfiguration } from "../sources/organization.js";
 import { ContentReviews } from "./content-reviews.js";
 import { RecognitionEdits } from "./recognition-edits.js";
+import { IngestionSeasons } from "./seasons.js";
 import { IngestionDirectories } from "./directories.js";
 import { RecognitionBatches, type BatchAvailability } from "./recognition-batches.js";
 import { OrganizeBatches, type BatchManifest } from "./organize-batches.js";
@@ -71,6 +72,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   readonly contentReviews: ContentReviews;
   readonly recognitionEdits: RecognitionEdits;
   readonly directories: IngestionDirectories;
+  readonly seasons: IngestionSeasons;
   readonly recognitionBatches: RecognitionBatches;
   readonly organizeBatches: OrganizeBatches;
   private readonly sources = new Map<string, SourceRoot>();
@@ -85,6 +87,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private readonly watches = new Map<string, { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout> }>();
   constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly watchFiles: typeof watch = watch) {
     const db = database.connection;
+    this.seasons = new IngestionSeasons(database, (id) => this.describeCandidate(id), (id) => this.task(id));
     this.directories = new IngestionDirectories(database, (id) => this.describeCandidate(id), (id) => this.task(id));
     this.recognitionBatches = new RecognitionBatches(database, { capture: (id) => ({ relativePath: JSON.parse(this.candidate(id).relative_json).join("/"), context: JSON.stringify(this.recognitionContext(id)) }), availability: (id, context) => this.batchAvailability(id, context), recognize: (id, requestKey) => this.recognize({ candidateId: id, requestKey }) }, now);
     this.organizeBatches = new OrganizeBatches(database, {
