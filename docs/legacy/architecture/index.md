@@ -2,6 +2,8 @@
 
 > 旧 Java / Vue / Docker 工程资料，已于 2026-10-25 归档。下文的“当前”指原文核对时点，不代表桌面客户端能力。
 
+独立 Mac 客户端的当前实现见[桌面客户端开发](../../architecture/desktop-development.md)、[统一来源配置与版本](../../architecture/source-rules.md)及[桌面整理流水线](../../architecture/desktop-ingestion.md)，进程与权限关系维护在[LikeC4 模型](../../architecture/cloud-downloads-internal.md)。以下正文保留 2026-10-17 的 Java／Vue 自托管架构基线，桌面工作区不依赖这些服务。
+
 本文面向维护者，描述 Media Marshal 当前代码的模块边界、部署关系与扩展入口。处理细节见[发现与整理流程](./processing.md)，持久化和故障语义见[数据与恢复机制](./data-and-recovery.md)。安装步骤沿用[部署指南](../deployment.md)。
 
 核对日期：2026-10-17；源码版本：`VERSION` 中的 `v0.2.13.1`。本文包含当前工作区尚未提交的增量扫描、Codex 识别和队列目录分组实现，不代表对应能力已发行或部署。本文记录源码现状；[旧架构决策历史](../design-decisions.md) 保留历史决策及其演变，早期描述需结合后续决策和代码阅读。
@@ -119,4 +121,4 @@ WebSocket 端点是 `/ws`，内存 STOMP broker 的任务主题是 `/topic/tasks
 
 后端测试入口为在 `backend/` 执行 `mvn test`，前端为在 `frontend/` 执行 `npm run test:queue` 和 `npm run build`，桥接为在根目录执行 `python3 -m unittest discover -s scripts -p test_codex_bridge.py`；这些是维护入口，不表示本文编写时已执行全部业务回归。文档检查入口为根目录 `npm run docs:build`。
 
-目前 OpenSpec 已初始化，`openspec/specs/` 与活动变更均为空。本文是现状架构基线，没有将已有实现转写为新的需求，也没有创建实现变更。后续业务变更可从此定位相关模块，再在 OpenSpec 中描述增量要求。
+基线建立时 OpenSpec 尚无活动变更。当前桌面实施由 `add-local-desktop-emby-ingestion` 跟踪，完成情况以其任务清单为准；本文中的旧服务能力不作为桌面功能已迁移的证据。

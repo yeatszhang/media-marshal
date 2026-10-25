@@ -1,10 +1,10 @@
-# 独立 Electron 客户端产品与技术设计
+# 统一来源的桌面下载、整理与 Emby 入库设计
 
 ## 上下文
 
-动机与范围见[提案](proposal.md)。2026-10-18 确定：一期为 monorepo 下的独立 Electron 客户端，React 重建界面，一期所需 Java 业务能力迁入 TypeScript；采用 `@yeatz/app-framework` 组织模块、服务、状态与生命周期。本变更仍解决本机网盘下载后的电影/剧集入库，产品目标不变；架构不再采用 Electron 启动 Java 服务，也不以同步交付 Web 版为门槛。
+动机、能力清单与合并范围见[提案](proposal.md)。本文件是原桌面整理与内置下载两份方案合并后的设计依据；保留能力边界，共用一个来源模型、迁移计划和任务清单。2026-10-18 确定：一期为 monorepo 下的独立 Electron 客户端，React 重建界面，一期所需 Java 业务能力迁入 TypeScript；采用 `@yeatz/app-framework` 组织模块、服务、状态与生命周期。本变更仍解决本机网盘下载后的电影/剧集入库，产品目标不变；架构不再采用 Electron 启动 Java 服务，也不以同步交付 Web 版为门槛。
 
-Emby 与下载均在用户电脑上，当前只开发和交付 Mac 客户端，其他平台保留扩展性与兼容。普通目录来源接入夸克、百度、阿里云盘客户端下载目录或自定义目录；新增受管夸克授权与下载由 [内置下载变更](../add-bundled-quark-downloads/design.md) 定义。应用不需要产品账户或用户部署后台；TMDB、Emby 及启用的网盘仍为外部网络依赖。
+Emby 与下载均在用户电脑上，当前只开发和交付 Mac 客户端，非 macOS 客户端新增适配与兼容补齐由独立后续变更承接。普通目录来源接入夸克客户端下载目录或自定义目录；受管夸克授权、内置下载和周期扫描纳入同一变更，技术细节见第 10 节。应用不需要产品账户或用户部署后台；TMDB、Emby 及启用的网盘仍为外部网络依赖。
 
 ### 已观察到的项目基线
 
@@ -29,11 +29,25 @@ Emby 与下载均在用户电脑上，当前只开发和交付 Mac 客户端，�
 
 **目标：** 一个安装包完成运行；React 提供首次配置、来源、任务、待处理与设置；TS 媒体核心负责识别、复制、恢复与 Emby 交付；窗口关闭后可继续工作。当前先在维护者自己的 Mac 上，将真实下载资源交付到已有 Emby 的指定媒体目录并核对收录。通过旧行为夹具与新故障测试保留媒体正确性，避免把服务端代码简单搬进主进程。
 
-**边界：** 本变更不交付新 Web、远程 NAS 后台、账号支付、自动更新、Codex CLI 桥接或 SMTP；不接入音乐、ISO、蓝光和非复制入库。网盘云端下载由 `add-bundled-quark-downloads` 扩展，并与普通本地来源区分。旧 Java/Vue/Docker 代码保留作参考及既有用户独立部署入口，不作为客户端回退服务或新功能双写目标。桌面数据独立，旧服务端库导入另立变更。
+**边界：** 本变更不交付新 Web、远程 NAS 后台、账号支付、自动更新、Codex CLI 桥接或 SMTP；不接入音乐、ISO、蓝光和非复制入库。网盘来源与普通本地来源共用配置入口，账号、下载、整理及交付保持明确的执行边界。旧 Java/Vue/Docker 代码保留作参考及既有用户独立部署入口，不作为客户端回退服务或新功能双写目标。桌面数据独立，旧服务端库导入另立变更。
 
-### 平台范围与推进顺序（2026-10-24）
+### 后续变更边界（2026-10-25）
 
-当前只维护一个 Mac 产品，优先 Apple Silicon 上的真实功能、界面和安装体验，Intel 复用同一代码并按架构验证原生依赖和安装包。平台策略与内置下载变更保持一致：二进制解析、凭据保护、进程回收、路径/卷语义和桌面集成由宿主适配，Core、Renderer 和业务 DTO 不写死 Mac 专有路径或命令。
+本次范围为 macOS、中文界面、夸克网盘与通用本地目录整理、接入已有 Emby。非 macOS 客户端由 [add-non-macos-desktop-clients](../add-non-macos-desktop-clients/proposal.md) 承接；自动安装与首次初始化 Emby 由 [add-emby-server-setup](../add-emby-server-setup/proposal.md) 承接；语言切换、翻译补齐与本地化验收由 [add-desktop-localization](../add-desktop-localization/proposal.md) 承接。这三项不属于本次任何里程碑或归档门槛。
+
+已有平台与国际化基础保留，新增页面只要求完整中文。媒体解析、文件名和路径仍需正确处理 Unicode 与中英文；这不属于界面多语言。Mac arm64/x64 仍沿用本次架构验证计划。
+
+### 网盘范围与扩展边界（2026-10-25）
+
+本次只提供夸克账号、远端浏览、下载和周期扫描；外部下载客户端的专属来源引导及就绪行为也只验证夸克。百度、阿里等其他网盘的账号、品牌入口、完成判定规则和真实客户端验收留待后续需求，不属于本次里程碑。通用本地目录继续可用，但不推断文件来自哪个网盘，也不据此承诺该网盘兼容性。
+
+保留 CloudDriveProvider、TransferEngine、能力声明、错误语义和静态注册表，业务状态机不绑定厂商私有字段。生产注册与账号／来源新建入口只启用夸克；OpenList 随包具备其他驱动不等于应用开放它们。既有独立 WebDAV 测试 Provider 只证明边界可替换，不进入产品入口，也不为满足扩展性新增其他真实网盘适配。
+
+升级时若已有其他客户端标签，保留原始标签、目录、来源 ID、历史及暂停状态，界面按普通本地来源说明其客户端行为未验证；不得自动转换为夸克账号或套用夸克完成规则。继续遵守未知行为要求确认的现有策略，不删除配置或媒体。
+
+### 平台范围与推进顺序（2026-10-24，范围于 2026-10-25 收敛）
+
+当前只维护一个 Mac 产品，优先 Apple Silicon 上的真实功能、界面和安装体验，Intel 复用同一代码并按架构验证原生依赖和安装包。所有能力共用平台策略：二进制解析、凭据保护、进程回收、路径/卷语义和桌面集成由宿主适配，Core、Renderer 和业务 DTO 不写死 Mac 专有路径或命令。
 
 Windows 现有资源映射、ACL/Job Object 实现及兼容测试保留，已有三目标结果继续作为历史证据；新功能不要求同步进行 Windows 验收，Windows 安装器、完整用户流程与正式签名由后续平台交付变更负责。Linux 等其他客户端也不进入本轮范围。Mac 功能开发和未签名内测不以公开发行的 Developer ID/公证配置为前提，公开正式发行仍须单独通过签名和安装态验收。
 
@@ -42,11 +56,11 @@ Windows 现有资源映射、ACL/Job Object 实现及兼容测试保留，已有
 | 场景 | 用户已有条件 | 需要完成的流程 | 推进顺序 |
 | --- | --- | --- | --- |
 | 老用户 | Emby 已安装，已有媒体库及目标路径 | 复用连接，绑定指定目录，下载资源后整理复制并核对收录 | 当前先走通维护者本机链路 |
-| 新用户 | 尚未安装或初始化 Emby | 协助安装及启动、首次账号设置、媒体目录和媒体库初始化，再进入同一交付链路 | 后续阶段规划，不阻塞当前里程碑 |
+| 新用户 | 尚未安装或初始化 Emby | 协助安装及启动、首次账号设置、媒体目录和媒体库初始化，再进入同一交付链路 | 已迁入独立 Emby 初始化变更，本次不实现 |
 
 当前以本机实际使用的一条下载来源和一个所需媒体类型的目标目录为起点，按需再验证另一媒体类型。实际服务器、媒体库标识、下载完成目录和媒体目标均取自已保存配置或用户选择；路径是运行配置，不作为开发者专属默认值。先读回服务器身份、库类型、库目录和读取/刷新权限，核对客户端目标可写及 Emby 可访问；证据不足时保留草稿和待处理状态，不猜测路径或改写服务器配置。
 
-第一里程碑验证：实际选择资源 → 受管下载完成 → 持久化接入意图 → 识别与必要的人工确认 → 目标预览 → COPY 到指定媒体目录 → Emby 刷新与收录核对。普通本地来源可使用同一整理链路进行对照，但已有本地文件的复制验证不能替代真实下载闭环。下载提交与接入意图归内置下载变更负责；整理、文件和交付状态归本变更负责，配置尚未就绪时允许保留下载成果及待接入状态。
+第一里程碑验证：连接账号 → 在来源中选择远端范围、本地落盘与可选整理目标 → 下载预览确认 → 受管下载完成 → 持久化接入意图 → 识别与必要的人工确认 → 目标预览 → COPY 到指定媒体目录 → Emby 刷新与收录核对。普通本地来源使用同一整理链路进行对照；下载、整理和交付分别记账，已有本地文件复制不能替代真实下载闭环。配置尚未就绪时保留下载成果及待接入状态。
 
 本机验收记录应用构建、机器架构、服务器版本、脱敏目录对应关系、下载项与整理/交付结果，并覆盖重复提交、重启恢复和 Emby 离线后只重试交付。未实际读回和验证的本机配置不能记为已通过。其他架构、来源适配、批量修正、完整故障矩阵及公开发行按原任务继续推进，先后顺序调整不等于这些项目已完成。
 
@@ -65,39 +79,57 @@ Windows 现有资源映射、ACL/Job Object 实现及兼容测试保留，已有
 | 桌面媒体整理 | [FileBot](https://www.filebot.net/purchase.html)、[tinyMediaManager](https://www.tinymediamanager.org/) | 已有商业授权与桌面整理工具；应比较实际配置、中文识别和修复体验 |
 | 新的一体化工具 | [Mediarium 自述](https://mediarium.app/)描述下载、整理和通知媒体服务器的一体化流程，提供 Docker 部署 | 集成多个工具本身也有竞争，介绍中的效果未经本次实测 |
 
-优先用户画像：已有本机 Emby，经常从国内网盘客户端手动选择影视下载，但不愿部署维护完整自动化栈的人。重度追更用户及只想整理一次存量资料的用户属于次级人群。
+优先用户画像：已有本机 Emby，经常从夸克网盘选择影视下载，但不愿部署维护完整自动化栈的人。重度追更用户及只想整理一次存量资料的用户属于次级人群。
 
-免费工具交付“少配置、少误整理、出错能修好”的结果；后续官方识别与整理 API 的付费价值是免配置服务和更少的人工识别处理。三种网盘共用本地目录接入实现，来源名称主要帮助首次设置。官网措辞使用“网盘下载目录自动入库”，避免将尚未提供的云端订阅写成卖点。官方入口可参考[夸克](https://pan.quark.cn/)、[百度](https://wangpan.baidu.com/download)、[阿里云盘](https://www.alipan.com/)；本次未取得可用于判断完成状态的官方事件协议，百度下载页面抓取超时，不据此断言其具体版本行为。
+免费工具交付“少配置、少误整理、出错能修好”的结果；后续官方识别与整理 API 的付费价值是免配置服务和更少的人工识别处理。本次围绕夸克受管下载与夸克客户端本地目录验收，通用目录使用同一整理流程。产品文案明确“夸克网盘与本地目录整理”，只宣传实际验收的能力，不将其他网盘列为已支持。夸克客户端的完成判定仍需以具体版本的磁盘行为夹具验证，不能只依据客户端名称自动放行。
 
 ### 2. 商业验证先于付费系统
 
 以下是建议的实验门槛，属于团队设定的决策条件，不是市场统计或交付保证。
 
 1. 访谈 10～15 位符合画像的用户，观察其真实目录、命名、下载和入库过程；记录每周频率、耗时和替代工具。
-2. 邀请约 20 位 Mac 用户安装内测，覆盖三种网盘目录来源；至少半数在无实时协助下完成首次入库，再逐项定位失败原因。其他系统的用户测试留待相应平台交付，不作为 Mac 内测前置条件。
+2. 邀请约 20 位 Mac 用户安装内测，覆盖夸克受管下载、夸克客户端目录及通用本地目录；至少半数在无实时协助下完成首次入库，再逐项定位失败原因。其他系统的用户测试留待相应平台交付，不作为 Mac 内测前置条件。
 3. 以首次入库耗时、首次配置放弃率、一周后仍有使用者占比、人工修复次数为核心指标；未经同意不上传文件名、目录或库清单。
 4. 桌面端与便捷、完整的整理核心免费，不测试桌面买断或更新续费。后续通过官方识别与整理 API 的体验额度和按量包验证付费意愿，关注真实付款、识别效果、复购、支持成本和退款原因；价格与额度待实测，不将口头好评视为购买证据。
 
 商业路线分为免费整理工具、官方 API 按需付费、消息通知等会员服务三个阶段，完整边界、运营转化与候选价格见[商业与付费策略](../../../docs/product/business-and-operations.md)。本变更仅交付第一阶段的桌面接入能力，不预建支付、账号、官方 API 或托管通知平台。基础保护、人工纠错和媒体服务器交付保持免费，自备识别服务的接入能力不以购买官方 API 为前提；接口支持范围按实际版本说明。后续官方 API 和会员服务另立变更，继续遵守现有开源许可。
 
-### 3. 信息架构：把问题与下一步放在同一处
+### 3. 账号、来源与任务的统一交互
 
 | 页面 | 用户要完成的事情 | 主要信息 |
 | --- | --- | --- |
-| 总览 | 判断自动化是否正常 | 运行状态、来源健康、待处理数量、最近已收录 |
-| 任务 | 查看某文件卡在哪一步 | 来源、作品、进度、目标、整理与 Emby 两组状态 |
-| 待处理 | 修复需要决策的问题 | 候选确认、季集修正、文件就绪确认、目录冲突和重试 |
-| 来源与设置 | 接入目录、连接 Emby、调整运行方式 | 来源标签、真实路径、策略、空间、连接测试、托盘与诊断 |
+| 总览 | 判断链路是否正常 | 来源健康、下载／整理／交付状态及待处理数量 |
+| 云端网盘 | 管理账号连接 | 连接、状态、重新授权、解除连接；不配置目录或启动下载 |
+| 来源配置 | 定义内容从哪里来、落到哪里、如何处理 | 网盘／本地类型、目录映射、过滤、周期扫描、可选整理绑定、最近／下次扫描 |
+| 任务 | 查看文件卡在哪一步 | 下载、整理、Emby 交付的独立进度、失败与阶段操作，关联来源入口 |
+| 待处理 | 修复需要决策的问题 | 候选确认、季集、文件就绪、目录冲突与重新预览 |
+| 设置 | 配置共享服务及运行方式 | 已有 Emby、按需媒体目录、TMDB、托盘、语言与诊断 |
 
-当前老用户引导顺序：复用已保存的 Emby 连接或填写已有服务器 → 读取现有媒体库 → 选择所需电影或剧集目标并验证其位于对应库目录内 → 选择受管下载来源或普通本地来源 → 配置元数据凭据 → 小范围下载/接入并预览 → 完成首次复制与收录核对 → 解释来源完成依据及局限后选择是否自动接入。已有有效配置可复核后继续使用，不要求每次重走首次设置；不以同时配置两种媒体类型作为进入条件。
+网盘来源配置为「账号 + 远端目录 → 本地下载目录 → 可选整理目标媒体库」；本地来源配置为「本地输入目录 → 整理目标媒体库」。远端目录使用所选账号的分页浏览器，本地输入、落盘及媒体目标分别使用受限原生目录授权。字段明确标明用途，取消选择保留原草稿；没有可用账号时指向账号连接，返回后恢复来源草稿。新建本地来源仅提供夸克客户端标签与自定义目录；历史其他标签保留原始记录并按普通本地来源展示，不作为受支持网盘、来源类型或账号授权证据。
 
-当前界面不执行 Emby 安装、创建媒体库或重置服务器设置；未安装时说明当前需要已有 Emby，保留配置草稿。新用户的安装与媒体库初始化后续规划，其完成后复用上述来源及交付流程。
+目录订阅作为网盘来源的周期扫描设置，移除独立配置导航。来源内提供过滤、周期、启停、立即扫描、最近扫描、下次运行及弱版本比较说明；底层仍复用订阅调度器。文件或目录的一次性下载由来源内的「执行一次」发起，不自动打开周期扫描；只有目录可启用周期扫描。远端浏览器只负责选择，保存草稿不触发下载，首次启用及影响范围的变更均先完整预览并确认。旧订阅链接定位到对应来源；无法映射时进入来源列表并说明，不打开第二套配置页面。
 
-内测阶段继续由用户填写自己的 TMDB Key；这是首次使用门槛，须统计该步骤的放弃原因。未来是否提供托管元数据服务属于独立商业决策，不能将产品共用密钥写进安装包。
+下载与可选整理分别配置。只下载时无需 TMDB、媒体库或 Emby；开启整理后选择所需媒体类型、已验证的目标及确认策略，启用 Emby 交付时复用现有服务器。自动整理默认关闭，下载预览的确认不替代作品识别与整理预览的确认。应用管理暂存区，来源摘要及执行预览显示实际完成路径；用户不需要填写内部暂存布局，也不用再新建普通本地来源接管完成目录。
 
-自动接入默认关闭；来源首次使用先走确认预览。预览列出来源文件、作品年份、季集、目标、预计复制量、可用空间和阻断项，支持小范围确认，不默认对整个历史下载盘执行整理。开启自动后，新文件满足就绪、识别与目标校验才执行。
+已有 Emby 用户可复核保存配置，按需绑定电影或剧集目标并继续，不要求同时配置两类，也不要求安装或初始化服务器。内测仍由用户提供 TMDB Key；新用户 Emby 自动安装及首次初始化仅在独立后续变更实现，不把共用产品密钥放入安装包。
 
-任务错误统一呈现“发生了什么、文件在哪、接下来做什么”。低置信度去选择候选；权限错误去重新选目录；空间不足去释放空间；Emby 不可达去检查连接；核对超时只重试交付。
+#### 3.1 单一来源身份与执行模块
+
+Core 增加统一来源配置聚合（拟名 `source_rule`），保存稳定来源 ID、类型、名称、配置版本、启用状态及执行关联。普通本地来源引用既有本地规则；网盘来源关联账号、远端引用、下载根授权、过滤及扫描策略，并可关联整理绑定。一个来源最多拥有一个当前周期扫描配置；既有订阅表可以继续持久化调度事实，但不得与来源各保存一份可独立修改的范围、过滤或周期。统一业务命令在同一短事务内提交配置版本和引用，Renderer 只持有草稿及查询 DTO。
+
+下载、整理及交付继续使用独立持久化状态机。下载作业／需求保存来源 ID 与配置版本快照，配置变更使未执行的旧计划失效，运行中的操作按原快照到安全点。保存涉及账号、远端范围、落盘目录、过滤或整理目标的变更前重新预览；部分失败保留原有效配置或明确的未启用草稿，不出现来源已启用而执行绑定缺失的状态。
+
+受管完成项按已持久化的下载需求关联来源及整理意图，不能仅按同一下载根猜测归属。当前按下载根登记的整理入口需扩展关联信息；不同来源共享一个下载项时，相同整理策略复用同一 item/version 候选。对同一完成项要求不同整理目标或策略时，在预览／启用阶段提示冲突，不采用最后保存者覆盖、重复投递或静默放弃某一规则。一个来源未启用整理不撤销其他来源对该共享项已确认的整理需求。completed 补扫遵循同样的已登记归属与唯一候选约束，不把目录中任意外部文件自动认领为受管成果。
+
+来源页的「暂停来源」停止本来源的新扫描、下载需求与新整理接入，进行中的文件操作到安全点；其他来源仍需的共享传输继续。已正式提交文件的交付仍按独立作业核对。任务页提供单项下载、整理或交付操作；全局暂停云端下载与暂停整理继续各自生效，不能通过来源恢复解除全局暂停。状态及文案说明作用范围。
+
+#### 3.2 目录授权与可修复错误
+
+本地下载目录和最终媒体库目录分别授权、分别校验，不因入口合并放宽真实路径、卷身份、符号链接或重叠检查。普通本地来源不能自行接管受管暂存／完成区；同一网盘来源的受管完成项经内部绑定进入整理，不视为新增普通目录规则。共享下载授权复用原根 ID，已知同一目录的重新选择必须幂等，不重新生成不匹配的归属标记。
+
+授权失败须区分与既有来源／媒体目标重叠、应用私有目录、卷或目录身份变化、权限／文件系统不支持，以及未知或不匹配的管理标记。业务错误通过受限原因分类和可信的配置引用传到界面，能确定时指向冲突来源或目标；不可确定时说明检查授权或选择独立目录，不暴露原始组件输出。未知管理标记不能自动删除、覆盖或认领。当前用户报告的泛化冲突尚未取得所选路径的复现证据，根因仍需调查，方案不将其认定为已修复或特定旧标记故障。
+
+保留现有 Token、组件、StatefulService 与 hooks，拆分账号状态和来源编辑状态，使页面卸载、重载及 StrictMode 不重放创建命令或下载。任务错误说明发生了什么、受影响阶段和下一步；Emby 故障只重试交付。
 
 ### 4. monorepo 与 TypeScript 客户端核心
 
@@ -110,7 +142,8 @@ apps/desktop/
   src/main/             窗口、托盘、权限、凭据、生命周期
   src/preload/          最小业务 API
   src/renderer/         React 页面、组件、文案
-  src/worker/           Utility Process 入口及进程适配
+  src/worker/           媒体 Utility Process 入口及进程适配
+  src/sidecar-host/     Provider、Engine 与受管下载组件
                         各进程在自身 bootstrap 组装 Application/modules
 packages/contracts/     Zod schema、DTO、命令与事件契约
 packages/media-core/    TS 业务规则、存储与文件/网络适配
@@ -121,6 +154,7 @@ packages/media-core/    TS 业务规则、存储与文件/网络适配
   migrations/           桌面库有序 SQL 迁移
   tests/fixtures/       脱敏行为及故障夹具
 tools/desktop-parser/   guessit stdio 入口、冻结构建与依赖清单
+tools/desktop-sidecars/ 网盘组件、Guardian、资源清单与故障夹具
 vendor/yeatz-app-framework/  仅未发布时备用；本次使用已发布的精确版本
 docs/                   现有文档站
 backend/ frontend/ parser/  旧实现，保留原位置与构建入口
@@ -136,7 +170,7 @@ backend/ frontend/ parser/  旧实现，保留原位置与构建入口
 | 应用框架 | `@yeatz/app-framework` | 每进程独立 Application、静态 ApplicationModule、DI 与受管生命周期；按公开子路径导入，不代替 Electron 宿主或 IPC |
 | 构建/分发 | electron-vite + electron-builder | 编译 Main/Preload/Renderer/worker，当前生成 Mac DMG，保留其他平台构建扩展；单一发布链路，首版手动升级 |
 | 界面 | React + TypeScript strict、shadcn/ui、Tailwind CSS、语义 Token | 项目持有使用的组件源码，围绕入库任务重建；不机械翻译 Element Plus 页面 |
-| 路由/文案 | React Router hash 路由；i18next + react-i18next | 本地协议下导航稳定；复用中英文文案并核对插值，中文默认、英文可切换 |
+| 路由/文案 | React Router hash 路由；保留已有 i18next + react-i18next 基础 | 本地协议下导航稳定；本次只补齐中文和插值，语言设置与英文完整覆盖迁入多语言变更 |
 | 状态 | StatefulService、computed、useServiceState；组件临时状态用 React | 框架内部已用 Zustand；应用不再另建全局 store，Renderer ViewModel 只保存核心 DTO 的视图与交互状态 |
 | 契约 | TypeScript + Zod | 主进程校验来源及动作，核心再次校验业务约束；类型校验不替代授权 |
 | 业务进程 | 单个 Electron Utility Process | 在带 Node 的应用子进程中执行核心，避免同步 SQLite、扫描与计算阻塞 Main |
@@ -161,6 +195,7 @@ UI 接入依据：[shadcn/Vite](https://ui.shadcn.com/docs/installation/vite)、
 | Main | DesktopApplication：凭据、窗口/托盘、核心进程监管、受限 IPC | 拥有 Electron 原生能力与子进程句柄；不打开业务库 |
 | Utility Process | MediaApplication：storage、parser、metadata、recognition、organizer、delivery、ingestion、业务命令入口 | 组装 media-core；独占 SQLite、任务与文件操作 |
 | Renderer | RendererApplication：desktop-client、navigation、sources、tasks、review、settings | desktop-client 只包装明确的 Preload 方法；其他模块提供 ViewModel 和页面交互 |
+| SidecarHost | 独立 Application：Provider、TransferEngine、连接与日志 | 不打开业务库，不决定扫描或发布业务完成；Guardian 持有原生进程 |
 | Preload | 不创建 Application，仅实现最小类型化桥 | 不注入 DI 容器或媒体核心，不传服务实例 |
 
 使用 `@yeatz/app-framework/application`、`/ioc`、`/lifecycle`、`/command` 等公开入口；只有 Renderer 引用 `/react`。不用 `/legacy` 或深层源码导入。所有容器、注册表和服务实例仅属于本进程 Application，不使用全局命令注册表。跨进程只传 contracts 定义的普通数据；DI 标识、AbortSignal、函数和服务对象不经过 IPC。
@@ -204,18 +239,55 @@ Renderer 在组件树之外创建并启动 Application，再挂载 `ContainerPro
 
 ### 5. 进程边界、凭据和生命周期
 
-```mermaid
-flowchart LR
-  R[React Renderer / RendererApplication] <-->|最小业务 API| P[Preload]
-  P <-->|受限 IPC| M[Electron Main / DesktopApplication]
-  M <-->|受控消息通道| U[媒体 Utility Process / MediaApplication]
-  U <-->|JSON Lines 管道| G[冻结 guessit]
-  U --> D[本机来源与目标目录]
-  U --> S[用户目录 SQLite]
-  U <-->|出站请求| T[TMDB 与本机 Emby]
+```likec4
+specification {
+  element system
+  element component
+}
+model {
+  desktop = system 'Media Marshal 桌面应用' {
+    ui = component 'React 与隔离 Preload'
+    main = component 'Electron Main：授权与生命周期'
+    core = component '媒体 Core：SQLite、计划、恢复与提交'
+    host = component 'SidecarHost：Provider 与 TransferEngine'
+    parser = component '冻结 guessit：离线名称解析'
+    database = component '业务 SQLite：仅由 Core 读写'
+    guardian = component 'Guardian：父管道与平台进程归属'
+    openlist = component 'OpenList：网盘访问与只读 WebDAV'
+    rclone = component 'Rclone CLI：批次传输'
+  }
+  quark = system '夸克网盘'
+  disk = system '本机受管下载目录'
+  localFiles = system '普通本地输入目录'
+  tmdb = system 'TMDB 元数据服务'
+  library = system '媒体库与 Emby'
+  desktop.ui -> desktop.main '受限业务 IPC'
+  desktop.main -> desktop.core '业务命令与状态'
+  desktop.core -> desktop.main '内部基础设施请求'
+  desktop.main -> desktop.host '授权执行与停止'
+  desktop.host -> desktop.openlist '管理 API 与就绪检查'
+  desktop.host -> desktop.guardian '受控执行与父管道'
+  desktop.guardian -> desktop.openlist '启动与回收'
+  desktop.guardian -> desktop.rclone '启动与回收'
+  desktop.rclone -> desktop.openlist '只读 WebDAV'
+  desktop.openlist -> quark '认证、列目录与代理读取'
+  desktop.rclone -> disk '写暂存区'
+  desktop.core -> disk '校验与不覆盖提交'
+  desktop.core -> desktop.parser '受控 JSON Lines'
+  desktop.core -> desktop.database '配置、任务与恢复记录'
+  desktop.core -> localFiles '观察、就绪核验与读取'
+  desktop.core -> tmdb '元数据查询与证据'
+  desktop.core -> library '识别、COPY 整理与 Emby 交付'
+}
+views {
+  view desktopIngestion {
+    include *
+    include desktop.*
+  }
+}
 ```
 
-独立客户端允许应用内部多进程；不会启动 Spring Boot、FastAPI、媒体 HTTP API、STOMP broker 或远程执行端。媒体业务通过 IPC；受管网盘的回环 API、SidecarHost 和 Go 子进程由内置下载变更定义。Main 管理窗口、托盘、目录选择、凭据、外部链接及生命周期，媒体核心负责数据库、文件、识别和调度。utilityProcess 具备 Node 权限，安全边界仍是最小 IPC、参数/路径校验、可信代码和原生权限。
+独立客户端允许应用内部多进程；不会启动 Spring Boot、FastAPI、媒体 HTTP API、STOMP broker 或远程执行端。媒体业务通过 IPC；受管网盘的回环 API、SidecarHost 和 Go 子进程按第 10 节管理。Main 管理窗口、托盘、目录选择、凭据、外部链接及生命周期，媒体核心负责数据库、文件、识别和调度。utilityProcess 具备 Node 权限，安全边界仍是最小 IPC、参数/路径校验、可信代码和原生权限。
 
 Renderer 仅加载打包页面，使用稳定自定义协议和 hash 路由，启用 contextIsolation/sandbox，关闭 nodeIntegration，限制导航、新窗口和 CSP。Preload 只暴露来源、预览、确认、任务查询等具体方法；不暴露任意 channel、SQL、URL 请求、文件系统或 shell。Main 校验 sender frame/origin、动作白名单、输入大小和授权目录；核心执行时再次解析真实路径并检查规则和资产状态。参考 [Electron 安全指南](https://www.electronjs.org/docs/latest/tutorial/security)。
 
@@ -223,7 +295,7 @@ Main 与 Utility Process 通过私有父子消息通道传递 requestId、命令
 
 Core 通过直接 spawn 的受控子进程调用冻结 parser，禁止 shell 拼接；stdin/stdout 使用有 requestId、长度上限、超时和 schema 校验的 JSON Lines，日志只写脱敏 stderr。名称文本是数据，不接受任意脚本/路径执行。解析器串行或有界处理，超时/异常重启后重新解析尚未完成的只读请求；stdin 关闭或父进程丢失时退出。该 stdio 协议用于 parser 子进程；Main 与 utilityProcess 使用 Electron 消息通道，不使用其不支持的 stdin 管道。
 
-敏感凭据在用户显式输入时仅经受限设置动作交给 Main，使用 [safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage) 保护权威副本；普通查询只返回是否已配置和脱敏信息。Core/SidecarHost 经私有通道取得所需内存值，业务 SQLite 只保存引用；密钥不写命令行、日志或 UI 持久化状态。OpenList 私有库等运行副本按内置下载变更限制权限并排除普通导出，不宣称全量加密。TMDB 代理仍只作用于 TMDB，不默认代理本机 Emby 请求。
+敏感凭据在用户显式输入时仅经受限设置动作交给 Main，使用 [safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage) 保护权威副本；普通查询只返回是否已配置和脱敏信息。Core/SidecarHost 经私有通道取得所需内存值，业务 SQLite 只保存引用；密钥不写命令行、日志或 UI 持久化状态。OpenList 私有库等运行副本按第 10 节限制权限并排除普通导出，不宣称全量加密。TMDB 代理仍只作用于 TMDB，不默认代理本机 Emby 请求。
 
 启动流程为单实例锁 → Main 桌面能力就绪 → Utility Process 打开并迁移数据库、恢复操作 → parser 就绪 → 允许新接入。UI 可提前显示组件状态，失败最多自动重启三次并递增等待，之后等待用户处理。重启前确认旧核心退出，禁止两个核心访问同一库。Main 异常退出时核心检测父通道关闭并停止接入、安全退出；parser 随核心管道关闭退出。父进程强杀与崩溃通过安装态故障注入验证无残留写入者，未验证不能声称清理可靠。
 
@@ -241,7 +313,7 @@ Main 和 Renderer 均不打开业务 SQLite；Core 采用单连接短事务、�
 
 所有发现入口汇入持久化候选表。候选观察路径真实值、文件标识、大小、修改时间及下载标记。采用至少 120 秒稳定窗口，每 10 秒复查；零字节、仍在写入、临时名称、不可读或已知标记存在时继续等待。使用单调时钟，进程重启或系统唤醒后重新建立窗口；延迟候选独立调度，不受目录修改时间缓存影响。
 
-**文件稳定和校验复制只能证明观察期间未变动，不能证明预分配文件或长时间暂停的下载已经完成。** 不把这类启发式描述为官方完成状态。只有经实测的来源行为、没有不确定标记且用户显式开启时才自动接入；客户端行为未知或预分配情况不明时要求用户到官方客户端确认。普通本地目录来源不显示网盘下载百分比、剩余时间或开始下载按钮；受管云端下载按内置下载变更展示真实传输状态。
+**文件稳定和校验复制只能证明观察期间未变动，不能证明预分配文件或长时间暂停的下载已经完成。** 不把这类启发式描述为官方完成状态。只有经实测的来源行为、没有不确定标记且用户显式开启时才自动接入；客户端行为未知或预分配情况不明时要求用户到官方客户端确认。普通本地目录来源不显示网盘下载百分比、剩余时间或开始下载按钮；受管云端下载按实际执行证据展示传输状态。
 
 无需用媒体探测工具能够读取容器头作为完整性证明：部分视频在未下载完成时也可读。相较只延长稳定等待，本设计明确保留人工确认降级，降低错误自动化的代价。
 
@@ -249,7 +321,7 @@ Main 和 Renderer 均不打开业务 SQLite；Core 采用单连接短事务、�
 
 桌面来源规则强制 `COPY`；旧 Docker 的 MOVE/HARD_LINK/SYMBOLIC_LINK 实现保留在旧目录，不迁入一期客户端。复制的代价是磁盘空间增加；相比默认移动，它能保留官方下载客户端的原文件视图，也避免硬链接两侧修改同一内容的问题。
 
-每个来源与 `WatchRule` 一对一；来源附加类型标签、确认策略和来源规则版本。保存及执行时校验真实路径、系统权限和重叠关系。首版目标只支持本机可直接访问的目录；NAS 挂载、远程路径映射及 Emby 容器路径映射不进入桌面支持矩阵。拒绝目录间相同或包含关系、跨规则重复接管和符号链接逃逸。
+每个普通本地来源与本地整理规则一对一，并关联统一来源 ID；外部客户端标签、确认策略和配置版本保持可追溯。网盘来源通过已确认的受管完成项绑定进入同一整理链路，不要求用户额外配置本地监听规则。保存及执行时校验真实路径、系统权限和重叠关系。首版目标只支持本机可直接访问的目录；NAS 挂载、远程路径映射及 Emby 容器路径映射不进入桌面支持矩阵。拒绝目录间相同或包含关系、跨规则重复接管和符号链接逃逸。
 
 老用户可直接选择已有媒体库根目录或其合法子目录作为整理目标，不要求空目录或应用专属根目录；已有媒体不自动成为重新整理对象。电影与剧集目标独立配置，只为本次所需类型选择和绑定目录。受管下载暂存/完成目录仍与媒体目标分离，所有来源交接后复用已绑定的目标配置；缺少相应类型绑定时等待配置，不自动落到新建默认目录。
 
@@ -298,6 +370,230 @@ Mac 按架构原生构建并记录应用、Electron、SQLite 模块与 guessit �
 
 验证分为业务夹具对照、真实临时文件/SQLite 故障测试、Electron 窗口、安装态四层，安装态分别标明未签名内测或正式签名发行。Vitest 运行规则和核心测试；[Playwright Electron](https://playwright.dev/docs/api/class-electron)目前是 experimental，锁定并验证版本组合。原生对话框/托盘/权限和完整进程树退出先在 Mac 做 OS 实测。记录同设备多次冷/热启动 P75/P95、安装体积、完整进程树空闲 CPU/内存、交互延迟和复制/校验吞吐，不先填写虚构性能目标。
 
+### 10. 内置网盘与传输子系统
+
+采用 OpenList 提供网盘访问、Rclone CLI 执行传输、Core 持有业务状态。以下细节从原内置下载方案并入，能力标识与已验证契约保持可追溯，实际完成状态见统一任务清单。
+
+#### 10.1. 进程所有权与模块落位
+
+Main 是唯一桌面宿主控制入口，管理凭据和组件生命周期。新增一个轻量 `SidecarHost` Utility Process，持有 Provider/Engine、HTTP 连接与日志流，通过独立 Guardian 持有 OpenList/Rclone 的 OS 子进程句柄。Host 不打开业务 SQLite、不决定调度、不持有业务真相；它执行受限基础设施动作，配合 Guardian 在父通道断开后回收 Go 子进程。生命周期保证不能仅依赖 Electron 的正常退出钩子。
+
+M0 实测修正：Main 被强杀时 Utility Host 也可能被 Electron 立即终止，单靠 Host 的父通道回调不足以回收 Go 进程。进程执行层必须增加应用自有的独立原生 Guardian：Host 通过保持打开的 stdin 管道管理它，管道 EOF 触发回收；既有 Windows 实现以带 KILL_ON_JOB_CLOSE 的 Job 管理子进程，作为历史基础保留，新增适配与验收由非 macOS 变更承接。Guardian 不持有账号业务状态。Main 另保留从自有子进程事件取得、经过父子关系/创建时间/唯一配置路径核对的进程身份，用于 Host/Guardian 故障时清理。M0 原型位于 `tools/desktop-sidecars/guardian/`，正式宿主接线和资源分发仍由后续任务完成。
+
+Core 负责扫描计划、队列、状态机、文件核对/提交及交接。Core 发出内部宿主请求，经 Main 校验并转发给 SidecarHost；结果携带 `coreGeneration`、`attemptId`、序号，经 Main 路由回 Core。长任务返回 ID，不占住现有 15 秒 RPC 等待窗口。Core 退出时 Main 立即撤销其代际并停止对应执行，确认停止后才能授权新核心领取。
+
+各进程继续使用独立的 `@yeatz/app-framework` Application 与静态模块；内部反向 RPC 使用专有白名单，不向 Preload 暴露。
+
+| 拟新增位置 | 职责 |
+| --- | --- |
+| `packages/contracts/src/cloud/` | 账号/节点/作业 DTO、业务动作及错误；不包含凭据和临时 URL |
+| `packages/contracts/src/internal/` | Main↔Core↔Host 内部消息、传输结果；禁止 Renderer 导入 |
+| `packages/media-core/src/cloud/` | 订阅、扫描、增量计划、队列、下载仓储、提交和交接 |
+| `apps/desktop/src/main/cloud/` | 凭据保险箱、宿主代理、进程代际、原生目录授权 |
+| `apps/desktop/src/sidecar-host/` | Provider 注册、OpenList 客户端、Rclone 引擎、进程监管 |
+| `apps/desktop/src/renderer/src/pages/` | 账号管理、统一来源内远端选择和下载任务；沿用框架 ViewModel |
+| `tools/desktop-sidecars/` | 构建期下载、校验、版本清单和许可材料 |
+
+整体架构统一见第 5 节的 LikeC4 模型。
+
+#### 10.2. 控制面和传输面分开抽象
+
+仅包装 OpenList REST API 不足以解耦：如果任务表保存 WebDAV 路径，或 Rclone 直接读取 OpenList 挂载 ID，后续替换仍需改业务。使用下面三个边界，领域层只保存账号、远端引用和版本证据。
+
+```ts
+// 设计草图；所有类型为应用自有类型，具体 Schema 在实施时补齐。
+interface CloudDriveProvider {
+  readonly implementationId: string;
+  capabilities(account: AccountRef): Promise<DriveCapabilities>;
+  validateCredential(input: PrivateCredentialInput): Promise<AccountIdentity>;
+  list(input: ListInput): Promise<RemotePage>;
+  stat(input: RemoteRef): Promise<RemoteEntry>;
+  acquireSource(input: SourceRequest): Promise<TransferSourceLease>;
+  releaseSource(leaseId: string): Promise<void>;
+}
+
+// 只存在于 SidecarHost 内部；业务库保存 sourceRequest，不保存本对象。
+interface TransferSourceLease {
+  leaseId: string;
+  generation: string;
+  kind: "webdav";
+  endpoint: string;
+  root: string;
+  credentialHandle: string;
+  expiresAt?: string;
+}
+
+interface TransferEngine {
+  readonly supportedSourceKinds: readonly string[];
+  start(input: PrivateTransferPlan): Promise<ExecutionHandle>;
+  stop(handle: ExecutionHandle): Promise<StoppedExecution>;
+  events(handle: ExecutionHandle): AsyncIterable<TransferEvent>;
+}
+```
+
+`TransferSourceLease` 首版只实现 `webdav` 判别分支。未来需要 `http-object` 时扩展内部联合类型和引擎能力，不预先写空实现。Provider 和 Engine 在 Host 内通过能力协商连接；Core 不认识 `dav/`、`quarkdav:`、Rclone flags 或 OpenList storage ID。
+
+关键类型约定：
+
+- `DriveCapabilities`：授权方式、`stable-id | path` 身份等级、可靠版本/hash 可用性、范围读取与可提供的 source kinds。不能因上游支持某功能就默认当前驱动也支持。
+- `RemoteEntry`：应用 `remoteRef`、名称、类型、大小、可选时间/摘要/版本及证据等级。上游 ID 只保存在实现绑定中；无稳定 ID 时明确退化为规范路径身份。
+- `TransferEvent`：进度、执行退出与可核对文件证据，不直接产生业务 `COMPLETED`。Core 核对后才提交成功。
+- 统一错误：`AUTH_REQUIRED`、`RATE_LIMITED`、`NETWORK_UNAVAILABLE`、`REMOTE_CHANGED`、`REMOTE_NOT_FOUND`、`LOCAL_UNAVAILABLE`、`UNSUPPORTED_CAPABILITY`、`COMPONENT_UNAVAILABLE`、`CONFLICT`、`INTERNAL_ERROR`；可带受限 `retryAfter`，不把上游原始消息直接展示。
+
+Provider/Engine 使用静态注册表和 DI，生产只注册夸克网盘接入，不允许用户传任意模块路径、二进制路径或 shell 参数。用假的 Provider 与 Engine 运行同一业务测试，并增加一个独立测试 WebDAV Provider，证明下载不依赖 OpenList 特有字段。
+
+#### 10.3. OpenList 仅作为受管网盘网关
+
+新增 `OpenListQuarkProvider`，通过固定版本的公开管理/文件 API 管理账号挂载、列目录和查询元数据；不直接读写 OpenList 数据库。应用生成隐藏的内部挂载命名，与用户可编辑的账号名称无关。OpenList 数据丢失时，以凭据保险箱和实现绑定重建挂载，重新验证远端引用。
+
+重新授权必须核对网盘账号身份；新 Cookie 属于另一个账号时拒绝覆盖原绑定，改走新增账号和范围预览。接入实现无法给出可靠账号身份时，不自动沿用旧目录授权，要求重新选择并核对订阅根。
+
+普通夸克驱动的官方文档要求 Cookie，当前说明采用本地代理；该文档同时提示相关历史逆向接口不主动维护。首版选择普通 Quark 驱动，不把 Quark TV/Open 的授权或 302 行为混用；正式版本必须通过真实账号验证。[OpenList 夸克驱动文档](https://doc.oplist.org/guide/drivers/quark)
+
+初始化顺序：校验包内版本 → 写安全配置 → 启动实例 → 建立私有管理授权 → 关闭匿名访问 → 创建仅 WebDAV 读取权限的账号 → 注册挂载 → 验证列表与读取。管理 API 不假定跨版本稳定，路径、字段与初始化 CLI 用锁定 tag 的源码/API 契约固定，失败即停止启用。
+
+配置显式设置 `scheme.address=127.0.0.1`，不要沿用上游默认监听全部地址。使用应用分配的高位端口；探测空闲端口与实际绑定间存在竞争，应在绑定失败后有限重选，并通过自有进程状态及私有授权核验实例，不能连接未知的现存 5244 服务。[OpenList 配置](https://doc.oplist.org/configuration/configuration)
+
+首个启用的云端账号触发启动，之后在应用后台期间常驻。没有云端账号时不启动；云端故障不阻塞本地来源。OpenList 的 WebDAV 授权只开放读取；其读取与管理权限可分开配置。[OpenList WebDAV 权限](https://openlistteam.github.io/docs/guide/webdav.html)
+
+#### 10.4. Rclone 按批次执行，先不用 rcd
+
+每个活跃传输批次一个 CLI 进程；同一账号首版只运行一个批次，批次内部初始 `--transfers 2`、`--checkers 2`、`--multi-thread-streams 1`。这些是保守默认值，需以真实账号限流和设备数据调整，不是性能保证。多个订阅共享账号预算，禁止并发相乘。
+
+Core 枚举后生成有界、不可变文件清单；同根、同凭据、同目标隔离区的文件组成批次。逻辑上的一次下载作业可以包含多个批次，避免百万文件单进程和整棵目录重新扫描。源路径映射和文件列表由 Host 生成，禁止把远端名称解释成参数或 glob；换行等无法由锁定版本清单接口无损表示的名称使用单文件安全路径或明确拒绝该项。
+
+传输采用 `copy` 加精确清单，单文件可使用 `copyto`；只写新的 attempt 暂存目录。应用先完成增量决策，不将整棵目录 `copy --size-only` 作为调度器。`copy` 不同步删除目标，但可能覆盖目标中的不同文件，因此不能直接面向最终目录运行。[Rclone copy](https://rclone.org/commands/rclone_copy/)
+
+启用 JSON 日志、1 秒统计和匹配的日志等级；逐行解析采用最大行长、有界缓存和未知字段容忍，输出归一化到约 1 Hz。日志夹具必须来自锁定版本。进度只是观测，退出码和逐项文件核对决定结果；重试字节分 attempt 统计，最终成功进度只累计已核对内容。CLI 自身短暂重试与应用退避共用总预算，不能两层无限重试。[Rclone 日志与统计参数](https://rclone.org/docs/)
+
+暂停实现为终止当前进程并等待退出，再标记 `PAUSED`。恢复跳过已提交项，对未完成文件创建新 attempt；首版不承诺字节级断点续传，范围请求能力也不等于跨进程续传能力。取消只撤销剩余执行，不删除已提交文件。
+
+当 CLI 的结构化状态确实不足时，增加 `RcloneRcEngine` 实现相同接口；届时内部 RC job ID 仍不进入领域标识。RC 已提供异步作业、停止和统计接口，但扩大了本地控制面，首版没有必要新增常驻 5572 端口。[Rclone RC](https://rclone.org/rc/)
+
+#### 10.5. 应用拥有增量状态与调度
+
+业务 SQLite 使用增量迁移。统一来源配置与迁移见第 3 节及本文迁移计划；不迁移或导入 OpenList 数据库作为业务事实。
+
+| 表/记录（拟） | 关键内容 |
+| --- | --- |
+| `cloud_account` | 应用 UUID、provider kind、状态、credentialRef；无明文凭据 |
+| `provider_binding` | accountId、implementationId、配置版本、generation、非敏感私有映射 |
+| `source_rule`（拟） | 统一来源 ID、类型、配置版本及本地规则／云端执行／整理关联 |
+| `cloud_subscription` | 关联来源的当前周期扫描配置及运行状态，保留账号、远端根和落盘引用；与来源通过统一命令维护 |
+| `cloud_scan` | 扫描代次、游标、完整性与时间；分页失败不生成删除结论 |
+| `remote_entry` | 应用引用、实现映射、路径、元数据、版本证据与最后观察代次 |
+| `download_job/item` | 需求关联来源 ID／配置版本，保存范围快照、条目版本、目标槽位、状态、幂等键及结果指纹 |
+| `download_attempt` | item/批次、核心及绑定代际、执行 token、临时路径、重试、退出证据 |
+| `ingestion_outbox` | 已提交 item/version → 本地候选；唯一键、投递状态和确认记录 |
+
+以“账号 + 远端引用 + 版本证据 + 目标槽位”归一化同内容请求，用唯一约束或关联表使重叠订阅复用同一下载项；同目标槽位仅一个活跃写入者。订阅配置变更递增版本，未执行计划重新预览，活动 attempt 使用不可变快照。扫描期间 root 不可达、分页失败和目录改名都不表示删除。
+
+共享下载项保留各作业/订阅的需求关联。取消单个作业仅解除其需求，仍有其他有效需求时继续传输；账号级暂停才停止整个账号。最后一个需求取消后才终止共享执行并按规则清理暂存区。
+
+版本比较优先级：可靠 provider revision/hash → 经验证的源元数据组合 → 路径与尺寸弱比较。mtime、ETag 不因字段存在就视为内容版本。普通 WebDAV 不提供可依赖的通用摘要/修改时间能力，因此 OpenList 管理 API 的源元数据与传输接口能力分别记录；实际拿不到可靠证据时，在 UI 明示弱比较。[Rclone WebDAV 能力](https://rclone.org/webdav/)
+
+同版本且本地已提交文件符合本地指纹才跳过。已知远端变化创建新候选，目标有同名旧成果则默认冲突待确认；不覆盖旧下载、不自动替换已整理媒体。弱比较无法发现同尺寸原地替换，提供“强制重新下载”并形成新请求，不把本地 SHA-256 当作远端内容正确性的证明。
+
+订阅默认周期建议 15 分钟，可配置；账号级抖动、退避和限流优先于该周期。应用退出期间不运行订阅；启动/唤醒后合并漏过触发为一轮补扫。用户显式启用自动下载后才持续运行。
+
+#### 10.6. 暂存、提交与媒体整理交接
+
+用户在来源中选择本地受管下载根，应用建立 `.media-marshal/staging/<attemptId>/` 与 `completed/`，两者在同一已验证卷上。目标根需要原生目录授权、realpath/卷身份和可写校验；缺盘不自动创建同名替代目录。该根与普通本地来源／媒体目标不得交叉覆盖；统一来源内部显式登记的受管交接不构成第二条普通来源，共享下载仍按既有授权及目标槽位校验。所有普通扫描入口排除 staging；受管 completed 由专有来源登记，补扫通过同一 item/version 去重入口。
+
+落盘映射公共层检查 `..`、绝对路径、分隔符、越界与目标占用；目标平台策略处理卷身份、命名、Unicode、大小写与路径长度。Mac 首先实测 APFS 的大小写及 Unicode 行为；Windows 盘符、保留名和重解析点策略保留为后续平台适配与兼容用例，不在 Mac 上无条件套用 Windows 命名限制。映射结果持久化；遇到不支持名称或碰撞明确失败，不静默映射到同一目标。写入与提交前再次核对真实父目录，防止链接逃逸。
+
+Core 对已结束执行逐项检查：文件是正式暂存结果、长度正确、可用远端版本未变化、有上游摘要则匹配摘要。生成本地摘要用于后续恢复和本地改动检查；无远端摘要时完整性等级标为“长度/版本核对”，不宣称端到端摘要校验。非零退出批次中的完整项也按相同条件独立核对；证据不足项保留失败。
+
+下载与第 7 节整理流程复用“不覆盖文件提交”组件，各自持有计划与记账：持久化提交意图 → 同卷校验 → 经平台验证的不覆盖提交 → 事务写完成记录及 outbox。`exists` 后 `rename` 不足以保证不覆盖；不支持可靠提交语义的卷直接阻断。崩溃后按计划、摘要和目标归属补记，无法证明的转待处理。预检空间覆盖下载暂存、已完成副本和后续 COPY 媒体副本，额度不足停止新领取。
+
+```mermaid
+sequenceDiagram
+  participant C as Core
+  participant H as SidecarHost
+  participant D as 受管磁盘
+  participant I as 本地整理接收端
+  C->>C: 持久化计划与 attempt
+  C->>H: 经 Main 授权的 start
+  H->>D: Rclone 写暂存区
+  H-->>C: 进度与执行退出
+  C->>D: 逐项校验、不覆盖提交
+  C->>C: 完成记录与 outbox 事务
+  C->>I: 按 item/version 投递接入意图
+  I-->>C: 幂等候选 ID
+```
+
+整理接收端仍执行识别、低置信度确认和媒体 COPY，不因来源为受管下载就跳过媒体规则。整理接收能力未就绪时 outbox 保持待接入，下载本身可完成；不可使用虚假的 `media_task=DONE` 补齐界面。后续自动整理与 Emby 成功分别由原链路记账。
+
+#### 10.7. 状态机、恢复与用户操作
+
+下载项主路径为 `QUEUED → RUNNING → VERIFYING → COMMITTING → COMPLETED`。执行侧分支为 `PAUSING → PAUSED`、`CANCELLING → CANCELLED`、`RETRY_WAIT`、`AUTH_REQUIRED`、`FAILED`；缺盘记为 `BLOCKED_LOCAL`，恢复核对记为 `RECONCILING`。作业状态从成员聚合，扫描中不显示虚构总量。
+
+- 暂停/取消在 `COMMITTING` 期间等待单项安全提交完成，然后停止剩余项；已完成文件始终保留。
+- 账号认证失败停止自动重试并请求重新授权；限流停止账号所有新领取，按 Retry-After 或有界退避恢复。
+- OpenList 崩溃使租约失效，终止相关 CLI 并有限恢复；进程恢复不能直接复用旧临时 URL 或旧代际请求。
+- Main 显式退出：Core 停止领取 → Host 停止 CLI → Core 核对并落盘 → Host 停止 OpenList → Core 关闭 SQLite。
+- Main 崩溃：Host 通过专用父通道关闭/心跳到期请求停止；即使 Host 同时被终止，Guardian 仍通过父管道 EOF 回收自有 Go 进程。Core 通过父通道关闭停止。Host/Guardian 崩溃而 Main 存活时，Main 根据已登记的自有句柄/执行身份回收残留进程，再允许重建。进程查询失败不能作为已停止的证据。
+- macOS 使用受管进程组及父通道监管，其强杀与旧写入者回收是当前 Mac 验收门槛。Windows Job Object 及已有用例作为保留的兼容实现，后续 Windows 启用前再做完整验收。PID 文件不能证明归属，禁止按进程名批量杀进程；任何平台没有确认旧写入者退出时，都不得启动新 attempt。
+
+窗口关闭仍后台执行，托盘分别提供“暂停云端下载”和既有“暂停接入”，不混淆传输与整理。账号页只管理连接；来源页完成远端选择、本地映射、预览与周期扫描配置；任务页展示阶段、速度、剩余量可用性和失败原因。最近扫描、下次执行、弱比较说明与启用开关归入来源详情，不再维护独立订阅页。来源暂停与共享需求的关系见第 3 节。
+
+#### 10.8. 凭据与本地 API
+
+权威 Cookie、管理凭据保存在 Main safeStorage 保险箱，Core 只保存引用。用户粘贴 Cookie 时 Renderer 仅短暂持有输入草稿，提交后清空；读取 API 永不回显。Main 解密后通过受限私有通道注入 Host，不经命令行、日志或事件进入 Renderer。
+
+扫码登录由 Main 创建无 preload、启用 sandbox/contextIsolation、禁用 Node 的独立 BrowserWindow，使用每次随机分配且禁用缓存的内存 Session。只允许夸克 HTTPS 页面顶层导航，拒绝新窗口、下载和权限请求。仅从目标夸克地址读取 Cookie，检测到必要登录 Cookie 后直接进入现有授权校验链；Renderer 只传账号名称、可选原账号 ID 和幂等请求 ID，永不接触扫码 Cookie。取消、五分钟超时、父窗口隐藏/重载、登录窗口崩溃、升级及退出均清理窗口与网页会话；未提交前不创建业务账号。重复活动请求复用窗口，已提交请求只查询已有授权作业。此能力不改变普通 Cookie Provider 的授权类型，不假装获得官方 OAuth 接入资格。
+
+OpenList 可能将驱动 Cookie 写进自己的数据库；safeStorage 不会自动加密该副本。首版显式允许其运行私有数据目录持有该副本，macOS 目录 0700/文件 0600，普通业务备份及诊断一律排除。已有 Windows 当前用户 ACL 实现保留，其后续完善与验收归非 macOS 变更。解除账号连接时先终止租约、删除挂载并清除保险箱；SQLite/WAL 或磁盘残留不承诺安全擦除。实现前须验证锁定版本的凭据写入位置并在隐私说明中披露。
+
+Rclone 临时配置只包含该批次 WebDAV 只读授权，不包含夸克 Cookie。使用每次执行的受限目录和最小环境，退出后清理，启动时清理已确认无主的旧配置；`obscure` 只是可逆混淆，不能当作加密。命令行只含受控配置文件路径，诊断不收集配置内容。
+
+关闭 OpenList 匿名读取与无关服务，管理账号与 WebDAV 读取账号分开；不将管理后台嵌入应用、不在 Renderer CSP 允许本地服务访问。Host 仅访问清单中登记的回环服务；本地外部页面通过 API 无法取得授权。同一 OS 用户的恶意进程不在“靠 loopback 即可隔离”的保证范围内。
+
+#### 10.9. 打包、升级与来源追踪
+
+当前构建及分发以 `darwin-arm64`、`darwin-x64` 为目标，下载明确 release 资产并验证预先锁定的 SHA-256；登记版本、tag/commit、上游地址、许可证、构建来源与目标架构。已有 `win32-x64` 锁定资产及准备能力保留，不随 Mac 包分发，也不要求同步生成 Windows 安装器。只打入当前目标的可执行文件和必要许可证，不把整个下载缓存递归复制进包。签名改变文件摘要时区分上游原始摘要和最终签名产物摘要，最终资源清单在签名流程中正确生成。
+
+```text
+Resources/
+  app.asar
+  bin/openlist[.exe]
+  bin/rclone[.exe]
+  bin/guardian[.exe]
+  sidecars/manifest.json
+  sidecars/licenses/...
+userData/
+  desktop.sqlite3
+  credentials.enc.json
+  sidecars/openlist/...
+  runtime/rclone/<attemptId>/...
+```
+
+`electron-builder extraResources` 将二进制放在 ASAR 外。开发态和安装态统一通过 `SidecarBinaryResolver` 定位：开发指向目标平台准备目录，安装态指向 `process.resourcesPath/bin`；不依赖 cwd，避免示例中开发路径多拼一层 `bin` 的问题。[electron-builder 资源配置](https://www.electron.build/docs/contents/)
+
+沿用手动整包升级，不执行 `rclone selfupdate` 或 OpenList 自更新。停止组件后备份其私有库、核心库及绑定版本，迁移成功才重新启用。私有备份与普通导出分开管理并使用相同权限；回退必须恢复匹配的数据快照，不能让旧组件打开新库。媒体文件不随数据库回退删除，恢复后重新核对。
+
+Mac 内测包可在明确标识未签名状态、完成安装态与功能验收后用于开发验证；这不等于正式公开发行。公开 Mac 包仍须 Developer ID 签名、公证和嵌套二进制验证。用户当前没有签名配置，正式发行任务保持未完成；Windows 签名/安装器不再是本轮 Mac 交付前置。
+
+OpenList 当前许可证为 AGPL-3.0，Rclone 为 MIT；仓库现有桌面包声明 GPL-3.0。发行清单需保留许可及版权、固定版本对应源码与构建/修改材料，并评估组合分发义务。独立进程有助于技术隔离，不能自动得出闭源豁免结论；本提案不改变仓库许可证。[OpenList LICENSE](https://github.com/OpenListTeam/OpenList/blob/main/LICENSE)、[Rclone Licence](https://rclone.org/licence/)
+
+#### 10.10. 替换 OpenList 的扩展路径（未来实现）
+
+本节说明未来替换夸克接入实现的边界，不要求本次交付 NativeQuarkProvider、其他网盘或新的传输引擎。既有通用切换机制与测试证据保留；新增真实接入实现由后续需求决定。
+
+推荐未来先实现 `NativeQuarkProvider + 只读 WebDAV Bridge`，继续复用 `RcloneCliEngine`。Bridge 只实现经过 Rclone 兼容验证的 OPTIONS/PROPFIND/HEAD/GET、长度/路径编码/范围读取、授权及错误映射，不复制 OpenList 的管理后台、用户体系和通用存储驱动。
+
+若自研适配器能够提供可靠的逐文件 URL、请求头和刷新机制，再实现 `http-object` 租约及相应 Engine。URL 的有效期、Cookie/Referer、Range 和过期刷新必须由基础设施解决，不把签名直链存入任务表。这样可以去掉 WebDAV Bridge，但比保留 WebDAV 更需要传输兼容验证，首版不预付这部分实现成本。
+
+账号级切换流程：
+
+1. 注册候选实现但不切流；用同一契约测试验证目录、错误和租约语义。
+2. 用户触发账号迁移，暂停该账号领取，等待旧 attempt 停止并回收租约。
+3. 候选实现验证授权与账号身份；对稳定原生 ID 做映射，路径/弱证据无法证明一致时要求重选订阅根并预览。
+4. 事务切换 binding 与 generation，保留旧绑定和本地历史；重扫并按新证据生成计划，不复制旧执行 token。
+5. 观察失败率、重试、内存、吞吐和授权成功率后扩大使用；失败可按相同静止流程切回旧绑定，保留所有已提交成果。
+
+完成替换的验收标准是：下载业务模块和 Renderer 不需要导入新 Provider 类型；现有订阅与本地成果保留；核心业务测试不变；Provider/Engine 契约测试通过。移除最后一个 OpenList 绑定且回退窗口结束后，才在后续版本考虑移除其二进制。
+
 ## 风险与取舍
 
 - **框架尚未公开发布及版本漂移** → 固定可还原来源的包快照与校验值，CI 脱离个人 wenger 目录；后续精确版本升级仍跑应用集成验证。
@@ -313,13 +609,18 @@ Mac 按架构原生构建并记录应用、Electron、SQLite 模块与 guessit �
 - **后台关闭与休眠误解** → 首次关闭提示、托盘状态、登录启动选项和唤醒补扫，不承诺关机运行。
 - **元数据配置仍有门槛** → 本机连接与 TMDB 配置分步检查并统计内测掉点，不捆绑产品共用密钥。
 
+- **来源合并误改历史与重复领取** → 稳定来源映射、有序事务迁移、保留作业和需求标识，关联不明时待核对；不因新导航重新发起下载。
+- **共享下载对应不一致的整理策略** → 预览阶段核对来源需求，冲突先解释并阻断；同一 item/version 仍至多一个有效整理候选。
+- **夸克驱动变化与弱版本证据** → 锁定版本与真实账号验证；认证故障停止新任务，同尺寸弱证据替换明确限制。
+- **内置网关凭据副本与组合发行** → 私有目录权限、默认导出排除、独立备份；随包保留 AGPL/MIT/GPL 对应许可、源码及构建材料，进程隔离不代替许可核对。
+
 ## 迁移与交付计划
 
-1. 建立模块迁移与行为对照矩阵、npm workspaces、框架固定依赖快照、三进程 Application、React 壳和 Utility Process 原型；先验证模块启动/失败清理、公开入口与 DI 构建，再优先在 Mac arm64 验证 SQLite 原生模块与冻结 parser，并补 Mac x64 的架构验证，不运行旧 Java 服务。
-2. 迁移解析结果、TMDB 匹配/缓存/季集和模板等规则，用固定夹具和 Java 开发期对照验证差异；建立独立桌面 schema、IPC 和配置保护。
-3. 迁移来源发现与队列，实现就绪、复制日志、幂等、恢复和单条/批量修正；补齐新规格要求而非复制旧恢复缺陷。
-4. 优先通过 Renderer StatefulService 与 hooks 接通老用户所需的已有 Emby 连接、指定媒体目录、来源、识别预览及交付状态，在维护者本机完成一次真实资源下载、COPY 和收录核对，验证重复操作、重启恢复与 Emby 离线后仅重试交付；再补齐通用配置、其他来源及重载、断网、缺盘、休眠和强杀矩阵。
-5. 完成 Mac 安装/手动升级/卸载和全进程生命周期验收，记录可供内测的产物及签名状态；公开发行前另行完成 Developer ID 签名、公证和正式安装态验收。旧 Web/Docker 独立保留，既不要求同步 React 化，也不自动导入旧库。
-6. 老用户本机闭环完成后，再规划新用户的 Emby 安装、首次账号和媒体库初始化；其他平台客户端、官方 API、会员通知、NAS、音乐或商店版依据内测独立规划。内置夸克下载按已有独立变更推进。
+1. **规划合并与追溯。** 本变更保留原桌面四份能力规格，并纳入原内置下载三份规格。统一任务按能力分组，保留已完成／未完成状态、原编号映射及历史验证口径；原云端目录在合并校验后移除，不运行 archive，不向主规格发布尚未完成能力。
+2. **统一来源与追加迁移。** Core 先停新领取并生成一致性备份，通过有序迁移建立稳定来源关联。既有普通本地来源保留 ID、类型、路径、版本及暂停状态；每个既有订阅映射到唯一网盘来源，保留订阅 ID、账号、远端引用、下载根、过滤、周期及历史。迁移不得重复创建订阅或重排目标文件。
+3. **整理绑定与历史恢复。** 依据已登记的下载根、订阅需求与整理绑定关联受管来源，不靠显示名称或相似路径推测。多个订阅共享下载根时保留各自来源和共享需求；只有能证明的相同整理策略才复用绑定。归属或策略不明确的配置保持待核对、不启动新的自动整理，已有文件和历史仍可查。历史一次性作业保留查询及恢复入口，不自动生成周期扫描。
+4. **原子配置与界面接续。** 统一来源配置命令、版本和预览先接通，再收敛账号页并迁入远端浏览器、本地授权与扫描设置；旧订阅入口只做来源定位。迁移本身不触发扫描或重放确认，已确认启用的来源经正常恢复核验后按原策略继续，未启用或待核对配置维持停止。变更和迁移失败保留原有效配置与恢复证据；旧版本拒绝写入新 schema，回退使用匹配备份并核对磁盘，不覆盖媒体。
+5. **本机真实闭环。** 复用现有下载、订阅、候选、识别、COPY 和交付模块，先完成来源整合及目录错误可解释性，再在维护者已有 Emby 和指定媒体目录上验证真实资源下载、可选整理及收录。验证取消、重复保存、页面重载、核心重启不重复下载或复制，Emby 离线仅重试交付；本地来源独立可用。
+6. **剩余能力与发行。** 完成旧 Java 行为夹具对照、夸克本地客户端就绪依据与通用目录策略、附属／批量修正、Mac 架构及故障矩阵；维护者链路优先不意味着这些任务已完成。Mac arm64 优先，x64 单独记录；安装态分别标明未签名内测或正式发行，公开发布另行满足 Developer ID、公证与许可要求。非 macOS、Emby 自动安装初始化及多语言已迁入独立变更；其他网盘、Web/NAS、旧库导入及付费服务仍另行规划。
 
-实施已开始，实际完成项以 tasks 复选框和[桌面客户端开发记录](../../../docs/architecture/desktop-development.md)为准。当前独立工程及 macOS arm64 原型已运行，Mac 完整业务、安装态与正式发行仍需分别验收；内置下载变更的历史三目标组件测试不等于 Windows 完整客户端交付，当前也不以 Windows 交付为门槛。不能以本机目录包测试替代 DMG 安装态验收。回退必须匹配桌面数据版本并核对磁盘；旧 Docker 可独立使用，但不是桌面数据库的自动恢复方案。
+原内置下载的 M0–M4 验收与原桌面实现记录保留在 [tasks.md](tasks.md) 的历史部分，仅说明当时版本和范围。固定 OpenList v4.2.7 lite、Rclone v1.75.2、真实账号／进程／安装态夹具及前序未签名 DMG 不自动成为此次来源改造的验收证据。具体未完成工作以统一复选框为准，不以规划状态 complete 宣称已实现。

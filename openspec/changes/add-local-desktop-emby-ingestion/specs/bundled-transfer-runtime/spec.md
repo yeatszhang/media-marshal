@@ -8,7 +8,7 @@
 
 ### Requirement: Mac 优先交付与平台扩展
 
-本变更当前 SHALL 只交付同一个 macOS 客户端，优先完成 Apple Silicon 上的功能闭环，并为实际通过验收的 Mac 架构提供安装包。Windows 等其他平台 SHALL 保留宿主策略、资源解析与契约兼容的扩展空间，MUST 不作为本轮 Mac 功能或内测交付前置。平台差异 MUST 不进入云端业务状态机、业务标识或公开 DTO；未验收平台不得宣传为已支持。
+本变更当前 SHALL 只交付同一个 macOS 客户端，优先完成 Apple Silicon 上的功能闭环，并为实际通过验收的 Mac 架构提供安装包。非 macOS 宿主策略、资源解析与兼容补齐 SHALL 由独立平台变更承接，MUST 不作为本轮实现或验收任务。平台差异 MUST 不进入云端业务状态机、业务标识或公开 DTO；未验收平台不得宣传为已支持。
 
 #### Scenario: Mac 功能完成但其他平台尚未交付
 - **WHEN** Mac 账号、下载与安装态检查通过，而 Windows 客户端或安装器尚未完成
