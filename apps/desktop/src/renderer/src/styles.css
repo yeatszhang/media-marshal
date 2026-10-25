@@ -926,3 +926,18 @@ th:first-child {
 .directory-members .download-controls, .recognition-batches .download-controls { flex-wrap: wrap; }
 .batch-items article { padding: 14px 0; border-top: 1px solid var(--border); line-height: 1.7; }
 .directory-queue .pagination { flex-wrap: wrap; }
+
+.organize-batch-editor, .organize-batch-history { padding: 20px; min-width: 0; margin: 18px 0; }
+.organize-batch-fields { border: 0; padding: 0; margin: 18px 0 0; display: grid; gap: 18px; min-width: 0; }
+.organize-batch-fields label:not(.check-label) { display: grid; gap: 8px; min-width: 0; }
+.organize-batch-fields table { width: 100%; table-layout: fixed; }
+.organize-batch-fields th:first-child { width: 48px; }
+.organize-batch-fields th:nth-child(n+3) { width: 86px; }
+.organize-batch-fields td input[type="number"] { width: 100%; min-width: 0; padding: 8px; }
+.organize-batch-fields input[type="checkbox"], .organize-batch-detail input[type="checkbox"] { flex: 0 0 18px; width: 18px; min-width: 18px; height: 18px; margin: 2px 0; padding: 0; accent-color: var(--primary); }
+.organize-batch-history .pagination { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 18px; }
+.organize-batch-detail { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 18px; }
+.organize-batch-item { display: grid; gap: 10px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.organize-batch-item > button { justify-self: start; }
+.organize-batch-detail .check-label { margin: 16px 0; }
+@media (max-width: 1040px) { .organize-batch-editor, .organize-batch-history { padding: 14px; } .organize-batch-fields th:nth-child(n+3) { width: 65px; } }

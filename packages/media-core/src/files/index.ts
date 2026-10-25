@@ -53,10 +53,8 @@ export class ManagedRoot {
     if (Buffer.byteLength(join(this.grant.path, ".media-marshal", "staging", "0".repeat(36), ...input)) >= this.grant.volume.pathMaxBytes) throw new CloudError("UNSUPPORTED_CAPABILITY");
     return [...input];
   }
-  slotKey(input: readonly string[]) {
-    const normalized = this.segments(input).map((part) => { const value = this.grant.volume.unicodeEquivalent ? part.normalize("NFC") : part; return this.grant.volume.caseSensitive ? value : value.toLowerCase(); });
-    return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
-  }
+  mappingIdentity(input: readonly string[]) { return this.segments(input).map((part) => { const value = this.grant.volume.unicodeEquivalent ? part.normalize("NFC") : part; return this.grant.volume.caseSensitive ? value : value.toLowerCase(); }); }
+  slotKey(input: readonly string[]) { return createHash("sha256").update(JSON.stringify(this.mappingIdentity(input))).digest("hex"); }
   assertMappings(items: readonly (readonly string[])[]) {
     const keys = new Set<string>(), prefixes = new Map<string, string>();
     for (const item of items) {

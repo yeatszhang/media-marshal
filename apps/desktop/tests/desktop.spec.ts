@@ -831,3 +831,43 @@ test("诊断导出使用原生保存授权且不包含个人路径", async () =>
   expect(text).not.toContain(directory); expect(text).not.toMatch(/Cookie|raw_url|authorization|password|data\.db/i);
   expect(report.privateDataIncluded).toBe(false); expect(report.cloud.state).toBe("DISABLED");
 });
+
+test("批量整理真实 IPC 阻断重叠季集，修正后明确确认 COPY，重启保留原操作", async () => {
+  test.skip(process.platform !== "darwin" || !!process.env.MARSHAL_EXECUTABLE, "使用当前 Mac 开发构建和隔离业务夹具"); test.setTimeout(260000);
+  let window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), source = join(canonical, "逐文件计划来源"), target = join(canonical, "逐文件计划媒体库"), profile = join(directory, "data"); await mkdir(source); await mkdir(target);
+  for (const n of [1, 2]) await writeFile(join(source, `作品.S01E0${n}.mkv`), `批量整理原内容 ${n}`);
+  await application.evaluate(({ dialog }, paths) => { let n = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[n++]!] })) as typeof dialog.showOpenDialog; }, [source, target]);
+  await window.evaluate(async ({ source, target }) => {
+    await window.desktopApi.chooseDirectory("source"); await window.desktopApi.chooseDirectory("target"); const draft = await window.desktopApi.configureSourceRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: crypto.randomUUID(), configuration: { type: "local", name: "批量整理窗口夹具", client: "custom", sourcePath: source, organization: { targetPath: target } } }); const preview = await window.desktopApi.previewSourceRule({ id: draft.id, expectedVersion: 0, expectedDraftRevision: 1, requestKey: crypto.randomUUID() }); await window.desktopApi.applySourceRule({ previewId: preview.id, requestKey: crypto.randomUUID() }); await window.desktopApi.saveCredential("tmdb", "isolated-cache-fixture-token");
+  }, { source, target });
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listIngestionCandidates({}))).total).toBe(2); await application.close();
+  // 仅在隔离应用退出后准备待确认业务数据与有界 TMDB 缓存；文件观察、授权、预览和 COPY 仍使用当前生产代码。
+  const seed = join(directory, "seed-organize.mjs"); await writeFile(seed, `
+import { CoreDatabase } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/infrastructure/database.js")).href)};
+import { normalizeParse } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/domain/media.js")).href)};
+import { randomUUID,createHash } from 'node:crypto'; import { join } from 'node:path';
+const db=await CoreDatabase.open(join(process.argv[2],'desktop.sqlite3')), sql=db.connection, stamp=new Date().toISOString();
+for (const candidate of sql.prepare('SELECT * FROM ingestion_candidate ORDER BY relative_json').all()) { const name=JSON.parse(candidate.relative_json).at(-1), episode=Number(/E0?(\\d+)/.exec(name)[1]), id=randomUUID(), source=sql.prepare('SELECT source_path FROM desktop_source WHERE id=?').get(candidate.source_id).source_path;
+sql.prepare("INSERT INTO media_task(id,source_id,source_path,title,status,parsed_json,created_at,updated_at) VALUES(?,?,?,'批量整理作品','AWAITING_CONFIRMATION',?,?,?)").run(id,candidate.source_id,join(source,name),JSON.stringify(normalizeParse({title:'批量整理作品',type:'episode',season:1,episode,year:2026},name)),stamp,stamp); sql.prepare("UPDATE ingestion_candidate SET task_id=?,state='QUEUED' WHERE id=?").run(id,candidate.id); }
+for (const [route,value] of [['tv/7',{id:7,name:'批量整理作品',first_air_date:'2026-01-01',seasons:[{season_number:1}]}],['tv/7/season/1',{episodes:[1,2].map(episode_number=>({season_number:1,episode_number,name:'第'+episode_number+'集'}))}]]) { const url=new URL(route,'https://api.themoviedb.org/3/');url.searchParams.set('language','zh-CN');const key=createHash('sha256').update('tmdb-v1|'+url.href).digest('hex');sql.prepare('INSERT INTO tmdb_cache(key,value,expires_at) VALUES(?,?,?)').run(key,JSON.stringify(value),Date.now()+600000); }
+db.close();
+`);
+  await new Promise<void>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [seed, profile], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (error) => error ? fail(error) : done()));
+  application = await _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${profile}`] }); window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.getByRole("link", { name: "待处理", exact: true }).click();
+  for (const n of [1, 2]) await window.getByRole("checkbox", { name: `选择识别任务 作品.S01E0${n}.mkv`, exact: true }).check();
+  await window.getByRole("button", { name: "预览所选文件整理（2）", exact: true }).click(); let editor = window.getByRole("region", { name: "共同作品与逐文件整理草稿", exact: true });
+  await editor.getByLabel("共同 TMDB 作品 ID", { exact: true }).fill("7"); await editor.getByLabel(`起始集号 ${join(source, "作品.S01E02.mkv")}`, { exact: true }).fill("1"); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
+  await editor.getByRole("button", { name: "生成所选文件的整理预览", exact: true }).click();
+  // 重启后的真实 120 秒连续观察，不用就绪夹具绕过文件稳定性。
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listOrganizeBatches({}))).items[0]?.state, { timeout: 165000, intervals: [1000, 5000] }).toBe("BLOCKED");
+  const history = window.getByRole("region", { name: "批量整理预览与提交记录", exact: true }); await expect(history).toContainText("S1 E1"); await expect(history).toContainText("作品.S01E01.mkv"); await expect(history).toContainText("作品.S01E02.mkv"); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await expect.poll(() => window.evaluate(() => innerWidth)).toBe(920); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await history.screenshot({ path: "test-results/desktop/organize-batch-conflict.png" });
+  await window.getByRole("button", { name: "预览所选文件整理（2）", exact: true }).click(); editor = window.getByRole("region", { name: "共同作品与逐文件整理草稿", exact: true }); await editor.getByLabel("共同 TMDB 作品 ID", { exact: true }).fill("7"); await editor.getByRole("button", { name: "生成所选文件的整理预览", exact: true }).click();
+  await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listOrganizeBatches({}))).items[0]?.state).toBe("READY"); const ready = (await window.evaluate(() => window.desktopApi.listOrganizeBatches({}))).items[0]!;
+  const submit = history.getByRole("button", { name: "确认提交本批 COPY（2）", exact: true }); await expect(submit).toBeDisabled(); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]); await history.screenshot({ path: "test-results/desktop/organize-batch-ready.png" });
+  await history.getByRole("checkbox", { name: "确认本批文件完整并核对计划", exact: true }).check(); await submit.click(); await expect.poll(async () => (await window.evaluate((id) => window.desktopApi.getOrganizeBatch({ id }), ready.id)).batch.done, { timeout: 35000 }).toBe(2);
+  const details = await window.evaluate((id) => window.desktopApi.getOrganizeBatch({ id }), ready.id), operations = details.items.map((item) => item.operationId); expect(new Set(operations).size).toBe(2);
+  for (const item of details.items) expect(await readFile(item.preview!.targetPath)).toEqual(await readFile(item.sourcePath)); await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.evaluate(() => window.desktopApi.restartCore()); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  expect((await window.evaluate((id) => window.desktopApi.getOrganizeBatch({ id }), ready.id)).items.map((item) => item.operationId)).toEqual(operations); expect((await window.evaluate(() => window.desktopApi.listTasks({}))).total).toBe(2);
+});

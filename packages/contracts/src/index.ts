@@ -277,6 +277,12 @@ export interface DesktopApi {
   listContentReviews(input: CoreInput<"ingestion.content-reviews">): Promise<CoreOutput<"ingestion.content-reviews">>;
   listContentReviewFiles(input: CoreInput<"ingestion.content-review-files">): Promise<CoreOutput<"ingestion.content-review-files">>;
   cancelContentReview(id: string): Promise<CoreOutput<"ingestion.cancel-content-review">>;
+  previewOrganizeBatch(input: CoreInput<"ingestion.preview-organize-batch">): Promise<CoreOutput<"ingestion.preview-organize-batch">>;
+  listOrganizeBatches(input: CoreInput<"ingestion.organize-batches">): Promise<CoreOutput<"ingestion.organize-batches">>;
+  getOrganizeBatch(input: CoreInput<"ingestion.organize-batch">): Promise<CoreOutput<"ingestion.organize-batch">>;
+  getOrganizeBatchAssets(input: CoreInput<"ingestion.organize-batch-assets">): Promise<CoreOutput<"ingestion.organize-batch-assets">>;
+  confirmOrganizeBatch(input: CoreInput<"ingestion.confirm-organize-batch">): Promise<CoreOutput<"ingestion.confirm-organize-batch">>;
+  cancelOrganizeBatch(id: string): Promise<CoreOutput<"ingestion.cancel-organize-batch">>;
   listIngestionDirectories(input: CoreInput<"ingestion.directories">): Promise<CoreOutput<"ingestion.directories">>;
   getIngestionDirectory(input: CoreInput<"ingestion.directory">): Promise<CoreOutput<"ingestion.directory">>;
   recognizeIngestionBatch(input: CoreInput<"ingestion.recognize-batch">): Promise<CoreOutput<"ingestion.recognize-batch">>;

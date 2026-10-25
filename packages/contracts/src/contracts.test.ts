@@ -20,6 +20,15 @@ const request = (action = "runtime.get", payload: unknown = {}) => ({
   payload,
 });
 describe("受限进程契约", () => {
+  it("批量整理只接收已有任务、版本与作品选择，明确文件完整才能确认，分页和数量有界", () => {
+    const id = randomUUID(), requestKey = randomUUID(), item = { taskId: randomUUID(), expectedRevision: 0, selection: { tmdbId: 7, mediaType: "TV_SHOW", season: 1, episode: 2 } };
+    expect(parseCoreRequest(request("ingestion.preview-organize-batch", { requestKey, items: [item] }))).toMatchObject({ payload: { includeAccessories: true } });
+    for (const items of [[], Array.from({ length: 101 }, () => item), [{ ...item, sourcePath: "/伪造路径" }], [{ ...item, expectedRevision: -1 }]]) expect(() => parseCoreRequest(request("ingestion.preview-organize-batch", { requestKey, items }))).toThrow();
+    for (const proof of [{}, { filesComplete: false }, { filesComplete: true, targetPath: "/伪造目标" }]) expect(() => parseCoreRequest(request("ingestion.confirm-organize-batch", { id, requestKey, ...proof }))).toThrow();
+    expect(parseCoreRequest(request("ingestion.confirm-organize-batch", { id, requestKey, filesComplete: true }))).toMatchObject({ payload: { filesComplete: true } });
+    expect(() => parseCoreRequest(request("ingestion.organize-batch", { id, page: 1000001 }))).toThrow();
+    expect(() => parseCoreRequest(request("ingestion.organize-batch-assets", { id, taskId: "../../文件" }))).toThrow();
+  });
   it("内容复核仅接受来源身份与幂等标识，查询有界且不接受路径或摘要注入", () => {
     const sourceId = randomUUID(), requestKey = randomUUID();
     expect(parseCoreRequest(request("ingestion.review-content", { sourceId, requestKey }))).toMatchObject({ payload: { sourceId, requestKey } });
