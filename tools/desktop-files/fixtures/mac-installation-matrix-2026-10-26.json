@@ -1,0 +1,126 @@
+{
+  "capturedAt": "2026-10-26T00:12:35.574696+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "macOSBuild": "25F84",
+  "artifactCodeCommit": "ecfbdd22645f143eeab6267ec8b01897b4ef4e7d",
+  "appVersion": "0.2.1",
+  "schema": 27,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "publicUpload": false,
+  "currentDMG": {
+    "path": "build-artifacts/desktop-install-validation/ecfbdd2/Media Marshal-0.2.1-arm64.dmg",
+    "size": 232087322,
+    "sha256": "098ea902b2f6fabc720697e764bab5a13144ed054dcb4057af2c0e0cf2a2089b",
+    "asarSha256": "310df21576eb5edd31ce0456b61e676fa315931deccfc52ba6610d4779cb4edd"
+  },
+  "previousDMG": {
+    "path": "apps/desktop/release/Media Marshal-0.2.1-arm64.dmg",
+    "size": 219451733,
+    "sha256": "82734e9f005fffb160c9288bf84ef872e579f68d3f69b95dd30e17ea766a46ad",
+    "asarSha256": "1475b3a4c17429d59feb4058b305a227416822c670e3cb851c6967493e7613b8",
+    "schema": 6,
+    "appVersion": "0.2.1"
+  },
+  "versionNote": "两份内测产物都显示 0.2.1，按 Schema、代码提交和 ASAR／DMG 摘要区分；未用版本号替代构建身份。",
+  "screenshots": {
+    "docs/public/desktop/source-card-actions-minimum.png": "defedd3ad74c844b8beb936b4e1afac3cfe657baafe323437fce18b5798d44a5"
+  },
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/tests/installation.spec.ts": "e35dc00ce29824808d601f3654704eef408e25481d9cc3d184b440d9a4183a0f",
+    "apps/desktop/tests/desktop.spec.ts": "85bfa219e67695e9d57b1302685c5cb95259cca86abf5765f1759f46a35df893",
+    "apps/desktop/src/renderer/src/pages/Sources.tsx": "67eb7ed96d0889d1efbf88848e0e624f1abf0ac9b0c2b203941a6ff22b0e3b1a",
+    "apps/desktop/src/renderer/src/styles.css": "2c21a8f20e1c19c34806a41ab37fb9eb95d951772007b9ea268904d635f7abc7",
+    "apps/desktop/src/main/index.ts": "576a94e9b2518fa712164dcbf25590dad2a584acddb954805aeee27b616fb9c9",
+    "apps/desktop/src/main/core-supervisor.ts": "4e082670bd20c9de619dc64063d8cfd72be1a80c745e313842f26fc55106a54b",
+    "apps/desktop/src/main/cloud/upgrades.ts": "6d3d1f300cfe2bcea98fd87edd3b3c89a0aaa415c6bf93ec91b85290d866e13c",
+    "apps/desktop/electron-builder.yml": "7ef472e774ffa2533069ec1ab4fbdaf1d63d579c57960014a6dfff7e18c94699",
+    "packages/contracts/src/internal/core.ts": "b9b190d19e3ab639658f98471d4b0de30be86489a3c7117eb595099cb4db48e2",
+    "scripts/check-desktop-artifact.mjs": "6c8fd43d82a33909bf817baa6fa184e0882971e83b6e5f64aceb6551e67a49d7",
+    "scripts/test-packaged-desktop.mjs": "dae1c647d66d98ee4308aaf31662c3d31c1988a7342a6044c400c86a7e50d472"
+  },
+  "receipts": {
+    "readonly": {
+      "target": "darwin-arm64",
+      "appVersion": "0.2.1",
+      "schema": 27,
+      "parser": "ready",
+      "correctionFiles": "ready",
+      "asarSha256": "310df21576eb5edd31ce0456b61e676fa315931deccfc52ba6610d4779cb4edd",
+      "actualReadOnlyVolume": true,
+      "coreRestarted": true,
+      "systemPathOnly": true
+    },
+    "reinstall": {
+      "target": "darwin-arm64",
+      "asarSha256": "310df21576eb5edd31ce0456b61e676fa315931deccfc52ba6610d4779cb4edd",
+      "configurationVersion": 1,
+      "candidatesRetained": 1,
+      "backupsRetained": 1,
+      "backupFilesVerified": 2,
+      "existingFilesRetained": 2,
+      "sameFileIdentityAndContents": true,
+      "unicodeAndSpaceInstallPath": true,
+      "replacementInstall": true,
+      "uninstallAndReinstall": true,
+      "systemPathOnly": true,
+      "directoryDialog": "controlled-result",
+      "upgradeDialog": "controlled-result"
+    },
+    "upgrade": {
+      "target": "darwin-arm64",
+      "previousAppVersion": "0.2.1",
+      "previousSchema": 6,
+      "previousAsarSha256": "1475b3a4c17429d59feb4058b305a227416822c670e3cb851c6967493e7613b8",
+      "currentAsarSha256": "310df21576eb5edd31ce0456b61e676fa315931deccfc52ba6610d4779cb4edd",
+      "currentSchema": 27,
+      "previousSchemaBackupPresent": true,
+      "sourceIdentityAndPauseRetained": true,
+      "existingFilesRetained": 2,
+      "systemPathOnly": true,
+      "directoryDialog": "controlled-result"
+    }
+  },
+  "checks": {
+    "packagedTestsPassed": 45,
+    "packagedTestsSkipped": 3,
+    "latestInstallationTestsPassed": 3,
+    "artifactEntries": 9534,
+    "artifactWhitelist": true,
+    "dmgApplicationsShortcut": "/Applications",
+    "desktopTypecheck": true,
+    "installationSpecStrictNoEmit": true,
+    "sourceComponentsPassed": 25,
+    "sourceFocusedPackagedWindowsPassed": 4,
+    "boundaries": true,
+    "docsBuild": true,
+    "openspecStrict": true,
+    "ownedImagesDetached": true
+  },
+  "skippedPackagedTests": [
+    "工作区准备的任务分页数据夹具",
+    "工作区准备的识别字段数据夹具",
+    "工作区启动竞态检查"
+  ],
+  "testPreparationHistory": [
+    "首次重装检查误把初次授权生成的 .media-marshal 标记视为额外媒体；改为核对授权后的标记及现有文件基线。",
+    "首轮完整 DMG 43 passed／2 failed／3 skipped：窄窗口来源操作被目录健康内容挤出首屏，另一个草稿用例未先展开新表单的可选筛选。",
+    "来源操作移到标题与版本之后，保留首屏可见断言；筛选用例先展开再填写，保留草稿和无写入断言。修复以 ecfbdd2 提交，25 项组件及四项打包窗口回归通过。",
+    "从修复后的当前目录包重新生成新 DMG，完整重跑包括三项安装场景的 test:packaged，45 passed／3 skipped。",
+    "运行中加强的备份逐文件断言未被 Playwright 启动时缓存加载；证据生成器因收据缺少新字段拒绝采纳。最终以最新源码另跑三项安装用例全部通过，收据确认保留一个备份并核验其中两个文件。",
+    "完整矩阵与随后加强断言的三项定向检查使用同一个最终 DMG，未修改应用实现；测试源码摘要绑定最新定向检查。"
+  ],
+  "boundaries": [
+    "实际只读 DMG、临时中文／空格 App 安装路径及隔离资料，未操作系统既有 Applications 安装或个人媒体。",
+    "目录与升级确认对话框为受控结果，后续授权、备份、迁移、SQLite、parser 与原生文件组件使用生产实现。",
+    "安装用例未配置真实 TMDB／Emby／网盘账号；没有创建识别或 COPY，不作为真实网络、移动硬盘或官方客户端行为矩阵。",
+    "本机仍安装开发工具；应用 PATH 限制不是无 Node／Python／编译器的干净主机验收。",
+    "原生界面工具读取隔离客户端三次超时；没有完成真实托盘点击或注销登录，不能用程序化关闭替代原生操作。",
+    "当前托盘缺整理与云端下载各自的暂停入口，2.6 尚未完成；Intel、签名／公证和完整发行矩阵也仍待验证。",
+    "8.4／9.2／18.4 按完整范围保持未完成，OpenSpec 进度不因 arm64 子矩阵而缩小。"
+  ]
+}
