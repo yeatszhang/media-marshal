@@ -53,10 +53,22 @@ test("永久冻结核心后显式重启先回收旧写入者，再恢复同一�
   const owner = await application.evaluate(({ app }) => ({ main: process.pid, core: app.getAppMetrics().find(row => row.name === "Media Marshal Core")!.pid })), core = identify(owner.core), parsers = children(owner.core);
   expect(core?.parent).toBe(owner.main); expect(parsers).toHaveLength(1); expect(matches(core, core.command)).toBe(true);
   const started = Date.now();
+  await application.evaluate(({ app }) => {
+    const events: { event: string; elapsedMs: number }[] = [], start = Date.now();
+    Reflect.set(globalThis, "marshalTerminationTrace", events);
+    app.on("before-quit", () => events.push({ event: "before-quit", elapsedMs: Date.now() - start }));
+    app.on("will-quit", () => events.push({ event: "will-quit", elapsedMs: Date.now() - start }));
+  });
   try {
     process.kill(core.pid, "SIGSTOP");
     expect(execFileSync("/bin/ps", ["-p", String(core.pid), "-o", "stat="], { encoding: "utf8" }).trim()).toMatch(/^T/);
-    await page.evaluate(() => window.desktopApi.restartCore());
+    try { await page.evaluate(() => window.desktopApi.restartCore()); }
+    catch (error) {
+      const events = await application.evaluate(() => Reflect.get(globalThis, "marshalTerminationTrace")).catch(() => null);
+      let oldCoreStillOwned: boolean | null = null; try { oldCoreStillOwned = matches(core, core.command); } catch { /* 诊断失败不能覆盖原重启错误。 */ }
+      await writeFile(test.info().outputPath("restart-failure.json"), JSON.stringify({ phase: "restart", elapsedMs: Date.now() - started, applicationEvents: events, oldCoreStillOwned })).catch(() => {});
+      throw error;
+    }
     expect(matches(core, core.command)).toBe(false);
     for (const parser of parsers) await expect.poll(() => matches(parser, parser.command), { timeout: 5000 }).toBe(false);
     await expect.poll(async () => { try { return (await page.evaluate(() => window.desktopApi.getRuntime())).status?.parser; } catch { return "waiting"; } }).toBe("ready");
@@ -65,6 +77,7 @@ test("永久冻结核心后显式重启先回收旧写入者，再恢复同一�
     expect(await page.evaluate(id => window.desktopApi.getSourceRule(id), draft.id)).toMatchObject({ id: draft.id, version: 0, draftRevision: 1, configuration: null, draft: { name: "冻结核心恢复草稿" } });
     expect(await page.evaluate(() => window.desktopApi.getOrganizePause())).toEqual({ paused: true }); expect(await page.evaluate(() => window.desktopApi.getCloudDownloadPause())).toMatchObject({ paused: false });
     expect(await page.evaluate(() => window.desktopApi.listJobs())).toEqual([]); expect(await page.evaluate(() => window.desktopApi.listSources())).toEqual([]);
-    await writeFile(resolve("test-results/desktop/core-termination-restart.json"), JSON.stringify({ stoppedStateVerifiedByOS: true, resumedCoreForSuccess: false, elapsedMs: Date.now() - started, oldCoreStopped: true, oldParserStopped: true, sameMain: true, newCore: true, replacementParserReady: true, persistedDraftId: draft.id, draftRevision: 1, draftNotActivated: true, organizePaused: true, downloadsPaused: false, fileJobs: 0 }));
+    const applicationEvents = await application.evaluate(() => Reflect.get(globalThis, "marshalTerminationTrace")); expect(applicationEvents).toEqual([]);
+    await writeFile(resolve("test-results/desktop/core-termination-restart.json"), JSON.stringify({ stoppedStateVerifiedByOS: true, resumedCoreForSuccess: false, elapsedMs: Date.now() - started, oldCoreStopped: true, oldParserStopped: true, sameMain: true, newCore: true, replacementParserReady: true, persistedDraftId: draft.id, draftRevision: 1, draftNotActivated: true, organizePaused: true, downloadsPaused: false, fileJobs: 0, applicationEvents }));
   } finally { if (matches(core, core.command)) stopVerified(core, core.command); }
 });

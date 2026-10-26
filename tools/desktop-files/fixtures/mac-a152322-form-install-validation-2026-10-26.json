@@ -1,0 +1,153 @@
+{
+  "capturedAt": "2026-10-26T15:24:46.970615+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "artifactCodeCommit": "a152322",
+  "runtimeCodeCommit": "8bf13cf",
+  "appVersion": "0.2.1",
+  "schema": 27,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "publicUpload": false,
+  "dmg": {
+    "path": "build-artifacts/desktop-install-validation/a152322/Media Marshal-0.2.1-arm64.dmg",
+    "bytes": 255490405,
+    "sha256": "5b7dd5cf2e1f5f1b904b4c8b178dda5a17a6ad3d42f1838163f53b22c694d81a",
+    "asarSha256": "f6c618b499f4602e8cfeaf9492201a8bafa3107f3585702c2aedc369733bd6bf"
+  },
+  "sourceAtArtifactRevision": {
+    "apps/desktop/src/renderer/src/components/SourceEditorForm.tsx": "d7fd55c07e43869618c9a6a5709a1629fb51fabc800041182867b075cb4de73d",
+    "apps/desktop/src/renderer/src/styles.css": "d14c529ce69e0dd424dc2fa8e89f2f85875cc8fcbba2240b345ceba0987b7400",
+    "apps/desktop/src/main/core-supervisor.ts": "4e082670bd20c9de619dc64063d8cfd72be1a80c745e313842f26fc55106a54b",
+    "apps/desktop/src/main/index.ts": "5831fe76da61ae444800346b8c1d0a48e0cd234db64aafe83fa2608a0769abb6",
+    "packages/media-core/src/infrastructure/parser-process.ts": "04c7b7d14fea9c1f1c24b04c8f754e798f70f30a28be2a741a4d94d83593ef4a"
+  },
+  "validationTestSource": {
+    "apps/desktop/tests/core-termination.spec.ts": "d01e130c5363dc87b9676a641a2cbb14d292daf0c9f5b705201a7767a71055bc",
+    "apps/desktop/tests/desktop.spec.ts": "0dac18c31de9c8d52ec4d0c08b9ce4f5845115c01639ff2ffa8d2c96f0ab95a1",
+    "apps/desktop/tests/installation.spec.ts": "e35dc00ce29824808d601f3654704eef408e25481d9cc3d184b440d9a4183a0f"
+  },
+  "checks": {
+    "fullUnitPassed": 887,
+    "fullUnitSkipped": 13,
+    "typecheck": true,
+    "coreTerminationTestStrictNoEmit": true,
+    "directoryPackageBuild": true,
+    "asarEntries": 9534,
+    "focusedDirectoryPassed": 8,
+    "focusedDmgPassed": 7,
+    "focusedDmgSkipped": 0,
+    "fullWindowSuiteRerunForThisAsar": false,
+    "ownedImagesDetached": true
+  },
+  "receipts": {
+    "install-matrix-readonly": {
+      "target": "darwin-arm64",
+      "appVersion": "0.2.1",
+      "schema": 27,
+      "parser": "ready",
+      "correctionFiles": "ready",
+      "asarSha256": "f6c618b499f4602e8cfeaf9492201a8bafa3107f3585702c2aedc369733bd6bf",
+      "actualReadOnlyVolume": true,
+      "coreRestarted": true,
+      "systemPathOnly": true
+    },
+    "install-matrix-reinstall": {
+      "target": "darwin-arm64",
+      "asarSha256": "f6c618b499f4602e8cfeaf9492201a8bafa3107f3585702c2aedc369733bd6bf",
+      "configurationVersion": 1,
+      "candidatesRetained": 1,
+      "backupsRetained": 1,
+      "backupFilesVerified": 2,
+      "existingFilesRetained": 2,
+      "sameFileIdentityAndContents": true,
+      "unicodeAndSpaceInstallPath": true,
+      "replacementInstall": true,
+      "uninstallAndReinstall": true,
+      "systemPathOnly": true,
+      "directoryDialog": "controlled-result",
+      "upgradeDialog": "controlled-result"
+    },
+    "install-matrix-upgrade": {
+      "target": "darwin-arm64",
+      "previousAppVersion": "0.2.1",
+      "previousSchema": 6,
+      "previousAsarSha256": "1475b3a4c17429d59feb4058b305a227416822c670e3cb851c6967493e7613b8",
+      "currentAsarSha256": "f6c618b499f4602e8cfeaf9492201a8bafa3107f3585702c2aedc369733bd6bf",
+      "currentSchema": 27,
+      "previousSchemaBackupPresent": true,
+      "sourceIdentityAndPauseRetained": true,
+      "existingFilesRetained": 2,
+      "systemPathOnly": true,
+      "directoryDialog": "controlled-result"
+    },
+    "core-termination-restart": {
+      "stoppedStateVerifiedByOS": true,
+      "resumedCoreForSuccess": false,
+      "elapsedMs": 10421,
+      "oldCoreStopped": true,
+      "oldParserStopped": true,
+      "sameMain": true,
+      "newCore": true,
+      "replacementParserReady": true,
+      "persistedDraftId": "f9b75d6d-0952-4302-8b4c-c1a25d78cd3c",
+      "draftRevision": 1,
+      "draftNotActivated": true,
+      "organizePaused": true,
+      "downloadsPaused": false,
+      "fileJobs": 0,
+      "applicationEvents": []
+    }
+  },
+  "failureHistory": {
+    "firstFocusedAttempt": {
+      "passed": 7,
+      "failed": 1,
+      "test": "永久冻结核心后显式重启",
+      "error": "核心启动已停止",
+      "failureContextPreserved": true
+    },
+    "diagnosticRestartRepeats": {
+      "passed": 3,
+      "failed": 0
+    },
+    "secondFocusedAttempt": {
+      "passed": 8,
+      "failed": 0
+    },
+    "dmgFocusedAttempt": {
+      "passed": 7,
+      "failed": 0
+    },
+    "rootCauseProven": false,
+    "productionLifecycleChanged": false,
+    "interpretation": "后续通过未能证明首轮启动中断的具体原因。新增测试内退出事件及失败阶段诊断，保留首轮失败，不宣称已修复，也不据此完成 2.6。"
+  },
+  "logs": {
+    "media-marshal-current-full-unit.log": "b4f0e773cc0a996ea5f674b3fa8562d352976f18fa9104cdd11b27fc1c5e3159",
+    "media-marshal-a152322-pack.log": "468fb7fab88460e93bd0cff823af8809265f4df0b841fb2af28ecec14a0f12e3",
+    "media-marshal-a152322-artifact.log": "45773d0b334ab3d567471ad257d4678c8836cc542aceb8173ca7bf13d4449e22",
+    "media-marshal-a152322-packaged-focused.log": "bbe58cc3b371e1927f16f8518a9aa5c9a5691d085971ad927b616dc9034da541",
+    "media-marshal-a152322-restart-diagnosis.log": "9dd30286c42cb08c7633bd79b81a5841cc04dea8934375fa9d767211d6564cc7",
+    "media-marshal-a152322-packaged-focused-second.log": "345ea56c526720f3c947eac570b5baa26676c707146dfa3771d3c13019594811",
+    "media-marshal-a152322-dmg-focused.log": "22ec7862209741effde850b0e30a74ba4ff6bea52400512bed147e4cb1c28cb3",
+    "media-marshal-core-termination-trace-types-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "screenshots": {
+    "build-artifacts/desktop-install-validation/a152322/dmg-focused-results/source-form-local-minimum.png": "f2fbeb15c961f4a62574763cf7986bcc1aff786c19020fa4507023509fc7f58c",
+    "build-artifacts/desktop-install-validation/a152322/dmg-focused-results/source-form-cloud-download.png": "c6a72e392b7197d523fb80a9b8eb3546f8bd884d6c6d48b879d4ae54be6db5d5",
+    "build-artifacts/desktop-install-validation/a152322/dmg-focused-results/source-form-download-only-minimum.png": "cb53e920c18ec96d60fd892642ed1588eda1eb152f868ec3818a7c4005781d22",
+    "build-artifacts/desktop-install-validation/a152322/dmg-focused-results/source-form-cloud-organize-minimum.png": "1b672b208df1f6b327d9526846626c7769b84b647bb38a58a73fe74a0310af7d",
+    "build-artifacts/desktop-install-validation/a152322/dmg-focused-results/source-form-processing-minimum.png": "200732107607fead8b5ff8d82a864694ad35be0bf1fc022cfd35b018f9ae7322"
+  },
+  "scopeLimits": [
+    "该 ASAR 包含 8bf13cf 的表单状态增强，50 项完整打包回归属于此前的 6a35a507… 构建，不套用于本产物。",
+    "本映像仅重跑受影响表单、配置恢复、键盘、冻结 Core 重启与三项安装场景，共 7 项；目录包另有八项定向检查。",
+    "实际只读映像、中文／空格副本与隔离业务资料；目录选择及升级确认结果受控，不作为 Finder 或系统对话框实测。",
+    "实际媒体保留、备份、SQLite、parser、Core 与原生组件均由生产实现执行；没有真实账号或个人媒体。",
+    "首轮重启中断尚无确定原因，保留诊断与完整生命周期待验状态；未为取得绿灯放宽退出期限或恢复冻结 Core。",
+    "arm64 内测仍无 Developer ID、公证、Intel、干净主机或最低支持系统证明；未安装到系统 Applications，未上传或发布。"
+  ]
+}

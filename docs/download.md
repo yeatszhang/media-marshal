@@ -75,3 +75,13 @@ shasum -a 256 "Media Marshal-0.2.1-arm64.dmg"
 ```text
 9c8c4b060155b0750c76f2fbad32dc30e506063a9b881fdf4136e4debec5de36
 ```
+
+### 新版表单内部归档 a152322
+
+包含 `8bf13cf` 表单状态增强的 arm64 内测 DMG 同样显示 0.2.1，大小 **255,490,405 字节**，仍未完成 Developer ID 签名、公证和完整发行验收，未开放下载。此映像的表单、配置恢复、冻结 Core 重启及三项安装场景共七项定向检查通过；首轮目录包的一次重启中断原因尚未确定，不能沿用上一构建的完整窗口检查结论。范围与收据见[新版表单映像验证](./architecture/mac-installation-validation.md#install-a152322)。
+
+SHA-256：
+
+```text
+5b7dd5cf2e1f5f1b904b4c8b178dda5a17a6ad3d42f1838163f53b22c694d81a
+```
