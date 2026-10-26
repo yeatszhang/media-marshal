@@ -499,6 +499,36 @@ describe("持久候选、人工确认与真实 COPY", () => {
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 });
     expect(await readFile(f.file)).toEqual(f.bytes); expect(await readFile(preview.targetPath)).toEqual(f.bytes);
   });
+  it("回放官方客户端正常下载实测时间线，最终尺寸仍须等待正式名及完整稳定窗口", async () => {
+    const trace = JSON.parse(await readFile(new URL("../../../../tools/desktop-sidecars/fixtures/quark-official-macos-7.4.2.822-normal.json", import.meta.url), "utf8")) as {
+      client: { version: string }; sample: { finalName: string; temporaryNameExample: string; bytes: number };
+      observations: { fullSizeBeforeFinalNameMs: number };
+      timeline: { atMs: number; kind: "temporary" | "final"; exists: boolean; size?: number; modifiedSincePrevious?: boolean }[];
+    };
+    expect(trace.client.version).toBe("7.4.2.822"); expect(trace.timeline).toHaveLength(77); expect(trace.observations.fullSizeBeforeFinalNameMs).toBe(941);
+    const f = await fixture(), temporaryPath = join(f.source, trace.sample.temporaryNameExample), finalPath = join(f.source, trace.sample.finalName), wall = Date.now();
+    await rename(f.file, temporaryPath); const handle = await open(temporaryPath, "r+"); cleanup.push(() => handle.close());
+    const identity = (await lstat(temporaryPath)).ino; let previousAt = 0, currentSize = f.bytes.length, path = temporaryPath, renamed = false, fullSizeWhileTemporary = 0;
+    for (const event of trace.timeline) {
+      // 同一次原子改名的两个 stat 收据相差 1 ms，在正式名收据处一起回放。
+      if (!event.exists) continue;
+      f.jump(event.atMs - previousAt); previousAt = event.atMs;
+      if (event.kind === "final") { await rename(temporaryPath, finalPath); path = finalPath; renamed = true; }
+      if (event.size !== currentSize) { await handle.truncate(event.size!); currentSize = event.size!; }
+      // 重放逻辑尺寸、修改变化及改名；稀疏测试文件不冒充原下载的内容和块分配。
+      if (event.modifiedSincePrevious) await handle.utimes(new Date(wall + event.atMs), new Date(wall + event.atMs));
+      await f.pipeline.scan(f.sourceId);
+      const items = f.pipeline.list({ sourceId: f.sourceId }).items;
+      expect(items.some(row => row.state === "READY")).toBe(false);
+      if (!renamed && currentSize === trace.sample.bytes) { fullSizeWhileTemporary++; expect(items.some(row => row.reason?.includes("临时名称"))).toBe(true); }
+    }
+    expect(fullSizeWhileTemporary).toBe(3); expect(renamed).toBe(true); expect((await lstat(finalPath)).ino).toBe(identity); expect((await lstat(finalPath)).size).toBe(trace.sample.bytes);
+    const final = () => f.pipeline.list({ sourceId: f.sourceId }).items.find(row => row.relativePath === trace.sample.finalName)!;
+    expect(final()).toMatchObject({ state: "OBSERVING", requiresConfirmation: true });
+    await f.advance(110000); f.jump(9999); await f.pipeline.scan(f.sourceId); expect(final().state).toBe("OBSERVING");
+    f.jump(1); await f.pipeline.scan(f.sourceId); expect(final()).toMatchObject({ state: "READY", requiresConfirmation: true, reason: expect.stringContaining("请确认文件已完整下载") });
+    expect(f.calls()).toBe(0); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 }); expect(await readdir(f.target)).toEqual([".media-marshal"]);
+  });
   it.each([null, [], ["cache/"]])("本地忽略设置 %j 在真实目录剪枝，私有暂存始终排除，精确样片保留跳过原因", async (ignoredFilePatterns) => {
     const f = await fixture({ ignoredFilePatterns });
     for (const directory of ["Sample", "cache", ".media-marshal/staging"]) { await mkdir(join(f.source, directory), { recursive: true }); await writeFile(join(f.source, directory, "视频.mp4"), "独立样本"); }
