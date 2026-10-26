@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "applicationCodeRevision": "2afb7f9",
+  "appVersion": "0.2.1",
+  "dataSchema": 27,
+  "releaseStatus": "unsigned-preview",
+  "benchmarkSourceSha256": "9a8f199b336c5eac869f9b519a790d7759346eca012cba8bf01f6ae1498def37",
+  "report": {
+    "capturedAt": "2026-10-26T01:26:24.635Z",
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "osRelease": "25.5.0",
+      "macOS": "26.5.2",
+      "cpu": "Apple M1",
+      "memoryGiB": 16,
+      "node": "v22.23.1",
+      "filesystemTypeCode": "0x1a"
+    },
+    "build": "未正式签名的当前目录包，Core 与冻结解析器已接入",
+    "artifact": {
+      "asarSha256": "6a35a50718d0f0a61fdb160d45186a62fa2046cdd5ed150dafd4e0dd7da08510",
+      "parserSha256": "4f8cabf53f20b0dd3b8565c7960c8d4e084c39073264e126fdc2161fce026473"
+    },
+    "definition": "启动耗时从创建进程开始，到核心已连接且来源页可以点击打开；首次/复用均为新进程，未清空 OS 磁盘缓存。复用目录先进行一次不计入结果的初始化。",
+    "firstLaunch": {
+      "samplesMs": [
+        5434.49,
+        2781.25,
+        2778.44
+      ],
+      "n": 3,
+      "p50Ms": 2781.25,
+      "p75Ms": 5434.49,
+      "p95Ms": 5434.49
+    },
+    "reusedLaunch": {
+      "samplesMs": [
+        2766.23,
+        2782.38,
+        2757.86,
+        2757.76,
+        2770.02
+      ],
+      "n": 5,
+      "p50Ms": 2766.23,
+      "p75Ms": 2770.02,
+      "p95Ms": 2782.38
+    },
+    "hotActivation": {
+      "definition": "已有进程窗口隐藏后，重复启动同一数据目录实例，测至原窗口可见且来源导航可点击；包含 10ms 轮询与自动化开销",
+      "samplesMs": [
+        190.22,
+        188.16,
+        225.11,
+        214.16,
+        181.31
+      ],
+      "n": 5,
+      "p50Ms": 190.22,
+      "p75Ms": 214.16,
+      "p95Ms": 225.11
+    },
+    "idle": {
+      "definition": "隔离空资料目录、无账号或媒体作业。从本次 Main 递归核对自有 OS 子进程，包括 Core 与冻结解析器；CPU 为两次 ps 累计 CPU 时间之差除以实际采样间隔，RSS 为末次快照。Electron 指标单列，不能与 OS 快照重复相加。",
+      "intervalMs": 2198,
+      "processes": [
+        {
+          "name": "Browser",
+          "cpuPercent": 0.46,
+          "residentKiB": 202320
+        },
+        {
+          "name": "GPU",
+          "cpuPercent": 0.46,
+          "residentKiB": 80352
+        },
+        {
+          "name": "Network Service",
+          "cpuPercent": 0,
+          "residentKiB": 48912
+        },
+        {
+          "name": "Tab",
+          "cpuPercent": 0.91,
+          "residentKiB": 175280
+        },
+        {
+          "name": "Media Marshal Core",
+          "cpuPercent": 1.37,
+          "residentKiB": 148272
+        },
+        {
+          "name": "冻结解析器",
+          "cpuPercent": 0,
+          "residentKiB": 43984
+        }
+      ],
+      "totalCpuPercent": 3.2,
+      "totalResidentMiB": 682.73,
+      "electron": {
+        "processes": [
+          {
+            "type": "Browser",
+            "name": "Browser",
+            "cpuPercent": 0.06240839399186134,
+            "workingSetKiB": 202336
+          },
+          {
+            "type": "GPU",
+            "name": "GPU",
+            "cpuPercent": 0.03041391849887167,
+            "workingSetKiB": 80352
+          },
+          {
+            "type": "Utility",
+            "name": "Network Service",
+            "cpuPercent": 0,
+            "workingSetKiB": 48912
+          },
+          {
+            "type": "Tab",
+            "name": "Tab",
+            "cpuPercent": 0.13645796308839606,
+            "workingSetKiB": 175280
+          },
+          {
+            "type": "Utility",
+            "name": "Media Marshal Core",
+            "cpuPercent": 0.1749992455348236,
+            "workingSetKiB": 148528
+          }
+        ],
+        "totalCpuPercent": 0.40427952111395266,
+        "totalWorkingSetMiB": 640.05
+      }
+    },
+    "size": {
+      "definition": "du -sk 目录占用，非 DMG/NSIS 下载体积",
+      "appMiB": 596.19,
+      "bundledParserMiB": 26.22
+    },
+    "bundledParser": {
+      "guessitVersion": "3.8.0",
+      "startupToHealthMs": 91.03,
+      "parse": {
+        "samplesMs": [
+          37.31,
+          3.96,
+          4.65,
+          3.85,
+          4.55,
+          3.79,
+          4.51,
+          3.84,
+          4.68,
+          3.74,
+          4.47,
+          3.71,
+          4.48,
+          3.73,
+          4.46,
+          3.73,
+          4.5,
+          3.73,
+          4.46,
+          3.71
+        ],
+        "n": 20,
+        "p50Ms": 3.96,
+        "p75Ms": 4.5,
+        "p95Ms": 4.68
+      }
+    },
+    "limitations": [
+      "样本量较小，未登录账号的空队列不代表真实下载、识别或 COPY 负载",
+      "仅测 macOS 当前机器，未测最低系统和其他架构",
+      "工作集相加可能重复计算共享页，不代表系统独占内存",
+      "解析耗时由同一随包程序独立进程测量，不等于完整识别或入库耗时",
+      "未测签名、公证和正式安装包"
+    ]
+  }
+}

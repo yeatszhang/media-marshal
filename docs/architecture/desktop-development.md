@@ -189,9 +189,11 @@ macOS arm64、Intel Mac、Windows x64 在同一提交上各通过 22 次本地 A
 
 ## 原型测量
 
-生成当前平台目录包和独立冻结 parser 后，在 macOS 运行 `npm run desktop:benchmark`。原始样本及环境保存到 `test-results/desktop/benchmark.json`。测量包含 Playwright 启动、查询与交互开销，系统磁盘缓存未清空；冷启动在此定义为新应用进程，热唤起为已有托盘进程重新显示窗口。它们不等于安装态真实用户体验的最终基准。
+生成当前平台目录包后，在 macOS 运行 `npm run desktop:benchmark`。测量从包内启动同一冻结 parser，不要求另有工作区 parser 产物。原始样本、ASAR／parser 摘要及环境保存到 `test-results/desktop/benchmark.json`。测量包含 Playwright 启动、查询与交互开销，系统磁盘缓存未清空；冷启动在此定义为新应用进程，热唤起为已有托盘进程重新显示窗口。它们不等于安装态真实用户体验的最终基准。
 
-本轮 Apple M1 / 16 GiB、macOS 26.5.2、系统 APFS（应用目录 statfs type `0x1a`）的空队列原型结果：
+空队列测量使用隔离资料目录。从实际 Main 的 PID、创建时间和完整命令核对归属，递归采样其 OS 子进程，包含 Core 和冻结 parser。CPU 使用两次 `ps` 累计 user＋system CPU 时间之差除以实际采样间隔，RSS 为末次快照；Electron `app.getAppMetrics` 单列，不能重复相加。新出现或缺少比较基线的进程保留未知 CPU，不记为零。以下原型表保留 2026-10-18～19 的旧测量，不将旧值套用于当前构建。
+
+2026-10-18～19 的 Apple M1 / 16 GiB、macOS 26.5.2、系统 APFS（应用目录 statfs type `0x1a`）空队列原型结果：
 
 | 项目 | 样本 | P75 | P95 |
 | --- | --- | --- | --- |
@@ -202,7 +204,22 @@ macOS arm64、Intel Mac、Windows x64 在同一提交上各通过 22 次本地 A
 
 冻结 parser 启动到 health 响应为一次样本 239.67 ms。最后一次启动稳定 2 秒后，Electron 管理的全部进程 CPU 采样合计约 0.33%，工作集相加约 566.69 MiB；共享页可能重复计算，该值不是系统独占内存。此时独立 parser 未接入 Core，不在该应用进程树内，不能视作最终完整流水线的资源数据。
 
-`du -sk` 测得当前应用目录约 367.91 MiB，独立 parser 目录约 23.53 MiB，均非 DMG/NSIS 下载体积。样本较小，未设置虚构性能承诺；Windows、Intel Mac、最低系统、正式签名产物及完整媒体队列均未测，后续接通 parser 和业务后需重新测量。
+当时 `du -sk` 测得应用目录约 367.91 MiB，独立 parser 目录约 23.53 MiB，均非 DMG/NSIS 下载体积。样本较小，未设置虚构性能承诺；Windows、Intel Mac、最低系统、正式签名产物及完整媒体队列均未测，后续接通 parser 和业务后需重新测量。
+
+### 当前目录包测量（2026-10-26）
+
+已接入 Core／冻结 parser 的 arm64 未签名目录包在同一 Apple M1／16 GiB、macOS 26.5.2／APFS 机器重新测量。修正脚本对「来源配置」标题的定位，直接测量随包解析器，补齐原先不在 Electron 指标中的 parser 进程。应用 ASAR 为 `6a35a50718d0f0a61fdb160d45186a62fa2046cdd5ed150dafd4e0dd7da08510`；脚本、环境与完整样本见 `tools/desktop-files/fixtures/mac-benchmark-2026-10-26.json`。
+
+| 检查 | 样本数 | P75 | P95 |
+| --- | --- | --- | --- |
+| 新资料目录、新进程到核心连接且来源页可用 | 3 | 5434.49 ms | 5434.49 ms |
+| 复用资料目录、新进程到同一可用状态 | 5 | 2770.02 ms | 2782.38 ms |
+| 已有进程隐藏窗口后重复启动唤起 | 5 | 214.16 ms | 225.11 ms |
+| 同一随包 parser 的名称解析请求 | 20 | 4.50 ms | 4.68 ms |
+
+parser 独立启动至 health 为 91.03 ms，首个解析请求为 37.31 ms，已包含在二十项原始样本中。启动后的 2198 ms 空队列窗口共采样六个 OS 进程，含 Core 和 parser，单核满载为 100% 口径的累计 CPU 时间差为 3.20%，末次 RSS 合计 682.73 MiB。Electron 五个进程的 SDK 指标另保存为 0.4043%／640.05 MiB，不与 OS 数据相加。RSS／工作集相加可能重复计算共享页，不是系统独占内存。
+
+应用目录占用 596.19 MiB，包含的 parser 为 26.22 MiB，均非 DMG 下载体积。此记录包含自动化和磁盘缓存影响；未登录账号、没有媒体作业，不能推广为真实下载、COPY、长期空闲或其他架构性能，也不作为已签名安装态的结果。
 
 
 云端测试默认使用 `npm test` 的 Electron Node 运行器，SQLite 与桌面 ABI 保持一致；`npm run test:electron-node` 为兼容别名。准备与验证命令见 [网盘与传输扩展开发](./cloud-adapter-development.md)。不要在桌面原生模块重建之后直接用另一 Node ABI 加载该 SQLite 二进制。
