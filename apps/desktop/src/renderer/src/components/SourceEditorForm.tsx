@@ -22,6 +22,10 @@ function DownloadFilters({ configured, children }: { configured: boolean; childr
   </details>;
 }
 
+function SourceOptionTitle({ title, status }: { title: string; status: string }) {
+  return <span className="source-option-heading"><strong>{title}</strong><span className="source-option-status" aria-hidden="true">{status}</span></span>;
+}
+
 export function SourceEditorForm({ onClose }: { onClose(): void }) {
   const { model, state } = useSourceRules(), nameRef = useRef<HTMLInputElement>(null), editor = state.editor, busy = !!state.pending, preview = state.preview;
   const [automaticAccepted, setAutomaticAccepted] = useState(false);
@@ -32,7 +36,7 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
   const organization = <>
     <div className="folder-field"><span>整理目标媒体目录</span><div><FolderOutput size={17} aria-hidden="true" /><span className="path" title={editor.targetPath}>{editor.targetPath || "尚未选择整理目标"}</span><Button variant="outline" size="sm" onClick={() => { void model.choose("target"); }}>选择整理目标目录</Button></div></div>
     <label>媒体类型<select aria-label="媒体类型" value={editor.mediaType} onChange={(event) => model.change({ mediaType: event.target.value as typeof editor.mediaType })}><option value="AUTO">自动识别电影／剧集</option><option value="MOVIE">电影</option><option value="TV_SHOW">剧集</option></select><small className="source-field-help">电影和剧集可分别选择对应来源与目标；混合内容选择自动识别。</small></label>
-    <div className={`source-option${editor.automatic ? " is-enabled" : ""}`}><label className="source-option-label"><input type="checkbox" aria-label="自动整理满足条件的新文件" checked={editor.automatic} disabled={!editor.version} onChange={(event) => model.change({ automatic: event.target.checked })} /><span><strong>自动整理满足条件的新文件</strong><small>默认由你逐项确认。开启后，只有下载完整、作品和季集都能明确识别的新文件才自动复制；有疑问的文件仍等你核对。</small></span></label>
+    <div className={`source-option${editor.automatic ? " is-enabled" : ""}`}><label className="source-option-label"><input type="checkbox" aria-label="自动整理满足条件的新文件" checked={editor.automatic} disabled={!editor.version} onChange={(event) => model.change({ automatic: event.target.checked })} /><span><SourceOptionTitle title="自动整理满足条件的新文件" status={editor.automatic ? "满足条件自动整理" : "逐项确认"} /><small>默认由你逐项确认。开启后，只有下载完整、作品和季集都能明确识别的新文件才自动复制；有疑问的文件仍等你核对。</small></span></label>
       {!editor.automatic && <p className="source-option-prerequisite">首次使用：先确认来源，在「待处理」核对一份整理预览，再回来开启自动整理。</p>}
       {editor.automatic && <div className="source-option-content"><p className="source-field-help">{editor.type === "local" ? "当前本地客户端行为尚未完整验证，本地来源仍需逐项确认。" : "无法确定下载完整或识别结果时，文件留在「待处理」并显示原因。"}修改这个选项后，需重新预览并确认配置；已经确认的整理会继续执行。</p></div>}
     </div>
@@ -61,13 +65,13 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
           {root && <p className="source-location-status">{root.state === "AVAILABLE" ? `原目录可用 · 可用空间 ${sourceSize(root.availableBytes)}` : "原磁盘或目录尚未恢复，请核对原卷授权。"}</p>}
         </SourceStep>
         <SourceStep number={3} title="什么时候下载" description="定期检查只控制下载时间，与下方是否整理相互独立。">
-          <div className={`source-option${editor.periodic ? " is-enabled" : ""}`}><label className="source-option-label"><input aria-label="定期检查网盘目录" type="checkbox" checked={editor.periodic} disabled={editor.remoteType === "file"} onChange={(event) => model.change({ periodic: event.target.checked })} /><span><strong>定期检查网盘目录</strong><small>{editor.remoteType === "file" ? "当前选择的是单个文件，只能执行一次；周期扫描仅适用于目录。" : editor.periodic ? "配置确认后，按下方间隔检查网盘目录，下载符合筛选条件的新增或变化文件。" : "当前仅手动执行。确认配置时可以执行一次，也可稍后从来源列表执行。"}</small></span></label>
+          <div className={`source-option${editor.periodic ? " is-enabled" : ""}`}><label className="source-option-label"><input aria-label="定期检查网盘目录" type="checkbox" checked={editor.periodic} disabled={editor.remoteType === "file"} onChange={(event) => model.change({ periodic: event.target.checked })} /><span><SourceOptionTitle title="定期检查网盘目录" status={editor.periodic ? "定期检查" : "手动执行"} /><small>{editor.remoteType === "file" ? "当前选择的是单个文件，只能执行一次；周期扫描仅适用于目录。" : editor.periodic ? "配置确认后，按下方间隔检查网盘目录，下载符合筛选条件的新增或变化文件。" : "当前仅手动执行。确认配置时可以执行一次，也可稍后从来源列表执行。"}</small></span></label>
             {editor.periodic && <div className="source-option-content"><label>扫描间隔<select aria-label="扫描间隔" value={editor.intervalSeconds} onChange={(event) => model.change({ intervalSeconds: Number(event.target.value) })}>{[...new Set([60, 300, 900, 3600, 86400, editor.intervalSeconds])].sort((a, b) => a - b).map((seconds) => <option value={seconds} key={seconds}>{seconds < 3600 ? `${seconds / 60} 分钟` : `${seconds / 3600} 小时`}</option>)}</select></label><p className="source-field-help">应用运行时才扫描；退出期间漏过的周期在重启后合并补扫。网盘文件被删除，不会删除已下载文件。</p></div>}
           </div>
           <details className="source-behavior-note"><summary>哪些文件变化可能无法发现？</summary><p>夸克按路径、大小等信息比较文件。同尺寸内容替换可能无法识别，需要时可在来源列表选择「强制重新下载」。</p></details>
         </SourceStep>
         <SourceStep number={4} title="下载后做什么" description="默认只下载。开启整理后，再识别作品并复制到媒体库。">
-          <div className={`source-option${editor.organize ? " is-enabled" : ""}`}><label className="source-option-label"><input aria-label="下载后整理到媒体库" type="checkbox" checked={editor.organize} onChange={(event) => model.change({ organize: event.target.checked })} /><span><strong>下载后整理到媒体库</strong><small>{editor.automatic ? "完成文件先识别，满足自动条件后复制；证据不足的文件仍进入待处理。下载原文件保留。" : "下载完成的文件进入「待处理」。核对作品、季集和目标路径并确认后，才复制到媒体库；下载的原文件保留。"}</small></span></label>
+          <div className={`source-option${editor.organize ? " is-enabled" : ""}`}><label className="source-option-label"><input aria-label="下载后整理到媒体库" type="checkbox" checked={editor.organize} onChange={(event) => model.change({ organize: event.target.checked })} /><span><SourceOptionTitle title="下载后整理到媒体库" status={editor.organize ? "下载并整理" : "只下载"} /><small>{!editor.organize ? "开启后，下载完成的文件才会进入识别与整理；可选择逐项确认，或在满足条件时自动整理。" : editor.automatic ? "完成文件先识别，满足自动条件后复制；证据不足的文件仍进入待处理。下载原文件保留。" : "下载完成的文件进入「待处理」。核对作品、季集和目标路径并确认后，才复制到媒体库；下载的原文件保留。"}</small></span></label>
             {editor.organize && <div className="source-option-content">{organization}</div>}
           </div>
           {!editor.organize && <p className="source-only-download">当前只下载到本地，无需 TMDB、媒体目标或 Emby 配置。</p>}

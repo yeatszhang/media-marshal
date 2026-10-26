@@ -296,6 +296,16 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
   }
   await form.screenshot({ path: "test-results/desktop/source-form-cloud-organize-minimum.png" });
   await form.locator(".source-step").nth(3).screenshot({ path: "test-results/desktop/source-form-processing-minimum.png" });
+  // 扫描时机与后续整理分别配置，切换任一选项不能改变另一项。
+  await periodic.uncheck(); await expect(organize).toBeChecked(); await expect(window.getByLabel("扫描间隔", { exact: true })).toHaveCount(0);
+  await expect(window.getByLabel("媒体类型", { exact: true })).toBeVisible(); await expect(behavior).toContainText("手动执行");
+  await organize.uncheck(); await periodic.check(); await expect(organize).not.toBeChecked();
+  await expect(window.getByLabel("媒体类型", { exact: true })).toHaveCount(0); await expect(window.getByLabel("扫描间隔", { exact: true })).toBeVisible();
+  await expect(behavior).toContainText("仅保存到本地下载目录"); await expect(behavior).toContainText("已连接的网盘账号和本地下载目录即可");
+  await expect(organize.locator("..")).toContainText("开启后，下载完成的文件才会进入识别与整理");
+  await expect(organize.locator("..").locator(".source-option-status")).toHaveText("只下载");
+  await expect(periodic.locator("..").locator(".source-option-status")).toHaveText("定期检查");
+  await form.locator(".source-step").nth(3).screenshot({ path: "test-results/desktop/source-form-download-only-minimum.png" });
   await window.getByLabel("来源类型", { exact: true }).selectOption("local"); await expect(form.getByRole("region")).toHaveCount(3);
   await expect(behavior).toHaveCount(0);
   await expect(periodic).toHaveCount(0); await expect(organize).toHaveCount(0); await expect(window.getByRole("button", { name: "选择本地输入目录", exact: true })).toBeVisible();

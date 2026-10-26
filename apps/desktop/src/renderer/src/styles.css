@@ -105,6 +105,9 @@
 .source-option-label > input[type="checkbox"] { flex: 0 0 18px; width: 18px; min-width: 18px; height: 18px; margin: 2px 0 0; padding: 0; accent-color: var(--primary); }
 .source-option-label > span { min-width: 0; flex: 1; }
 .source-option-label strong { display: block; font-size: 14px; line-height: 22px; }
+.source-option-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.source-option-status { flex: 0 0 auto; padding: 1px 8px; border-radius: 5px; background: var(--background); color: var(--muted-foreground); font-size: 11px; font-weight: 400; line-height: 20px; }
+.source-option.is-enabled > .source-option-label .source-option-status { background: #edf4f0; color: var(--primary); }
 .source-option-label small { display: block; color: var(--muted-foreground); font-weight: 400; font-size: 13px; line-height: 1.7; margin-top: 4px; }
 .source-option-content { display: grid; gap: 16px; padding: 18px 16px; border-top: 1px solid var(--border); background: #fbfdfc; }
 .source-option-content > label { max-width: 320px; }
