@@ -1,6 +1,5 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { execFile, fork } from "node:child_process";
-import { promisify } from "node:util";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fork } from "node:child_process";
 import { mkdtemp, mkdir, readFile, realpath, rm, lstat, unlink, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,7 +16,6 @@ import { probeManagedVolume, probeReadOnlyVolume } from "./volume-probe";
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
 describe.skipIf(process.platform !== "darwin")("整理与交付记账真实 SIGKILL", () => {
-  beforeAll(async () => { await promisify(execFile)(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "-p", "packages/media-core/tsconfig.json"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 30000, shell: false }); });
   it("全量内容复核读取中强杀，原作业保留已完成项并只读取未完成文件", async () => {
     const path = await realpath(await mkdtemp(join(tmpdir(), "marshal-content-review-crash-"))); cleanup.push(() => rm(path, { recursive: true, force: true }));
     const sourcePath = join(path, "输入"), targetPath = join(path, "媒体库"); await mkdir(sourcePath); await mkdir(targetPath);
@@ -26,7 +24,7 @@ describe.skipIf(process.platform !== "darwin")("整理与交付记账真实 SIGK
     const exited = new Promise<string | null>((resolve) => child.once("exit", (_code, signal) => resolve(signal))); cleanup.push(async () => { if (child.exitCode === null && !child.signalCode) { child.kill("SIGKILL"); await exited; } });
     const reached = new Promise<{ reviewId: string; sourceFile: string; size: number; authorization: PrivateCoreInput<"media.sources.authorize"> }>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("复核未到达读取边界")), 10000);
-      child.once("message", (value: any) => { clearTimeout(timer); if (value.error) reject(new Error("内容复核崩溃夹具失败")); else resolve(value); }); child.once("error", (error) => { clearTimeout(timer); reject(error); });
+      child.once("message", (value: any) => { clearTimeout(timer); if (value.error) reject(new Error(`内容复核崩溃夹具失败：${value.stage}／${value.failure?.code}／${value.failure?.message}`)); else resolve(value); }); child.once("error", (error) => { clearTimeout(timer); reject(error); });
     });
     child.send({ path, source, target, point: "content-review" }); const receipt = await reached; child.kill("SIGKILL"); expect(await exited).toBe("SIGKILL");
     const db = await CoreDatabase.open(join(path, "desktop.sqlite3"), undefined, { exclusiveOwner: true }); cleanup.push(() => db.close());

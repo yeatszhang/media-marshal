@@ -1,6 +1,5 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { execFile, fork } from "node:child_process";
-import { promisify } from "node:util";
+import { afterEach, describe, expect, it } from "vitest";
+import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, realpath, readFile, rm, readdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,8 +12,6 @@ import { probeManagedVolume } from "./volume-probe";
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 describe.skipIf(process.platform !== "darwin")("Core 文件与记账边界真实 SIGKILL", () => {
-  // 子进程执行发布用编译输出；避免拿已有 dist 当作当前源码的测试证据。
-  beforeAll(async () => { await promisify(execFile)(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "-p", "packages/media-core/tsconfig.json"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 30000, shell: false }); });
   for (const point of ["planned", "writing", "verified", "intent", "linked", "recorded", "foreign-target"]) it(`${point} 强杀后按持久证据恢复`, async () => {
     const path = await realpath(await mkdtemp(join(tmpdir(), "marshal-file-crash-"))); cleanup.push(() => rm(path, { recursive: true, force: true }));
     const target = join(path, "download"); await mkdir(target); const grant = await probeManagedVolume(target);

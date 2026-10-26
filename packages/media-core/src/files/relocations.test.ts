@@ -19,7 +19,6 @@ describe.skipIf(process.platform !== "darwin")("持久修正文件步骤（真�
     work = await realpath(await mkdtemp(join(tmpdir(), "marshal-relocations-")));
     await run(process.execPath, [resolve("tools/desktop-files/build.mjs"), "--out", join(work, "native")], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 30000 });
     const manifestPath = join(work, "native/manifest.json"); nativeLaunch = { manifestPath, manifestSha256: createHash("sha256").update(await readFile(manifestPath)).digest("hex") }; native = await loadNativeRename(nativeLaunch);
-    await run(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "-p", "packages/media-core/tsconfig.json"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 30000 });
   }, 40000);
   afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
   afterAll(async () => { if (work) await rm(work, { recursive: true, force: true }); });

@@ -207,4 +207,4 @@ macOS arm64、Intel Mac、Windows x64 在同一提交上各通过 22 次本地 A
 
 云端测试默认使用 `npm test` 的 Electron Node 运行器，SQLite 与桌面 ABI 保持一致；`npm run test:electron-node` 为兼容别名。准备与验证命令见 [网盘与传输扩展开发](./cloud-adapter-development.md)。不要在桌面原生模块重建之后直接用另一 Node ABI 加载该 SQLite 二进制。
 
-整理强杀恢复测试会编译并读取 `packages/media-core/dist`；`typecheck` 会更新 contracts 声明，`desktop:build` 会更新完整产物，因此三者按类型构建、单元测试、桌面构建的顺序执行，避免共享产物写入竞争。Electron 窗口测试在构建成功后启动；构建失败后不得继续沿用旧 Renderer 或混合宿主／核心产物作为当前验收。
+`npm test` 的 Electron Node 运行器先串行构建 contracts 与 `packages/media-core/dist`，成功后才运行并行测试；真实强杀夹具统一读取这份编译输出，测试文件不再各自重编共享目录。`typecheck` 会更新 contracts 声明，`desktop:build` 会更新完整产物，因此类型构建、单元测试和桌面构建仍须按顺序执行，不能并行运行多个写入同一 dist 的入口。Electron 窗口测试在构建成功后启动；构建失败后不得继续沿用旧 Renderer 或混合宿主／核心产物作为当前验收。
