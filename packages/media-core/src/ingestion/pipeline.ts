@@ -743,7 +743,16 @@ export class IngestionPipeline implements ManagedIngestionSink {
       if (row.mode === "managed") {
         const files = this.database.connection.prepare("SELECT i.id,i.version_key,i.target_segments_json,c.file_evidence_json FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.target_root_id=? AND i.state='COMPLETED' ORDER BY i.id LIMIT 10001").all(row.download_root_id) as { id: string; version_key: string; target_segments_json: string; file_evidence_json: string }[];
         if (files.length > 10000) throw conflict("已完成下载超过一万项，请按来源拆分目录");
-        for (const file of files) { check(); if (!this.canAccept({ itemId: file.id, versionKey: file.version_key })) continue; const evidence = localFileEvidenceSchema.parse(JSON.parse(file.file_evidence_json)); try { await this.accept({ itemId: file.id, versionKey: file.version_key, rootId: row.download_root_id!, completedSegments: JSON.parse(file.target_segments_json), size: evidence.size, sha256: evidence.sha256 }, signal); check(); discovered++; checkedPaths.push(["completed", ...JSON.parse(file.target_segments_json)].join("/")); } catch (error) { await failed(["completed", ...JSON.parse(file.target_segments_json)], error); } }
+        for (const file of files) {
+          check(); if (!this.canAccept({ itemId: file.id, versionKey: file.version_key })) continue;
+          const evidence = localFileEvidenceSchema.parse(JSON.parse(file.file_evidence_json)), completedSegments: string[] = JSON.parse(file.target_segments_json), relative = ["completed", ...completedSegments];
+          try {
+            // 幂等接收允许终态候选补记回执；显式／定时补扫仍须核对本次文件可读。
+            await root!.inspect(relative); check();
+            await this.accept({ itemId: file.id, versionKey: file.version_key, rootId: row.download_root_id!, completedSegments, size: evidence.size, sha256: evidence.sha256 }, signal);
+            check(); discovered++; checkedPaths.push(relative.join("/"));
+          } catch (error) { await failed(relative, error); }
+        }
       } else {
         const ignored = this.ignored(row), files = await this.sources.get(sourceId)!.discover([], 10000, ignored, signal), samples = sampleVideos(files, (name) => video.test(name)), observed = new Set<string>();
         for (const relative of files) {

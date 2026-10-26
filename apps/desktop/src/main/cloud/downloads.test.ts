@@ -475,15 +475,19 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     // 枚举和确认需要跨多个 500ms 调度周期，等待完整记账，避免全量并发检查中的瞬时状态。
     await expect.poll(() => ({ jobs: (f.db.connection.prepare("SELECT count(*) AS n FROM download_job").get() as { n: number }).n, complete: (f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan WHERE state='COMPLETE'").get() as { n: number }).n }), { timeout: 5000 }).toEqual({ jobs: 1, complete: 1 });
   });
-  it("共享目录的手动扫描摘要仅包含本来源有效需求，其他来源的权限问题不会误归属", async () => {
+  it.each([false, true])("共享目录的手动扫描摘要仅包含本来源有效需求，已淘汰候选=%s 时仍核验文件权限", async (superseded) => {
     const f = await setup(new Map([["甲/电影.mp4", Buffer.from("甲内容")], ["乙/电影.mp4", Buffer.from("乙内容")]])), targetPath = join(f.path, "共享扫描目标"); await mkdir(targetPath); const target = await probeManagedVolume(targetPath);
     const first = await organized(f, "甲来源", f.entries.find((entry) => entry.name === "甲")!.ref, target), second = await organized(f, "乙来源", f.entries.find((entry) => entry.name === "乙")!.ref, target);
     f.downloads.start(); await expect.poll(() => [first, second].map((row) => f.state(row.job.jobId).state), { timeout: 10000 }).toEqual(["COMPLETED", "COMPLETED"]);
     // 完成状态先于下载调度收尾；先停止写入者，再排空已开始的扫描，隔离权限故障注入。
     await f.downloads.close();
     await f.pipeline.scan(f.pipeline.bootstrap()[0]!.sourceId);
-    const row = f.db.connection.prepare("SELECT i.target_segments_json FROM download_item i JOIN download_job_item ji ON ji.item_id=i.id WHERE ji.job_id=?").get(second.job.jobId) as { target_segments_json: string }, denied = join(f.rootPath, "completed", ...JSON.parse(row.target_segments_json)); await chmod(denied, 0o000);
+    const row = f.db.connection.prepare("SELECT i.id,i.target_segments_json FROM download_item i JOIN download_job_item ji ON ji.item_id=i.id WHERE ji.job_id=?").get(second.job.jobId) as { id: string; target_segments_json: string }, denied = join(f.rootPath, "completed", ...JSON.parse(row.target_segments_json));
+    // 权限／属性变化可能已使旧候选淘汰；显式补扫不能仅凭幂等接收回执算文件成功。
+    if (superseded) expect(f.db.connection.prepare("UPDATE ingestion_candidate SET state='SUPERSEDED' WHERE managed_item_id=?").run(row.id).changes).toBe(1);
+    await chmod(denied, 0o000);
     try {
+      await expect(readFile(denied)).rejects.toMatchObject({ code: "EACCES" });
       await f.pipeline.scan(f.pipeline.bootstrap()[0]!.sourceId);
       const a = f.rules.scans.enqueue({ sourceId: first.source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: a.id })).toMatchObject({ job: { state: "COMPLETED", discovered: 1, failed: 0 }, issues: [] });
       const b = f.rules.scans.enqueue({ sourceId: second.source.id, requestKey: randomUUID() }); await f.rules.scans.idle(); expect(f.rules.scans.get({ id: b.id })).toMatchObject({ job: { state: "PARTIAL_FAILED", discovered: 0, failed: 1 }, issues: [{ relativePath: expect.stringContaining("乙") }] });
