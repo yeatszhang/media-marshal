@@ -10,6 +10,7 @@ import {
   session,
   Tray,
   shell,
+  type MenuItemConstructorOptions,
 } from "electron";
 import {
   createApplication,
@@ -39,6 +40,7 @@ import { trayIcon } from "./tray-icon";
 import { HostPreferencesController } from "./host-preferences";
 import { DesktopAboutController } from "./desktop-about";
 import { RendererReloadController } from "./renderer-reload";
+import { NativePauseControls, type PauseKind } from "./native-pause-controls";
 import { SidecarSupervisor } from "./cloud/sidecar-supervisor";
 import { AccountCredentials } from "./cloud/account-credentials";
 import { defaultDiagnostic } from "./cloud/diagnostics";
@@ -86,6 +88,8 @@ async function bootstrap() {
   let tray: Tray | undefined;
   let exiting = false;
   let maintenance = false;
+  let nativePauses: NativePauseControls | undefined;
+  let refreshNativePauses: (() => void) | undefined;
   let rendererReload: RendererReloadController | undefined;
   let reloadFlight: Promise<void> | undefined;
   const requestReload = (ignoreCache = false) => {
@@ -307,6 +311,7 @@ async function bootstrap() {
         const vault = ctx.get(credentialToken);
         await installServiceCredentials(supervisor, vault);
         await recover();
+        refreshNativePauses?.();
       };
       let capacityMaintenance: Promise<void> | undefined;
       const host = ctx.get(sidecarToken);
@@ -333,6 +338,7 @@ async function bootstrap() {
       ctx.disposables.add(() => supervisor.stop());
       // 首次、显式及自动重启共用同一栅栏；备份失败不能通过“重启核心”绕过。
       supervisor.beforeStart = async () => {
+        nativePauses?.invalidate();
         await backups.recover();
         if (exiting || ctx.signal.aborted) throw new DesktopError("INTERRUPTED", "客户端正在停止", true);
         const version = await runtimeVersion(), previous = await backups.previousVersion();
@@ -488,6 +494,7 @@ async function bootstrap() {
                 },
               };
             if (action === "desktop.restart-core") {
+              nativePauses?.invalidate();
               await supervisor.restart();
               return { ok: true, result: null };
             }
@@ -532,6 +539,11 @@ async function bootstrap() {
             }
             return { ok: true, result: await supervisor.requestPrivate("source-rules.apply", { ...input, grants: { source, target } }) };
           }
+          if (request.action === "ingestion.set-paused" || request.action === "cloud.downloads.set-paused") {
+            nativePauses?.invalidate();
+            try { return { ok: true, result: await supervisor.request(request.action, request.payload as never) }; }
+            finally { refreshNativePauses?.(); }
+          }
           return {
             ok: true,
             result: await supervisor.request(
@@ -559,16 +571,19 @@ async function bootstrap() {
       if (exiting || ctx.signal.aborted) return;
       tray = new Tray(trayIcon());
       tray.setToolTip("Media Marshal");
-      tray.setContextMenu(
-        Menu.buildFromTemplate([
-          { label: "打开 Media Marshal", click: show },
-          { type: "separator" },
-          { label: "退出", click: () => app.quit() },
-        ]),
-      );
+      const supervisor = ctx.get(coreToken), labels = { organize: "暂停全部整理", downloads: "暂停云端下载" };
+      const schedule = (task: () => Promise<void>) => { if (!exiting && !maintenance && !ctx.signal.aborted) void ctx.effects.run(task, "核对或保存原生暂停控制").catch(() => {}); };
+      const report = (kind: PauseKind, message?: string) => { const problem = message ?? nativePauses?.view[kind].problem; if (problem && !exiting && !maintenance) dialog.showErrorBox(`${kind === "organize" ? "整理" : "云端下载"}控制问题`, problem); };
+      const pauseEntries = (): MenuItemConstructorOptions[] => [
+        ...(["organize", "downloads"] as const).map(kind => ({ id: `desktop.pause.${kind}`, label: labels[kind] + "（状态未核对）", type: "checkbox" as const, checked: false, enabled: false, click: (item: Electron.MenuItem) => { const paused = item.checked; schedule(() => nativePauses!.set(kind, paused)); } })),
+        { id: "desktop.pause.status", label: "正在核对暂停状态", enabled: false },
+        { id: "desktop.pause.refresh", label: "重新核对暂停状态", click: () => refreshNativePauses?.() },
+        ...(["organize", "downloads"] as const).map(kind => ({ id: `desktop.pause.problem.${kind}`, label: `查看上次${kind === "organize" ? "整理" : "云端下载"}控制问题…`, visible: false, click: () => report(kind) })),
+      ];
+      const trayMenu = Menu.buildFromTemplate([{ label: "打开 Media Marshal", click: show }, { type: "separator" }, ...pauseEntries(), { type: "separator" }, { label: "退出", click: () => app.quit() }]);
+      tray.setContextMenu(trayMenu);
       tray.on("double-click", show);
-      Menu.setApplicationMenu(
-        Menu.buildFromTemplate([
+      const applicationMenu = Menu.buildFromTemplate([
           {
             label: "Media Marshal",
             submenu: [
@@ -578,6 +593,7 @@ async function bootstrap() {
             ],
           },
           { role: "editMenu", label: "编辑" },
+          { id: "desktop.tasks", label: "任务", submenu: pauseEntries() },
           { label: "视图", submenu: [
             { id: "desktop.reload", label: "重新加载界面", accelerator: "CmdOrCtrl+R", click: () => requestReload() },
             { id: "desktop.reload-ignoring-cache", label: "忽略缓存并重新加载界面", accelerator: "CmdOrCtrl+Shift+R", click: () => requestReload(true) },
@@ -585,8 +601,36 @@ async function bootstrap() {
             { type: "separator" }, { role: "resetZoom", label: "实际大小" }, { role: "zoomIn", label: "放大" }, { role: "zoomOut", label: "缩小" },
             { type: "separator" }, { role: "togglefullscreen", label: "切换全屏" },
           ] },
-        ]),
-      );
+        ]);
+      Menu.setApplicationMenu(applicationMenu);
+      const menus = [trayMenu, applicationMenu];
+      nativePauses = new NativePauseControls({
+        ready: () => !exiting && !maintenance && !ctx.signal.aborted && supervisor.state === "ready",
+        read: kind => kind === "organize" ? supervisor.request("ingestion.pause-status", {}) : supervisor.request("cloud.downloads.pause-status", {}),
+        write: (kind, paused, requestKey) => kind === "organize" ? supervisor.request("ingestion.set-paused", { paused, requestKey }) : supervisor.request("cloud.downloads.set-paused", { paused, requestKey }),
+        report,
+        publish: view => {
+          for (const menu of menus) {
+            for (const kind of ["organize", "downloads"] as const) {
+              const item = menu.getMenuItemById(`desktop.pause.${kind}`)!; item.label = labels[kind] + (view[kind].paused === null ? "（状态未核对）" : ""); item.checked = view[kind].paused === true; item.enabled = view[kind].enabled;
+              menu.getMenuItemById(`desktop.pause.problem.${kind}`)!.visible = !!view[kind].problem;
+            }
+            const status = menu.getMenuItemById("desktop.pause.status")!; status.visible = !!view.status; status.label = view.status ?? "暂停状态已核对";
+            menu.getMenuItemById("desktop.pause.refresh")!.enabled = !exiting && !maintenance && !ctx.signal.aborted;
+          }
+          if (process.platform === "linux" && tray && !tray.isDestroyed()) tray.setContextMenu(trayMenu);
+        },
+      });
+      let pauseRefreshFlight: Promise<void> | undefined;
+      refreshNativePauses = () => {
+        if (pauseRefreshFlight || exiting || maintenance || ctx.signal.aborted) return;
+        pauseRefreshFlight = ctx.effects.run(() => nativePauses!.refresh(), "核对原生暂停状态").catch(() => {}).finally(() => { pauseRefreshFlight = undefined; });
+      };
+      const openMenu = () => refreshNativePauses?.(), taskMenu = applicationMenu.getMenuItemById("desktop.tasks")!.submenu!;
+      trayMenu.on("menu-will-show", openMenu); taskMenu.on("menu-will-show", openMenu);
+      const pauseTimer = setInterval(openMenu, 10000);
+      ctx.disposables.add(() => { clearInterval(pauseTimer); trayMenu.removeListener("menu-will-show", openMenu); taskMenu.removeListener("menu-will-show", openMenu); refreshNativePauses = undefined; nativePauses?.freeze(); });
+      refreshNativePauses();
     },
   };
   const desktop = createApplication({
@@ -607,11 +651,12 @@ async function bootstrap() {
     }
     if (maintenance || exiting) throw new DesktopError("CONFLICT", "客户端正在停止");
     maintenance = true;
+    nativePauses?.freeze();
     try {
       await hostPreferences.stop();
       await desktop.container.get(quarkLoginToken).stop();
       const host = desktop.container.get(sidecarToken); host.retainForBackup();
-      await desktop.container.get(cloudAccountsToken).stop(); await desktop.container.get(coreToken).stop(); await host.stop(); await host.prepareOfflineBackup(); await desktop.container.get(credentialToken).drain();
+      await desktop.container.get(cloudAccountsToken).stop(); await desktop.container.get(coreToken).stop(); await nativePauses?.stop(); await host.stop(); await host.prepareOfflineBackup(); await desktop.container.get(credentialToken).drain();
       const version = await runtimeVersion(); await backups.capture(version);
       if (chosen) await backups.restore(chosen, version);
       await dialog.showMessageBox({ type: "info", title: restore ? "恢复完成" : "升级备份完成", message: restore ? "数据已恢复，应用将退出。请安装与备份匹配的客户端。" : "已停写并保存私有备份，应用将退出。现在可以替换整个 App。", detail: "备份只保存在本机受限数据目录，不包含下载文件或媒体库，也不会进入普通诊断导出。" });
@@ -631,12 +676,14 @@ async function bootstrap() {
     if (exiting) return;
     event.preventDefault();
     exiting = true;
+    nativePauses?.freeze();
     // 在框架 drain 前显式停止核心，避免已跟踪启动/任务阻止资源清理。
     void (async () => {
       try {
         // 扫码／账号作业可能正在等 Core；并发停接入与 Core，避免互相等待。
         await Promise.allSettled([
           hostPreferences.stop(),
+          nativePauses?.stop(),
           Promise.resolve().then(() => desktop.container.isBound(quarkLoginToken) ? desktop.container.get(quarkLoginToken).stop() : undefined),
           Promise.resolve().then(() => desktop.container.isBound(cloudAccountsToken) ? desktop.container.get(cloudAccountsToken).stop() : undefined),
           Promise.resolve().then(() => desktop.container.isBound(coreToken) ? desktop.container.get(coreToken).stop() : undefined),

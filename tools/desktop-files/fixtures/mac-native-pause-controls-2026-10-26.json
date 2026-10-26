@@ -1,0 +1,153 @@
+{
+  "capturedAt": "2026-10-26T00:44:55.494Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "electron": "44.9.0",
+  "appVersion": "0.2.1",
+  "schema": 27,
+  "releaseStatus": "unsigned-directory-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "80dd79d13048ec304e026a872236998adc6bae4d73610f57269630a0488c9010",
+  "builtMainSha256": "3dad9b5e327015d84f4b1165aeb05f8f75be996ce8355befe2927a3b0006b2fa",
+  "packagedMainMatchesCurrentBuild": true,
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/main/index.ts": "5831fe76da61ae444800346b8c1d0a48e0cd234db64aafe83fa2608a0769abb6",
+    "apps/desktop/src/main/native-pause-controls.ts": "7a02dbf5d6d56dc37cf819222e58c8b9764128808264155012660188e027e68e",
+    "apps/desktop/src/main/native-pause-controls.test.ts": "86817d5a449791cbd88d5d419b0826db0e06252892aeb05e7319cc72a96ba756",
+    "apps/desktop/tests/native-pause.spec.ts": "8a59d630202f3090d9a8a6b44df75b2ac31f6d933ed2a3d7081d494d4fd9ca55"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 884,
+      "skipped": 13,
+      "passedFiles": 84,
+      "skippedFiles": 3
+    },
+    "newControllerTests": 9,
+    "developmentWindows": 5,
+    "packagedWindows": 7,
+    "subsequentPackagedSourceFormWindow": 1,
+    "typecheck": true,
+    "windowTestStrictTypecheck": true,
+    "boundaries": true,
+    "artifactEntries": 9534,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "openSpecProgress": {
+      "total": 109,
+      "complete": 95,
+      "remaining": 14
+    }
+  },
+  "automatedReceipts": {
+    "controls": {
+      "menuItemCallbacks": true,
+      "sameFactoryAsTray": true,
+      "rendererMutationSynchronized": true,
+      "hiddenWindowControl": true,
+      "rendererReloadRetained": true,
+      "coreRestartRetained": true,
+      "appRestartRetained": true,
+      "finalOrganizePaused": false,
+      "finalDownloadPaused": true,
+      "fileJobsCreated": 0,
+      "nativeOsClick": false
+    },
+    "timeout": {
+      "realUtilityProcessPaused": true,
+      "actualDeadlineExercised": true,
+      "pauseReceiptCount": 0,
+      "currentPaused": false,
+      "errorReportedOnce": true,
+      "unknownStateDisabled": true,
+      "problemRetained": true,
+      "automaticWriteReplay": false
+    },
+    "stop": {
+      "exitWhileControlPending": true,
+      "stoppedOwnedCoreResumedAfterMs": 500,
+      "oldCoreStopped": true,
+      "parserStopped": true,
+      "nativeOsQuitClick": false,
+      "forcedKillOfUnresponsiveCore": false
+    }
+  },
+  "ordinaryNativeObservations": {
+    "launch": "直接执行最终目录包，仅指定隔离 user-data-dir，无 Playwright、inspect 或 remote-debugging 参数",
+    "nativeTaskMenuClicks": [
+      "暂停全部整理",
+      "暂停云端下载",
+      "恢复全部整理"
+    ],
+    "nativeDirectoryPanels": {
+      "sourceSelected": true,
+      "targetSelected": true,
+      "paths": "自有临时目录中的本地输入及媒体库，未使用个人下载或媒体目录"
+    },
+    "firstCloseDialogObserved": true,
+    "keepInBackgroundSelected": true,
+    "fileCreatedAt": "2026-10-26T00:41:13.280Z",
+    "candidateCreatedAt": "2026-10-26T00:41:13.981Z",
+    "secondLaunchAt": "2026-10-26T00:41:26.459556+00:00",
+    "candidateCreatedBeforeSecondLaunch": true,
+    "candidateStateAtQuit": "OBSERVING",
+    "sourceVersion": 1,
+    "sourcePaused": false,
+    "sourceAutomatic": false,
+    "nativeApplicationQuitClicked": true,
+    "afterQuit": {
+      "at": "2026-10-26T00:42:02.369Z",
+      "mainStopped": true,
+      "coreStopped": true,
+      "childStopped": [
+        {
+          "pid": 63113,
+          "stopped": true
+        }
+      ]
+    },
+    "durablePauseFlags": [
+      {
+        "key": "cloud.downloads.paused",
+        "value": "true"
+      },
+      {
+        "key": "ingestion.paused",
+        "value": "false"
+      }
+    ],
+    "organizeCommandCount": 2,
+    "downloadCommandCount": 1,
+    "fileOperations": 0,
+    "inputBytes": 8400,
+    "inputSha256": "bbb03cf6d21a3162bf448d0dd40fbf58f7c6b78ed0e7170038d9c3ffcbe33171",
+    "targetContainsOwnershipMarkerOnly": true,
+    "ordinarySecondInstance": {
+      "mainPid": 76284,
+      "corePid": 76299,
+      "mainCreated": "Mon Oct 26 08:43:30 2026",
+      "coreCreated": "Mon Oct 26 08:43:30 2026",
+      "sameMainIdentity": true,
+      "sameCoreIdentity": true,
+      "duplicateExitCode": 0,
+      "checkedAt": "2026-10-26T00:43:39.277Z"
+    },
+    "appRestartRetainedDownloadPause": true,
+    "nativeTrayIconMenuClicked": false
+  },
+  "preparationCorrections": [
+    "测试首轮重复设置 checked 再调用 MenuItem.click，实际 Electron SDK 的 click 本身会切换复选值；已改为只调用 click 并复验。",
+    "独立 E2E 文件补齐严格环境变量类型，避免 Page 局部变量名遮蔽浏览器 window。"
+  ],
+  "limits": [
+    "目录包运行结果不替代 ecfbdd2 历史 DMG 的独立安装矩阵，也不证明此新产物已完整重装。",
+    "实际点击的是 macOS 应用任务菜单及退出菜单；托盘与应用菜单由同一工厂组装，但未实际点击托盘图标菜单。",
+    "原生目录前往面板一次观察超时，重新连接原进程后完成选择；普通启动可读取不能确定先前工具超时的原因。",
+    "在途退出测试恢复 SIGSTOP Core 于 500 毫秒后，不证明永久无响应 Core 的最终强杀。",
+    "没有修改真实登录项、个人凭据或夸克设置，没有真实媒体 COPY、真实网盘流量或 Emby 收录。",
+    "Intel、Developer ID、公证、真实登录启动及完整生命周期矩阵未验收，任务 2.6 保持未完成。"
+  ]
+}
