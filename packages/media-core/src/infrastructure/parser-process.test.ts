@@ -3,7 +3,10 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { ParserProcess } from "./parser-process";
+const { identify, matches, stopVerified } = createRequire(import.meta.url)("../../../../tools/desktop-sidecars/process-identity.cjs");
 
 const parsers: ParserProcess[] = [], directories: string[] = [];
 afterEach(async () => { await Promise.all(parsers.splice(0).map((parser) => parser.close())); await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
@@ -52,5 +55,20 @@ describe("受管离线解析器管道", () => {
     expect(await parser.parse("The.Dark.Knight.2008.1080p.BluRay.x264.mkv")).toMatchObject({ title: "The Dark Knight", year: 2008, type: "MOVIE" });
     expect(await parser.parse("Show.S01E02E03.mkv")).toMatchObject({ season: 1, episode: 2, episodeEnd: 3, episodes: [2, 3], type: "TV_SHOW" });
     await parser.close(); expect(parser.ready).toBe(false);
+  });
+  it.skipIf(process.platform !== "darwin" || !existsSync(resolve("tools/desktop-parser/dist/media-marshal-parser/media-marshal-parser")))("冻结 guessit 实际 SIGSTOP 后按默认超时回收，旧进程退出后新进程处理下一名称", async () => {
+    const executable = resolve("tools/desktop-parser/dist/media-marshal-parser/media-marshal-parser"), parser = new ParserProcess(executable); parsers.push(parser); await parser.start();
+    const child = Reflect.get(parser, "child") as ChildProcess, identity = identify(child.pid!);
+    expect(identity?.parent).toBe(process.pid); expect(identity.command).toContain(executable); expect(matches(identity, executable)).toBe(true);
+    try {
+      process.kill(identity.pid, "SIGSTOP"); expect(execFileSync("/bin/ps", ["-p", String(identity.pid), "-o", "stat="], { encoding: "utf8" }).trim()).toMatch(/^T/);
+      const started = performance.now();
+      await expect(parser.parse("停止中的名称.2026.mp4")).rejects.toMatchObject({ code: "TIMEOUT" });
+      expect(performance.now() - started).toBeGreaterThanOrEqual(4900);
+      await expect.poll(() => matches(identity, executable), { timeout: 3000 }).toBe(false); expect(parser.ready).toBe(false);
+      expect(await parser.parse("The.Dark.Knight.2008.1080p.mkv")).toMatchObject({ title: "The Dark Knight", year: 2008, type: "MOVIE" });
+      const replacement = Reflect.get(parser, "child") as ChildProcess, replacementIdentity = identify(replacement.pid!); expect(replacement.pid).not.toBe(identity.pid); expect(replacementIdentity?.parent).toBe(process.pid);
+      await parser.close(); expect(matches(identity, executable)).toBe(false); expect(matches(replacementIdentity, executable)).toBe(false);
+    } finally { if (matches(identity, executable)) stopVerified(identity, executable); await parser.close(); }
   });
 });

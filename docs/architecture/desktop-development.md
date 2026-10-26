@@ -119,6 +119,8 @@ Main 收到 resume 后先通过私有动作重置就绪观察，再恢复目录�
 
 2026-10-25 的六项 Core 故障单元与七项 parser 管道测试通过；真实 Electron 补充强杀核心、恢复同一持久草稿、原解析器退出及不产生执行来源的检查通过。握手与重试上限采用可控时钟及受控进程替身，真实强杀另使用 OS 创建时间和完整命令核验进程归属，二者证据分别记录。
 
+2026-10-26 进一步使用实际冻结 guessit 做持续 SIGSTOP 检查：核对本测试父子进程与 OS 停止状态后，使用默认五秒期限等待 TIMEOUT；旧解析器由生产 `ParserProcess` 回收，下一名称在新的 PID 解析成功，关闭后新旧进程均不存在。成功路径不发送 SIGCONT，也不由测试代杀；失败清理仅针对身份核对后的自有进程。八项 parser 管道测试全部通过，全量为 887 passed／13 skipped，复验为 `npm test -- packages/media-core/src/infrastructure/parser-process.test.ts`。证据摘要见 `tools/desktop-files/fixtures/mac-parser-timeout-2026-10-26.json`。这项证据来自本机 arm64 冻结组件，缺少该二进制或非 macOS 时会跳过，不代表完整应用安装态、Intel 或真实登录启动已经验收。
+
 ## 本机运行设置与许可读取
 
 运行偏好由 Main 的 `HostPreferencesController` 独占，不进入业务 SQLite。`host-preferences.json` 只保存版本及首次关闭提醒，以 0600 临时文件独占创建后原子替换；登录项不保存第二份权威副本，以 Electron 系统 API 当前状态为准。默认不注册，只在用户明确保存且状态需要改变时调用系统设置；待批准单独展示，读取、窗口重载和启动不注册。开发构建及未支持平台拒绝注册请求。保存失败时核对登录项回退结果，不能将未确认回退报告为成功；退出／维护阻止迟到保存并等待在途落盘。
