@@ -6,6 +6,9 @@ hero:
   tagline: 桌面客户端的开发、架构与验收文档。
   actions:
     - theme: brand
+      text: 客户端下载与使用条件
+      link: /download
+    - theme: alt
       text: 桌面客户端开发
       link: /architecture/desktop-development
     - theme: alt

@@ -9,6 +9,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: '首页', link: '/' },
+      { text: '客户端下载', link: '/download' },
       { text: '桌面开发', link: '/architecture/desktop-development' },
       { text: '旧工程资料', link: '/legacy/' },
       { text: '架构文档', link: '/architecture/' },
@@ -19,6 +20,8 @@ export default defineConfig({
         text: 'Media Marshal',
         items: [
           { text: '项目介绍', link: '/' },
+          { text: '客户端下载与使用条件', link: '/download' },
+          { text: '0.2.1 内测归档说明', link: '/releases/0.2.1-preview' },
         ],
       },
       {
