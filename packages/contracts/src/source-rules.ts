@@ -8,6 +8,7 @@ const organization = z.strictObject({
   operation: z.literal("COPY").default("COPY"),
   automatic: z.boolean().default(false),
 });
+/** 历史来源／活动操作的兼容格式；新职责契约使用 syncSourceConfigurationSchema。 */
 export const sourceConfigurationSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("local"), name: z.string().trim().min(1).max(100),
