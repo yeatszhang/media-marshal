@@ -32,6 +32,7 @@ describe.skipIf(process.platform !== "darwin")("Core 文件与记账边界真实
     await expect.poll(itemState, { timeout: 5000 }).toBe(published ? "COMPLETED" : point === "foreign-target" ? "RECONCILING" : "QUEUED");
     expect(transfers).toBe(0); expect(db.connection.prepare("SELECT count(*) AS n FROM download_attempt").get()).toEqual({ n: 1 });
     expect(db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: published ? 1 : 0 });
+    expect(db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: published ? 1 : 0 });
     if (published) {
       expect((await readFile(join(target, "completed", "sample.bin"))).length).toBe(receipt.size);
       await expect.poll(() => readdir(join(target, ".media-marshal", "staging"))).toEqual([]);

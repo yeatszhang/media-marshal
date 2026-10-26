@@ -13,6 +13,7 @@ export function SourceExecutionPreview() {
     <h2>{preview.forceRedownload ? "强制重新下载预览" : "执行一次预览"}</h2><p>{preview.name} · 生效版本 v{preview.sourceVersion}</p><p className="cloud-hint">只执行当前生效版本，不修改来源草稿或周期扫描策略。</p>
     {preview.state === "BUILDING" && <p role="status">正在扫描本次范围，数量尚未完整确定。</p>}
     <p>{preview.download.complete ? "完整范围" : "范围尚未完整"}：{preview.download.files} 项 · {sourceSize(preview.download.bytes)} · 可复用 {preview.download.reuseFiles} 项 · 冲突 {preview.download.conflicts} 项</p>
+    {!!preview.download.localRemovedFiles && <p className="notice" role="status">{preview.download.localRemovedFiles} 项已同步，本地已移除。本次会跳过同一源版本；需要重新获取时，请从来源选择强制重新下载并确认预览。</p>}
     <p className="cloud-root-path">完成目录：{state.roots.find((root) => root.id === preview.download.targetGrantId)?.path}/{preview.download.destinationPrefix}/{preview.download.selectionPath}</p>
     {preview.forceRedownload && <p className="notice">本次会重新传输到独立完成目录，保留原下载文件，不覆盖已有媒体成果。</p>}
     {preview.download.failure && <ErrorNotice message={preview.download.failure.message} />}

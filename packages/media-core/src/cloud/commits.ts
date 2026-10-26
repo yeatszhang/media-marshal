@@ -4,6 +4,7 @@ import { localFileEvidenceSchema, type LocalFileEvidence, type TransferItem } fr
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { CloudRoots } from "./roots.js";
 import type { RemoteCatalog } from "./catalog.js";
+import { SyncReceipts } from "../sources/sync-receipts.js";
 
 type Checkpoint = "verified" | "intent" | "linked" | "recorded";
 interface Intent { item_id: string; attempt_id: string; account_id: string; version_key: string; file_evidence_json: string; state: string; target_root_id: string; target_segments_json: string }
@@ -64,6 +65,7 @@ export class DownloadCommits {
       db.prepare("UPDATE download_item SET state='COMPLETED',local_sha256=?,completed_size=?,failure_code=NULL,updated_at=? WHERE id=? AND version_key=?").run(evidence.sha256, evidence.size, now, intent.item_id, intent.version_key);
       db.prepare("INSERT INTO ingestion_outbox(id,item_id,version_key,state,created_at,updated_at) VALUES(?,?,?,'PENDING',?,?) ON CONFLICT(item_id,version_key) DO NOTHING").run(randomUUID(), intent.item_id, intent.version_key, now, now);
       db.prepare("UPDATE download_commit_intent SET state='RECORDED',updated_at=? WHERE item_id=?").run(now, intent.item_id);
+      new SyncReceipts(this.database).recordDownload(intent.item_id, evidence);
       db.prepare("DELETE FROM download_claim WHERE item_id=? AND attempt_id=?").run(intent.item_id, intent.attempt_id);
     })();
   }

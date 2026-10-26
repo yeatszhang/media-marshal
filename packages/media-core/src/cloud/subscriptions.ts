@@ -175,7 +175,7 @@ export class CloudSubscriptions {
   }
   private summary(preview: PreviewRow): Summary {
     const snapshot: PreviewSnapshot = JSON.parse(preview.snapshot_json);
-    return { files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), reused: snapshot.items.filter((item) => item.reuseItemId).length, conflicts: snapshot.items.filter((item) => item.issue).length, complete: snapshot.complete };
+    return { files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), reused: snapshot.items.filter((item) => item.reuseItemId || item.receiptId).length, conflicts: snapshot.items.filter((item) => item.issue).length, complete: snapshot.complete };
   }
   private fail(scan: ScanRow, row: SubscriptionRow, error: unknown, summary: Summary = { files: 0, bytes: 0, reused: 0, conflicts: 0, complete: false }) {
     const db = this.database.connection, failure = cloudFailure(error), retry = row.retry_count + 1, now = new Date(this.now()).toISOString();
@@ -205,7 +205,7 @@ export class CloudSubscriptions {
     try {
       if (!scan.execution_preview_id) {
         const needed = snapshot.items.filter((item) => {
-          if (item.reuseItemId) return false;
+          if (item.reuseItemId || item.receiptId) return false;
           if (!item.existingItemId) return true;
           if (item.issue) return false;
           // 同一订阅已有有效需求或用户暂停的需求时不再创建相同作业；其他订阅仍建立独立需求。

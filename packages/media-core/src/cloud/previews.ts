@@ -5,11 +5,12 @@ import type { CoreDatabase } from "../infrastructure/database.js";
 import type { RemoteCatalog } from "./catalog.js";
 import type { CloudRoots } from "./roots.js";
 import { planOnce } from "./planning.js";
+import { SyncReceipts } from "../sources/sync-receipts.js";
 
 export interface PreviewSnapshot {
   binding: BindingRef; name: string; complete: boolean; failure: CloudFailure | null;
   rootType?: "file" | "directory"; variant?: string; filters?: { extensions: string[]; names?: string[] }; layout?: "selection" | "drive"; selectionPath?: string;
-  items: (TransferItem & { versionKey: string; targetPathKey: string; reuseItemId?: string; existingItemId?: string; issue?: CloudFailure })[];
+  items: (TransferItem & { versionKey: string; targetPathKey: string; reuseItemId?: string; existingItemId?: string; receiptId?: string; localRemoved?: boolean; issue?: CloudFailure })[];
   policy: { maxAttempts: number; retryBaseMs: number };
 }
 export interface PreviewRow { id: string; account_id: string; remote_root_ref: string; target_root_id: string; request_key: string; state: string; expires_at: string; snapshot_json: string }
@@ -25,7 +26,8 @@ export class DownloadPreviews {
   }
   private dto(row: PreviewRow): DownloadPreview {
     const snapshot: PreviewSnapshot = JSON.parse(row.snapshot_json);
-    return { id: row.id, accountId: row.account_id, remoteRef: row.remote_root_ref, targetGrantId: row.target_root_id, files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), complete: snapshot.complete, weakComparison: snapshot.items.some((item) => item.source.expectedVersion?.kind === "weak"), expiresAt: row.expires_at, state: snapshot.failure ? "FAILED" : row.state === "CONFIRMED" ? "CONFIRMED" : row.expires_at <= new Date(this.now()).toISOString() ? "EXPIRED" : row.state as DownloadPreview["state"], failure: snapshot.failure, reuseFiles: snapshot.items.filter((item) => item.reuseItemId).length, conflicts: snapshot.items.filter((item) => item.issue).length, forceRedownload: !!snapshot.variant, destinationPrefix: snapshot.variant ? `completed/redownload-${row.id}` : "completed", selectionPath: snapshot.selectionPath ?? snapshot.name, layout: snapshot.layout ?? "selection" };
+    const localRemovedFiles = snapshot.items.filter((item) => item.localRemoved).length;
+    return { id: row.id, accountId: row.account_id, remoteRef: row.remote_root_ref, targetGrantId: row.target_root_id, files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), complete: snapshot.complete, weakComparison: snapshot.items.some((item) => item.source.expectedVersion?.kind === "weak"), expiresAt: row.expires_at, state: snapshot.failure ? "FAILED" : row.state === "CONFIRMED" ? "CONFIRMED" : row.expires_at <= new Date(this.now()).toISOString() ? "EXPIRED" : row.state as DownloadPreview["state"], failure: snapshot.failure, reuseFiles: snapshot.items.filter((item) => item.reuseItemId || item.receiptId).length, conflicts: snapshot.items.filter((item) => item.issue).length, forceRedownload: !!snapshot.variant, destinationPrefix: snapshot.variant ? `completed/redownload-${row.id}` : "completed", selectionPath: snapshot.selectionPath ?? snapshot.name, layout: snapshot.layout ?? "selection", ...(localRemovedFiles ? { localRemovedFiles } : {}) };
   }
   start(input: CloudInput<"cloud.downloads.preview">): DownloadPreview {
     if (this.closed) throw new CloudError("INTERRUPTED");
@@ -66,7 +68,17 @@ export class DownloadPreviews {
           const item = { ...plan.items[0]! } as PreviewSnapshot["items"][number], db = this.database.connection;
           const previous = db.prepare("SELECT i.id,i.state,c.file_evidence_json FROM download_item i LEFT JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.account_id=? AND i.remote_ref=? AND i.version_key=? AND i.request_variant=? AND i.target_root_id=? AND i.target_path_key=?").get(row.account_id, current.entry.ref, item.versionKey, snapshot.variant ?? "", row.target_root_id, item.targetPathKey) as { id: string; state: string; file_evidence_json: string | null } | undefined;
           if (previous) item.existingItemId = previous.id;
-          if (previous?.state === "COMPLETED") {
+          const receipts = new SyncReceipts(this.database, this.now), receipt = !snapshot.variant && item.source.expectedVersion ? receipts.find("cloud", row.account_id, current.entry.ref, item.source.expectedVersion, row.target_root_id, item.targetPathKey) : undefined;
+          if (receipt) {
+            const state = await receipts.observe(receipt, root);
+            if (state === "PRESENT" || state === "REMOVED") {
+              item.receiptId = receipt.id; item.localRemoved = state === "REMOVED";
+              if (db.prepare("SELECT 1 FROM download_item WHERE id=?").get(receipt.result_id)) item.reuseItemId = receipt.result_id;
+            } else {
+              item.issue = cloudFailure(new CloudError(state === "UNAVAILABLE" ? "LOCAL_UNAVAILABLE" : "CONFLICT"));
+              if (state === "CONFLICT") db.prepare("UPDATE download_item SET state='RECONCILING',failure_code='CONFLICT',updated_at=? WHERE id=? AND state='COMPLETED'").run(new Date(this.now()).toISOString(), receipt.result_id);
+            }
+          } else if (previous?.state === "COMPLETED") {
             try {
               if (!previous.file_evidence_json) throw new CloudError("CONFLICT");
               const before = localFileEvidenceSchema.parse(JSON.parse(previous.file_evidence_json)), after = await root.inspectCompleted(item.targetSegments);
@@ -83,7 +95,7 @@ export class DownloadPreviews {
           } else {
             try { await root.assertVacant(item.targetSegments); } catch (error) { item.issue = cloudFailure(error); }
           }
-          if (!item.reuseItemId && !item.issue) requiredBytes += current.entry.size!;
+          if (!item.reuseItemId && !item.receiptId && !item.issue) requiredBytes += current.entry.size!;
           snapshotBytes += Buffer.byteLength(JSON.stringify(item)) + 1;
           if (snapshotBytes > 16 * 1024 * 1024) throw new CloudError("UNSUPPORTED_CAPABILITY");
           snapshot.items.push(item); bytes += current.entry.size!;

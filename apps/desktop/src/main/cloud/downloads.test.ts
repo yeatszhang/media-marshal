@@ -783,9 +783,86 @@ describe.skipIf(process.platform !== "darwin")("订阅扫描与配置快照", ()
     await expect.poll(() => restored.list({}).items[0]?.lastResult?.reused, { timeout: 5000 }).toBe(1);
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM cloud_scan").get()).toEqual({ n: before + 1 }); expect(f.downloads.list({}).total).toBe(1); expect(f.fileEngine.starts).toBe(1);
   });
-  it("本地成果被删除时进入待处理，不能依据历史完成记录跳过", async () => {
+  it("本地成果被删除后多次普通执行复用成功收据，不重传同一源版本", async () => {
     const f = await fixture(), job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
-    await rm(join(f.rootPath, "completed/电影.txt")); expect(await f.preview()).toMatchObject({ reuseFiles: 0, conflicts: 1 }); expect(f.state(job.jobId).state).toBe("RECONCILING"); expect(f.fileEngine.starts).toBe(1);
+    await rm(join(f.rootPath, "completed/电影.txt"));
+    for (let index = 0; index < 3; index++) {
+      const preview = await f.preview(); expect(preview).toMatchObject({ reuseFiles: 1, localRemovedFiles: 1, conflicts: 0 });
+      const command = { previewId: preview.id, requestKey: randomUUID() }, next = await f.downloads.confirm(command); expect(await f.downloads.confirm(command)).toEqual(next);
+      expect(f.state(next.jobId)).toMatchObject({ state: "COMPLETED", localRemovedFiles: 1 });
+    }
+    expect(f.state(job.jobId).state).toBe("COMPLETED"); expect(f.fileEngine.starts).toBe(1);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_attempt").get()).toEqual({ n: 1 });
+    await expect(lstat(join(f.rootPath, "completed/电影.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("删除后周期扫描及核心重建仍复用收据，不增加传输和下载项", async () => {
+    const f = await fixture(), preview = await f.preview(f.account.rootRef!, { layout: "drive" }), sub = f.subscriptions.configure({ previewId: preview.id, requestKey: randomUUID() }); f.downloads.start(); f.subscriptions.start();
+    await expect.poll(() => f.downloads.list({}).items[0]?.state, { timeout: 5000 }).toBe("COMPLETED");
+    await rm(join(f.rootPath, "completed/电影.txt")); f.subscriptions.control({ subscriptionId: sub.id, operation: "scan", requestKey: randomUUID() });
+    await expect.poll(() => f.subscriptions.list({}).items[0]?.lastResult?.reused, { timeout: 5000 }).toBe(1);
+    await f.subscriptions.close(); await f.downloads.close();
+    const restored = new CloudDownloads(f.db, f.host, f.catalog, f.roots); cleanup.push(() => restored.close());
+    const requestKey = randomUUID(); restored.previews.start({ accountId: f.account.id, remoteRef: f.entries[0]!.ref, targetGrantId: f.grant.id, requestKey });
+    await expect.poll(() => restored.previews.get(requestKey)?.state).toBe("READY"); const repeat = restored.previews.get(requestKey)!;
+    expect(repeat).toMatchObject({ reuseFiles: 1, localRemovedFiles: 1, conflicts: 0 });
+    const result = await restored.confirm({ previewId: repeat.id, requestKey: randomUUID() }); expect(restored.list({}).items.find((item) => item.id === result.jobId)).toMatchObject({ state: "COMPLETED", localRemovedFiles: 1 });
+    expect(f.fileEngine.starts).toBe(1); expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 1 });
+  });
+  it("原卷或根失效不记为本地移除，恢复原根后才可核对删除", async () => {
+    const f = await fixture(), job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
+    await rename(f.rootPath, f.rootPath + "-offline");
+    const key = randomUUID(); f.downloads.previews.start({ accountId: f.account.id, remoteRef: f.entries[0]!.ref, targetGrantId: f.grant.id, requestKey: key });
+    await expect.poll(() => f.downloads.previews.get(key)?.state).toBe("FAILED");
+    expect(f.db.connection.prepare("SELECT state FROM sync_receipt_local_state").get()).toEqual({ state: "UNAVAILABLE" }); expect(f.fileEngine.starts).toBe(1);
+    await rename(f.rootPath + "-offline", f.rootPath); await f.roots.authorize(f.grant);
+    expect(await f.preview()).toMatchObject({ reuseFiles: 1, conflicts: 0 });
+    expect(f.db.connection.prepare("SELECT state FROM sync_receipt_local_state").get()).toEqual({ state: "PRESENT" });
+  });
+  it("弱版本只有修改时间变化且本地已删除时仍跳过，不把弱证据当作新内容", async () => {
+    const f = await fixture(), stat = f.provider.stat.bind(f.provider); let modifiedAt = "2026-10-26T00:00:00.000Z";
+    f.provider.stat = async (input) => ({ ...await stat(input), version: null, modifiedAt });
+    const job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
+    await rm(join(f.rootPath, "completed/电影.txt")); modifiedAt = "2026-10-27T00:00:00.000Z";
+    const preview = await f.preview(); expect(preview).toMatchObject({ weakComparison: true, localRemovedFiles: 1, reuseFiles: 1, conflicts: 0 });
+    const result = await f.downloads.confirm({ previewId: preview.id, requestKey: randomUUID() }); expect(f.state(result.jobId).state).toBe("COMPLETED");
+    expect(f.fileEngine.starts).toBe(1); expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 1 });
+  });
+  it("显式重新下载使用新意图和独立目录，确认幂等且保留旧收据", async () => {
+    const f = await fixture(), job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED"); await rm(join(f.rootPath, "completed/电影.txt"));
+    const preview = await f.preview(undefined, { forceRedownload: true }); expect(preview).toMatchObject({ forceRedownload: true, reuseFiles: 0, conflicts: 0 });
+    expect(f.fileEngine.starts).toBe(1); const command = { previewId: preview.id, requestKey: randomUUID() }, next = await f.downloads.confirm(command); expect(await f.downloads.confirm(command)).toEqual(next);
+    await expect.poll(() => f.state(next.jobId).state).toBe("COMPLETED"); expect(f.fileEngine.starts).toBe(2);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 2 });
+    expect(await readFile(join(f.rootPath, preview.destinationPrefix, "电影.txt"))).toEqual(f.input.get("电影.txt"));
+    expect(await f.preview()).toMatchObject({ localRemovedFiles: 1, reuseFiles: 1, conflicts: 0 });
+  });
+  it("清理完成任务历史后成功收据仍独立存在，等价新需求不创建下载项", async () => {
+    const f = await fixture(), job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
+    await expect.poll(() => (Reflect.get(f.downloads, "active") as Map<string, unknown>).size).toBe(0); await rm(join(f.rootPath, "completed/电影.txt"));
+    f.db.connection.transaction(() => {
+      for (const table of ["download_attempt_item", "ingestion_outbox", "download_commit_intent", "download_job_item", "download_item_runtime", "download_item", "download_job"]) f.db.connection.prepare(`DELETE FROM ${table}`).run();
+    })();
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
+    const preview = await f.preview(); expect(preview).toMatchObject({ reuseFiles: 1, localRemovedFiles: 1, conflicts: 0 });
+    const next = await f.downloads.confirm({ previewId: preview.id, requestKey: randomUUID() }); expect(f.state(next.jobId)).toMatchObject({ state: "COMPLETED", localRemovedFiles: 1, progress: { completedItems: 1, totalItems: 1 } });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_job_receipt").get()).toEqual({ n: 1 }); expect(f.fileEngine.starts).toBe(1);
+  });
+  it("副本已移除且源端出现可靠新版本时允许新传输，旧成功历史仍保留", async () => {
+    const f = await fixture(), first = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(first.jobId).state).toBe("COMPLETED");
+    const originalSize = f.input.get("电影.txt")!.length; await rm(join(f.rootPath, "completed/电影.txt")); f.input.set("电影.txt", Buffer.alloc(originalSize, 70));
+    const preview = await f.preview(); expect(preview).toMatchObject({ reuseFiles: 0, conflicts: 0 }); const next = await f.downloads.confirm({ previewId: preview.id, requestKey: randomUUID() });
+    await expect.poll(() => f.state(next.jobId).state).toBe("COMPLETED"); expect(f.fileEngine.starts).toBe(2);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 2 }); expect(await readFile(join(f.rootPath, "completed/电影.txt"))).toEqual(f.input.get("电影.txt"));
+  });
+  it("提交事务中的收据故障可按原文件补记，保持 inode 和唯一传输", async () => {
+    const f = await fixture(); f.db.connection.exec("CREATE TRIGGER receipt_fault BEFORE INSERT ON sync_receipt_evidence BEGIN SELECT RAISE(ABORT,'注入成功收据故障'); END");
+    const job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("RECONCILING");
+    const inode = (await lstat(join(f.rootPath, "completed/电影.txt"))).ino;
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: 0 });
+    f.db.connection.exec("DROP TRIGGER receipt_fault"); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
+    expect((await lstat(join(f.rootPath, "completed/电影.txt"))).ino).toBe(inode); expect(f.fileEngine.starts).toBe(1);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: 1 });
   });
 });
 describe.skipIf(process.platform !== "darwin")("Core 下载调度、文件校验与提交", () => {
@@ -903,7 +980,7 @@ describe.skipIf(process.platform !== "darwin")("Core 下载调度、文件校验
     const fresh = await f.downloads.confirm({ previewId: forced.id, requestKey: randomUUID() }); await expect.poll(() => f.state(fresh.jobId).state).toBe("COMPLETED");
     expect(await readFile(join(f.rootPath, "completed", "电影.txt"))).toEqual(initial); expect(await readFile(join(f.rootPath, forced.destinationPrefix, "电影.txt"))).toEqual(changed);
   });
-  it("弱证据明确不能发现同尺寸远端替换，本地缺失/修改则必须进入待处理", async () => {
+  it("弱证据无法发现同尺寸远端替换，本地内容改动仍需处理", async () => {
     const f = await fixture(), stat = f.provider.stat.bind(f.provider); f.provider.stat = async (input) => ({ ...await stat(input), version: null });
     const job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
     f.input.set("电影.txt", Buffer.alloc(f.input.get("电影.txt")!.length, 68));

@@ -4,7 +4,7 @@ import { bindingRefSchema, implementationIdSchema, managedRootGrantSchema, remot
 import { sourceRuleApplySchema, sourceRuleSchema } from "../source-rules.js";
 import { PROTOCOL_VERSION, rpcErrorSchema } from "../index.js";
 
-export const CORE_DATA_SCHEMA_VERSION = 28;
+export const CORE_DATA_SCHEMA_VERSION = 29;
 const id = z.uuid(), empty = z.strictObject({});
 const configuredBinding = z.strictObject({ binding: bindingRefSchema.extend({ implementationId: implementationIdSchema }), credentialRef: id });
 export const privateCoreActions = {

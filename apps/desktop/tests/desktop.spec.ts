@@ -74,6 +74,27 @@ async function completedCorrectionFixture(mediaType: "MOVIE" | "TV_SHOW" = "MOVI
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${join(directory, "data")}`], env }); window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
   return { window, canonical, source, target, fileName, bytes, original };
 }
+test("成功同步的本地移除状态经固定 IPC 展示，重载与核心重启不创建传输", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(60000);
+  let page = await application.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), rootPath = join(canonical, "本地下载 中文 空格"); await mkdir(rootPath);
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, rootPath);
+  const root = await page.evaluate(() => window.desktopApi.chooseDownloadRoot()); expect(root).not.toBeNull();
+  await application.close(); const config = join(canonical, "seed-receipt.json"); await writeFile(config, JSON.stringify({ database: join(directory, "data/desktop.sqlite3"), rootId: root!.id }));
+  const seeded = await new Promise<string>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [resolve("tools/desktop-files/seed-sync-receipt.mjs"), config], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 20000 }, (error, stdout) => error ? fail(error) : done(stdout))), receipt = JSON.parse(seeded.trim()) as { jobId: string; receiptId: string; filename: string };
+  const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")); delete env.ELECTRON_RUN_AS_NODE;
+  application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${join(directory, "data")}`], env }); page = await application.firstWindow();
+  await expect(page.getByText("核心已连接", { exact: true })).toBeVisible(); await page.getByRole("link", { name: "云端下载", exact: true }).click();
+  const entry = page.getByRole("article", { name: receipt.filename }); await expect(entry).toContainText("已同步，本地已移除"); await expect(entry).toContainText("预览并确认强制重新下载");
+  expect(await page.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 1, items: [{ id: receipt.jobId, state: "COMPLETED", localRemovedFiles: 1, progress: { completedItems: 1, totalItems: 1 } }] });
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await entry.screenshot({ path: "test-results/desktop/sync-receipt-local-removed-minimum.png" });
+  await page.reload(); await page.evaluate(() => window.desktopApi.restartCore()); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article", { name: receipt.filename })).toContainText("已同步，本地已移除"); expect((await page.evaluate(() => window.desktopApi.listDownloads({}))).items).toHaveLength(1);
+  await expect(stat(join(rootPath, "completed", receipt.filename))).rejects.toMatchObject({ code: "ENOENT" });
+  await application.close();
+  const checked = await new Promise<string>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, ["--input-type=module", "-e", 'import Database from "better-sqlite3"; const db=new Database(process.argv[1],{readonly:true}); console.log(JSON.stringify({attempts:db.prepare("SELECT count(*) AS n FROM download_attempt").get().n,receipts:db.prepare("SELECT count(*) AS n FROM sync_receipt").get().n,jobs:db.prepare("SELECT count(*) AS n FROM download_job").get().n})); db.close();', join(directory, "data/desktop.sqlite3")], { cwd: resolve("."), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 10000 }, (error, stdout) => error ? fail(error) : done(stdout)));
+  expect(JSON.parse(checked.trim())).toEqual({ attempts: 0, receipts: 1, jobs: 1 });
+});
 test("自动策略以真实人工 COPY 预览授权，经 Main 固定桥确认，重载和核心重启不重做文件", async () => {
   test.skip(process.platform !== "darwin"); test.setTimeout(60000);
   // 复用生产 Core 准备的隔离人工 COPY 收据；受控时钟不作为实际客户端稳定窗口的证据。

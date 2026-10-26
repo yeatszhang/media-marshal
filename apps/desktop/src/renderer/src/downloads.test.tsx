@@ -21,6 +21,11 @@ async function mount(initial: DownloadJob[]) {
   return { app, api, model: app.container.get(DownloadsViewModel), element };
 }
 describe("下载队列交互与观测边界", () => {
+  it("本地移除与成功下载分别说明，读取或 StrictMode 重挂载不发重传请求", async () => {
+    const completed = job("COMPLETED"), f = await mount([{ ...completed, localRemovedFiles: 1, progress: { ...completed.progress, completedItems: 1, totalItems: 1 } }]);
+    expect(f.element.textContent).toContain("已同步，本地已移除"); expect(f.element.textContent).toContain("预览并确认强制重新下载");
+    expect(f.api.previewDownload).not.toHaveBeenCalled(); expect(f.api.confirmDownload).not.toHaveBeenCalled(); expect(f.api.controlDownload).not.toHaveBeenCalled();
+  });
   it("未知总量不显示百分比，暂停只发一次业务意图，页面查询不重放下载", async () => {
     const f = await mount([job()]); expect(f.element.textContent).toContain("12 B / 未知"); expect(f.element.querySelector("progress")).toBeNull();
     const pause = [...f.element.querySelectorAll("button")].find((button) => button.textContent === "暂停下载")!;

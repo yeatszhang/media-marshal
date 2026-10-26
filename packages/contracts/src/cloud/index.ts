@@ -124,6 +124,7 @@ export const cloudDiagnosticCountsSchema = z.strictObject({
 export type CloudDiagnosticCounts = z.infer<typeof cloudDiagnosticCountsSchema>;
 export const downloadJobSchema = z.strictObject({
   id, accountId: id, name: z.string().max(1024), state: downloadStateSchema, progress: downloadProgressSchema,
+  localRemovedFiles: count.optional(),
   sourceId: id.nullable().optional(), sourceVersion: count.nullable().optional(),
   ingestion: z.strictObject({ pending: count, candidates: count, organized: count, collected: count, needsAttention: count, organization: z.enum(["ENABLED", "NOT_ENABLED", "REVIEW_REQUIRED", "UNASSIGNED"]).optional() }).optional(),
   failure: cloudFailureSchema.nullable(), updatedAt: timestamp,
@@ -135,7 +136,7 @@ export const downloadPreviewSchema = z.strictObject({
   files: count, bytes: count, complete: z.boolean(), weakComparison: z.boolean(),
   expiresAt: timestamp,
   state: z.enum(["BUILDING", "READY", "FAILED", "EXPIRED", "CONFIRMED"]), failure: cloudFailureSchema.nullable(),
-  reuseFiles: count, conflicts: count, forceRedownload: z.boolean(), destinationPrefix: z.string().max(256), selectionPath: z.string().max(4096), layout: z.enum(["selection", "drive"]),
+  reuseFiles: count, localRemovedFiles: count.optional(), conflicts: count, forceRedownload: z.boolean(), destinationPrefix: z.string().max(256), selectionPath: z.string().max(4096), layout: z.enum(["selection", "drive"]),
 });
 export type DownloadPreview = z.infer<typeof downloadPreviewSchema>;
 export const cloudSubscriptionSchema = z.strictObject({
