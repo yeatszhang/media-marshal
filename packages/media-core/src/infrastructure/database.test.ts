@@ -24,7 +24,7 @@ describe("显式数据库迁移", () => {
     const path = await temporary(), old = await CoreDatabase.open(path, migrations.slice(0, 26)), source = randomUUID(), stamp = new Date().toISOString(), configuration = JSON.stringify({ type: "local", name: "保留人工来源", client: "quark", sourcePath: "/原来源", organization: { targetPath: "/原媒体", automatic: false } });
     old.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'保留人工来源','quark','/原来源','/原媒体','AUTO','COPY',?)").run(source, stamp);
     old.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,local_source_id,created_at,updated_at) VALUES(?,'local',1,1,?,?,?,?)").run(source, configuration, source, stamp, stamp); old.close();
-    const db = await CoreDatabase.open(path); expect(db.schemaVersion).toBe(27); expect(db.connection.prepare("SELECT draft_json FROM source_rule WHERE id=?").get(source)).toEqual({ draft_json: configuration });
+    const db = await CoreDatabase.open(path, migrations.slice(0, 27)); expect(db.schemaVersion).toBe(27); expect(db.connection.prepare("SELECT draft_json FROM source_rule WHERE id=?").get(source)).toEqual({ draft_json: configuration });
     for (const table of ["source_automatic_consent", "ingestion_automatic"]) expect(db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
     expect(db.connection.prepare("SELECT automatic FROM desktop_source WHERE id=?").get(source)).toEqual({ automatic: 0 }); expect(db.connection.pragma("foreign_key_check")).toEqual([]); db.close();
     const backup = new Database(path + ".before-v27.bak", { readonly: true }); expect(backup.pragma("user_version", { simple: true })).toBe(26); backup.close();
@@ -34,7 +34,7 @@ describe("显式数据库迁移", () => {
     const path = await temporary(), old = await CoreDatabase.open(path, migrations.slice(0, 26)); old.connection.prepare("INSERT INTO app_setting VALUES('原配置','保持人工')").run(); old.close();
     await expect(CoreDatabase.open(path, [...migrations.slice(0, 26), { ...migrations[26]!, sql: migrations[26]!.sql + "SELECT missing_automatic_migration();" }])).rejects.toThrow();
     const before = await CoreDatabase.open(path, migrations.slice(0, 26)); expect(before.connection.prepare("SELECT name FROM sqlite_master WHERE name IN ('source_automatic_consent','ingestion_automatic')").all()).toEqual([]); expect(before.connection.pragma("table_info(source_rule_preview)").some((row) => (row as { name: string }).name === "automatic_preview_id")).toBe(false); before.close();
-    const current = await CoreDatabase.open(path); expect(current.connection.prepare("SELECT value FROM app_setting WHERE key='原配置'").get()).toEqual({ value: "保持人工" }); current.close();
+    const current = await CoreDatabase.open(path, migrations.slice(0, 27)); expect(current.connection.prepare("SELECT value FROM app_setting WHERE key='原配置'").get()).toEqual({ value: "保持人工" }); current.close();
     const backup = new Database(path + ".before-v27.bak", { readonly: true }); expect(backup.pragma("user_version", { simple: true })).toBe(26); backup.close();
   });
   it("v26 扫描迁移保留原来源、健康诊断与任务，旧核心拒绝新库且升级不产生扫描", async () => {

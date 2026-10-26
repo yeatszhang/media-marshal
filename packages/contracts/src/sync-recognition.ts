@@ -19,12 +19,13 @@ export const defaultDownloadDirectorySchema = z.strictObject({ version: revision
 export type DefaultDownloadDirectory = z.infer<typeof defaultDownloadDirectorySchema>;
 export const defaultDownloadDirectoryWriteSchema = z.strictObject({ expectedVersion: revision, directoryId: id.nullable(), requestKey: id });
 
-export const syncFilterSchema = z.strictObject({ action: z.enum(["include", "exclude"]), pattern: z.string().min(1).max(1024).refine((value) => !/[\0\r\n]/.test(value), "过滤表达式必须为单行") });
+export const syncFilterSchema = z.strictObject({ action: z.enum(["include", "exclude"]), pattern: z.string().min(1).max(4096).refine((value) => !/[\0\r\n]/.test(value), "过滤表达式必须为单行"), caseSensitive: z.boolean().default(true) });
+export type SyncFilter = z.infer<typeof syncFilterSchema>;
 const periodic = z.strictObject({ enabled: z.boolean().default(false), intervalSeconds: z.number().int().min(60).max(604800).default(900) }).default({ enabled: false, intervalSeconds: 900 });
 const syncFields = {
   name,
   target: directorySelectionSchema.default({ kind: "default" }),
-  filters: z.array(syncFilterSchema).max(100).default([]),
+  filters: z.array(syncFilterSchema).max(200).default([]),
   periodic,
 };
 
