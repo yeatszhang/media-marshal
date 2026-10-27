@@ -1,4 +1,5 @@
 import { ConfigurationViewModel } from "./configuration-model";
+import { RecognitionViewModel } from "./recognition-model";
 import { SyncViewModel } from "./sync-model";
 import {
   createApplication,
@@ -286,23 +287,23 @@ export class DownloadsViewModel extends StatefulService<{ paused: boolean; pausi
   protected dispose() { this.stopped = true; ++this.epoch; ++this.request; clearTimeout(this.timer); }
 }
 @injectable()
-export class IngestionViewModel extends StatefulService<{ items: IngestionCandidate[]; total: number; page: number; sources: SourceRule[]; task: Recognition | null; preview: OrganizePreview | null; error: string | null; busy: boolean }> {
-  protected initState = { items: [], total: 0, page: 1, sources: [], task: null, preview: null, error: null, busy: false };
+export class IngestionViewModel extends StatefulService<{ items: IngestionCandidate[]; total: number; page: number; sources: SourceRule[]; task: Recognition | null; targets: CoreOutput<"recognition.task-targets"> | null; selecting: boolean; preview: OrganizePreview | null; error: string | null; busy: boolean }> {
+  protected initState = { items: [], total: 0, page: 1, sources: [], task: null, targets: null, selecting: false, preview: null, error: null, busy: false };
   private stopped = false; private watchers = 0; private epoch = 0; private request = 0; private selection = 0; private timer?: ReturnType<typeof setTimeout>;
   private readonly confirmations = new Map<string, string>();
   constructor(@inject(DesktopClient) readonly client: DesktopApi) { super(); }
-  watch() { if (this.stopped) return () => {}; if (++this.watchers === 1) { const epoch = ++this.epoch; const poll = async () => { await this.refresh(); if (!this.stopped && this.watchers && epoch === this.epoch) this.timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); } let released = false; return () => { if (released) return; released = true; if (!--this.watchers) { this.epoch++; clearTimeout(this.timer); } }; }
+  watch() { if (this.stopped) return () => {}; if (++this.watchers === 1) { const epoch = ++this.epoch; const poll = async () => { await this.refresh(); if (!this.stopped && this.watchers && epoch === this.epoch) this.timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); } let released = false; return () => { if (released) return; released = true; if (!--this.watchers) { this.epoch++; this.request++; this.selection++; this.setState({ selecting: false }); clearTimeout(this.timer); } }; }
   async refresh(page = this.state.page) {
-    if (this.stopped) return;
+    if (this.stopped || !this.watchers) return;
     const request = ++this.request, selected = this.selection; this.setState({ page });
-    try { const [result, sources, task] = await Promise.all([this.client.listIngestionCandidates({ page }), this.client.listSourceRules(), this.state.task ? this.client.getIngestionTask(this.state.task.taskId) : Promise.resolve(null)]); if (!this.stopped && request === this.request) this.setState({ ...result, sources, ...(selected === this.selection ? { task } : {}) }); }
+    try { const [result, sources, task, targets] = await Promise.all([this.client.listIngestionCandidates({ page }), this.client.listSourceRules(), this.state.task ? this.client.getIngestionTask(this.state.task.taskId) : Promise.resolve(null), this.state.task ? this.client.getRecognitionTaskTargets(this.state.task.taskId) : Promise.resolve(null)]); if (!this.stopped && request === this.request) this.setState({ ...result, sources, ...(selected === this.selection ? { task, targets, ...(this.state.targets?.scopeToken && targets?.scopeToken !== this.state.targets.scopeToken ? { preview: null } : {}) } : {}) }); }
     catch (error) { if (!this.stopped && request === this.request) this.setState({ error: message(error) }); }
   }
   private async action(work: () => Promise<void>) { if (this.state.busy || this.stopped) return; this.setState({ busy: true, error: null }); try { await work(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } finally { if (!this.stopped) this.setState({ busy: false }); } }
-  recognize(candidateId: string) { return this.action(async () => { const result = await this.client.recognizeIngestion({ candidateId, requestKey: crypto.randomUUID() }); await this.select(result.taskId); await this.refresh(); }); }
-  async select(taskId: string) { if (this.stopped) return; const selection = ++this.selection; this.setState({ preview: null }); try { const task = await this.client.getIngestionTask(taskId); if (!this.stopped && selection === this.selection) this.setState({ task }); } catch (error) { if (!this.stopped && selection === this.selection) this.setState({ error: message(error) }); } }
+  async recognize(candidateId: string) { let taskId: string | null = null; await this.action(async () => { const result = await this.client.recognizeIngestion({ candidateId, requestKey: crypto.randomUUID() }); if (this.stopped || !this.watchers) return; await this.select(result.taskId); await this.refresh(); if (!this.stopped && this.watchers) taskId = result.taskId; }); return taskId; }
+  async select(taskId: string) { if (this.stopped || !this.watchers) return; const selection = ++this.selection; this.setState({ preview: null, selecting: true, targets: null }); try { const [task, targets] = await Promise.all([this.client.getIngestionTask(taskId), this.client.getRecognitionTaskTargets(taskId)]); if (!this.stopped && selection === this.selection) this.setState({ task, targets, error: null }); } catch (error) { if (!this.stopped && selection === this.selection) this.setState({ error: message(error) }); } finally { if (!this.stopped && selection === this.selection) this.setState({ selecting: false }); } }
   clearPreview() { this.selection++; this.setState({ preview: null }); }
-  preview(input: Omit<CoreInput<"ingestion.preview">, "requestKey" | "taskId">) { return this.action(async () => { if (!this.state.task) return; const selection = this.selection, result = await this.client.previewOrganize({ ...input, taskId: this.state.task.taskId, requestKey: crypto.randomUUID() }); if (!this.stopped && selection === this.selection) this.setState({ preview: result }); }); }
+  preview(input: Omit<CoreInput<"ingestion.preview">, "requestKey" | "taskId">) { return this.action(async () => { if (!this.state.task) return; const selection = this.selection, scopeToken = this.state.targets?.scopeToken, result = await this.client.previewOrganize({ ...input, taskId: this.state.task.taskId, requestKey: crypto.randomUUID() }); if (!this.stopped && selection === this.selection && scopeToken === this.state.targets?.scopeToken) this.setState({ preview: result }); }); }
   confirm() { return this.action(async () => { const preview = this.state.preview; if (!preview) return; let requestKey = this.confirmations.get(preview.id); if (!requestKey) { requestKey = crypto.randomUUID(); this.confirmations.set(preview.id, requestKey); } await this.client.confirmOrganize({ previewId: preview.id, requestKey }); this.setState({ preview: null }); await this.refresh(); }); }
   retry(taskId: string) { return this.action(async () => { await this.client.retryOrganize(taskId); await this.refresh(); }); }
   protected dispose() { this.stopped = true; this.request++; this.selection++; this.epoch++; clearTimeout(this.timer); this.confirmations.clear(); }
@@ -366,6 +367,7 @@ export function createRendererApplication(client: DesktopApi) {
       register(bind) {
         bind(SourceRulesViewModel).toSelf().inSingletonScope();
         bind(SyncViewModel).toSelf().inSingletonScope();
+        bind(RecognitionViewModel).toSelf().inSingletonScope();
       },
     },
     {

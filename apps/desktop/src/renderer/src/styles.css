@@ -895,6 +895,7 @@ th {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.table-file > small { display: block; margin-top: 4px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; }
 th:first-child {
   width: 50%;
 }
@@ -1056,3 +1057,5 @@ th:first-child {
 .source-scans-panel a { color: var(--primary); text-decoration: underline; font-size: 13px; }
 .source-scans-panel .download-controls > .button { max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .source-scan-list .content-review-heading > strong { min-width: 0; overflow-wrap: anywhere; }
+
+.recognition-target { margin: 14px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--background, white); }

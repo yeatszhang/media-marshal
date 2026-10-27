@@ -17,7 +17,10 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { SourceDraftProvider } from "./source-draft-context";
+import { RecognitionDraftProvider } from "./recognition-draft-context";
+import { RecognitionPage } from "./pages/Recognition";
 import { SyncDraftProvider } from "./sync-draft-context";
+import { SourceConfigurationRedirect } from "./pages/SourceConfigurationRedirect";
 import { SyncSources } from "./pages/SyncSources";
 import { RuntimeViewModel, DesktopClient } from "./services";
 import { Button, cn } from "./components/ui/button";
@@ -59,6 +62,7 @@ function Shell() {
     { to: "/tasks", name: "tasks", Icon: Clapperboard },
     { to: "/review", name: "review", Icon: ListTodo },
     { to: "/sources", name: "sources", Icon: Folder },
+    { to: "/recognition", name: "recognitionMapping", Icon: ListTodo },
     { to: "/cloud", name: "cloud.title", Icon: Cloud },
     { to: "/downloads", name: "cloud.downloads", Icon: Download },
     { to: "/settings", name: "settings", Icon: Settings },
@@ -120,7 +124,9 @@ function Shell() {
             <Routes>
               <Route path="/" element={<Overview />} />
               <Route path="/sources" element={<SyncSources />} />
-              <Route path="/sources/legacy" element={<Sources />} />
+              <Route path="/sources/resolve" element={<SourceConfigurationRedirect />} />
+              <Route path="/sources/legacy" element={<Sources legacyOnly />} />
+              <Route path="/recognition" element={<RecognitionPage />} />
               <Route path="/cloud" element={<CloudDrives />} />
               <Route path="/downloads" element={<Downloads />} />
               <Route path="/subscriptions" element={<Subscriptions />} />
@@ -166,8 +172,8 @@ function Shell() {
 }
 export function App() {
   return (
-    <SourceDraftProvider><SyncDraftProvider><HashRouter>
+    <SourceDraftProvider><SyncDraftProvider><RecognitionDraftProvider><HashRouter>
       <Shell />
-    </HashRouter></SyncDraftProvider></SourceDraftProvider>
+    </HashRouter></RecognitionDraftProvider></SyncDraftProvider></SourceDraftProvider>
   );
 }

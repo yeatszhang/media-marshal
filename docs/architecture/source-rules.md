@@ -4,7 +4,9 @@
 
 ## 同步与识别职责拆分契约
 
-原 OpenSpec 第 21 组将来源同步与识别映射分开，该大变更已于 2026-10-27 历史归档。后续来源同步、独立识别与 Emby 路径关联分别由 `finish-source-sync-rules`、`add-independent-recognition-mapping`、`add-emby-target-path-binding` 承接；下文 21.x 编号保留原实现证据口径。`packages/contracts/src/sync-recognition.ts` 定义新模型；下文 `SourceRules`、来源内 `organization` 和 schema v27 及以前的说明记录现有兼容实现，后续迁移及页面接线完成前，不代表新流程已启用。
+原 OpenSpec 第 21 组将来源同步与识别映射分开，该大变更已于 2026-10-27 历史归档。来源同步、独立识别与 Emby 路径关联分别由 `finish-source-sync-rules`、`add-independent-recognition-mapping`、`add-emby-target-path-binding` 承接。当前主入口使用独立同步来源和「识别与映射」，契约位于 `packages/contracts/src/sync-recognition.ts`；下文 21.x 编号、`SourceRules`、来源内 `organization` 和 schema v27 及以前的说明保留兼容实现及历史证据口径。
+
+下载历史按实际所有权进入新同步规则或升级前配置核对，旧订阅链接仍定位原来源。兼容入口保留旧配置与任务核对，不提供新建耦合配置。独立识别操作见[识别规则](./desktop-recognition.md)，逐项实现和验证范围见[独立流水线验收](../development/independent-pipeline-validation.md)。
 
 | 新契约 | 配置职责与版本边界 |
 | --- | --- |

@@ -18,7 +18,7 @@ export function Downloads() {
     <div className="download-queue">{state.items.map((job) => {
       const busy = state.busy.includes(job.id), pausable = ["QUEUED", "RUNNING", "VERIFYING", "COMMITTING", "RETRY_WAIT"].includes(job.state), resumable = job.state === "PAUSED", retryable = ["FAILED", "AUTH_REQUIRED", "BLOCKED_LOCAL"].includes(job.state), cancellable = !["COMPLETED", "CANCELLED", "CANCELLING", "RECONCILING"].includes(job.state), total = job.progress.totalBytes;
       return <article className="panel download-job" key={job.id} aria-label={job.name || job.id}><div className="cloud-browser-toolbar"><h2 title={job.name}>{job.name || job.id.slice(0, 8)}</h2><span className="badge">{t(`cloud.state${job.state}`)}</span></div>
-        <Link className="source-inline-link" to={job.sourceId ? `/sources?source=${job.sourceId}` : `/sources?legacyJob=${job.id}`}>查看来源配置</Link>
+        <Link className="source-inline-link" to={job.sourceId ? `/sources/resolve?source=${job.sourceId}` : `/sources/legacy?legacyJob=${job.id}`}>查看来源配置</Link>
         <p className="download-progress" role="status">{size(job.progress.bytes)} / {total === null ? t("cloud.unknownSize") : size(total)} · {size(job.progress.bytesPerSecond)}/s · {t("cloud.completedCount", { done: job.progress.completedItems, total: job.progress.totalItems ?? "—" })}</p>
         {total !== null && total > 0 && <progress aria-label={t("cloud.downloadProgress")} max={total} value={Math.min(job.progress.bytes, total)} />}
         {job.failure && <ErrorNotice message={job.failure.message} />}

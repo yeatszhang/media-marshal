@@ -59,7 +59,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
                     <td className="table-file" title={task.sourcePath}>
                       {task.title || task.sourcePath}
                       <small className="task-source-filename">{task.sourcePath.split(/[\\/]/).at(-1)}</small>
-                      <small><Link to={`/sources?source=${task.sourceId}`}>来源配置</Link></small>
+                      <small><Link to={task.recognitionRuleId ? `/recognition?rule=${task.recognitionRuleId}` : `/sources/legacy?source=${task.sourceId}`}>{task.recognitionRuleId ? "识别规则" : "升级前来源配置"}</Link></small>
                     </td>
                     <td>{t(task.status)}</td>
                     <td>{t(task.deliveryStatus)}{task.deliveryFailure && <><p className="notice notice-error" role="alert">{task.deliveryFailure}</p>{task.targetPath && <small className="settings-mapping-path">媒体目标：{task.targetPath}</small>}<Link to="/settings">核对 Emby 关联</Link></>}</td>

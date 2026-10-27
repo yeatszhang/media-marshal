@@ -12,7 +12,7 @@ import { LocalSourceHealthPanel } from "../components/LocalSourceHealth";
 import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 
-export function Sources() {
+export function Sources({ legacyOnly = false }: { legacyOnly?: boolean }) {
   const { model, state } = useSourceRules(), [query, setQuery] = useSearchParams();
   const [page, setPage] = useState(1), addRef = useRef<HTMLButtonElement>(null), sourceId = query.get("source"), legacyJob = query.get("legacyJob"), busy = state.hasPending;
   const [archivedPage, setArchivedPage] = useState(1), [lifecycle, setLifecycle] = useState<{ row: SourceRule; operation: "remove" | "restore" } | null>(null);
@@ -30,7 +30,7 @@ export function Sources() {
     <Header title="来源配置" description="把网盘内容下载到本地，或整理已有本地文件。每个来源独立设置下载方式和媒体库目标。">
       <Button variant="outline" disabled={busy} onClick={() => { void model.toggleOrganizePause(); }}>{state.organizePaused ? "恢复全部整理" : "暂停全部整理"}</Button>
       <Button variant="outline" onClick={() => { void model.reload(); }} aria-label="刷新来源"><RefreshCw size={15} /></Button>
-      <Button ref={addRef} data-source-add disabled={busy} onClick={() => { setQuery({}); model.newSource(); }}><Plus size={16} />添加来源</Button>
+      {!legacyOnly && <Button ref={addRef} data-source-add disabled={busy} onClick={() => { setQuery({}); model.newSource(); }}><Plus size={16} />添加来源</Button>}
     </Header>
     <ErrorNotice message={state.error} retry={() => { void model.reload(); }} />
     <ErrorNotice message={state.healthError ? `本地目录检查：${state.healthError}` : null} retry={() => { void model.checkVisibleLocalHealth(true); }} />

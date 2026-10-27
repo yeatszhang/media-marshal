@@ -79,7 +79,7 @@ async function mount(overrides: Partial<DesktopApi> = {}, path = "/sources", set
   const api = { ...f.api, ...overrides } as unknown as DesktopApi, app = createRendererApplication(api); await app.start();
   const element = document.createElement("div"); document.body.append(element); let root = createRoot(element), mounted = true, projectionRenders = 0;
   function SourceCountProbe() { const model = useService(SourceRulesViewModel), count = useServiceState(model, (state) => state.sourceCount); projectionRenders++; return <span data-source-count>{count}</span>; }
-  const render = async () => { await act(async () => { root.render(<StrictMode><MemoryRouter initialEntries={[path]}><ContainerProvider value={app.container}><SourceDraftProvider><SourceCountProbe /><Routes><Route path="/sources" element={<Sources />} /><Route path="/cloud" element={<AccountConnections />} /><Route path="/subscriptions/:id" element={<Subscriptions />} /><Route path="/subscriptions" element={<Subscriptions />} /></Routes></SourceDraftProvider></ContainerProvider></MemoryRouter></StrictMode>); }); };
+  const render = async () => { await act(async () => { root.render(<StrictMode><MemoryRouter initialEntries={[path]}><ContainerProvider value={app.container}><SourceDraftProvider><SourceCountProbe /><Routes><Route path="/sources" element={<Sources />} /><Route path="/sources/legacy" element={<Sources legacyOnly />} /><Route path="/cloud" element={<AccountConnections />} /><Route path="/subscriptions/:id" element={<Subscriptions />} /><Route path="/subscriptions" element={<Subscriptions />} /></Routes></SourceDraftProvider></ContainerProvider></MemoryRouter></StrictMode>); }); };
   await render();
   const unmount = async () => { if (mounted) { mounted = false; await act(async () => root.unmount()); } };
   const remount = async () => { await unmount(); root = createRoot(element); mounted = true; await render(); };
@@ -267,7 +267,7 @@ describe("统一来源页、连接返回和确认边界", () => {
     let connected = false; const account: CloudAccount = { id: crypto.randomUUID(), name: "新连接", providerKind: "quark", status: "READY", capabilities: null, rootRef: crypto.randomUUID() };
     const f = await mount({ listCloudAccounts: async () => connected ? [account] : [], loginCloudAccount: async (input) => { connected = true; return { id: crypto.randomUUID(), accountId: account.id, requestKey: input.requestKey, state: "SUCCEEDED", failure: null, updatedAt: new Date().toISOString() }; } });
     await click("添加来源"); await fill("来源名称", "需要保留的草稿"); await fill("扩展名过滤", "mkv"); expect(button("选择远端范围").disabled).toBe(true);
-    await act(async () => document.querySelector<HTMLAnchorElement>('a[href="/cloud?returnTo=sources"]')!.click());
+    await act(async () => document.querySelector<HTMLAnchorElement>('a[href="/cloud?returnTo=legacy-sources"]')!.click());
     await click("连接夸克账号"); await fill("账号名称", "新连接"); await click("打开扫码登录");
     expect(field("来源名称").value).toBe("需要保留的草稿"); expect(field("扩展名过滤").value).toBe("mkv"); expect(field("网盘账号").value).toBe(account.id);
     expect(f.api.configureSourceRule).not.toHaveBeenCalled(); expect(f.api.runSourceOnce).not.toHaveBeenCalled(); expect(f.api.listRemote).not.toHaveBeenCalled();

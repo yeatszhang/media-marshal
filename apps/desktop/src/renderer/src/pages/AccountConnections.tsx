@@ -13,10 +13,10 @@ export function AccountConnections() {
   const { t } = useTranslation(), model = useService(CloudAccountsViewModel), state = useServiceState(model, (value) => value), navigate = useNavigate(), [query] = useSearchParams();
   const [editing, setEditing] = useState(false), [name, setName] = useState(""), [cookie, setCookie] = useState(""), [accountId, setAccountId] = useState<string | undefined>(), [localError, setLocalError] = useState<string | null>(null), [submitting, setSubmitting] = useState(false), [disconnectId, setDisconnectId] = useState<string | null>(null), [method, setMethod] = useState<"scan" | "cookie">("scan");
   const addRef = useRef<HTMLButtonElement>(null), nameRef = useRef<HTMLInputElement>(null), previousSuccess = useRef(state.authorization?.state === "SUCCEEDED" ? state.authorization.id : null);
-  const returning = query.get("returnTo") === "sources";
+  const legacyReturn = query.get("returnTo") === "legacy-sources", returning = legacyReturn || query.get("returnTo") === "sources";
   useEffect(() => model.watch(), [model]);
   useEffect(() => { if (editing) nameRef.current?.focus(); }, [editing]);
-  useEffect(() => { if (returning && state.authorization?.state === "SUCCEEDED" && state.authorization.id !== previousSuccess.current) navigate("/sources", { replace: true }); }, [navigate, returning, state.authorization]);
+  useEffect(() => { if (returning && state.authorization?.state === "SUCCEEDED" && state.authorization.id !== previousSuccess.current) navigate(legacyReturn ? "/sources/legacy" : "/sources", { replace: true }); }, [navigate, returning, legacyReturn, state.authorization]);
   const close = () => { setCookie(""); setName(""); setEditing(false); setLocalError(null); requestAnimationFrame(() => addRef.current?.focus()); };
   const edit = (account?: CloudAccount) => { setCookie(""); setName(account?.name ?? ""); setAccountId(account?.id); setMethod("scan"); setLocalError(null); setEditing(true); };
   const submit = async (event: FormEvent) => {
@@ -28,7 +28,7 @@ export function AccountConnections() {
   };
   return <>
     <Header title="网盘账号" description="连接和管理自己的夸克账号。远端范围、下载位置和整理策略在来源配置中设置。">
-      {returning && <Button variant="outline" onClick={() => navigate("/sources")}>返回来源草稿</Button>}
+      {returning && <Button variant="outline" onClick={() => navigate(legacyReturn ? "/sources/legacy" : "/sources")}>返回来源草稿</Button>}
       <Button ref={addRef} disabled={editing || state.authorizing || state.loggingIn} onClick={() => edit()}><Plus size={16} />{t("cloud.add")}</Button>
     </Header>
     <ErrorNotice message={state.error} />

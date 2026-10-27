@@ -27,6 +27,7 @@ export function Overview() {
             runtime?.status?.sourceCount ?? 0,
             <Folder size={19} />,
           ],
+          ["recognitionCount", runtime?.status?.recognitionCount ?? 0, <ListTodo size={19} />],
           [
             "taskCount",
             runtime?.status?.taskCount ?? 0,
