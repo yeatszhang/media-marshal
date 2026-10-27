@@ -64,7 +64,7 @@ export const sourceRulePreviewSchema = z.strictObject({
   organizationConflicts: z.array(z.strictObject({ sourceId: id, name: z.string().max(100) })).max(1000),
 });
 export type SourceRulePreview = z.output<typeof sourceRulePreviewSchema>;
-export const sourceRuleApplySchema = z.strictObject({ previewId: id, requestKey: id, runOnce: z.boolean().default(false), automaticConsent: z.strictObject({ previewId: id, accepted: z.literal(true) }).optional() });
+export const sourceRuleApplySchema = z.strictObject({ previewId: id, requestKey: id, runOnce: z.boolean().default(false), automaticConsent: z.strictObject({ previewId: id, accepted: z.literal(true) }).optional(), historyConsent: z.strictObject({ accepted: z.literal(true) }).optional() });
 export const sourceLegacyReferenceSchema = z.strictObject({
   kind: z.enum(["local-source", "subscription", "managed-binding", "download-job"]), id, sourceId: id.nullable(),
   status: z.enum(["MAPPED", "REVIEW_REQUIRED", "HISTORICAL"]),

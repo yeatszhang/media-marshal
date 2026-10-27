@@ -136,7 +136,7 @@ export const downloadPreviewSchema = z.strictObject({
   files: count, bytes: count, complete: z.boolean(), weakComparison: z.boolean(),
   expiresAt: timestamp,
   state: z.enum(["BUILDING", "READY", "FAILED", "EXPIRED", "CONFIRMED"]), failure: cloudFailureSchema.nullable(),
-  reuseFiles: count, localRemovedFiles: count.optional(), conflicts: count, forceRedownload: z.boolean(), destinationPrefix: z.string().max(256), selectionPath: z.string().max(4096), layout: z.enum(["selection", "drive"]),
+  reuseFiles: count, localRemovedFiles: count.optional(), historyRestore: z.strictObject({ files: count.min(1), confirmed: z.boolean() }).optional(), conflicts: count, forceRedownload: z.boolean(), destinationPrefix: z.string().max(256), selectionPath: z.string().max(4096), layout: z.enum(["selection", "drive"]),
 });
 export type DownloadPreview = z.infer<typeof downloadPreviewSchema>;
 export const cloudSubscriptionSchema = z.strictObject({

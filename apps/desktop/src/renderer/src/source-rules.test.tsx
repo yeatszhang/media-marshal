@@ -102,6 +102,20 @@ function savedLocal(f: ReturnType<typeof memoryApi>, name: string, client: "quar
 }
 
 describe("统一来源页、连接返回和确认边界", () => {
+  it("登录历史沿用必须明确勾选，重新预览重置确认且页面只提交接受标记", async () => {
+    const f = await mount(); await cloudDraft(f);
+    const original = vi.mocked(f.api.previewSourceRule).getMockImplementation()!;
+    vi.mocked(f.api.previewSourceRule).mockImplementation(async (input) => { const p = await original(input); p.download!.historyRestore = { files: 1, confirmed: false }; f.previews.set(p.id, structuredClone(p)); return p; });
+    await click("预览配置");
+    const consent = () => document.querySelector<HTMLInputElement>('[aria-label="确认仍为原账号和目录并沿用同步历史"]')!;
+    expect(consent().checked).toBe(false); expect(button("确认配置生效").disabled).toBe(true);
+    await act(async () => f.model.confirm()); expect(f.api.applySourceRule).not.toHaveBeenCalled();
+    await act(async () => consent().click()); expect(button("确认配置生效").disabled).toBe(false);
+    await fill("来源名称", "重新核对"); await click("预览配置"); expect(consent().checked).toBe(false); expect(button("确认配置生效").disabled).toBe(true);
+    await act(async () => consent().click()); await click("确认配置生效");
+    expect(f.api.applySourceRule).toHaveBeenCalledOnce(); expect(vi.mocked(f.api.applySourceRule).mock.calls[0]![0]).toMatchObject({ historyConsent: { accepted: true } });
+    expect(f.api.confirmDownload).not.toHaveBeenCalled(); expect(f.api.runSourceOnce).not.toHaveBeenCalled();
+  });
   it("自动开关默认关闭，必须核对冻结样例并明确勾选说明；编辑后不能沿用勾选", async () => {
     let source!: SourceRule; const f = await mount({}, "/sources", (fixture) => { source = savedLocal(fixture, "自动条件测试", "quark"); });
     await act(async () => { await f.model.openSource(source.id); });

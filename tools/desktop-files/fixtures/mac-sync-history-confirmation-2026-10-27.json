@@ -1,0 +1,80 @@
+{
+  "recordedAt": "2026-10-27T01:02:51.614178+00:00",
+  "scope": "finish-source-sync-rules 1.3（原 21.5）的网盘重新登录历史确认分支；本地同步及完整矩阵仍未完成，不勾选整项",
+  "baseCommit": "28683b1a78eefaaeaebcc0fc7b265ab382006c3e",
+  "environment": {
+    "platform": "Darwin",
+    "arch": "arm64",
+    "osVersion": "26.5.2",
+    "electronVersion": "44.9.0",
+    "schemaVersion": 30,
+    "build": "当前工作区开发构建；非安装态、签名或正式发行验收"
+  },
+  "decision": "用户明确核对仍为原账号和目录后沿用旧成功历史；不把相同路径和尺寸当作账号身份",
+  "checks": {
+    "unit": {
+      "command": "npm test",
+      "passed": 927,
+      "skipped": 13,
+      "filesPassed": 88,
+      "filesSkipped": 3,
+      "initialRun": "已有 macOS 目录事件测试等待 4 秒超时；其单独复跑和最终全量复跑均通过"
+    },
+    "workspaceTypecheck": "passed",
+    "boundaries": "passed",
+    "desktopBuild": "passed",
+    "docsBuild": "passed",
+    "openSpecStrict": "8 passed",
+    "newWindowIsolatedStrictTypecheck": "passed",
+    "desktopWindow": {
+      "command": "npm run test:desktop -- -g '重新登录的历史确认|成功同步的本地移除状态'",
+      "passed": 2,
+      "fixture": "Main 授权隔离目录；预置成功收据和待确认预览；临时固定页面预览请求键读取该预览，实际 Renderer／Preload／Main／Core IPC；不安装凭据、不模拟真实网盘登录",
+      "assertions": [
+        "确认默认未勾选、确认按钮禁用，勾选后可确认",
+        "920×640 长路径与确认说明无横向溢出，截图人工核对",
+        "取消及重载保持草稿版本 0，零历史确认、零引用关联、零传输 attempt",
+        "本地移除状态经 IPC 展示，重载与 Core 重启不创建副本或传输"
+      ]
+    },
+    "coreScenarios": [
+      "本机测试 Provider 重新授权后引用改变，未明确确认不能复用",
+      "来源版本写入故障回滚确认和引用关联，重试与重复键幂等",
+      "已确认后等价来源、周期、普通执行和 Core 重建不重复传输",
+      "再次登录、授权代际变化、草稿修改和预览过期需要重新预览",
+      "其他应用账号、其他目标目录、槽位及版本不能命中待确认历史",
+      "旧远端引用清理保留定位线索；普通预览清理保留防重确认依据",
+      "独立下载和周期入口不能绕过确认，强制重下载仍为独立预览",
+      "v29 到 v30 不改旧成功事实、不伪造确认，失败回滚及原备份保留、旧 Core 拒绝新库"
+    ]
+  },
+  "limitations": [
+    "未进行真实夸克账号重新登录验证",
+    "窗口确认预览来自持久隔离夹具；核心重新登录使用本机测试 Provider 与文件引擎",
+    "本地同步完整入口尚未接通；finish-source-sync-rules 仍 0/3",
+    "未运行安装态、签名、其他架构或正式发行验收；原 v29 SIGKILL 证据不冒充本次新增实测"
+  ],
+  "sha256": {
+    "apps/desktop/out/main/index.js": "5a3f19ecefb3da887c8f2bac66df5ef563c8cabc25834cadcc76059e2b63437d",
+    "apps/desktop/out/main/worker.js": "b2baeb138bab7bb8829ba65f3d8eeef31655faefe6d27e186c5e0d2b97bb7119",
+    "apps/desktop/out/preload/index.js": "863b6c8e9bd34ea1b53ba69214e5f57c36a60f20ad6900d4064c891c6f737da6",
+    "apps/desktop/out/renderer/assets/index-B8uzQwaG.js": "47edf40b4d862c1e9f6885a63d2c6728de3f16e967b1a538cb82856e88b7f69b",
+    "apps/desktop/out/renderer/assets/index-CrgNsP47.css": "ce04f489ab74d84f84390adecdc8ef1f36f665569ac66e02508de5e3b339d14d",
+    "apps/desktop/src/renderer/src/components/SourceEditorForm.tsx": "dfe4294e2e120e4d753255e784cd12d0f6498d6329df95b93ae6ca0212584fd6",
+    "apps/desktop/src/renderer/src/source-rules-model.ts": "79a156442cc6b4ff6c724ae287a69a7a9b3c89ed29751e9779fc3748d0edbdb8",
+    "apps/desktop/tests/desktop.spec.ts": "56d17b6e6ef334da1e0af4a6b67ab39fc29092b76586fdd80e73486123d4137c",
+    "docs/public/desktop/sync-history-confirmation-minimum.png": "1fc70f559e4b76468928668fe0175abab02b03579666f39e4416db0ae098e5c9",
+    "packages/contracts/src/cloud/index.ts": "7eaa235aa7b24d21c2bebb2acd3ddb1e6acd093faa196123ad9fbde0cd026c54",
+    "packages/contracts/src/internal/core.ts": "891cb938c78c9e4195da397aebd5aa1938b7d31c6c29b10dc0f3ba5520fa9a8e",
+    "packages/contracts/src/source-rules.ts": "6b7ec9b0a43efcef1e042b222e690ba191704413474913b89eda2e7fe759b68a",
+    "packages/media-core/src/cloud/downloads.ts": "74496fae7f77ed5fcb7aeca2aa4f4183836f74a0dbd79591387792ec4b74864c",
+    "packages/media-core/src/cloud/previews.ts": "afcd99b5af921472ac9d2022a197432dfb44d84e0a25af5230131376eea6b72d",
+    "packages/media-core/src/cloud/subscriptions.ts": "2a03e2ee6da47a77d95bb11ffcafb57d908922c9583490f9869028619c4251ea",
+    "packages/media-core/src/infrastructure/database.ts": "b11fad20a5d2efca539f08b69e5ef1d17a0dbcb17099e67ed5c4e5fcfd017109",
+    "packages/media-core/src/infrastructure/sync-history-migration.ts": "29492d5497bc3cae0fb16ec524bd02822df4368cbd39d6b75e60e8df01ffff8d",
+    "packages/media-core/src/sources/rules.ts": "fdbba10491c4e3e013a3bd4a4e20029b031a47be5c3c53925915690feab56647",
+    "packages/media-core/src/sources/sync-history.ts": "685285f1596cc40307c4b39a0eff251027a4128eed480f40926a325dae2d37cd",
+    "packages/media-core/src/sources/sync-receipts.ts": "0b8eef30d3a33f398ebbf08135486f68584a1911264980f3a0c9e70a6686bdb9",
+    "tools/desktop-files/seed-sync-receipt.mjs": "06f4cebe942ea23930ec0f2f48ecd0031535626cf2bb9fe38e1419b115c3cb4c"
+  }
+}

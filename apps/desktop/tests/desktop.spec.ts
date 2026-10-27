@@ -95,6 +95,32 @@ test("成功同步的本地移除状态经固定 IPC 展示，重载与核心重
   const checked = await new Promise<string>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, ["--input-type=module", "-e", 'import Database from "better-sqlite3"; const db=new Database(process.argv[1],{readonly:true}); console.log(JSON.stringify({attempts:db.prepare("SELECT count(*) AS n FROM download_attempt").get().n,receipts:db.prepare("SELECT count(*) AS n FROM sync_receipt").get().n,jobs:db.prepare("SELECT count(*) AS n FROM download_job").get().n})); db.close();', join(directory, "data/desktop.sqlite3")], { cwd: resolve("."), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 10000 }, (error, stdout) => error ? fail(error) : done(stdout)));
   expect(JSON.parse(checked.trim())).toEqual({ attempts: 0, receipts: 1, jobs: 1 });
 });
+test("重新登录的历史确认在真实窗口默认未勾选，取消和重载不登记关联", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(60000);
+  let page = await application.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), rootPath = join(canonical, "登录历史核对 中文 空格"); await mkdir(rootPath);
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, rootPath);
+  const root = await page.evaluate(() => window.desktopApi.chooseDownloadRoot()); await application.close();
+  const config = join(canonical, "seed-history-preview.json"); await writeFile(config, JSON.stringify({ database: join(directory, "data/desktop.sqlite3"), rootId: root!.id, historyPreview: true }));
+  const seeded = await new Promise<string>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [resolve("tools/desktop-files/seed-sync-receipt.mjs"), config], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 20000 }, (error, stdout) => error ? fail(error) : done(stdout))), fixture = JSON.parse(seeded.trim()) as { historyPreview: { sourceId: string; name: string; requestKey: string } };
+  const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")); delete env.ELECTRON_RUN_AS_NODE;
+  application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${join(directory, "data")}`], env }); page = await application.firstWindow();
+  await expect(page.getByText("核心已连接", { exact: true })).toBeVisible(); await page.getByRole("link", { name: "来源", exact: true }).click();
+  await page.getByRole("article", { name: `来源 ${fixture.historyPreview.name}`, exact: true }).getByRole("button", { name: "编辑并预览" }).click();
+  // 只把本次预览请求指向已持久的隔离夹具；IPC 与页面均使用实际构建。
+  await page.evaluate((key) => { Reflect.set(window, "__historyOriginalUUID", crypto.randomUUID.bind(crypto)); crypto.randomUUID = () => key as ReturnType<Crypto["randomUUID"]>; }, fixture.historyPreview.requestKey);
+  await page.getByRole("button", { name: "预览配置", exact: true }).click();
+  await expect(page.getByText("正在建立范围预览…", { exact: true })).toBeHidden();
+  await page.evaluate(() => { crypto.randomUUID = Reflect.get(window, "__historyOriginalUUID"); Reflect.deleteProperty(window, "__historyOriginalUUID"); });
+  const consent = page.getByRole("checkbox", { name: "确认仍为原账号和目录并沿用同步历史", exact: true }), confirm = page.getByRole("button", { name: "确认配置生效", exact: true });
+  await expect(consent).toBeVisible(); await expect(consent).not.toBeChecked(); await expect(confirm).toBeDisabled(); await expect(page.getByText("核对重新登录后的同步历史", { exact: true })).toBeVisible();
+  await consent.check(); await expect(confirm).toBeEnabled(); await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  await consent.scrollIntoViewIfNeeded(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: "test-results/desktop/sync-history-confirmation-minimum.png" });
+  await page.getByRole("button", { name: "取消编辑", exact: true }).click(); await page.reload(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  expect((await page.evaluate((id) => window.desktopApi.getSourceRule(id), fixture.historyPreview.sourceId))?.version).toBe(0); await application.close();
+  const result = await new Promise<string>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, ["--input-type=module", "-e", 'import Database from "better-sqlite3"; const db=new Database(process.argv[1],{readonly:true}); console.log(JSON.stringify({confirmations:db.prepare("SELECT count(*) AS n FROM sync_history_confirmation").get().n,references:db.prepare("SELECT count(*) AS n FROM sync_receipt_reference").get().n,attempts:db.prepare("SELECT count(*) AS n FROM download_attempt").get().n})); db.close();', join(directory, "data/desktop.sqlite3")], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 10000 }, (error, stdout) => error ? fail(error) : done(stdout)));
+  expect(JSON.parse(result.trim())).toEqual({ confirmations: 0, references: 0, attempts: 0 });
+});
 test("自动策略以真实人工 COPY 预览授权，经 Main 固定桥确认，重载和核心重启不重做文件", async () => {
   test.skip(process.platform !== "darwin"); test.setTimeout(60000);
   // 复用生产 Core 准备的隔离人工 COPY 收据；受控时钟不作为实际客户端稳定窗口的证据。

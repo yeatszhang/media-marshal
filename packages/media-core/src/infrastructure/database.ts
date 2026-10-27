@@ -26,6 +26,7 @@ import { automaticIngestionMigrationSql } from "./automatic-ingestion-migration.
 import { sourceHealthMigrationSql } from "./source-health-migration.js";
 import { syncRecognitionMigrationSql, migrateSyncRecognition } from "./sync-recognition-migration.js";
 import { syncReceiptMigrationSql, migrateSyncReceiptEvidence } from "./sync-receipt-migration.js";
+import { syncHistoryMigrationSql, migrateSyncHistory } from "./sync-history-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
@@ -92,6 +93,7 @@ export const migrations: readonly Migration[] = [
   { version: 27, sql: automaticIngestionMigrationSql },
   { version: 28, sql: syncRecognitionMigrationSql, apply: migrateSyncRecognition },
   { version: 29, sql: syncReceiptMigrationSql, apply: migrateSyncReceiptEvidence },
+  { version: 30, sql: syncHistoryMigrationSql, apply: migrateSyncHistory },
 ];
 
 export class CoreDatabase {

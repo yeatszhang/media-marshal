@@ -178,7 +178,7 @@ export class CloudDownloads {
       for (const item of snapshot.items) {
         if (item.receiptId && !item.issue) {
           if (snapshot.variant || !item.source.expectedVersion) throw new CloudError("CONFLICT");
-          const receipts = new SyncReceipts(this.database), receipt = receipts.find("cloud", preview.account_id, item.source.remoteRef, item.source.expectedVersion, preview.target_root_id, item.targetPathKey);
+          const receipts = new SyncReceipts(this.database), receipt = receipts.findCloud(preview.account_id, item.source.remoteRef, item.source.expectedVersion, preview.target_root_id, item.targetPathKey, snapshot.binding.bindingId);
           if (!receipt || receipt.id !== item.receiptId) throw new CloudError("CONFLICT");
           const existingResult = db.prepare("SELECT id FROM download_item WHERE id=? AND account_id=? AND target_root_id=?").get(receipt.result_id, preview.account_id, preview.target_root_id);
           if (existingResult) {

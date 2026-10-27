@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { CoreDatabase } from "../../packages/media-core/dist/infrastructure/database.js";
 import { CloudRoots } from "../../packages/media-core/dist/cloud/roots.js";
 import { SyncReceipts } from "../../packages/media-core/dist/sources/sync-receipts.js";
+import { planOnce } from "../../packages/media-core/dist/cloud/planning.js";
 
 const config = JSON.parse(await readFile(process.argv[2], "utf8"));
 const db = await CoreDatabase.open(config.database, undefined, { exclusiveOwner: true }), roots = new CloudRoots(db);
@@ -25,5 +26,23 @@ try {
     db.connection.prepare("INSERT INTO download_job_item VALUES(?,?,?,'ACTIVE')").run(job, item, account);
   })();
   const receipts = new SyncReceipts(db), receipt = receipts.recordDownload(item, evidence); await rm(join(grant.path, "completed", name)); assert.equal(await receipts.observe(receipt, root), "REMOVED"); await root.cleanupAttempt(attempt);
-  console.log(JSON.stringify({ jobId: job, receiptId: receipt.id, filename: name }));
+  let historyPreview;
+  if (config.historyPreview) {
+    // 仅预置登录后待核对的页面状态，不安装凭据、不模拟真实账号校验。
+    const binding = { accountId: account, bindingId: randomUUID(), generation: randomUUID() }, ref = randomUUID(), source = randomUUID(), previewId = randomUUID(), requestKey = randomUUID(), locator = { kind: "path", segments: [name] }, configuration = { type: "cloud", name: "重新登录的同步来源", accountId: account, remoteRef: ref, downloadRootId: grant.id, filters: { extensions: [], names: [] }, periodic: { enabled: false, intervalSeconds: 900 }, organization: null }, expires = Date.now() + 900000;
+    const itemPlan = planOnce({ jobId: randomUUID(), requestKey, attemptId: randomUUID(), binding, targetGrantId: grant.id, files: [{ entry: { accountId: account, ref, parentRef: null, name, type: "file", size: bytes.length, modifiedAt: null, version }, locator, mapping: { segments: [name], slotKey: root.slotKey([name]) } }] });
+    const pending = { ...itemPlan.items[0], receiptId: receipt.id, reuseItemId: item, historyPending: true, localRemoved: true }, snapshot = { binding, name, rootType: "file", layout: "drive", selectionPath: name, items: [pending], complete: true, failure: null, variant: "", filters: configuration.filters, policy: { maxAttempts: 3, retryBaseMs: 1000 } };
+    db.connection.transaction(() => {
+      db.connection.prepare("UPDATE cloud_account SET status='READY' WHERE id=?").run(account);
+      db.connection.prepare("INSERT INTO provider_binding(id,account_id,implementation_id,configuration_version,generation,state,created_at) VALUES(?,?,'quark.openlist',1,?,'ACTIVE',?)").run(binding.bindingId, account, binding.generation, stamp);
+      db.connection.prepare("INSERT INTO remote_entry(id,account_id,name,type,size,observed_at) VALUES(?,?,?,'file',?,?)").run(ref, account, name, bytes.length, stamp);
+      db.connection.prepare("INSERT INTO remote_binding(remote_ref,binding_id,account_id,locator_json,locator_key,updated_at) VALUES(?,?,?,?,?,?)").run(ref, binding.bindingId, account, JSON.stringify(locator), createHash("sha256").update(JSON.stringify(locator)).digest("hex"), stamp);
+      db.connection.prepare("INSERT INTO sync_receipt_origin VALUES(?,?,'path',?)").run(receipt.id, account, createHash("sha256").update(JSON.stringify(locator)).digest("hex"));
+      db.connection.prepare("INSERT INTO cloud_preview(id,account_id,remote_root_ref,target_root_id,request_key,snapshot_json,state,configuration_version,created_at,expires_at) VALUES(?,?,?,?,?,?,'READY',1,?,?)").run(previewId, account, ref, grant.id, requestKey, JSON.stringify(snapshot), stamp, new Date(expires).toISOString());
+      db.connection.prepare("INSERT INTO source_rule(id,type,version,draft_revision,draft_json,paused,created_at,updated_at) VALUES(?,'cloud',0,1,?,1,?,?)").run(source, JSON.stringify(configuration), stamp, stamp);
+      db.connection.prepare("INSERT INTO source_rule_preview(id,source_id,version,draft_revision,request_key,configuration_json,download_preview_id,state,expires_at,created_at) VALUES(?,?,0,1,?,?,?,'READY',?,?)").run(randomUUID(), source, requestKey, JSON.stringify(configuration), previewId, expires, stamp);
+    })();
+    historyPreview = { sourceId: source, name: configuration.name, requestKey };
+  }
+  console.log(JSON.stringify({ jobId: job, receiptId: receipt.id, filename: name, ...(historyPreview ? { historyPreview } : {}) }));
 } finally { await roots.close(); db.close(); }

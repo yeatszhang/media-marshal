@@ -114,6 +114,82 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     const p = await f.preview(draft), source = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() }, target ? { source: f.grant, target } : undefined);
     return { p, source, job: await f.downloads.confirm({ previewId: p.download!.id, requestKey: randomUUID() }) };
   }
+  async function relogin(f: Awaited<ReturnType<typeof setup>>, accountId = f.account.id) {
+    const prepared = f.accounts.dispatch("cloud.authorization.begin", { accountId, name: "重新登录", requestKey: randomUUID(), implementationId: f.provider.implementationId });
+    await f.sidecar.installCredential(prepared.candidate.binding, "isolated-fixture");
+    const result = f.accounts.dispatch("cloud.authorization.finish", { jobId: prepared.job.id, failure: null, capabilities: { ...await f.provider.capabilities(prepared.candidate.binding), accountIdentity: "unavailable" }, identityKey: null });
+    expect(result.state).toBe("SUCCEEDED");
+    return f.catalog.accounts().find((account) => account.id === accountId)!;
+  }
+  async function deletedHistory() {
+    const f = await setup(), initial = await organized(f, "原同步来源", f.account.rootRef!, null);
+    f.downloads.start(); await expect.poll(() => f.state(initial.job.jobId).state, { timeout: 10000 }).toBe("COMPLETED");
+    await expect.poll(() => (Reflect.get(f.downloads, "active") as Map<string, unknown>).size).toBe(0);
+    await rm(join(f.rootPath, "completed/目录/电影.mp4"));
+    const account = await relogin(f);
+    expect(account.rootRef).not.toBe(f.account.rootRef);
+    const configure = (periodic = false) => f.rules.configure({ id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, requestKey: randomUUID(), configuration: { ...initial.source.configuration!, remoteRef: account.rootRef!, periodic: { enabled: periodic, intervalSeconds: 900 } } });
+    return { ...f, initial, account, configure };
+  }
+  it("重新登录重建引用后须明确沿用原账号目录历史，原子确认与重启扫描均不重传已移除副本", async () => {
+    const f = await deletedHistory(), draft = f.configure(true), p = await f.preview(draft);
+    expect(p.download).toMatchObject({ historyRestore: { files: 1, confirmed: false }, reuseFiles: 1, localRemovedFiles: 1, conflicts: 0 });
+    await expect(f.rules.apply({ previewId: p.id, requestKey: randomUUID() })).rejects.toThrow(/原同步历史/);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_reference").get()).toEqual({ n: 0 });
+    expect(() => f.subscriptions.configure({ previewId: p.download!.id, requestKey: randomUUID() })).toThrow();
+    const command = { previewId: p.id, requestKey: randomUUID(), historyConsent: { accepted: true as const } };
+    f.db.connection.exec("CREATE TRIGGER history_fault BEFORE INSERT ON source_rule_version BEGIN SELECT RAISE(ABORT,'注入来源版本故障'); END");
+    await expect(f.rules.apply(command)).rejects.toThrow(/注入来源版本故障/);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_history_confirmation").get()).toEqual({ n: 0 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_reference").get()).toEqual({ n: 0 });
+    f.db.connection.exec("DROP TRIGGER history_fault");
+    const source = await f.rules.apply(command); expect(await f.rules.apply(command)).toEqual(source);
+    expect(f.rules.getPreview(p.id)?.download?.historyRestore).toEqual({ files: 1, confirmed: true });
+    f.subscriptions.start(); await expect.poll(() => f.subscriptions.list({}).items[0]?.lastResult?.reused, { timeout: 10000 }).toBe(1);
+    const replacement = await f.preview(f.configure()); expect(replacement.download).toMatchObject({ reuseFiles: 1, localRemovedFiles: 1 }); expect(replacement.download?.historyRestore).toBeUndefined();
+    await f.rules.apply({ previewId: replacement.id, requestKey: randomUUID() });
+    const job = await f.downloads.confirm({ previewId: replacement.download!.id, requestKey: randomUUID() }); expect(f.state(job.jobId).state).toBe("COMPLETED");
+    // 模拟普通来源预览历史被清理；防重依据及它的确认凭据须独立保留。
+    f.db.connection.prepare("UPDATE cloud_subscription SET confirmed_preview_id=? WHERE id=?").run(replacement.download!.id, source.subscriptionId);
+    f.db.connection.prepare("DELETE FROM source_rule_preview WHERE id=?").run(p.id);
+    f.db.connection.prepare("UPDATE cloud_preview SET expires_at='2000-01-01T00:00:00.000Z' WHERE id=?").run(p.download!.id);
+    await Reflect.get(f.subscriptions, "tick").call(f.subscriptions);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_history_confirmation").get()).toEqual({ n: 1 });
+    expect(f.downloads.previews.row(p.download!.id)).toBeDefined();
+    await f.subscriptions.close(); await f.downloads.close();
+    const restored = new CloudDownloads(f.db, f.host, f.catalog, f.roots); cleanup.push(() => restored.close());
+    const key = randomUUID(); restored.previews.start({ accountId: f.account.id, remoteRef: f.account.rootRef!, targetGrantId: f.grant.id, layout: "drive", requestKey: key });
+    await expect.poll(() => restored.previews.get(key)?.state).toBe("READY"); expect(restored.previews.get(key)).toMatchObject({ reuseFiles: 1, localRemovedFiles: 1 });
+    expect(f.fileEngine.starts).toBe(1); expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_attempt").get()).toEqual({ n: 1 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
+    const again = await relogin(f), againKey = randomUUID();
+    restored.previews.start({ accountId: again.id, remoteRef: again.rootRef!, targetGrantId: f.grant.id, layout: "drive", requestKey: againKey });
+    await expect.poll(() => restored.previews.get(againKey)?.state).toBe("READY"); expect(restored.previews.get(againKey)?.historyRestore).toEqual({ files: 1, confirmed: false });
+    await expect(restored.confirm({ previewId: restored.previews.get(againKey)!.id, requestKey: randomUUID() })).rejects.toMatchObject({ code: "CONFLICT" });
+    const forceKey = randomUUID(); restored.previews.start({ accountId: again.id, remoteRef: again.rootRef!, targetGrantId: f.grant.id, layout: "drive", requestKey: forceKey, forceRedownload: true });
+    await expect.poll(() => restored.previews.get(forceKey)?.state).toBe("READY"); expect(restored.previews.get(forceKey)).toMatchObject({ forceRedownload: true, reuseFiles: 0 }); expect(restored.previews.get(forceKey)?.historyRestore).toBeUndefined();
+  });
+  it("沿用确认不能跨授权代际或草稿版本重放，重新预览仍需新确认", async () => {
+    const f = await deletedHistory(), draft = f.configure(), p = await f.preview(draft);
+    await relogin(f); await expect(f.rules.apply({ previewId: p.id, requestKey: randomUUID(), historyConsent: { accepted: true } })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_history_confirmation").get()).toEqual({ n: 0 });
+    const account = f.catalog.accounts()[0]!, changed = f.rules.configure({ id: draft.id, expectedVersion: 0, expectedDraftRevision: 1, requestKey: randomUUID(), configuration: { ...draft.draft!, remoteRef: account.rootRef! } });
+    const next = await f.preview(changed); expect(next.download?.historyRestore?.confirmed).toBe(false);
+    f.rules.configure({ id: draft.id, expectedVersion: 0, expectedDraftRevision: 2, requestKey: randomUUID(), configuration: { ...changed.draft!, name: "新的草稿" } });
+    await expect(f.rules.apply({ previewId: next.id, requestKey: randomUUID(), historyConsent: { accepted: true } })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.fileEngine.starts).toBe(1);
+  });
+  it("待沿用历史不能通过独立下载或周期入口绕过明确确认，过期后不能提交", async () => {
+    const f = await deletedHistory(), key = randomUUID();
+    f.downloads.previews.start({ accountId: f.account.id, remoteRef: f.account.rootRef!, targetGrantId: f.grant.id, layout: "drive", requestKey: key });
+    await expect.poll(() => f.downloads.previews.get(key)?.state).toBe("READY"); const standalone = f.downloads.previews.get(key)!;
+    expect(standalone.historyRestore).toMatchObject({ files: 1, confirmed: false });
+    await expect(f.downloads.confirm({ previewId: standalone.id, requestKey: randomUUID() })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(() => f.subscriptions.configure({ previewId: standalone.id, requestKey: randomUUID() })).toThrow();
+    const p = await f.preview(f.configure()); f.db.connection.prepare("UPDATE cloud_preview SET expires_at='2000-01-01T00:00:00.000Z' WHERE id=?").run(p.download!.id);
+    await expect(f.rules.apply({ previewId: p.id, requestKey: randomUUID(), historyConsent: { accepted: true } })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_reference").get()).toEqual({ n: 0 }); expect(f.fileEngine.starts).toBe(1);
+  });
   async function automaticFixture() {
     const f = await setup(new Map([["目录/测试剧集.S01E01.mkv", Buffer.from("首次人工预览原片")]])), targetPath = join(f.path, "自动整理媒体库"); await mkdir(targetPath);
     const target = await probeManagedVolume(targetPath), first = await organized(f, "单来源自动整理", f.account.rootRef!, target, ["mkv"], "TV_SHOW");

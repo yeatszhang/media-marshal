@@ -59,6 +59,11 @@ describe("统一来源受限契约", () => {
 });
 
 describe("自动来源授权的受限契约", () => {
+  it("历史沿用只允许对当前预览明确接受，不接受任意账号或引用映射", () => {
+    const input = { previewId: randomUUID(), requestKey: randomUUID(), historyConsent: { accepted: true } };
+    expect(sourceRuleApplySchema.safeParse(input).success).toBe(true);
+    for (const historyConsent of [{ accepted: false }, {}, { accepted: true, accountId: randomUUID() }, { accepted: true, remoteRef: randomUUID() }, { accepted: true, aliases: [] }, { accepted: true, generation: randomUUID() }]) expect(sourceRuleApplySchema.safeParse({ ...input, historyConsent }).success).toBe(false);
+  });
   it("统一草稿允许显式自动意图，确认只能携带样例引用和明确接受，不接收任意完成证据", () => {
     expect(sourceConfigurationSchema.parse({ ...local, organization: { targetPath: "/library", automatic: true } }).organization?.automatic).toBe(true);
     const input = { previewId: randomUUID(), requestKey: randomUUID(), automaticConsent: { previewId: randomUUID(), accepted: true } };

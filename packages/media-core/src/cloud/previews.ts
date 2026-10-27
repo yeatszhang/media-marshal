@@ -10,7 +10,7 @@ import { SyncReceipts } from "../sources/sync-receipts.js";
 export interface PreviewSnapshot {
   binding: BindingRef; name: string; complete: boolean; failure: CloudFailure | null;
   rootType?: "file" | "directory"; variant?: string; filters?: { extensions: string[]; names?: string[] }; layout?: "selection" | "drive"; selectionPath?: string;
-  items: (TransferItem & { versionKey: string; targetPathKey: string; reuseItemId?: string; existingItemId?: string; receiptId?: string; localRemoved?: boolean; issue?: CloudFailure })[];
+  items: (TransferItem & { versionKey: string; targetPathKey: string; reuseItemId?: string; existingItemId?: string; receiptId?: string; historyPending?: boolean; localRemoved?: boolean; issue?: CloudFailure })[];
   policy: { maxAttempts: number; retryBaseMs: number };
 }
 export interface PreviewRow { id: string; account_id: string; remote_root_ref: string; target_root_id: string; request_key: string; state: string; expires_at: string; snapshot_json: string }
@@ -26,8 +26,10 @@ export class DownloadPreviews {
   }
   private dto(row: PreviewRow): DownloadPreview {
     const snapshot: PreviewSnapshot = JSON.parse(row.snapshot_json);
-    const localRemovedFiles = snapshot.items.filter((item) => item.localRemoved).length;
-    return { id: row.id, accountId: row.account_id, remoteRef: row.remote_root_ref, targetGrantId: row.target_root_id, files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), complete: snapshot.complete, weakComparison: snapshot.items.some((item) => item.source.expectedVersion?.kind === "weak"), expiresAt: row.expires_at, state: snapshot.failure ? "FAILED" : row.state === "CONFIRMED" ? "CONFIRMED" : row.expires_at <= new Date(this.now()).toISOString() ? "EXPIRED" : row.state as DownloadPreview["state"], failure: snapshot.failure, reuseFiles: snapshot.items.filter((item) => item.reuseItemId || item.receiptId).length, conflicts: snapshot.items.filter((item) => item.issue).length, forceRedownload: !!snapshot.variant, destinationPrefix: snapshot.variant ? `completed/redownload-${row.id}` : "completed", selectionPath: snapshot.selectionPath ?? snapshot.name, layout: snapshot.layout ?? "selection", ...(localRemovedFiles ? { localRemovedFiles } : {}) };
+    const localRemovedFiles = snapshot.items.filter((item) => item.localRemoved).length, historyFiles = snapshot.items.filter((item) => item.historyPending).length;
+    const historyRestore = historyFiles ? { files: historyFiles, confirmed: !!this.database.connection.prepare("SELECT 1 FROM sync_history_confirmation WHERE preview_id=?").get(row.id) } : undefined;
+    const historyExpired = historyFiles > 0 && !this.database.connection.prepare("SELECT 1 FROM provider_binding b JOIN cloud_account a ON a.id=b.account_id WHERE b.id=? AND b.account_id=? AND b.generation=? AND b.state='ACTIVE' AND a.status IN ('READY','RESELECT_REQUIRED')").get(snapshot.binding.bindingId, row.account_id, snapshot.binding.generation);
+    return { id: row.id, accountId: row.account_id, remoteRef: row.remote_root_ref, targetGrantId: row.target_root_id, files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), complete: snapshot.complete, weakComparison: snapshot.items.some((item) => item.source.expectedVersion?.kind === "weak"), expiresAt: row.expires_at, state: snapshot.failure ? "FAILED" : row.state === "CONFIRMED" ? "CONFIRMED" : historyExpired || row.expires_at <= new Date(this.now()).toISOString() ? "EXPIRED" : row.state as DownloadPreview["state"], failure: snapshot.failure, reuseFiles: snapshot.items.filter((item) => item.reuseItemId || item.receiptId).length, conflicts: snapshot.items.filter((item) => item.issue).length, forceRedownload: !!snapshot.variant, destinationPrefix: snapshot.variant ? `completed/redownload-${row.id}` : "completed", selectionPath: snapshot.selectionPath ?? snapshot.name, layout: snapshot.layout ?? "selection", ...(localRemovedFiles ? { localRemovedFiles } : {}), ...(historyRestore ? { historyRestore } : {}) };
   }
   start(input: CloudInput<"cloud.downloads.preview">): DownloadPreview {
     if (this.closed) throw new CloudError("INTERRUPTED");
@@ -68,11 +70,13 @@ export class DownloadPreviews {
           const item = { ...plan.items[0]! } as PreviewSnapshot["items"][number], db = this.database.connection;
           const previous = db.prepare("SELECT i.id,i.state,c.file_evidence_json FROM download_item i LEFT JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.account_id=? AND i.remote_ref=? AND i.version_key=? AND i.request_variant=? AND i.target_root_id=? AND i.target_path_key=?").get(row.account_id, current.entry.ref, item.versionKey, snapshot.variant ?? "", row.target_root_id, item.targetPathKey) as { id: string; state: string; file_evidence_json: string | null } | undefined;
           if (previous) item.existingItemId = previous.id;
-          const receipts = new SyncReceipts(this.database, this.now), receipt = !snapshot.variant && item.source.expectedVersion ? receipts.find("cloud", row.account_id, current.entry.ref, item.source.expectedVersion, row.target_root_id, item.targetPathKey) : undefined;
+          const receipts = new SyncReceipts(this.database, this.now), existingReceipt = !snapshot.variant && item.source.expectedVersion ? receipts.findCloud(row.account_id, current.entry.ref, item.source.expectedVersion, row.target_root_id, item.targetPathKey, snapshot.binding.bindingId) : undefined;
+          const pendingReceipt = !existingReceipt && !snapshot.variant && item.source.expectedVersion ? receipts.pendingCloudHistory(row.account_id, current.entry.ref, item.source.expectedVersion, row.target_root_id, item.targetPathKey, snapshot.binding.bindingId) : undefined;
+          const receipt = existingReceipt ?? pendingReceipt;
           if (receipt) {
             const state = await receipts.observe(receipt, root);
             if (state === "PRESENT" || state === "REMOVED") {
-              item.receiptId = receipt.id; item.localRemoved = state === "REMOVED";
+              item.receiptId = receipt.id; item.localRemoved = state === "REMOVED"; if (pendingReceipt) item.historyPending = true;
               if (db.prepare("SELECT 1 FROM download_item WHERE id=?").get(receipt.result_id)) item.reuseItemId = receipt.result_id;
             } else {
               item.issue = cloudFailure(new CloudError(state === "UNAVAILABLE" ? "LOCAL_UNAVAILABLE" : "CONFLICT"));

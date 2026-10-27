@@ -26,21 +26,48 @@ async function fixture(conflictingEvidence = false) {
 }
 describe("v29 成功收据文件证据迁移", () => {
   it("保留 v28 成功事实，仅补入摘要和长度一致的原提交文件证据", async () => {
-    const f = await fixture(), db = await CoreDatabase.open(f.path); cleanup.push(() => db.close());
+    const f = await fixture(), db = await CoreDatabase.open(f.path, migrations.slice(0, 29)); cleanup.push(() => db.close());
     expect(db.schemaVersion).toBe(29); expect(db.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before);
     expect(JSON.parse((db.connection.prepare("SELECT evidence_json FROM sync_receipt_evidence WHERE receipt_id=?").get(f.id) as { evidence_json: string }).evidence_json)).toEqual(f.evidence);
     expect(db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_local_state").get()).toEqual({ n: 0 }); expect(db.connection.prepare("SELECT count(*) AS n FROM download_job_receipt").get()).toEqual({ n: 0 });
     expect(db.connection.pragma("foreign_key_check")).toEqual([]); db.close(); await expect(CoreDatabase.open(f.path, migrations.slice(0, 28))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
   });
   it("证据冲突不伪造原文件身份，也不删除已有成功事实", async () => {
-    const f = await fixture(true), db = await CoreDatabase.open(f.path); cleanup.push(() => db.close());
+    const f = await fixture(true), db = await CoreDatabase.open(f.path, migrations.slice(0, 29)); cleanup.push(() => db.close());
     expect(db.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before); expect(db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_evidence").get()).toEqual({ n: 0 });
   });
   it("迁移失败保留 v28 原记录及一致性备份，重试不覆盖原备份", async () => {
     const f = await fixture(), failed = [...migrations.slice(0, 28), { ...migrations[28]!, sql: migrations[28]!.sql + "SELECT injected_receipt_failure();" }];
     await expect(CoreDatabase.open(f.path, failed)).rejects.toThrow(); const backup = f.path + ".before-v29.bak", before = digest(await readFile(backup));
     const old = await CoreDatabase.open(f.path, migrations.slice(0, 28)); expect(old.schemaVersion).toBe(28); expect(old.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before); expect(old.connection.prepare("SELECT name FROM sqlite_master WHERE name='sync_receipt_evidence'").get()).toBeUndefined(); old.close();
-    const current = await CoreDatabase.open(f.path); cleanup.push(() => current.close()); expect(current.schemaVersion).toBe(29); expect(digest(await readFile(backup))).toBe(before);
+    const current = await CoreDatabase.open(f.path, migrations.slice(0, 29)); cleanup.push(() => current.close()); expect(current.schemaVersion).toBe(29); expect(digest(await readFile(backup))).toBe(before);
     const saved = new Database(backup, { readonly: true }); expect(saved.pragma("user_version", { simple: true })).toBe(28); saved.close();
+  });
+});
+
+describe("v30 登录历史线索迁移", () => {
+  async function historyFixture() {
+    const f = await fixture(), old = await CoreDatabase.open(f.path, migrations.slice(0, 29)), db = old.connection;
+    const receipt = db.prepare("SELECT source_namespace,source_object_key FROM sync_receipt").get() as { source_namespace: string; source_object_key: string };
+    const binding = db.prepare("SELECT id FROM provider_binding").get() as { id: string }, locator = JSON.stringify({ kind: "path", segments: ["file.mkv"] });
+    db.prepare("INSERT INTO remote_binding(remote_ref,binding_id,account_id,locator_json,locator_key,updated_at) VALUES(?,?,?,?,?,?)").run(receipt.source_object_key, binding.id, receipt.source_namespace, locator, digest(locator), new Date().toISOString());
+    old.close(); return { ...f, receipt, locator };
+  }
+  it("仅回填可核对的定位线索，不伪造账号确认或新授权关联，原成功事实不变", async () => {
+    const f = await historyFixture(), db = await CoreDatabase.open(f.path); cleanup.push(() => db.close());
+    expect(db.schemaVersion).toBe(30); expect(db.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before);
+    expect(db.connection.prepare("SELECT * FROM sync_receipt_origin").all()).toEqual([{ receipt_id: f.id, account_id: f.receipt.source_namespace, object_namespace: "path", locator_key: digest(f.locator) }]);
+    expect(db.connection.prepare("SELECT count(*) AS n FROM sync_history_confirmation").get()).toEqual({ n: 0 }); expect(db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_reference").get()).toEqual({ n: 0 });
+    expect(db.connection.pragma("foreign_key_check")).toEqual([]); db.close(); await expect(CoreDatabase.open(f.path, migrations.slice(0, 29))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
+  });
+  it("没有定位映射的旧收据仍保留，未知历史不按名称猜测", async () => {
+    const f = await fixture(), db = await CoreDatabase.open(f.path); cleanup.push(() => db.close());
+    expect(db.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before); expect(db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_origin").get()).toEqual({ n: 0 });
+  });
+  it("回填失败整体回滚，重试不覆盖 v29 一致性备份", async () => {
+    const f = await historyFixture(), failing = [...migrations.slice(0, 29), { ...migrations[29]!, sql: migrations[29]!.sql + "SELECT injected_history_failure();" }];
+    await expect(CoreDatabase.open(f.path, failing)).rejects.toThrow(); const backup = f.path + ".before-v30.bak", before = digest(await readFile(backup));
+    const old = await CoreDatabase.open(f.path, migrations.slice(0, 29)); expect(old.schemaVersion).toBe(29); expect(old.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before); expect(old.connection.prepare("SELECT name FROM sqlite_master WHERE name='sync_receipt_origin'").get()).toBeUndefined(); old.close();
+    const db = await CoreDatabase.open(f.path); cleanup.push(() => db.close()); expect(db.schemaVersion).toBe(30); expect(digest(await readFile(backup))).toBe(before);
   });
 });

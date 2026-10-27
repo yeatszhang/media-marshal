@@ -14,6 +14,7 @@ import { SourceExecutionPreviews } from "./executions.js";
 import { AutomaticConsents } from "./automatic-consent.js";
 import { SourceScans } from "./scans.js";
 import { LocalSourceHealthChecks } from "./local-health.js";
+import { SyncReceipts } from "./sync-receipts.js";
 
 interface Row {
   id: string; type: SourceRule["type"]; version: number; draft_revision: number; draft_json: string;
@@ -239,7 +240,7 @@ export class SourceRules {
     const task = this.queue.catch(() => {}).then(() => this.applyOnce(input, grants)); this.queue = task; return task;
   }
   private async applyOnce(input: CoreInput<"source-rules.apply">, grants?: SourceRuleGrants) {
-    this.writable(); const signature = hash({ operation: "apply", previewId: input.previewId, requestKey: input.requestKey, ...(input.runOnce ? { runOnce: true } : {}), ...(input.automaticConsent ? { automaticConsent: input.automaticConsent } : {}) }), repeated = this.previous(input.requestKey, signature);
+    this.writable(); const signature = hash({ operation: "apply", previewId: input.previewId, requestKey: input.requestKey, ...(input.runOnce ? { runOnce: true } : {}), ...(input.automaticConsent ? { automaticConsent: input.automaticConsent } : {}), ...(input.historyConsent ? { historyConsent: input.historyConsent } : {}) }), repeated = this.previous(input.requestKey, signature);
     if (repeated) return this.get(repeated)!;
     const preview = this.getPreview(input.previewId);
     if (!preview || !["READY", "APPLIED"].includes(preview.state)) throw conflict("来源预览未完成、已经过期或存在冲突，请重新预览");
@@ -273,6 +274,8 @@ export class SourceRules {
         this.writable(); const current = this.row(row.id), checked = this.getPreview(preview.id);
         if (!current || current.deleted_at || current.lifecycle_revision !== row.lifecycle_revision || current.version !== preview.version || current.draft_revision !== preview.draftRevision || current.paused !== row.paused || checked?.state !== "READY") throw conflict();
         if (configuration.organization?.automatic && (!input.automaticConsent || input.automaticConsent.previewId !== preview.automaticSample?.previewId)) throw conflict("请核对首次 COPY 预览与自动整理说明后确认配置");
+        if (configuration.type === "cloud") new SyncReceipts(this.database, this.now).confirmHistory(preview.download!.id, input.requestKey, input.historyConsent?.accepted);
+        else if (input.historyConsent) throw conflict("本地来源不接受网盘登录历史确认，请重新预览");
         const automaticConsent = this.automaticConsents.prepare(row.id, configuration, input.automaticConsent?.previewId);
         const installed = prepared?.commit(), subscriptionId = subscription?.commit() ?? null, nextVersion = preview.version + 1, stamp = new Date(this.now()).toISOString();
         this.database.connection.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,local_source_id,subscription_id,ingestion_source_id,target_root_id,created_at) VALUES(?,?,?,?,?,?,?,?)")
