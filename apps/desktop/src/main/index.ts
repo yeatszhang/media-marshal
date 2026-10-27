@@ -281,8 +281,10 @@ async function bootstrap() {
       const quarkLogin = new QuarkLoginController((input) => accounts.authorize(input), (requestKey) => supervisor.request("cloud.authorizations.get", { requestKey }));
       ctx.container.bind(quarkLoginToken).toConstantValue(quarkLogin);
       ctx.container.bind(downloadRootsToken).toConstantValue(roots);
-      let recovering: Promise<void> | undefined;
-      const recover = () => recovering ??= (async () => {
+      let recovering: Promise<void> | undefined, recoverAgain = false;
+      const recover = (fresh = false): Promise<void> => {
+        if (recovering) { if (fresh) recoverAgain = true; return recovering; }
+        return recovering = (async () => {
         if (exiting || supervisor.state !== "ready") return;
         await roots.restore();
         for (const previous of await supervisor.requestPrivate("configuration.bootstrap", {})) {
@@ -309,7 +311,12 @@ async function bootstrap() {
         if (await backups.reconciliationNeeded()) { await supervisor.requestPrivate("desktop.state.reconcile-restored", {}); await backups.acknowledgeReconciliation(); }
         await accounts.restore();
         await supervisor.requestPrivate("cloud.runtime.wake", { hostGeneration: ctx.get(sidecarToken).generation });
-      })().finally(() => { recovering = undefined; });
+        })().finally(() => {
+          recovering = undefined;
+          // 唤醒时目录可能刚恢复；不能把这次新探测合并进先前看到缺盘的恢复轮次。
+          if (recoverAgain) { recoverAgain = false; void recover().catch(() => {}); }
+        });
+      };
       supervisor.onReady = async () => {
         // ready 已证明 Core 完成数据库迁移；服务或账号恢复失败不能留下旧 Schema 元数据。
         await backups.recordVersion(await runtimeVersion());
@@ -333,7 +340,7 @@ async function bootstrap() {
         if (exiting || supervisor.state !== "ready") return;
         void ctx.effects.run(async () => {
           await supervisor.requestPrivate("media.observations.reset", {});
-          if (!exiting && !ctx.signal.aborted) await recover();
+          if (!exiting && !ctx.signal.aborted) await recover(true);
         }, "唤醒后恢复媒体观察").catch(() => {});
       };
       powerMonitor.on("resume", resume);
