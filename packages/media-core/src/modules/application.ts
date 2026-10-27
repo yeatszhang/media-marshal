@@ -35,6 +35,8 @@ import { IngestionPipeline } from "../ingestion/pipeline.js";
 import { EmbyDelivery } from "../ingestion/emby-delivery.js";
 import { SourceRules } from "../sources/rules.js";
 import { ConfigurationDirectories } from "../sources/configuration-directories.js";
+import { LocalSync } from "../sources/local-sync.js";
+import { SyncRules } from "../sources/sync-rules.js";
 import { Corrections } from "../ingestion/corrections.js";
 import { loadNativeRename, type NativeRenameLaunch } from "../files/native-rename.js";
 
@@ -76,6 +78,17 @@ declare module "@yeatz/app-framework/command" {
     "media.source-rules.apply": (input: CoreInput<"source-rules.apply">) => CoreOutput<"source-rules.apply">;
     "media.media.libraries": () => CoreOutput<"media.libraries">;
     "media.emby.configuration": () => CoreOutput<"emby.configuration">;
+    "media.sync.list": (input: CoreInput<"sync.list">) => CoreOutput<"sync.list">;
+    "media.sync.save": (input: CoreInput<"sync.save">) => CoreOutput<"sync.save">;
+    "media.sync.preview": (input: CoreInput<"sync.preview">) => Promise<CoreOutput<"sync.preview">>;
+    "media.sync.get-preview": (input: CoreInput<"sync.get-preview">) => CoreOutput<"sync.get-preview">;
+    "media.sync.preview-files": (input: CoreInput<"sync.preview-files">) => CoreOutput<"sync.preview-files">;
+    "media.sync.confirm": (input: CoreInput<"sync.confirm">) => Promise<CoreOutput<"sync.confirm">>;
+    "media.sync.control": (input: CoreInput<"sync.control">) => Promise<CoreOutput<"sync.control">>;
+    "media.sync.jobs": (input: CoreInput<"sync.jobs">) => CoreOutput<"sync.jobs">;
+    "media.sync.job": (input: CoreInput<"sync.job">) => CoreOutput<"sync.job">;
+    "media.sync.job-files": (input: CoreInput<"sync.job-files">) => CoreOutput<"sync.job-files">;
+    "media.sync.retry": (input: CoreInput<"sync.retry">) => CoreOutput<"sync.retry">;
     "media.configuration.directories": () => Promise<CoreOutput<"configuration.directories">>;
     "media.configuration.default": () => CoreOutput<"configuration.default">;
     "media.configuration.set-default": (input: CoreInput<"configuration.set-default">) => CoreOutput<"configuration.set-default">;
@@ -207,6 +220,8 @@ export function createMediaApplication(
       sourceRules = new SourceRules(ctx.get(DatabaseToken), downloads, subscriptions, ingestion);
       configurationDirectories = new ConfigurationDirectories(ctx.get(DatabaseToken), roots);
       ctx.disposables.add(() => configurationDirectories.close());
+      syncRules = new SyncRules(ctx.get(DatabaseToken), configurationDirectories, downloads, new LocalSync(ctx.get(DatabaseToken), configurationDirectories, roots), Date.now, () => sourceRules.synchronize());
+      ctx.disposables.add(() => syncRules.close());
       ctx.disposables.add(() => sourceRules.close());
       outbox = new IngestionOutbox(ctx.get(DatabaseToken), roots, options.ingestion ?? ingestion);
       ctx.disposables.add(() => outbox.close());
@@ -254,6 +269,17 @@ export function createMediaApplication(
       add(registry.register("media.emby.configuration", () => delivery.configuration()));
       add(registry.register("media.configuration.directories", () => configurationDirectories.list()));
       add(registry.register("media.configuration.default", () => configurationDirectories.defaults()));
+      add(registry.register("media.sync.list", (_, input) => syncRules.list(input.includeDeleted)));
+      add(registry.register("media.sync.save", (_, input) => syncRules.save(input)));
+      add(registry.register("media.sync.preview", (_, input) => syncRules.preview(input)));
+      add(registry.register("media.sync.get-preview", (_, input) => syncRules.getPreview(input.id)));
+      add(registry.register("media.sync.preview-files", (_, input) => syncRules.previewFiles(input)));
+      add(registry.register("media.sync.confirm", (_, input) => syncRules.confirm(input)));
+      add(registry.register("media.sync.control", (_, input) => syncRules.control(input)));
+      add(registry.register("media.sync.jobs", (_, input) => syncRules.jobs(input)));
+      add(registry.register("media.sync.job", (_, input) => syncRules.getJob(input.id)));
+      add(registry.register("media.sync.job-files", (_, input) => syncRules.jobFiles(input)));
+      add(registry.register("media.sync.retry", (_, input) => syncRules.retry(input)));
       add(registry.register("media.configuration.set-default", (_, input) => configurationDirectories.setDefault(input)));
       add(registry.register("media.emby.libraries", () => delivery.libraries()));
       add(registry.register("media.emby.discover", (_, input) => delivery.discover(input)));
@@ -294,7 +320,7 @@ export function createMediaApplication(
       add(registry.register("media.ingestion.confirm", (_, input) => ingestion.confirm(input)));
       add(registry.register("media.ingestion.retry", (_, input) => ingestion.retry(input.taskId)));
       add(registry.register("media.cloud.downloads.pause-status", () => downloads.pauseStatus()));
-      add(registry.register("media.cloud.downloads.set-paused", (_, input) => downloads.setPaused(input)));
+      add(registry.register("media.cloud.downloads.set-paused", (_, input) => { const result = downloads.setPaused(input); syncRules.local.pauseChanged(); return result; }));
       add(registry.register("media.cloud.subscriptions.configure", (_, input) => subscriptions.configure(input)));
       add(registry.register("media.cloud.subscriptions.list", (_, input) => subscriptions.list(input)));
       add(registry.register("media.cloud.subscriptions.control", (_, input) => subscriptions.control(input)));
@@ -335,8 +361,8 @@ export function createMediaApplication(
       );
     },
   };
-  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); } };
-  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories;
+  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); syncRules.start(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); } };
+  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories, syncRules: SyncRules;
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],
   });
@@ -344,13 +370,13 @@ export function createMediaApplication(
   function quiesceOwners() {
     if (quiescence) return quiescence;
     accepting = false; requests.quiesce();
-    sourceRules?.quiesce(); downloads?.quiesce();
+    syncRules?.quiesce(); sourceRules?.quiesce(); downloads?.quiesce();
     if (app.state === "running") app.container.get(CoreService).quiesce();
     connections?.close();
     // 取消等待不等同于文件回滚或写入者已停止；后者仍由 Main／Host 回收证明。
     let cancelFailure: unknown;
     try { options.cancelHostRequests?.(); } catch (error) { cancelFailure = error; }
-    return quiescence = Promise.allSettled([configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
+    return quiescence = Promise.allSettled([syncRules?.close(), configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
   }
   return {
     app,
@@ -382,7 +408,7 @@ export function createMediaApplication(
           if (request.action === "cloud.downloads.reconcile-restored") { downloads.reconcileRestored(); return {}; }
           if (request.action === "cloud.downloads.quiesce") { downloads.quiesce(); return {}; }
           if (request.action === "cloud.account.writers-stopped") { await downloads.accountWritersStopped((payload as { accountId: string }).accountId); return {}; }
-          if (request.action === "cloud.runtime.wake") { ingestion.resetObservations(); sourceRules.synchronize(); await downloads.wake(); await subscriptions.wake((payload as { hostGeneration: string }).hostGeneration); return {}; }
+          if (request.action === "cloud.runtime.wake") { ingestion.resetObservations(); syncRules.local.resetObservations(); sourceRules.synchronize(); await downloads.wake(); await subscriptions.wake((payload as { hostGeneration: string }).hostGeneration); return {}; }
           if (request.action === "cloud.authorization.finish") {
             const input = privateCoreActions["cloud.authorization.finish"].input.parse(payload), validator = new CloudBindingValidator(app.container.get(DatabaseToken), options.host ?? unavailableHost);
             const wasRunning = !!app.container.get(DatabaseToken).connection.prepare("SELECT 1 FROM cloud_authorization WHERE id=? AND state='RUNNING'").get(input.jobId);

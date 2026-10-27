@@ -39,7 +39,10 @@ export class SourceRules {
   start() { this.synchronize(); this.runs.start(); this.scans.start(); }
   synchronize() { for (const source of this.list(true)) { try { this.reconcile(source.id); } catch { /* 主机授权恢复后再次协调，不因离线阻止 Core 启动。 */ } } }
   quiesce() { this.accepting = false; this.runs.quiesce(); this.executions.quiesce(); this.localHealth.quiesce(); this.scans.quiesce(); }
-  private writable() { if (!this.accepting) throw new DesktopError("INTERRUPTED", "来源配置正在停止", true); }
+  private writable(id?: string) {
+    if (!this.accepting) throw new DesktopError("INTERRUPTED", "来源配置正在停止", true);
+    if (id && this.database.connection.prepare("SELECT 1 FROM legacy_configuration_owner WHERE source_id=? AND (sync_claimed=1 OR recognition_claimed=1)").get(id)) throw conflict("此配置已经拆分，请在独立来源或识别与映射入口操作；原版本和历史保留");
+  }
   private async scanForRule(sourceId: string, physicalId: string) {
     const source = this.get(sourceId), result = await this.ingestion.scan(physicalId);
     if (source?.configuration?.type !== "cloud") return result;
@@ -69,7 +72,7 @@ export class SourceRules {
     db.prepare("UPDATE source_rule_execution_preview SET expires_at=0 WHERE source_id=? AND run_id IS NULL").run(source.id);
   }
   lifecycle(input: CoreInput<"source-rules.remove">, operation: "remove" | "restore"): SourceRule {
-    this.writable(); const db = this.database.connection;
+    this.writable(input.id); const db = this.database.connection;
     const old = db.prepare("SELECT * FROM source_rule_lifecycle_command WHERE request_key=?").get(input.requestKey) as { source_id: string; version: number; draft_revision: number; lifecycle_revision: number; operation: string } | undefined;
     if (old) {
       if (old.source_id !== input.id || old.version !== input.expectedVersion || old.draft_revision !== input.expectedDraftRevision || old.lifecycle_revision !== input.expectedLifecycleRevision || old.operation !== operation) throw conflict("请求标识已用于其他来源删除或恢复");
@@ -109,7 +112,7 @@ export class SourceRules {
     return this.get(source.id)!;
   }
   control(input: CoreInput<"source-rules.control">): SourceRule {
-    this.writable(); const db = this.database.connection;
+    this.writable(input.id); const db = this.database.connection;
     const prior = db.prepare("SELECT source_id,version,operation,lifecycle_revision FROM source_rule_control WHERE request_key=?").get(input.requestKey) as { source_id: string; version: number; operation: string; lifecycle_revision: number } | undefined;
     if (prior) {
       if (prior.source_id !== input.id || prior.version !== input.expectedVersion || prior.operation !== input.operation || prior.lifecycle_revision !== (input.expectedLifecycleRevision ?? 0)) throw conflict("请求标识已用于其他来源控制");
@@ -145,7 +148,7 @@ export class SourceRules {
       if (subscription && subscription.state !== "CANCELLED" && !!subscription.enabled !== enabled) this.subscriptions.control({ subscriptionId: source.subscriptionId, operation: enabled ? "resume" : "pause", requestKey: randomUUID() }, true);
     }
     const physical = source.localSourceId ?? source.ingestionSourceId;
-    if (physical) {
+    if (physical && !db.prepare("SELECT 1 FROM legacy_configuration_owner WHERE source_id=? AND recognition_claimed=1").get(source.id)) {
       const paused = source.type === "local" ? blocked : !db.prepare("SELECT 1 FROM source_rule WHERE ingestion_source_id=? AND paused=0 AND review_required=0 LIMIT 1").get(physical);
       const changed = db.prepare("UPDATE desktop_source SET paused=? WHERE id=? AND paused!=?").run(Number(paused), physical, Number(paused));
       if (source.type === "cloud") this.ingestion.sourceRuleChanged(physical); else if (changed.changes) this.ingestion.sourceChanged(physical);
@@ -189,6 +192,7 @@ export class SourceRules {
   }
   configure(value: CoreInput<"source-rules.configure">): SourceRule {
     this.writable(); const input = sourceRuleDraftSchema.parse(value), { expectedLifecycleRevision, ...original } = input, signature = hash({ operation: "configure", ...original, ...(expectedLifecycleRevision ? { expectedLifecycleRevision } : {}) }), db = this.database.connection;
+    this.writable(input.id);
     const previous = this.previous(input.requestKey, signature); if (previous) return this.get(previous)!;
     return db.transaction(() => {
       const row = this.row(input.id);
@@ -208,7 +212,7 @@ export class SourceRules {
     })();
   }
   preview(input: CoreInput<"source-rules.preview">): SourceRulePreview {
-    this.writable(); const row = this.row(input.id), db = this.database.connection;
+    this.writable(input.id); const row = this.row(input.id), db = this.database.connection;
     const repeated = db.prepare("SELECT * FROM source_rule_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (repeated) {
       if (repeated.source_id !== input.id || repeated.version !== input.expectedVersion || repeated.draft_revision !== input.expectedDraftRevision || repeated.lifecycle_revision !== (input.expectedLifecycleRevision ?? 0)) throw conflict();
@@ -245,7 +249,7 @@ export class SourceRules {
     const preview = this.getPreview(input.previewId);
     if (!preview || !["READY", "APPLIED"].includes(preview.state)) throw conflict("来源预览未完成、已经过期或存在冲突，请重新预览");
     if (preview.state === "APPLIED") throw conflict("该来源预览已经确认，请查询已有配置");
-    const configuration = preview.configuration, row = this.row(preview.sourceId)!;
+    const configuration = preview.configuration, row = this.row(preview.sourceId)!; this.writable(row.id);
     if (input.runOnce && (configuration.type !== "cloud" || configuration.periodic.enabled)) throw conflict("确认并执行一次仅适用于未启用周期扫描的网盘来源");
     const previousPhysical = row.local_source_id ?? row.ingestion_source_id;
     if (previousPhysical && this.database.connection.prepare("SELECT 1 FROM ingestion_operation o WHERE o.candidate_id IN (SELECT id FROM ingestion_candidate WHERE source_id=?) AND (o.phase NOT IN ('RECORDED','NEEDS_ATTENTION') OR EXISTS(SELECT 1 FROM ingestion_accessory a WHERE a.operation_id=o.id AND a.phase NOT IN ('RECORDED','NEEDS_ATTENTION'))) LIMIT 1").get(previousPhysical)) throw conflict("来源仍有活动整理，请等待当前文件到达安全点后重新确认");

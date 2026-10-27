@@ -101,7 +101,7 @@ const ruleFields = {
   reviewReasons: z.array(z.enum(["LEGACY_AUTHORIZATION_MISSING", "LEGACY_POLICY_CONFLICT", "AUTOMATIC_REAUTHORIZATION_REQUIRED", "LEGACY_SCOPE_REVIEW_REQUIRED"])).max(4),
   createdAt: z.string(), updatedAt: z.string(),
 };
-export const syncSourceRuleSchema = z.strictObject({ ...ruleFields, draft: syncSourceConfigurationSchema, snapshot: syncSourceSnapshotSchema.nullable() });
+export const syncSourceRuleSchema = z.strictObject({ ...ruleFields, draft: syncSourceConfigurationSchema, snapshot: syncSourceSnapshotSchema.nullable(), runtime: z.strictObject({ claimed: z.boolean(), nextScanAt: z.number().int().nullable(), failure: z.string().max(500).nullable() }).optional() });
 export type SyncSourceRule = z.infer<typeof syncSourceRuleSchema>;
 export const recognitionRuleSchema = z.strictObject({ ...ruleFields, draft: recognitionRuleConfigurationSchema, snapshot: recognitionRuleSnapshotSchema.nullable() });
 export type RecognitionRule = z.infer<typeof recognitionRuleSchema>;

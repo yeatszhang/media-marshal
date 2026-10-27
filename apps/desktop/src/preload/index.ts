@@ -26,6 +26,17 @@ async function invoke(action: string, payload: unknown): Promise<any> {
 }
 // 此对象仅暴露具体动作，不暴露 invoke、通道名或 Electron 对象。
 const api: DesktopApi = {
+  listSyncSources: (input = {}) => invoke("sync.list", input),
+  saveSyncSource: (input) => invoke("sync.save", input),
+  previewSyncSource: (input) => invoke("sync.preview", input),
+  getSyncPreview: (id) => invoke("sync.get-preview", { id }),
+  listSyncPreviewFiles: (input) => invoke("sync.preview-files", input),
+  confirmSyncSource: (input) => invoke("sync.confirm", input),
+  controlSyncSource: (input) => invoke("sync.control", input),
+  listSyncJobs: (input = {}) => invoke("sync.jobs", input),
+  getSyncJob: (id) => invoke("sync.job", { id }),
+  listSyncJobFiles: (input) => invoke("sync.job-files", input),
+  retrySyncJob: (input) => invoke("sync.retry", input),
   listConfigurationDirectories: () => invoke("configuration.directories", {}),
   getDefaultDownloadDirectory: () => invoke("configuration.default", {}),
   setDefaultDownloadDirectory: (input) => invoke("configuration.set-default", input),

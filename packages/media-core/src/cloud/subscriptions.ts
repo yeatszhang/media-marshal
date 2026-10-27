@@ -67,6 +67,7 @@ export class CloudSubscriptions {
     const repeated = this.previous(input.requestKey, hash); if (repeated) return this.dto(this.row(repeated));
     if (input.subscriptionId && db.prepare("SELECT 1 FROM source_rule_version WHERE subscription_id=? LIMIT 1").get(input.subscriptionId)) throw new CloudError("CONFLICT");
     if (db.prepare("SELECT 1 FROM source_rule_preview WHERE download_preview_id=?").get(input.previewId)) throw new CloudError("CONFLICT");
+    if (db.prepare("SELECT 1 FROM sync_configuration_preview WHERE download_preview_id=?").get(input.previewId)) throw new CloudError("CONFLICT");
     const preview = this.downloads.previews.row(input.previewId);
     if (!preview) throw new CloudError("REMOTE_NOT_FOUND");
     const snapshot: PreviewSnapshot = JSON.parse(preview.snapshot_json), old = input.subscriptionId ? this.row(input.subscriptionId) : null;
@@ -257,7 +258,7 @@ export class CloudSubscriptions {
         this.createScan(row.id, row.account_id, row.remote_root_ref, row.configuration_version);
         db.prepare("UPDATE cloud_subscription_runtime SET state='SCANNING' WHERE subscription_id=?").run(row.id);
       })();
-      db.prepare("DELETE FROM cloud_preview WHERE expires_at<=? AND NOT EXISTS(SELECT 1 FROM sync_history_confirmation h WHERE h.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_execution_preview e WHERE e.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_run r WHERE r.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_preview r WHERE r.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM download_job j WHERE j.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_subscription s WHERE s.confirmed_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_scan_plan p JOIN cloud_scan c ON c.id=p.scan_id WHERE c.state='SCANNING' AND (p.preview_id=cloud_preview.id OR p.execution_preview_id=cloud_preview.id))").run(now);
+      db.prepare("DELETE FROM cloud_preview WHERE expires_at<=? AND NOT EXISTS(SELECT 1 FROM sync_configuration_preview p WHERE p.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM sync_job j WHERE j.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM sync_history_confirmation h WHERE h.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_execution_preview e WHERE e.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_run r WHERE r.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_preview r WHERE r.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM download_job j WHERE j.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_subscription s WHERE s.confirmed_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_scan_plan p JOIN cloud_scan c ON c.id=p.scan_id WHERE c.state='SCANNING' AND (p.preview_id=cloud_preview.id OR p.execution_preview_id=cloud_preview.id))").run(now);
     } finally { this.ticking = false; }
   }
   async wake(hostGeneration: string) {

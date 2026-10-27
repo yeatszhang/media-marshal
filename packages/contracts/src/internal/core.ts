@@ -5,7 +5,7 @@ import { sourceRuleApplySchema, sourceRuleSchema } from "../source-rules.js";
 import { PROTOCOL_VERSION, rpcErrorSchema } from "../index.js";
 import { directoryBindingSchema } from "../sync-recognition.js";
 
-export const CORE_DATA_SCHEMA_VERSION = 31;
+export const CORE_DATA_SCHEMA_VERSION = 32;
 const id = z.uuid(), empty = z.strictObject({});
 const configuredBinding = z.strictObject({ binding: bindingRefSchema.extend({ implementationId: implementationIdSchema }), credentialRef: id });
 export const privateCoreActions = {

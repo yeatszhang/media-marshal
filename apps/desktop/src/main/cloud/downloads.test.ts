@@ -18,6 +18,9 @@ import { CloudDownloads } from "../../../../../packages/media-core/src/cloud/dow
 import { IngestionOutbox } from "../../../../../packages/media-core/src/cloud/outbox";
 import { CloudSubscriptions } from "../../../../../packages/media-core/src/cloud/subscriptions";
 import { SourceRules } from "../../../../../packages/media-core/src/sources/rules";
+import { ConfigurationDirectories } from "../../../../../packages/media-core/src/sources/configuration-directories";
+import { LocalSync } from "../../../../../packages/media-core/src/sources/local-sync";
+import { SyncRules } from "../../../../../packages/media-core/src/sources/sync-rules";
 import { IngestionPipeline } from "../../../../../packages/media-core/src/ingestion/pipeline";
 import { MediaConnections } from "../../../../../packages/media-core/src/application/media-connections";
 import { MediaNetworkError } from "../../../../../packages/media-core/src/infrastructure/json-http";
@@ -96,6 +99,58 @@ async function fixture(input = new Map([["电影.txt", Buffer.from("完整测试
   const state = (jobId: string) => downloads.list({}).items.find((item) => item.id === jobId)!;
   return { accounts, path, db, roots, grant, rootPath, provider, fileEngine, sidecar, host, downloads, catalog, account, entries, preview, confirm, state, input, server, listeners, subscriptions };
 }
+describe.skipIf(process.platform !== "darwin")("独立来源同步与既有网盘传输", () => {
+  async function setup(native = false) {
+    const f = await fixture(new Map([["目录/电影.mp4", Buffer.from("独立来源的完整内容")], ["目录/排除.txt", Buffer.from("不进入清单")]]), native);
+    const directories = new ConfigurationDirectories(f.db, f.roots); cleanup.push(() => directories.close()); await directories.authorize(f.grant, "managed");
+    const sync = new SyncRules(f.db, directories, f.downloads, new LocalSync(f.db, directories, f.roots)); cleanup.push(() => sync.close());
+    const versions = (row: import("@media-marshal/contracts").SyncSourceRule) => ({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, expectedLifecycleRevision: row.lifecycleRevision });
+    const save = (row?: import("@media-marshal/contracts").SyncSourceRule, remoteRef = f.account.rootRef!) => sync.save({ ...(row ? versions(row) : { id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0 }), requestKey: randomUUID(), configuration: { type: "cloud", name: "独立网盘来源", accountId: f.account.id, remoteRef, target: { kind: "directory", directoryId: f.grant.id }, filters: [{ action: "include", pattern: "*.mp4", caseSensitive: true }, { action: "exclude", pattern: "**", caseSensitive: true }] } });
+    const preview = async (row: import("@media-marshal/contracts").SyncSourceRule, mode: "configuration" | "execution" = "configuration", force = false) => { const p = await sync.preview({ ...versions(row), requestKey: randomUUID(), mode, force }); await expect.poll(() => sync.getPreview(p.id).state).toBe("READY"); return sync.getPreview(p.id); };
+    const enable = async () => { const draft = save(), p = await preview(draft); return (await sync.confirm({ previewId: p.id, requestKey: randomUUID() })).rule; };
+    const execute = async (row: import("@media-marshal/contracts").SyncSourceRule, force = false) => { const p = await preview(row, "execution", force), result = await sync.confirm({ previewId: p.id, requestKey: randomUUID() }); await sync.tick(); return { p, result }; };
+    const done = async (id: string) => { await expect.poll(async () => { await sync.tick(); return sync.getJob(id).state; }, { timeout: 10000 }).toBe("DONE"); };
+    return { ...f, directories, sync, versions, save, preview, enable, execute, done };
+  }
+  it("新来源的过滤与真实 Rclone 精确清单一致，配置确认和一次执行分别记账", async () => {
+    const f = await setup(true), source = await f.enable();
+    expect(f.sync.jobs({}).total).toBe(0); expect(f.downloads.list({}).total).toBe(0);
+    const { p, result } = await f.execute(source); expect(p).toMatchObject({ files: 1, complete: true }); expect(result.jobId).toBeTruthy(); f.downloads.start(); await f.done(result.jobId!);
+    expect(await readFile(join(f.rootPath, "completed/目录/电影.mp4"), "utf8")).toBe("独立来源的完整内容"); await expect(readFile(join(f.rootPath, "completed/目录/排除.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(f.sync.getJob(result.jobId!)).toMatchObject({ files: 1, done: 1, state: "DONE", sourceId: source.id });
+    expect(f.downloads.list({}).items[0]).toMatchObject({ sourceId: source.id, sourceVersion: source.version, ingestion: { organization: "NOT_ENABLED" } });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM cloud_subscription").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM media_task").get()).toEqual({ n: 0 });
+  });
+  it("成功后移除、等价来源重建及显式重新同步沿用成功历史，不改写旧收据", async () => {
+    const f = await setup(), source = await f.enable(), first = await f.execute(source); f.downloads.start(); await f.done(first.result.jobId!); await rm(join(f.rootPath, "completed/目录/电影.mp4"));
+    const other = await f.enable(), skipped = await f.execute(other); expect(skipped.p).toMatchObject({ removed: 1 }); await f.done(skipped.result.jobId!);
+    expect(f.fileEngine.starts).toBe(1); expect(f.sync.getJob(skipped.result.jobId!)).toMatchObject({ removed: 1, done: 1 });
+    const forced = await f.execute(other, true); expect(forced.p).toMatchObject({ force: true, removed: 0 }); await f.done(forced.result.jobId!); expect(f.fileEngine.starts).toBe(2);
+    const files = f.sync.previewFiles({ id: forced.p.id }); expect(files.items[0]?.targetPath).toContain("redownload-"); expect(await readFile(files.items[0]!.targetPath, "utf8")).toBe("独立来源的完整内容");
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 2 }); await expect(readFile(join(f.rootPath, "completed/目录/电影.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("重新登录须明确确认原账号目录，历史别名与新来源版本原子提交", async () => {
+    const f = await setup(), source = await f.enable(), first = await f.execute(source); f.downloads.start(); await f.done(first.result.jobId!); await rm(join(f.rootPath, "completed/目录/电影.mp4"));
+    const login = f.accounts.dispatch("cloud.authorization.begin", { accountId: f.account.id, name: "重新连接", requestKey: randomUUID(), implementationId: f.provider.implementationId });
+    await f.sidecar.installCredential(login.candidate.binding, "isolated-sync-fixture"); f.accounts.dispatch("cloud.authorization.finish", { jobId: login.job.id, failure: null, capabilities: { ...await f.provider.capabilities(login.candidate.binding), accountIdentity: "unavailable" }, identityKey: null });
+    const account = f.catalog.accounts()[0]!, draft = f.save(f.sync.get(source.id), account.rootRef!), p = await f.preview(draft);
+    expect(p.download?.historyRestore).toEqual({ files: 1, confirmed: false }); await expect(f.sync.confirm({ previewId: p.id, requestKey: randomUUID() })).rejects.toThrow(/原同步历史/);
+    const command = { previewId: p.id, requestKey: randomUUID(), historyConsent: { accepted: true as const } };
+    f.db.connection.exec("CREATE TRIGGER sync_scope_fault BEFORE INSERT ON sync_source_version BEGIN SELECT RAISE(ABORT,'注入独立来源确认失败'); END"); await expect(f.sync.confirm(command)).rejects.toThrow(/注入独立来源/);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_reference").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_history_confirmation").get()).toEqual({ n: 0 }); expect(f.sync.get(source.id).version).toBe(1);
+    f.db.connection.exec("DROP TRIGGER sync_scope_fault"); const updated = await f.sync.confirm(command); expect(await f.sync.confirm(command)).toEqual(updated);
+    const skipped = await f.execute(updated.rule); await f.done(skipped.result.jobId!); expect(f.fileEngine.starts).toBe(1); expect(skipped.p.removed).toBe(1);
+  });
+  it("来源暂停只控制本来源需求，全局暂停在恢复来源后继续生效", async () => {
+    const f = await setup(), a = await f.enable(), b = await f.enable(); f.downloads.setPaused({ paused: true, requestKey: randomUUID() });
+    const first = await f.execute(a), second = await f.execute(b); expect(f.sync.getJob(first.result.jobId!).downloadJobId).toBeNull();
+    const paused = await f.sync.control({ ...f.versions(a), operation: "pause", requestKey: randomUUID() }); await f.sync.control({ ...f.versions(paused), operation: "resume", requestKey: randomUUID() }); expect(f.downloads.pauseStatus().paused).toBe(true);
+    const pausedAgain = await f.sync.control({ ...f.versions(f.sync.get(a.id)), operation: "pause", requestKey: randomUUID() }); expect(pausedAgain.paused).toBe(true);
+    f.downloads.setPaused({ paused: false, requestKey: randomUUID() }); f.downloads.start(); await f.done(second.result.jobId!); expect(f.fileEngine.starts).toBe(1); expect(f.sync.getJob(first.result.jobId!).downloadJobId).toBeNull();
+    await f.sync.control({ ...f.versions(f.sync.get(a.id)), operation: "resume", requestKey: randomUUID() }); await f.done(first.result.jobId!); expect(f.fileEngine.starts).toBe(1);
+  });
+});
+
 describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关联", () => {
   it("有序过滤相对于选定目录，预览与真实 Rclone 精确清单一致，排除项不传输", async () => {
     const f = await fixture(new Map([["目录/a.mp4", Buffer.from("选中视频")], ["目录/private/b.mp4", Buffer.from("排除视频")], ["目录/a.txt", Buffer.from("排除文本")], ["目录/中文 空格1.mkv", Buffer.from("中文视频")]]), true);

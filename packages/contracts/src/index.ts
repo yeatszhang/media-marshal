@@ -18,6 +18,8 @@ export * from "./sync-recognition.js";
 export * from "./sync-glob.js";
 import { configurationActions, configurationDirectorySchema } from "./configuration-api.js";
 export * from "./configuration-api.js";
+import { syncActions } from "./sync-api.js";
+export * from "./sync-api.js";
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_MESSAGE_BYTES = 64 * 1024;
@@ -170,6 +172,7 @@ export type DesktopRuntime = z.infer<typeof runtimeSchema>;
 const empty = z.strictObject({});
 export const coreActions = {
   ...configurationActions,
+  ...syncActions,
   ...correctionActions,
   ...sourceRuleActions,
   ...ingestionActions,
@@ -271,6 +274,17 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  listSyncSources(input?: CoreInput<"sync.list">): Promise<CoreOutput<"sync.list">>;
+  saveSyncSource(input: CoreInput<"sync.save">): Promise<CoreOutput<"sync.save">>;
+  previewSyncSource(input: CoreInput<"sync.preview">): Promise<CoreOutput<"sync.preview">>;
+  getSyncPreview(id: string): Promise<CoreOutput<"sync.get-preview">>;
+  listSyncPreviewFiles(input: CoreInput<"sync.preview-files">): Promise<CoreOutput<"sync.preview-files">>;
+  confirmSyncSource(input: CoreInput<"sync.confirm">): Promise<CoreOutput<"sync.confirm">>;
+  controlSyncSource(input: CoreInput<"sync.control">): Promise<CoreOutput<"sync.control">>;
+  listSyncJobs(input?: CoreInput<"sync.jobs">): Promise<CoreOutput<"sync.jobs">>;
+  getSyncJob(id: string): Promise<CoreOutput<"sync.job">>;
+  listSyncJobFiles(input: CoreInput<"sync.job-files">): Promise<CoreOutput<"sync.job-files">>;
+  retrySyncJob(input: CoreInput<"sync.retry">): Promise<CoreOutput<"sync.retry">>;
   listConfigurationDirectories(): Promise<CoreOutput<"configuration.directories">>;
   getDefaultDownloadDirectory(): Promise<CoreOutput<"configuration.default">>;
   setDefaultDownloadDirectory(input: CoreInput<"configuration.set-default">): Promise<CoreOutput<"configuration.set-default">>;

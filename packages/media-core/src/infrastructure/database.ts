@@ -26,6 +26,7 @@ import { automaticIngestionMigrationSql } from "./automatic-ingestion-migration.
 import { sourceHealthMigrationSql } from "./source-health-migration.js";
 import { syncRecognitionMigrationSql, migrateSyncRecognition } from "./sync-recognition-migration.js";
 import { embyBindingMigrationSql } from "./emby-binding-migration.js";
+import { independentSyncMigrationSql, migrateIndependentSync } from "./independent-sync-migration.js";
 import { syncReceiptMigrationSql, migrateSyncReceiptEvidence } from "./sync-receipt-migration.js";
 import { syncHistoryMigrationSql, migrateSyncHistory } from "./sync-history-migration.js";
 
@@ -96,6 +97,7 @@ export const migrations: readonly Migration[] = [
   { version: 29, sql: syncReceiptMigrationSql, apply: migrateSyncReceiptEvidence },
   { version: 30, sql: syncHistoryMigrationSql, apply: migrateSyncHistory },
   { version: 31, sql: embyBindingMigrationSql },
+  { version: 32, sql: independentSyncMigrationSql, apply: migrateIndependentSync },
 ];
 
 export class CoreDatabase {
