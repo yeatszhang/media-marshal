@@ -69,6 +69,7 @@ const api: DesktopApi = {
   chooseMediaTarget: (mediaType) => invoke("desktop.media.choose-target", { mediaType }),
   getEmbyConfiguration: () => invoke("emby.configuration", {}),
   listEmbyLibraries: () => invoke("emby.libraries", {}),
+  discoverEmbyTargets: (input) => invoke("emby.discover", input),
   connectEmby: (input) => invoke("emby.connect", input),
   retryEmby: async (taskId) => { await invoke("emby.retry", { taskId }); },
   openEmby: async (taskId) => { await invoke("desktop.emby.open", { taskId }); },

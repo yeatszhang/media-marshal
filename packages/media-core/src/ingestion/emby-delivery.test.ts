@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { CoreDatabase } from "../infrastructure/database";
+import { CoreService } from "../application/core-service";
 import { ManagedRoots } from "../files/index";
 import { MediaConnections } from "../application/media-connections";
 import { EmbyDelivery } from "./emby-delivery";
@@ -52,6 +53,58 @@ async function fixture(options: { mediaType?: "AUTO" | "MOVIE" | "TV_SHOW"; subd
   return { directory, path, libraryPath, existingMedia, db, delivery, configure, add, state, restored, setItems(value: EmbyItem[]) { items = value; }, setSeries(value: EmbyItem[]) { seriesItems = value; }, setStatus(code: number) { status = code; }, setPermission(kind: "read" | "refresh", code: number) { if (kind === "read") readStatus = code; else refreshStatus = code; }, setLibraryType(type: string | null) { libraryType = type; }, setLibraryPaths(paths: string[]) { listedPaths = paths; }, setServerId(id: string) { serverId = id; }, refreshes: () => refreshes, requests: () => requests, pages: () => pages, jump(ms: number) { clock += ms; }, pipeline, connections, settings };
 }
 describe("独立 Emby 交付、合并与核对", () => {
+  it("v30 直接路径快照缺少新绑定仍需远端复核，恢复只补记交付且保留原文件", async () => {
+    const f = await fixture(); await f.configure(); const item = await f.add(), before = await lstat(item.path);
+    f.db.connection.prepare("UPDATE emby_library SET binding_json=NULL").run(); await f.delivery.close();
+    const restored = f.restored(); expect(restored.configuration()?.verified).toBe(false);
+    f.setItems([{ Id: "legacy-item", Type: "Movie", Path: item.path, ProviderIds: { Tmdb: "1" } }]);
+    f.jump(30000); await restored.tick(); f.jump(15000); await restored.tick(); expect(f.state(item.taskId).state).toBe("COLLECTED");
+    expect(await restored.openUrl(item.taskId)).toContain("legacy-item"); expect((await lstat(item.path)).ino).toBe(before.ino);
+  });
+  it("显式容器转换冻结具体库根与版本，收录查询使用服务端路径，重启离线不复制", async () => {
+    const f = await fixture({ subdirectory: "新电影" }), targetId = f.pipeline.libraries()[0]!.targetId;
+    f.setLibraryPaths(["/archive/movies", "/container/movies"]);
+    const conversion = { localRoot: f.libraryPath, serverRoot: "/container/movies", serverPathStyle: "posix" as const };
+    expect(await f.delivery.discover({ conversions: [{ targetId, conversion }] })).toMatchObject({ targets: [{ state: "MATCHED", matches: [{ libraryPath: "/container/movies", serverPath: "/container/movies/新电影" }] }] });
+    const input = { serverId: "fixture-server-id", requestKey: randomUUID(), expectedVersion: 0, libraries: [{ targetId, libraryId: "library-1", libraryPath: "/container/movies", conversion }] };
+    const saved = await f.delivery.connect(input), refreshes = f.refreshes();
+    expect(await f.delivery.connect(input)).toEqual(saved); expect(f.refreshes()).toBe(refreshes);
+    const binding = JSON.parse((f.db.connection.prepare("SELECT binding_json FROM emby_library").get() as { binding_json: string }).binding_json);
+    expect(binding).toMatchObject({ version: 1, serverId: "fixture-server-id", connectionVersion: 1, libraryRoot: "/container/movies", targetDirectory: { path: f.path }, conversion: { version: 1, localRoot: { path: f.libraryPath }, serverRoot: "/container/movies" } });
+    const item = await f.add(), before = await lstat(item.path), remotePath = "/container/movies/新电影/" + item.path.split("/").at(-1);
+    f.setItems([{ Id: "local-path-is-wrong", Type: "Movie", Path: item.path, ProviderIds: { Tmdb: "1" } }]);
+    f.jump(30000); await f.delivery.tick(); f.jump(15000); await f.delivery.tick(); expect(f.state(item.taskId).state).toBe("WAITING_LIBRARY");
+    await f.delivery.close(); const restored = f.restored(); f.setStatus(503); f.jump(30000); await restored.tick(); expect(restored.configuration()?.verified).toBe(false);
+    f.setStatus(200); f.setItems([{ Id: "remote-path", Type: "Movie", Path: remotePath, ProviderIds: { Tmdb: "1" } }]); f.jump(30000); await restored.tick();
+    expect(f.state(item.taskId).state).toBe("COLLECTED"); expect(await restored.openUrl(item.taskId)).toContain("id=remote-path");
+    expect((await lstat(item.path)).ino).toBe(before.ino); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 });
+    await expect(restored.connect({ ...input, requestKey: randomUUID(), expectedVersion: 0 })).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+  it("转换变更清除旧收录证据；恢复旧交付快照必须核对绑定版本，修复只重试交付", async () => {
+    const f = await fixture(), targetId = f.pipeline.libraries()[0]!.targetId;
+    const configure = (serverRoot: string) => f.delivery.connect({ serverId: "fixture-server-id", requestKey: randomUUID(), libraries: [{ targetId, libraryId: "library-1", libraryPath: serverRoot, conversion: { localRoot: f.path, serverRoot, serverPathStyle: "posix" } }] });
+    f.setLibraryPaths(["/first/movies"]); await configure("/first/movies"); const item = await f.add(), before = await lstat(item.path), name = item.path.split("/").at(-1)!;
+    f.setItems([{ Id: "first-item", Type: "Movie", Path: "/first/movies/" + name, ProviderIds: { Tmdb: "1" } }]); f.jump(30000); await f.delivery.tick(); f.jump(15000); await f.delivery.tick();
+    expect(f.state(item.taskId).state).toBe("COLLECTED");
+    const old = f.db.connection.prepare("SELECT binding_json FROM emby_delivery WHERE task_id=?").get(item.taskId) as { binding_json: string };
+    f.setLibraryPaths(["/second/movies"]); await configure("/second/movies");
+    expect(f.state(item.taskId).state).toBe("REFRESH_PENDING"); await expect(f.delivery.openUrl(item.taskId)).rejects.toMatchObject({ code: "CONFLICT" });
+    f.db.connection.prepare("UPDATE emby_delivery SET binding_json=? WHERE task_id=?").run(old.binding_json, item.taskId);
+    f.jump(30000); await f.delivery.tick(); expect(f.state(item.taskId)).toMatchObject({ state: "NEEDS_ATTENTION", last_failure: "BINDING_CHANGED" });
+    expect(new CoreService(f.db).listTasks({ page: 1, pageSize: 25 }).items[0]).toMatchObject({ deliveryFailure: expect.stringContaining("绑定版本已变化"), targetPath: item.path });
+    f.delivery.retry(item.taskId); f.setItems([{ Id: "second-item", Type: "Movie", Path: "/second/movies/" + name, ProviderIds: { Tmdb: "1" } }]);
+    f.jump(30000); await f.delivery.tick(); f.jump(15000); await f.delivery.tick(); expect(f.state(item.taskId).state).toBe("COLLECTED");
+    expect((await lstat(item.path)).ino).toBe(before.ino); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 });
+    f.setLibraryPaths(["/moved-again"]); await expect(f.delivery.openUrl(item.taskId)).rejects.toMatchObject({ code: "CONFLICT" }); expect(f.state(item.taskId).state).toBe("NEEDS_ATTENTION");
+  });
+  it("自动发现类型冲突、重叠库根和越界可定位；发现只读，不触发刷新或改库", async () => {
+    const f = await fixture({ subdirectory: "电影" }), targetId = f.pipeline.libraries()[0]!.targetId;
+    f.setLibraryPaths([f.libraryPath, f.path]); expect((await f.delivery.discover({})).targets[0]?.state).toBe("AMBIGUOUS");
+    f.setLibraryType("tvshows"); expect((await f.delivery.discover({})).targets[0]?.state).toBe("TYPE_CONFLICT");
+    const result = await f.delivery.discover({ conversions: [{ targetId, conversion: { localRoot: f.path + "-old", serverRoot: "/media", serverPathStyle: "posix" } }] });
+    expect(result.targets[0]).toMatchObject({ state: "UNAVAILABLE" }); expect(result.targets[0]?.reason).toContain("路径转换");
+    expect(f.refreshes()).toBe(0); expect(f.delivery.configuration()).toBeNull();
+  });
   it("本机服务密钥未恢复时不请求 Emby，也不将持久绑定误判为远端认证失效", async () => {
     const f = await fixture(); await f.configure(); const item = await f.add(), requests = f.requests();
     f.connections.install({ tmdb: null, emby: null }); f.jump(30000); await f.delivery.tick(); await f.delivery.revalidate();

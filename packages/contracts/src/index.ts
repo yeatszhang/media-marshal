@@ -119,6 +119,7 @@ export const taskSchema = z.strictObject({
   title: z.string().nullable(),
   status: taskStatusSchema,
   deliveryStatus: deliveryStatusSchema,
+  deliveryFailure: z.string().max(500).optional(),
   targetPath: z.string().nullable(),
   correctedFromId: z.uuid().nullable().optional(),
   correctedToId: z.uuid().nullable().optional(),
@@ -309,6 +310,7 @@ export interface DesktopApi {
   chooseMediaTarget(mediaType: "MOVIE" | "TV_SHOW"): Promise<CoreOutput<"media.libraries">>;
   getEmbyConfiguration(): Promise<CoreOutput<"emby.configuration">>;
   listEmbyLibraries(): Promise<CoreOutput<"emby.libraries">>;
+  discoverEmbyTargets(input: CoreInput<"emby.discover">): Promise<CoreOutput<"emby.discover">>;
   connectEmby(input: CoreInput<"emby.connect">): Promise<CoreOutput<"emby.connect">>;
   retryEmby(taskId: string): Promise<void>;
   openEmby(taskId: string): Promise<void>;

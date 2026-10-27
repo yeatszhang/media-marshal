@@ -24,6 +24,15 @@ async function mount() {
   return { app, api, task, element, unmount, model: app.container.get(TasksViewModel) };
 }
 describe("任务分页、过滤与交付观测", () => {
+  it("持久交付失败定位原目标和修复入口，状态恢复后清除逐项原因", async () => {
+    const f = await mount();
+    const failure = "Emby 路径转换或绑定版本已变化，旧证据已失效。请核对当前关联，再仅重试交付。";
+    f.api.listTasks.mockResolvedValue({ items: [{ ...f.task, deliveryStatus: "NEEDS_ATTENTION", deliveryFailure: failure }], total: 1, page: 1, pageSize: 25 });
+    await act(async () => { await f.model.refresh(); }); expect(f.element.querySelector('[role="alert"]')?.textContent).toContain(failure);
+    expect(f.element.textContent).toContain(f.task.targetPath); expect(f.element.textContent).toContain("核对 Emby 关联");
+    f.api.listTasks.mockResolvedValue({ items: [{ ...f.task, deliveryStatus: "COLLECTED" }], total: 1, page: 1, pageSize: 25 });
+    await act(async () => { await f.model.refresh(); }); expect(f.element.textContent).not.toContain(failure); expect(f.api.retryEmby).not.toHaveBeenCalled();
+  });
   it("原 COPY 保留整理详情，修正任务和已修正历史不再进入旧候选详情", async () => {
     const f = await mount(); expect(f.element.textContent).toContain("中文视频.mp4"); expect(f.element.textContent).toContain("整理详情"); expect([...f.element.querySelectorAll("button")].some((button) => button.textContent === "修正")).toBe(true);
     f.api.listTasks.mockResolvedValue({ items: [{ ...f.task, correctedFromId: crypto.randomUUID(), activeCorrectionId: crypto.randomUUID() }], total: 1, page: 1, pageSize: 25 }); await act(async () => f.model.refresh()); expect(f.element.textContent).toContain("查看修正进度"); expect(f.element.textContent).not.toContain("整理详情");

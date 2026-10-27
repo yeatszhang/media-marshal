@@ -571,6 +571,41 @@ test("仅电影目标绑定已有非空媒体库，Core 重启复核结果自动
   } finally { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 
+test("Emby 显式路径转换经真实 IPC 保存，多库根发现与重载不猜测目标", async () => {
+  test.setTimeout(60000);
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const folder = join(directory, "转换媒体库 中文 空格"); await mkdir(folder); const target = await realpath(folder), retained = join(target, "原有媒体.mp4"); await writeFile(retained, "保留原有媒体");
+  let roots = ["/archive/movies", "/container/movies"], type = "movies", refreshes = 0;
+  const server = createHttpServer((req, res) => {
+    if (req.headers["x-emby-token"] !== "binding-conversion-fixture") { res.writeHead(401).end(); return; }
+    const url = new URL(req.url!, "http://localhost"); res.setHeader("Content-Type", "application/json");
+    if (url.pathname === "/System/Info") res.end(JSON.stringify({ Id: "conversion-server", Version: "4.9-fixture" }));
+    else if (url.pathname === "/Library/VirtualFolders/Query") res.end(JSON.stringify({ Items: [{ ItemId: "movies", Name: "容器电影库", Locations: roots, CollectionType: type }], TotalRecordCount: 1 }));
+    else if (url.pathname === "/Items") res.end(JSON.stringify({ Items: [], TotalRecordCount: 0 }));
+    else if (url.pathname === "/Library/Refresh") { refreshes++; res.writeHead(204).end(); }
+    else res.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+    await window.evaluate(async (address) => { await window.desktopApi.saveSettings({ language: "zh-CN", embyUrl: address, tmdbProxy: "" }); await window.desktopApi.saveCredential("emby", "binding-conversion-fixture"); }, address);
+    await application.evaluate(({ dialog }, target) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [target] })) as typeof dialog.showOpenDialog; }, target);
+    await window.getByRole("link", { name: "设置", exact: true }).click(); await window.getByRole("button", { name: "选择电影目录", exact: true }).click();
+    await window.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click(); await expect(window.getByText(/没有匹配库根/)).toBeVisible(); expect(refreshes).toBe(0);
+    await window.getByRole("checkbox", { name: `配置路径转换 · ${target}`, exact: true }).check(); await expect(window.getByRole("alert")).toContainText("请填写此目标");
+    await window.getByRole("textbox", { name: `服务端根 · ${target}`, exact: true }).fill("/container/movies"); await window.getByRole("button", { name: "重新发现关联", exact: true }).click();
+    const select = window.getByRole("combobox", { name: `选择服务端媒体库目录 · ${target}`, exact: true }); await expect(select).toHaveValue(JSON.stringify(["movies", "/container/movies"]));
+    await expect(window.getByText(`服务端目标：/container/movies`, { exact: false })).toBeVisible(); await window.getByRole("button", { name: "验证并保存（触发扫描）", exact: true }).click(); await expect(window.getByText("连接已验证", { exact: true })).toBeVisible();
+    const configuration = await window.evaluate(() => window.desktopApi.getEmbyConfiguration()); expect(configuration?.libraries[0]).toMatchObject({ libraryId: "movies", libraryPath: "/container/movies", bindingVersion: 1, conversion: { localRoot: target, serverRoot: "/container/movies", serverPathStyle: "posix" } }); expect(refreshes).toBe(1);
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await window.screenshot({ path: "test-results/desktop/emby-path-conversion-minimum.png", fullPage: true }); await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+    await window.getByRole("link", { name: "设置", exact: true }).click(); await window.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click(); await expect(select).toHaveValue(JSON.stringify(["movies", "/container/movies"])); expect(refreshes).toBe(1);
+    roots = ["/container", "/container/movies"]; await window.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click(); await expect(window.getByText(/匹配多个库根/)).toBeVisible(); await expect(select).toHaveValue("");
+    type = "tvshows"; await window.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click(); await expect(window.getByText(/媒体类型不兼容/)).toBeVisible(); await expect(window.getByRole("button", { name: "验证并保存（触发扫描）", exact: true })).toBeDisabled();
+    expect(await readFile(retained, "utf8")).toBe("保留原有媒体"); expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 }); expect(refreshes).toBe(1);
+  } finally { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
 test("任务分页筛选和 Core 重启／页面重载恢复持久状态，不提交新作业", async () => {
   test.skip(!!process.env.MARSHAL_EXECUTABLE, "当前 schema 的数据夹具使用工作区构建");
   const initial = await application.firstWindow(); await expect(initial.getByText("核心已连接", { exact: true })).toBeVisible(); await application.close();

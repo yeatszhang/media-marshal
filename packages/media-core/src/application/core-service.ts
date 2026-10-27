@@ -16,6 +16,7 @@ import {
   type DesktopJob,
 } from "@media-marshal/contracts";
 import { CoreDatabase } from "../infrastructure/database.js";
+import { embyFailureMessage } from "../ingestion/emby-failure.js";
 import { pathsOverlap } from "../files/index.js";
 import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
 
@@ -282,7 +283,8 @@ export class CoreService {
         input.pageSize,
         (input.page - 1) * input.pageSize,
       ) as TaskPage["items"];
-    return { items, total, page: input.page, pageSize: input.pageSize };
+    const delivery = this.database.connection.prepare("SELECT last_failure FROM emby_delivery WHERE task_id=?");
+    return { items: items.map((item) => { const failure = delivery.get(item.id) as { last_failure: string | null } | undefined; return failure?.last_failure ? { ...item, deliveryFailure: embyFailureMessage(failure.last_failure) } : item; }), total, page: input.page, pageSize: input.pageSize };
   }
   listJobs(): DesktopJob[] {
     return this.database.connection

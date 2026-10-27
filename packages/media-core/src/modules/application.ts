@@ -76,6 +76,7 @@ declare module "@yeatz/app-framework/command" {
     "media.media.libraries": () => CoreOutput<"media.libraries">;
     "media.emby.configuration": () => CoreOutput<"emby.configuration">;
     "media.emby.libraries": () => Promise<CoreOutput<"emby.libraries">>;
+    "media.emby.discover": (input: CoreInput<"emby.discover">) => Promise<CoreOutput<"emby.discover">>;
     "media.emby.connect": (input: CoreInput<"emby.connect">) => Promise<CoreOutput<"emby.connect">>;
     "media.emby.retry": (input: CoreInput<"emby.retry">) => CoreOutput<"emby.retry">;
     "media.ingestion.candidates": (input: CoreInput<"ingestion.candidates">) => CoreOutput<"ingestion.candidates">;
@@ -246,6 +247,7 @@ export function createMediaApplication(
       add(registry.register("media.media.libraries", () => ingestion.libraries()));
       add(registry.register("media.emby.configuration", () => delivery.configuration()));
       add(registry.register("media.emby.libraries", () => delivery.libraries()));
+      add(registry.register("media.emby.discover", (_, input) => delivery.discover(input)));
       add(registry.register("media.emby.connect", (_, input) => delivery.connect(input)));
       add(registry.register("media.emby.retry", (_, input) => delivery.retry(input.taskId)));
       add(registry.register("media.ingestion.candidates", (_, input) => ingestion.list(input)));

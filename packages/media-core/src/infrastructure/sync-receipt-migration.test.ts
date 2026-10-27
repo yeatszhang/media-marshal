@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CoreDatabase, migrations } from "./database.js";
+import { CoreDatabase, migrations, SCHEMA_VERSION } from "./database.js";
 
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -55,7 +55,7 @@ describe("v30 登录历史线索迁移", () => {
   }
   it("仅回填可核对的定位线索，不伪造账号确认或新授权关联，原成功事实不变", async () => {
     const f = await historyFixture(), db = await CoreDatabase.open(f.path); cleanup.push(() => db.close());
-    expect(db.schemaVersion).toBe(30); expect(db.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before);
+    expect(db.schemaVersion).toBe(SCHEMA_VERSION); expect(db.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before);
     expect(db.connection.prepare("SELECT * FROM sync_receipt_origin").all()).toEqual([{ receipt_id: f.id, account_id: f.receipt.source_namespace, object_namespace: "path", locator_key: digest(f.locator) }]);
     expect(db.connection.prepare("SELECT count(*) AS n FROM sync_history_confirmation").get()).toEqual({ n: 0 }); expect(db.connection.prepare("SELECT count(*) AS n FROM sync_receipt_reference").get()).toEqual({ n: 0 });
     expect(db.connection.pragma("foreign_key_check")).toEqual([]); db.close(); await expect(CoreDatabase.open(f.path, migrations.slice(0, 29))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
@@ -68,6 +68,6 @@ describe("v30 登录历史线索迁移", () => {
     const f = await historyFixture(), failing = [...migrations.slice(0, 29), { ...migrations[29]!, sql: migrations[29]!.sql + "SELECT injected_history_failure();" }];
     await expect(CoreDatabase.open(f.path, failing)).rejects.toThrow(); const backup = f.path + ".before-v30.bak", before = digest(await readFile(backup));
     const old = await CoreDatabase.open(f.path, migrations.slice(0, 29)); expect(old.schemaVersion).toBe(29); expect(old.connection.prepare("SELECT * FROM sync_receipt").all()).toEqual(f.before); expect(old.connection.prepare("SELECT name FROM sqlite_master WHERE name='sync_receipt_origin'").get()).toBeUndefined(); old.close();
-    const db = await CoreDatabase.open(f.path); cleanup.push(() => db.close()); expect(db.schemaVersion).toBe(30); expect(digest(await readFile(backup))).toBe(before);
+    const db = await CoreDatabase.open(f.path); cleanup.push(() => db.close()); expect(db.schemaVersion).toBe(SCHEMA_VERSION); expect(digest(await readFile(backup))).toBe(before);
   });
 });

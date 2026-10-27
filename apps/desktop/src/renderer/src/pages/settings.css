@@ -181,6 +181,9 @@
 .settings-mapping-path {
   font-size: 11px;
 }
+.settings-library-choice .settings-mapping-toggle { display: flex; align-items: center; gap: 8px; }
+.settings-library-choice .settings-mapping-toggle input { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; }
+.settings-library-choice label { overflow-wrap: anywhere; }
 
 .settings-maintenance {
   margin-top: 20px;

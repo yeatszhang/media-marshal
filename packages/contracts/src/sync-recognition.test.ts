@@ -5,6 +5,7 @@ import {
   defaultDownloadDirectorySchema, defaultDownloadDirectoryWriteSchema, directoryBindingSchema,
   recognitionAutomaticConsentSchema, recognitionRuleConfigurationSchema, recognitionRuleSnapshotSchema,
   recognitionRuleWriteSchema, syncSourceConfigurationSchema, syncSourceSnapshotSchema, syncSourceWriteSchema,
+  coreActions,
 } from "./index.js";
 
 const directory = () => ({ id: randomUUID(), version: 1, path: "/隔离测试/下载目录" });
@@ -14,6 +15,14 @@ const target = () => ({ id: randomUUID(), name: "电影", mediaType: "MOVIE", di
 const edit = () => ({ id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0, requestKey: randomUUID() });
 
 describe("同步来源与识别映射的独立契约", () => {
+  it("Emby 发现与转换只接受受限业务字段，验证请求可绑定连接版本和幂等键", () => {
+    const conversion = { localRoot: "/本机/媒体", serverRoot: "/container/media", serverPathStyle: "posix" }, targetId = randomUUID();
+    const input = { conversions: [{ targetId, conversion }] };
+    expect(coreActions["emby.discover"].input.safeParse(input).success).toBe(true);
+    for (const extra of [{ grant: {} }, { apiKey: "不接受凭据" }, { volume: {} }, { modifyLibrary: true }]) expect(coreActions["emby.discover"].input.safeParse({ ...input, ...extra }).success).toBe(false);
+    expect(coreActions["emby.connect"].input.safeParse({ serverId: "server", libraries: [{ targetId, libraryId: "movies", libraryPath: "/container/media", conversion }], requestKey: randomUUID(), expectedVersion: 2 }).success).toBe(true);
+    expect(coreActions["emby.discover"].input.safeParse({ conversions: [{ targetId, conversion: { ...conversion, serverPathStyle: "auto" } }] }).success).toBe(false);
+  });
   it("同步来源只持有输入、target、过滤和周期，不接收旧整理策略", () => {
     for (const configuration of [local(), cloud()]) {
       expect(syncSourceConfigurationSchema.parse(configuration)).toMatchObject({ target: { kind: "default" }, filters: [], periodic: { enabled: false } });

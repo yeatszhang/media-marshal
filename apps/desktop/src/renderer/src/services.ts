@@ -306,8 +306,9 @@ export class IngestionViewModel extends StatefulService<{ items: IngestionCandid
   protected dispose() { this.stopped = true; this.request++; this.selection++; this.epoch++; clearTimeout(this.timer); this.confirmations.clear(); }
 }
 @injectable()
-export class LibraryViewModel extends StatefulService<{ targets: CoreOutput<"media.libraries">; server: CoreOutput<"emby.libraries"> | null; configuration: CoreOutput<"emby.configuration">; error: string | null; queryError: string | null; busy: boolean }> {
-  protected initState = { targets: [], server: null, configuration: null, error: null, queryError: null, busy: false };
+export class LibraryViewModel extends StatefulService<{ targets: CoreOutput<"media.libraries">; server: CoreOutput<"emby.libraries"> | null; discovery: CoreOutput<"emby.discover"> | null; configuration: CoreOutput<"emby.configuration">; error: string | null; queryError: string | null; busy: boolean }> {
+  protected initState = { targets: [], server: null, discovery: null, configuration: null, error: null, queryError: null, busy: false };
+  private connectIntent?: { signature: string; input: CoreInput<"emby.connect"> };
   private stopped = false; private generation = 0; private watchers = 0; private epoch = 0; private timer?: ReturnType<typeof setTimeout>; private flight?: Promise<void>;
   constructor(@inject(DesktopClient) readonly client: DesktopApi) { super(); }
   watch() {
@@ -326,9 +327,16 @@ export class LibraryViewModel extends StatefulService<{ targets: CoreOutput<"med
     return this.flight = task;
   }
   async action(work: () => Promise<void>) { if (this.state.busy || this.stopped) return; this.setState({ busy: true, error: null }); try { await work(); await this.refresh(true); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } finally { if (!this.stopped) this.setState({ busy: false }); } }
-  choose(type: "MOVIE" | "TV_SHOW") { return this.action(async () => { const targets = await this.client.chooseMediaTarget(type); if (!this.stopped) this.setState({ targets, server: null }); }); }
-  readServer() { return this.action(async () => { const server = await this.client.listEmbyLibraries(); if (!this.stopped) this.setState({ server }); }); }
-  connect(input: CoreInput<"emby.connect">) { return this.action(async () => { const configuration = await this.client.connectEmby(input); if (!this.stopped) this.setState({ configuration }); }); }
+  choose(type: "MOVIE" | "TV_SHOW") { return this.action(async () => { const targets = await this.client.chooseMediaTarget(type); if (!this.stopped) this.setState({ targets, server: null, discovery: null }); }); }
+  readServer(input: CoreInput<"emby.discover"> = {}) { return this.action(async () => { this.connectIntent = undefined; const server = await this.client.listEmbyLibraries(); if (this.stopped) return; this.setState({ server, discovery: null }); const discovery = await this.client.discoverEmbyTargets(input); if (!this.stopped && discovery.serverId === server.serverId) this.setState({ discovery }); }); }
+  discover(input: CoreInput<"emby.discover">) { return this.action(async () => { const discovery = await this.client.discoverEmbyTargets(input); if (!this.stopped && discovery.serverId === this.state.server?.serverId) this.setState({ discovery }); else if (!this.stopped) throw new Error("Emby 服务器身份已变化，请重新读取媒体库"); }); }
+  clearDiscovery() { this.connectIntent = undefined; this.setState({ discovery: null }); }
+  connect(input: CoreInput<"emby.connect">) { return this.action(async () => {
+    const signature = JSON.stringify(input);
+    if (this.connectIntent?.signature !== signature) this.connectIntent = { signature, input: { ...input, requestKey: crypto.randomUUID(), expectedVersion: this.state.configuration?.version ?? 0 } };
+    const configuration = await this.client.connectEmby(this.connectIntent.input);
+    if (!this.stopped) { this.generation++; this.setState({ configuration }); this.connectIntent = undefined; }
+  }); }
   protected dispose() { this.stopped = true; this.generation++; this.epoch++; clearTimeout(this.timer); }
 }
 export function createRendererApplication(client: DesktopApi) {
