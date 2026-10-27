@@ -4,7 +4,7 @@ import type { CoreDatabase } from "../infrastructure/database.js";
 import { pathsOverlap } from "../files/index.js";
 import { managedRootGrantSchema } from "@media-marshal/contracts/internal";
 
-interface Edge { id: string; name: string; kind: "sync" | "recognition"; input: string; targets: string[] }
+interface Edge { id: string; name: string; kind: "sync" | "recognition"; input: string; targets: string[]; operational?: boolean }
 /** 同步完成区接入识别是合法边；只有回到输入的链路及识别重复接管被阻断。 */
 export function assertDirectoryGraph(database: CoreDatabase, kind: "sync" | "recognition", snapshot: SyncSourceSnapshot | RecognitionRuleSnapshot, legacySourceIds: string[] = []) {
   const grants = (database.connection.prepare("SELECT grant_json FROM configuration_directory WHERE grant_json IS NOT NULL UNION SELECT grant_json FROM media_target_root").all() as { grant_json: string }[]).flatMap((row) => { const result = managedRootGrantSchema.safeParse(JSON.parse(row.grant_json)); return result.success ? [result.data] : []; }).sort((a, b) => b.path.length - a.path.length);
@@ -26,9 +26,13 @@ export function assertDirectoryGraph(database: CoreDatabase, kind: "sync" | "rec
     if (input) edges.push({ id: "legacy:" + row.id, name: configuration.name, kind: "recognition", input, targets: [configuration.organization!.targetPath] });
   }
   if (candidate) edges.push(candidate);
+  // 未完成文件计划仍保留原输入／目标；编辑当前规则不能抹掉恢复时可能出现的回流边。
+  const pending = database.connection.prepare("SELECT DISTINCT json_extract(plan_json,'$.source.path') AS input,json_extract(plan_json,'$.target.path') AS target,json_extract(plan_json,'$.recognitionSnapshot.inputMode') AS mode,'recognition' AS kind FROM ingestion_operation WHERE phase!='RECORDED' UNION SELECT DISTINCT json_extract(plan_json,'$.source.path'),json_extract(plan_json,'$.target.path'),NULL,'sync' FROM local_sync_operation WHERE phase!='RECORDED' LIMIT 2001").all() as { input: string | null; target: string | null; mode: string | null; kind: "sync" | "recognition" }[];
+  if (pending.length > 2000) throw new DesktopError("CONFLICT", "未完成目录链路超过两千项，请先处理原任务，再新增或调整目录关系");
+  for (const [index, plan] of pending.entries()) if (plan.input && plan.target) edges.push({ id: `operation:${index}`, name: "原文件计划", kind: plan.kind, input: plan.mode === "managed-completed" ? join(plan.input, "completed") : plan.input, targets: [plan.kind === "sync" ? join(plan.target, "completed") : plan.target], operational: true });
   for (const edge of edges) if (edge.targets.some((target) => overlap(edge.input, target))) throw new DesktopError("UNSAFE_PATH", `规则「${edge.name}」的输入与目标相互包含，请选择独立目录`);
   if (candidate?.kind === "recognition") {
-    const other = edges.find((edge) => edge !== candidate && edge.kind === "recognition" && overlap(candidate.input, edge.input));
+    const other = edges.find((edge) => edge !== candidate && !edge.operational && edge.kind === "recognition" && overlap(candidate.input, edge.input));
     if (other) throw new DesktopError("CONFLICT", `识别输入与「${other.name}」重叠，请调整输入或删除其接管规则后重新预览`);
   }
   const visited = new Set<Edge>(), active = new Set<Edge>();

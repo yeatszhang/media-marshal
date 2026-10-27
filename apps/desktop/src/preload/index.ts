@@ -26,6 +26,15 @@ async function invoke(action: string, payload: unknown): Promise<any> {
 }
 // 此对象仅暴露具体动作，不暴露 invoke、通道名或 Electron 对象。
 const api: DesktopApi = {
+  listRecognitionRules: (input = {}) => invoke("recognition.list", input),
+  saveRecognitionRule: (input) => invoke("recognition.save", input),
+  previewRecognitionRule: (input) => invoke("recognition.preview", input),
+  getRecognitionConfigurationPreview: (id) => invoke("recognition.get-preview", { id }),
+  confirmRecognitionRule: (input) => invoke("recognition.confirm", input),
+  controlRecognitionRule: (input) => invoke("recognition.control", input),
+  scanRecognitionRule: (input) => invoke("recognition.scan", input),
+  authorizeRecognitionAutomatic: (input) => invoke("recognition.authorize-automatic", input),
+  getRecognitionTaskTargets: (taskId) => invoke("recognition.task-targets", { taskId }),
   listSyncSources: (input = {}) => invoke("sync.list", input),
   saveSyncSource: (input) => invoke("sync.save", input),
   previewSyncSource: (input) => invoke("sync.preview", input),

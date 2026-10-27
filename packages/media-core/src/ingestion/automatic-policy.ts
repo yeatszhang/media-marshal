@@ -1,4 +1,5 @@
-import { sourceConfigurationSchema, type SourceConfiguration } from "@media-marshal/contracts";
+import { sourceConfigurationSchema, recognitionRuleSnapshotSchema, type SourceConfiguration } from "@media-marshal/contracts";
+import { recognitionOwner, recognitionScopeHash } from "./recognition-routing.js";
 import { localFileEvidenceSchema } from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import { resolveManagedOrganization } from "../sources/organization.js";
@@ -31,6 +32,12 @@ export class AutomaticPolicies {
   capture(id: string): Capture | null {
     const candidate = this.candidate(id);
     if (!candidate || ["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(candidate.state) || (!candidate.managed_item_id && !candidate.is_current)) return null;
+    const independent = recognitionOwner(this.database, candidate.source_id);
+    if (independent) {
+      const snapshot = recognitionRuleSnapshotSchema.parse(JSON.parse(independent.snapshot_json)), scope = recognitionScopeHash(snapshot);
+      if (!independent.active || independent.deleted_at || !snapshot.configuration.automatic || !this.database.connection.prepare("SELECT 1 FROM recognition_automatic_consent WHERE rule_id=? AND rule_version=? AND scope_hash=?").get(independent.rule_id, independent.version, scope)) return null;
+      return { candidateId: id, sourceId: independent.rule_id, context: JSON.stringify({ kind: "recognition", ruleId: independent.rule_id, version: independent.version, scope, candidateVersion: candidate.version_key, physicalVersion: candidate.physical_version }) };
+    }
     const rules = this.rules(candidate), authorizers = rules.filter((rule) => {
       const configuration = sourceConfigurationSchema.parse(JSON.parse(rule.configuration_json));
       return !rule.review_required && configuration.organization?.automatic && this.consents.accepted(rule.id, configuration);
@@ -42,6 +49,17 @@ export class AutomaticPolicies {
   check(id: string, sourceId: string, context: string): AutomaticAvailability {
     const candidate = this.candidate(id), captured = this.capture(id);
     if (!candidate || !captured || captured.sourceId !== sourceId || captured.context !== context) return { state: "MANUAL", reason: "自动授权、来源版本或文件版本已变化，请在待处理重新预览" };
+    const independent = recognitionOwner(this.database, candidate.source_id);
+    if (independent) {
+      if (independent.paused || candidate.physical_paused || this.database.connection.prepare("SELECT 1 FROM app_setting WHERE key='ingestion.paused' AND value='true'").get()) return { state: "WAITING", reason: "识别规则或全局整理已暂停，原自动意图保留" };
+      if (!candidate.available) return { state: "WAITING", reason: "等待原识别输入目录与卷授权恢复" };
+      if (independent.mode !== "managed-completed") return { state: "MANUAL", reason: "普通目录的客户端完成行为尚未完整验证，请确认文件完整后人工预览整理" };
+      const receipt = this.database.connection.prepare("SELECT r.local_sha256,r.size,e.evidence_json FROM recognition_receipt p JOIN sync_receipt r ON r.id=p.receipt_id JOIN sync_receipt_evidence e ON e.receipt_id=r.id WHERE p.candidate_id=? AND p.state='ACCEPTED' LIMIT 1").get(id) as { local_sha256: string; size: number; evidence_json: string } | undefined;
+      if (!receipt) return { state: "MANUAL", reason: "缺少正式同步成功收据或接入核对，请补扫原成果后人工预览" };
+      const evidence = localFileEvidenceSchema.parse(JSON.parse(receipt.evidence_json)), snapshot = JSON.parse(candidate.snapshot_json);
+      if (receipt.local_sha256 !== candidate.expected_sha256 || receipt.size !== snapshot.size || evidence.inode !== snapshot.inode || evidence.birthtimeNs !== snapshot.birthtimeNs || evidence.modifiedNs !== snapshot.modifiedNs) return { state: "MANUAL", reason: "正式成果证据已变化，请核对原文件并重新预览" };
+      return { state: "READY" };
+    }
     const rules = this.rules(candidate), rule = rules.find((value) => value.id === sourceId)!;
     if (candidate.physical_paused || rule.paused || this.database.connection.prepare("SELECT 1 FROM app_setting WHERE key='ingestion.paused' AND value='true'").get()) return { state: "WAITING", reason: "来源或全部整理已暂停，原自动意图保留；恢复后重新观察" };
     if (rule.review_required) return { state: "MANUAL", reason: "来源归属需要核对，请重新预览并确认来源配置" };

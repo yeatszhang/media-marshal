@@ -18,6 +18,8 @@ export * from "./sync-recognition.js";
 export * from "./sync-glob.js";
 import { configurationActions, configurationDirectorySchema } from "./configuration-api.js";
 export * from "./configuration-api.js";
+import { recognitionActions } from "./recognition-api.js";
+export * from "./recognition-api.js";
 import { syncActions } from "./sync-api.js";
 export * from "./sync-api.js";
 
@@ -119,6 +121,7 @@ export const deliveryStatusSchema = z.enum([
 export const taskSchema = z.strictObject({
   id: z.uuid(),
   sourceId: z.uuid(),
+  recognitionRuleId: z.uuid().nullable().optional(),
   sourcePath: z.string(),
   title: z.string().nullable(),
   status: taskStatusSchema,
@@ -154,6 +157,7 @@ export type DesktopJob = z.infer<typeof jobSchema>;
 export const coreStatusSchema = z.strictObject({
   schemaVersion: z.number().int().nonnegative(),
   sourceCount: z.number().int().nonnegative(),
+  recognitionCount: z.number().int().nonnegative().optional(),
   taskCount: z.number().int().nonnegative(),
   mode: z.enum(["manual-only", "automatic-enabled"]),
   parser: z.enum(["unavailable", "ready"]),
@@ -173,6 +177,7 @@ const empty = z.strictObject({});
 export const coreActions = {
   ...configurationActions,
   ...syncActions,
+  ...recognitionActions,
   ...correctionActions,
   ...sourceRuleActions,
   ...ingestionActions,
@@ -245,7 +250,7 @@ export const credentialSchema = z.strictObject({
   value: z.string().trim().max(1024),
 });
 export const nativeActions = {
-  "desktop.configuration.choose-directory": z.strictObject({ kind: z.enum(["ordinary", "managed"]) }),
+  "desktop.configuration.choose-directory": z.strictObject({ kind: z.enum(["ordinary", "managed", "media"]) }),
   "desktop.host-preferences.get": empty,
   "desktop.host-preferences.save": hostPreferencesDraftSchema,
   "desktop.about": empty,
@@ -274,6 +279,15 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  listRecognitionRules(input?: CoreInput<"recognition.list">): Promise<CoreOutput<"recognition.list">>;
+  saveRecognitionRule(input: CoreInput<"recognition.save">): Promise<CoreOutput<"recognition.save">>;
+  previewRecognitionRule(input: CoreInput<"recognition.preview">): Promise<CoreOutput<"recognition.preview">>;
+  getRecognitionConfigurationPreview(id: string): Promise<CoreOutput<"recognition.get-preview">>;
+  confirmRecognitionRule(input: CoreInput<"recognition.confirm">): Promise<CoreOutput<"recognition.confirm">>;
+  controlRecognitionRule(input: CoreInput<"recognition.control">): Promise<CoreOutput<"recognition.control">>;
+  scanRecognitionRule(input: CoreInput<"recognition.scan">): Promise<CoreOutput<"recognition.scan">>;
+  authorizeRecognitionAutomatic(input: CoreInput<"recognition.authorize-automatic">): Promise<CoreOutput<"recognition.authorize-automatic">>;
+  getRecognitionTaskTargets(taskId: string): Promise<CoreOutput<"recognition.task-targets">>;
   listSyncSources(input?: CoreInput<"sync.list">): Promise<CoreOutput<"sync.list">>;
   saveSyncSource(input: CoreInput<"sync.save">): Promise<CoreOutput<"sync.save">>;
   previewSyncSource(input: CoreInput<"sync.preview">): Promise<CoreOutput<"sync.preview">>;
@@ -288,7 +302,7 @@ export interface DesktopApi {
   listConfigurationDirectories(): Promise<CoreOutput<"configuration.directories">>;
   getDefaultDownloadDirectory(): Promise<CoreOutput<"configuration.default">>;
   setDefaultDownloadDirectory(input: CoreInput<"configuration.set-default">): Promise<CoreOutput<"configuration.set-default">>;
-  chooseConfigurationDirectory(kind: "ordinary" | "managed"): Promise<z.infer<typeof configurationDirectorySchema> | null>;
+  chooseConfigurationDirectory(kind: "ordinary" | "managed" | "media"): Promise<z.infer<typeof configurationDirectorySchema> | null>;
   checkLocalSourceHealth(input: CoreInput<"source-rules.local-health">): Promise<CoreOutput<"source-rules.local-health">>;
   onBeforeReload(listener: () => Promise<void>): () => void;
   getHostPreferences(): Promise<HostPreferences>;

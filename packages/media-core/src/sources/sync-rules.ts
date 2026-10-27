@@ -146,7 +146,7 @@ export class SyncRules {
     const prepared = row.local_preview_id && jobId ? await this.local.confirm(row.local_preview_id, jobId, input.filesComplete === true) : null;
     const result = db.transaction(() => {
       this.writable(); const again = this.previous<CoreOutput<"sync.confirm">>(input.requestKey, signature); if (again) return again;
-      if (this.getPreview(row.id).state !== "READY") throw conflict(); this.assertLegacy(owner.id);
+      if (this.getPreview(row.id).state !== "READY") throw conflict(); this.assertLegacy(owner.id); assertDirectoryGraph(this.database, "sync", preview.snapshot);
       if (row.download_preview_id) new SyncReceipts(this.database, this.now).confirmHistory(row.download_preview_id, input.requestKey, input.historyConsent?.accepted);
       else if (input.historyConsent) throw conflict("本地来源不接受网盘登录历史确认");
       const stamp = new Date(this.now()).toISOString();
@@ -180,6 +180,20 @@ export class SyncRules {
   async control(input: CoreInput<"sync.control">): Promise<SyncSourceRule> {
     this.writable(); const db = this.database.connection, signature = hash({ operation: "sync.control", input }), previous = this.previous<SyncSourceRule>(input.requestKey, signature); if (previous) return previous;
     const row = this.row(input.id); this.assertVersion(row, input, true); const rule = this.get(input.id);
+    if (!rule.runtime?.claimed && input.operation === "pause" && db.prepare("SELECT 1 FROM legacy_configuration_owner WHERE source_id=?").get(rule.id)) {
+      if (rule.deletedAt) throw conflict("旧来源已删除，请先核对其恢复状态");
+      const result = db.transaction(() => {
+        this.writable(); this.assertVersion(this.row(input.id), input, true);
+        const before = legacyConfigurationFingerprint(db, rule.id), runtime = db.prepare("SELECT legacy_fingerprint FROM sync_runtime WHERE source_id=?").get(rule.id) as { legacy_fingerprint: string | null };
+        db.prepare("INSERT OR IGNORE INTO source_rule_pause_job(source_id,job_id) SELECT ?,j.id FROM download_job j JOIN download_source_demand d ON d.job_id=j.id JOIN source_rule r ON r.id=d.source_id AND r.version=d.source_version WHERE r.id=? AND (j.state IN ('QUEUED','RUNNING','VERIFYING','COMMITTING','RETRY_WAIT') OR EXISTS(SELECT 1 FROM cloud_global_pause_job p WHERE p.job_id=j.id))").run(rule.id, rule.id);
+        db.prepare("UPDATE source_rule_execution_preview SET expires_at=0 WHERE source_id=? AND run_id IS NULL").run(rule.id);
+        db.prepare("UPDATE source_rule SET paused=1,updated_at=? WHERE id=?").run(new Date(this.now()).toISOString(), rule.id);
+        db.prepare("UPDATE sync_source_rule SET paused=1,lifecycle_revision=lifecycle_revision+1 WHERE id=?").run(rule.id);
+        if (runtime.legacy_fingerprint === before) db.prepare("UPDATE sync_runtime SET legacy_fingerprint=? WHERE source_id=?").run(legacyConfigurationFingerprint(db, rule.id), rule.id);
+        db.prepare("UPDATE sync_configuration_preview SET state='EXPIRED' WHERE source_id=? AND state='READY'").run(rule.id);
+        const saved = this.get(rule.id); this.receipt(input.requestKey, signature, saved); return saved;
+      })(); this.legacyChanged?.(); return result;
+    }
     if (!rule.runtime?.claimed && db.prepare("SELECT 1 FROM legacy_configuration_owner WHERE source_id=?").get(rule.id)) throw conflict("请先完整预览确认接管此来源，或从旧配置入口控制原来源；不会同时修改两套有效配置");
     if (input.operation === "resume") {
       if (!rule.snapshot || rule.deletedAt || rule.reviewReasons.length) throw conflict("请先恢复、预览确认来源配置，再恢复同步");
@@ -213,7 +227,8 @@ export class SyncRules {
     const counts = db.prepare("SELECT count(*) AS files,sum(state='DONE') AS done,sum(state='REUSED') AS reused,sum(state='REMOVED') AS removed,sum(state='NEEDS_ATTENTION') AS failed FROM local_sync_member WHERE job_id=?").get(row.id) as { files: number; done: number | null; reused: number | null; removed: number | null; failed: number | null };
     const cloud = row.download_job_id ? this.downloads.get(row.download_job_id) : null;
     const failed = row.download_job_id ? (db.prepare("SELECT count(*) AS n FROM download_job_item j JOIN download_item i ON i.id=j.item_id WHERE j.job_id=? AND i.failure_code IS NOT NULL AND i.state IN ('FAILED','AUTH_REQUIRED','BLOCKED_LOCAL','RECONCILING')").get(row.download_job_id) as { n: number }).n : counts.failed ?? 0;
-    return { id: row.id, sourceId: row.source_id, sourceVersion: row.source_version, state: row.state, files: cloud?.progress.totalItems ?? counts.files, done: cloud?.progress.completedItems ?? counts.done ?? 0, reused: counts.reused ?? 0, removed: cloud?.localRemovedFiles ?? counts.removed ?? 0, failed, failure: row.failure ?? cloud?.failure?.message ?? null, downloadJobId: row.download_job_id, createdAt: row.created_at, updatedAt: row.updated_at };
+    const destination = (JSON.parse(row.snapshot_json) as SyncSourceSnapshot).targetDirectory.id, recognition = db.prepare("SELECT r.id,r.paused FROM recognition_input i JOIN recognition_rule r ON r.id=i.rule_id WHERE i.directory_id=? AND i.mode='managed-completed' AND i.active=1 AND r.deleted_at IS NULL LIMIT 1").get(destination) as { id: string; paused: number } | undefined;
+    return { recognition: { state: !recognition ? "NOT_ENABLED" as const : recognition.paused ? "PAUSED" as const : "ENABLED" as const, ruleId: recognition?.id ?? null }, id: row.id, sourceId: row.source_id, sourceVersion: row.source_version, state: row.state, files: cloud?.progress.totalItems ?? counts.files, done: cloud?.progress.completedItems ?? counts.done ?? 0, reused: counts.reused ?? 0, removed: cloud?.localRemovedFiles ?? counts.removed ?? 0, failed, failure: row.failure ?? cloud?.failure?.message ?? null, downloadJobId: row.download_job_id, createdAt: row.created_at, updatedAt: row.updated_at };
   }
   jobs(input: CoreInput<"sync.jobs">): CoreOutput<"sync.jobs"> {
     const db = this.database.connection, size = input.pageSize ?? 25, offset = ((input.page ?? 1) - 1) * size;

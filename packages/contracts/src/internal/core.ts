@@ -5,10 +5,11 @@ import { sourceRuleApplySchema, sourceRuleSchema } from "../source-rules.js";
 import { PROTOCOL_VERSION, rpcErrorSchema } from "../index.js";
 import { directoryBindingSchema } from "../sync-recognition.js";
 
-export const CORE_DATA_SCHEMA_VERSION = 32;
+export const CORE_DATA_SCHEMA_VERSION = 33;
 const id = z.uuid(), empty = z.strictObject({});
 const configuredBinding = z.strictObject({ binding: bindingRefSchema.extend({ implementationId: implementationIdSchema }), credentialRef: id });
 export const privateCoreActions = {
+  "recognition.restore": { input: empty, output: empty },
   "configuration.bootstrap": { input: empty, output: z.array(z.strictObject({ kind: z.enum(["ordinary", "managed", "media"]), grant: managedRootGrantSchema })).max(1000) },
   "configuration.authorize": { input: z.strictObject({ kind: z.enum(["ordinary", "managed", "media"]), grant: managedRootGrantSchema }), output: directoryBindingSchema },
   "media.observations.reset": { input: empty, output: empty },

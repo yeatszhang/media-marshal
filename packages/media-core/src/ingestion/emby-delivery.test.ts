@@ -36,10 +36,10 @@ async function fixture(options: { mediaType?: "AUTO" | "MOVIE" | "TV_SHOW"; subd
   const pipeline = { targets: roots, libraries: () => [{ mediaType: options.mediaType ?? "MOVIE", targetId: grant.id, path, available: true }] };
   const delivery = new EmbyDelivery(db, connections, () => settings, pipeline, () => clock); cleanup.push(() => delivery.close());
   const configure = () => delivery.connect({ serverId: "fixture-server-id", libraries: [{ targetId: grant.id, libraryId: "library-1", libraryPath }] });
-  const add = async (type: "MOVIE" | "TV_SHOW" = "MOVIE") => {
+  const add = async (type: "MOVIE" | "TV_SHOW" = "MOVIE", logicalTargetId?: string) => {
     const root = roots.get(grant.id), attempt = randomUUID(), taskId = randomUUID(), candidateId = randomUUID(), operationId = randomUUID(), segments = ["测试-" + taskId + ".mp4"];
     await root.prepareStage(attempt); await writeFile(await root.stageFilePath(attempt, segments), "fixture-video"); const proof = await root.verifyStage(attempt, segments, 13), commit = await root.commit(attempt, segments, proof); await root.cleanupAttempt(attempt);
-    const sourceId = randomUUID(), stamp = new Date(clock).toISOString(), plan = { targetSegments: segments, selection: { tmdbId: type === "MOVIE" ? 1 : 2, mediaType: type, season: type === "MOVIE" ? null : 3, episode: type === "MOVIE" ? null : 4, episodeEnd: null } };
+    const sourceId = randomUUID(), stamp = new Date(clock).toISOString(), plan = { ...(logicalTargetId ? { logicalTargetId } : {}), targetSegments: segments, selection: { tmdbId: type === "MOVIE" ? 1 : 2, mediaType: type, season: type === "MOVIE" ? null : 3, episode: type === "MOVIE" ? null : 4, episodeEnd: null } };
     db.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'test','custom',?,?,'AUTO','COPY',?)").run(sourceId, join(directory, sourceId), path, stamp);
     db.connection.prepare("INSERT INTO media_task(id,source_id,source_path,status,delivery_status,target_path,created_at,updated_at) VALUES(?,?,?,'DONE','REFRESH_PENDING',?,?,?)").run(taskId, sourceId, join(directory, sourceId), commit.path, stamp, stamp);
     db.connection.prepare("INSERT INTO ingestion_candidate(id,source_id,relative_json,version_key,snapshot_json,state,task_id,created_at,updated_at) VALUES(?,?,'[]',?,'{}','PROCESSED',?,?,?)").run(candidateId, sourceId, randomUUID(), taskId, stamp, stamp);
@@ -60,6 +60,20 @@ describe("独立 Emby 交付、合并与核对", () => {
     f.setItems([{ Id: "legacy-item", Type: "Movie", Path: item.path, ProviderIds: { Tmdb: "1" } }]);
     f.jump(30000); await restored.tick(); f.jump(15000); await restored.tick(); expect(f.state(item.taskId).state).toBe("COLLECTED");
     expect(await restored.openUrl(item.taskId)).toContain("legacy-item"); expect((await lstat(item.path)).ino).toBe(before.ino);
+  });
+  it("同一本机目录下的电影和剧集逻辑 target 分别绑定并按冻结逻辑身份交付", async () => {
+    const f = await fixture(), physical = f.pipeline.libraries()[0]!, movieTarget = randomUUID(), tvTarget = randomUUID();
+    const owner = randomUUID(), raw = (f.db.connection.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(physical.targetId) as { grant_json: string }).grant_json;
+    f.db.connection.prepare("INSERT INTO configuration_directory VALUES(?,1,?,?,'media',NULL,'测试')").run(physical.targetId, physical.path, raw); f.db.connection.prepare("INSERT INTO recognition_rule VALUES(?,1,1,0,'{}',0,NULL,'[]','测试','测试')").run(owner);
+    for (const [id, type] of [[movieTarget, "MOVIE"], [tvTarget, "TV_SHOW"]]) f.db.connection.prepare("INSERT INTO recognition_target_identity VALUES(?,?,?,?,?)").run(id, owner, physical.targetId, type, type);
+    vi.spyOn(f.pipeline, "libraries").mockReturnValue([{ ...physical, targetId: movieTarget, directoryId: physical.targetId, directoryVersion: 1, mediaType: "MOVIE" }, { ...physical, targetId: tvTarget, directoryId: physical.targetId, directoryVersion: 1, mediaType: "TV_SHOW" }] as ReturnType<typeof f.pipeline.libraries>);
+    expect(await f.delivery.discover({})).toMatchObject({ targets: [{ targetId: movieTarget, state: "MATCHED" }, { targetId: tvTarget, state: "MATCHED" }] });
+    await f.delivery.connect({ serverId: "fixture-server-id", libraries: [{ targetId: movieTarget, libraryId: "library-1", libraryPath: f.libraryPath }, { targetId: tvTarget, libraryId: "library-1", libraryPath: f.libraryPath }] });
+    const bindings = f.db.connection.prepare("SELECT target_root_id,binding_json FROM emby_library ORDER BY target_root_id").all() as { target_root_id: string; binding_json: string }[];
+    expect(bindings.map((row) => row.target_root_id).sort()).toEqual([movieTarget, tvTarget].sort()); expect(bindings.every((row) => JSON.parse(row.binding_json).targetDirectory.id === physical.targetId)).toBe(true); expect(new Set(bindings.map((row) => JSON.parse(row.binding_json).id)).size).toBe(2);
+    const movie = await f.add("MOVIE", movieTarget), tv = await f.add("TV_SHOW", tvTarget), before = await lstat(movie.path);
+    f.setItems([{ Id: "movie-item", Type: "Movie", Path: movie.path, ProviderIds: { Tmdb: "1" } }, { Id: "tv-item", Type: "Episode", Path: tv.path, ParentIndexNumber: 3, IndexNumber: 4, SeriesId: "series-1" }]); f.jump(30000); await f.delivery.tick(); f.jump(15000); await f.delivery.tick();
+    expect(f.state(movie.taskId).state).toBe("COLLECTED"); expect(f.state(tv.taskId).state).toBe("COLLECTED"); expect(await f.delivery.openUrl(movie.taskId)).toContain("id=movie-item"); expect((await lstat(movie.path)).ino).toBe(before.ino);
   });
   it("显式容器转换冻结具体库根与版本，收录查询使用服务端路径，重启离线不复制", async () => {
     const f = await fixture({ subdirectory: "新电影" }), targetId = f.pipeline.libraries()[0]!.targetId;

@@ -18,7 +18,7 @@ const conversionOf = (binding: Binding | null): EmbyPathConversion | null => bin
 interface Connection { id: string; version: number; server_id: string; base_url: string; valid: number }
 interface Library { target_root_id: string; library_id: string; library_path: string; binding_json: string | null }
 interface Delivery { task_id: string; operation_id: string | null; correction_id: string | null; state: string; refresh_attempts: number; check_started_at: number | null; target_path: string; target_root_id: string; evidence_json: string; plan_json: string; binding_json: string | null }
-interface DeliveryPlan { targetSegments: string[]; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null } }
+interface DeliveryPlan { logicalTargetId?: string; targetSegments: string[]; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null } }
 const contains = (parent: string, child: string) => { const part = relative(parent, child); return !part || (part !== ".." && !part.startsWith(".." + sep) && !isAbsolute(part)); };
 const query = "SELECT d.*,t.target_path,o.target_root_id,o.evidence_json,o.plan_json FROM emby_delivery d JOIN media_task t ON t.id=d.task_id AND t.status='DONE' AND NOT EXISTS(SELECT 1 FROM correction_item ci WHERE ci.task_id=t.id AND ci.state IN ('PENDING','RUNNING','NEEDS_ATTENTION')) JOIN (SELECT id,task_id,target_root_id,evidence_json,plan_json,'ingestion' AS kind FROM ingestion_operation WHERE phase='RECORDED' UNION ALL SELECT id,new_task_id AS task_id,target_root_id,evidence_json,plan_json,'correction' AS kind FROM media_correction_operation WHERE phase='RECORDED') o ON o.task_id=d.task_id AND ((o.kind='ingestion' AND o.id=d.operation_id) OR (o.kind='correction' AND o.id=d.correction_id))";
 
@@ -85,7 +85,8 @@ export class EmbyDelivery {
     });
   }
   private async checkLocal(id: string, targetPath: string, conversion: EmbyPathConversion | null | undefined) {
-    const root = this.ingestion.targets.get(id);
+    const target = this.ingestion.libraries().find((value) => value.targetId === id);
+    const root = this.ingestion.targets.get(target?.directoryId ?? id);
     if (root.grant.path !== targetPath) throw new DesktopError("CONFLICT", "媒体目录身份已变化，请重新授权和预览");
     await root.check();
     if (conversion) {
@@ -150,7 +151,7 @@ export class EmbyDelivery {
         const previousBinding = old.find((row) => row.target_root_id === mapping.targetId)?.binding_json;
         const prior = previousBinding ? bindingSchema.parse(JSON.parse(previousBinding)) : null;
         const conversion = mapping.conversion ? { id: prior?.conversion?.id ?? randomUUID(), version: (prior?.conversion?.version ?? 0) + 1, localRoot: { id: prior?.conversion?.localRoot.id ?? randomUUID(), version: (prior?.conversion?.localRoot.version ?? 0) + 1, path: mapping.conversion.localRoot }, serverRoot: mapping.conversion.serverRoot, serverPathStyle: mapping.conversion.serverPathStyle } : null;
-        const binding = bindingSchema.parse({ id: prior?.id ?? randomUUID(), version: (prior?.version ?? 0) + 1, targetId: target.targetId, targetDirectory: { id: target.targetId, version: 1, path: target.path }, serverId: input.serverId, connectionVersion: version, libraryId: mapping.libraryId, libraryRoot: mapping.libraryPath, mediaType: target.mediaType, conversion });
+        const binding = bindingSchema.parse({ id: prior?.id ?? randomUUID(), version: (prior?.version ?? 0) + 1, targetId: target.targetId, targetDirectory: { id: target.directoryId ?? target.targetId, version: target.directoryVersion ?? 1, path: target.path }, serverId: input.serverId, connectionVersion: version, libraryId: mapping.libraryId, libraryRoot: mapping.libraryPath, mediaType: target.mediaType, conversion });
         db.prepare("INSERT INTO emby_library(connection_id,library_id,library_path,target_root_id,binding_json) VALUES(?,?,?,?,?)").run(id, mapping.libraryId, mapping.libraryPath, mapping.targetId, JSON.stringify(binding));
       }
       db.prepare("UPDATE emby_delivery SET connection_id=?,connection_version=?,binding_json=NULL,state='REFRESH_PENDING',refresh_attempts=0,next_attempt_at=?,check_started_at=NULL,last_failure=NULL,emby_item_id=NULL,updated_at=?").run(id, version, this.now() + 30000, new Date(this.now()).toISOString());
@@ -217,7 +218,7 @@ export class EmbyDelivery {
     const latest = this.current();
     if (revision !== this.connections.version || !latest || !this.isVerified(latest) || latest.id !== connection.id || latest.version !== connection.version || !this.database.connection.prepare(query + " WHERE d.task_id=? AND d.state='COLLECTED' AND d.connection_id=? AND d.connection_version=? AND d.emby_item_id=?").get(taskId, connection.id, connection.version, row.emby_item_id)) throw new DesktopError("CONFLICT", "收录或连接状态已变化，请重新核对交付");
     if (info.Id !== connection.server_id) { this.invalidate(); throw new DesktopError("CONFLICT", "服务器身份已变化，请重新验证"); }
-    const mapping = this.database.connection.prepare("SELECT * FROM emby_library WHERE connection_id=? AND target_root_id=?").get(connection.id, row.target_root_id) as Library | undefined;
+    const mapping = this.database.connection.prepare("SELECT * FROM emby_library WHERE connection_id=? AND target_root_id=?").get(connection.id, this.deliveryTarget(row)) as Library | undefined;
     const libraries = await client.libraries(this.lifetime.signal), library = libraries.find((value) => value.id === mapping?.library_id);
     if (!mapping || !library?.paths.includes(mapping.library_path) || row.binding_json !== mapping.binding_json || !this.isVerified(connection)) { this.invalidate("LIBRARY_CONFIGURATION_CHANGED"); throw new DesktopError("CONFLICT", "媒体库路径或关联版本已变化，请重新发现关联并仅重试交付"); }
     const selection = (JSON.parse(row.plan_json) as DeliveryPlan).selection;
@@ -255,6 +256,7 @@ export class EmbyDelivery {
       return item.Type === "Episode" && item.ParentIndexNumber === selection.season && item.IndexNumber === selection.episode && (item.IndexNumberEnd ?? item.IndexNumber) === (selection.episodeEnd ?? selection.episode) && !!item.SeriesId && series.get(item.SeriesId)?.Type === "Series" && series.get(item.SeriesId)?.ProviderIds?.Tmdb === String(selection.tmdbId);
     }); return matches.length === 1 ? matches[0]!.Id : null;
   }
+  private deliveryTarget(row: Delivery) { return (JSON.parse(row.plan_json) as DeliveryPlan).logicalTargetId ?? row.target_root_id; }
   private deliveryPath(row: Delivery) {
     const binding = row.binding_json ? bindingSchema.parse(JSON.parse(row.binding_json)) : null;
     if (binding && (binding.targetDirectory.id !== row.target_root_id || binding.targetDirectory.path !== this.ingestion.targets.get(row.target_root_id).grant.path || !contains(binding.targetDirectory.path, row.target_path))) throw new DesktopError("UNSAFE_PATH", "文件与冻结的 Emby 目标不一致，请重新核验目录后仅重试交付");
@@ -281,7 +283,7 @@ export class EmbyDelivery {
       if (libraries.some((mapping) => { const target = targets.find((value) => value.targetId === mapping.target_root_id), library = remoteLibraries.find((value) => value.id === mapping.library_id)!; return !!target && !acceptsMediaType(library.type, target.mediaType); })) { this.invalidate("LIBRARY_TYPE_MISMATCH"); return; }
       const usable: Delivery[] = [];
       for (const row of rows) {
-        const library = libraries.find((value) => value.target_root_id === row.target_root_id);
+        const library = libraries.find((value) => value.target_root_id === this.deliveryTarget(row));
         if (!library) { this.update(row.task_id, "NEEDS_ATTENTION", "LIBRARY_PATH_MISMATCH", this.now()); continue; }
         try {
           if (row.binding_json && row.binding_json !== library.binding_json) { this.update(row.task_id, "NEEDS_ATTENTION", "BINDING_CHANGED", this.now()); continue; }
@@ -302,7 +304,7 @@ export class EmbyDelivery {
         } catch (error) { if (current()) refresh.forEach((row) => this.fail(row, error)); }
       }
       for (const library of libraries) {
-        const checking = usable.filter((row) => row.state === "WAITING_LIBRARY" && row.target_root_id === library.target_root_id);
+        const checking = usable.filter((row) => row.state === "WAITING_LIBRARY" && this.deliveryTarget(row) === library.target_root_id);
         if (!checking.length || !current()) continue;
         try {
           const items = await client.items(library.library_id, controller.signal, checking.map((row) => this.deliveryPath(row)));

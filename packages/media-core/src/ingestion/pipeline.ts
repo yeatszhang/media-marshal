@@ -4,7 +4,9 @@ import { access, open } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { constants, watch, type FSWatcher } from "node:fs";
-import { DesktopError, sourceConfigurationSchema, type CoreInput, type CoreOutput, type LocalDirectoryHealth, type SourceConfiguration } from "@media-marshal/contracts";
+import { DesktopError, sourceConfigurationSchema, type CoreInput, type CoreOutput, type LocalDirectoryHealth, type SourceConfiguration, type RecognitionRuleSnapshot, type EmbyTargetBinding } from "@media-marshal/contracts";
+import type { ConfigurationDirectories } from "../sources/configuration-directories.js";
+import { recognitionOwner, recognitionSnapshot, recognitionRoute, recognitionCandidateContext, recognitionEmbyBinding } from "./recognition-routing.js";
 import { localFileEvidenceSchema, managedRootGrantSchema, type LocalFileEvidence, type ManagedRootGrant } from "@media-marshal/contracts/internal";
 import type { PrivateCoreInput, PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
 import type { CoreDatabase } from "../infrastructure/database.js";
@@ -37,7 +39,7 @@ type Authorization = PrivateCoreInput<"media.sources.authorize">;
 interface SourceRow { source_id: string; mode: "local" | "managed"; download_root_id: string | null; source_grant_json: string; target_root_id: string; source_version: number; available: number; paused: number; version: number; source_path: string; target_path: string; media_type: "AUTO" | "MOVIE" | "TV_SHOW"; policy_key?: string }
 interface CandidateRow { id: string; source_id: string; relative_json: string; version_key: string; attribute_key: string; is_current: number; snapshot_json: string; expected_sha256: string | null; managed_item_id: string | null; managed_version_key: string | null; state: CoreOutput<"ingestion.candidates">["items"][number]["state"]; task_id: string | null; reason: string | null; created_at: string; updated_at: string }
 interface Accessory { sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null }
-interface Plan { taskId: string; candidateId: string; sourceId: string; sourceVersion: number; recognitionRevision?: number; sourceLifecycles?: { id: string; revision: number }[]; connectionVersion: number; source: ManagedRootGrant; target: ManagedRootGrant; sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null; parsed: ParsedMedia; metadata: MetadataWork; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null }; episodeTitle: string | null; accessories?: Accessory[] }
+interface Plan { recognitionSnapshot?: RecognitionRuleSnapshot; recognitionContext?: ReturnType<typeof recognitionCandidateContext>; logicalTargetId?: string; embyBinding?: EmbyTargetBinding | null; taskId: string; candidateId: string; sourceId: string; sourceVersion: number; recognitionRevision?: number; sourceLifecycles?: { id: string; revision: number }[]; connectionVersion: number; source: ManagedRootGrant; target: ManagedRootGrant; sourceSegments: string[]; targetSegments: string[]; snapshot: SourceSnapshot; expectedSha256: string | null; parsed: ParsedMedia; metadata: MetadataWork; selection: { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; season: number | null; episode: number | null; episodeEnd: number | null }; episodeTitle: string | null; accessories?: Accessory[] }
 interface PreviewRow { id: string; request_key: string; task_id: string; input_hash: string; plan_json: string; expires_at: number; operation_id: string | null }
 interface OperationRow { id: string; task_id: string; candidate_id: string; target_root_id: string; plan_json: string; attempt_id: string; phase: string; evidence_json: string | null }
 interface Observation { since: number; last: number; wall: number; version: string }
@@ -154,6 +156,70 @@ export class IngestionPipeline implements ManagedIngestionSink {
       receipt: (key) => { const row = db.prepare("SELECT id FROM ingestion_operation WHERE request_key=?").get(key) as { id: string } | undefined; return row ? { operationId: row.id } : null; },
     }, now);
   }
+  assertRecognitionChangeSafe(ruleId: string) {
+    const sources = new Set((this.database.connection.prepare("SELECT source_id FROM recognition_input WHERE rule_id=?").all(ruleId) as { source_id: string }[]).map((row) => row.source_id));
+    if ([...this.activeWork.values()].some((work) => sources.has(work.sourceId))) throw conflict("识别规则仍有活动文件操作，请先暂停并等待当前步骤安全点，再修改或删除；原文件和计划保留");
+  }
+  recognitionRuleChanged(ruleId: string) { for (const row of this.database.connection.prepare("SELECT source_id FROM recognition_input WHERE rule_id=?").all(ruleId) as { source_id: string }[]) this.sourceChanged(row.source_id); }
+  async authorizeRecognitionTarget(grant: ManagedRootGrant) {
+    const previous = this.database.connection.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(grant.id) as { grant_json: string } | undefined;
+    if (previous && !sameVolumeRoot(JSON.parse(previous.grant_json).volume, grant.volume)) throw conflict("媒体目录原卷身份不一致，请恢复原磁盘后重试");
+    await this.targets.install(grant); this.database.connection.prepare("INSERT INTO media_target_root VALUES(?,?,1) ON CONFLICT(id) DO UPDATE SET grant_json=excluded.grant_json,available=1").run(grant.id, JSON.stringify(grant));
+  }
+  async prepareRecognitionInput(snapshot: RecognitionRuleSnapshot, grant: ManagedRootGrant) {
+    if (this.closed || grant.id !== snapshot.inputDirectory.id || grant.path !== snapshot.inputDirectory.path) throw conflict("识别输入授权与预览不一致，请重新选择原目录");
+    const db = this.database.connection, sourcePath = snapshot.inputMode === "managed-completed" ? join(grant.path, "completed") : grant.path;
+    const existing = db.prepare("SELECT d.*,i.target_root_id,i.mode,i.download_root_id FROM desktop_source d LEFT JOIN ingestion_source i ON i.source_id=d.id WHERE d.source_path=?").get(sourcePath) as { id: string; version: number; target_root_id: string | null; mode: "local" | "managed" | null; download_root_id: string | null } | undefined;
+    const sourceId = existing?.id ?? randomUUID(), owner = recognitionOwner(this.database, sourceId);
+    if ([...this.activeWork.values()].some((work) => work.sourceId === sourceId)) throw conflict("原输入仍有活动文件步骤，请先暂停并等待安全点后确认接管");
+    if (owner && owner.rule_id !== snapshot.ruleId && db.prepare("SELECT 1 FROM ingestion_operation WHERE candidate_id IN (SELECT id FROM ingestion_candidate WHERE source_id=?) AND phase!='RECORDED' LIMIT 1").get(sourceId)) throw conflict("此输入仍有其他识别规则的原文件计划，请先处理原任务再转交，避免替换恢复归属");
+    const source = await SourceRoot.open(grant), version = (existing?.version ?? 0) + 1;
+    try {
+      for (const target of snapshot.targets) {
+        const row = db.prepare("SELECT grant_json FROM configuration_directory WHERE id=? AND kind='media'").get(target.directory.id) as { grant_json: string | null } | undefined;
+        if (!row?.grant_json) throw conflict("媒体目录授权尚未恢复，请核验原目录"); await this.authorizeRecognitionTarget(managedRootGrantSchema.parse(JSON.parse(row.grant_json)));
+      }
+    } catch (error) { await source.close(); throw error; }
+    let activated = false;
+    return { sourceId,
+      commit: (paused: boolean) => {
+        if (!db.inTransaction) throw new Error("识别输入与规则快照必须在同一事务保存");
+        if (this.closed) throw new DesktopError("INTERRUPTED", "识别服务正在停止", true);
+        if ([...this.activeWork.values()].some((work) => work.sourceId === sourceId)) throw conflict("原输入仍有在途操作，请等待安全点后重新预览");
+        if (existing) db.prepare("UPDATE desktop_source SET name=?,version=?,paused=?,health='available' WHERE id=?").run(snapshot.configuration.name, version, Number(paused), sourceId);
+        else db.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,version,paused,health,created_at) VALUES(?,?,?,?,'','AUTO','COPY',?,?,'available',?)").run(sourceId, snapshot.configuration.name, snapshot.configuration.client, sourcePath, version, Number(paused), timestamp(this.now));
+        db.prepare("INSERT INTO ingestion_source VALUES(?,?,?,?,?,?,1) ON CONFLICT(source_id) DO UPDATE SET source_grant_json=excluded.source_grant_json,source_version=excluded.source_version,available=1").run(sourceId, existing?.mode ?? "local", existing?.download_root_id ?? null, JSON.stringify(grant), existing?.target_root_id ?? null, version);
+        db.prepare("UPDATE recognition_input SET active=0 WHERE rule_id=?").run(snapshot.ruleId);
+        db.prepare("INSERT INTO recognition_input VALUES(?,?,?,?,1) ON CONFLICT(source_id) DO UPDATE SET rule_id=excluded.rule_id,directory_id=excluded.directory_id,mode=excluded.mode,active=1").run(sourceId, snapshot.ruleId, grant.id, snapshot.inputMode);
+        db.prepare("UPDATE desktop_source SET paused=? WHERE id IN (SELECT source_id FROM recognition_input WHERE rule_id=?)").run(Number(paused), snapshot.ruleId);
+      },
+      activate: async () => { if (activated) return; activated = true; const previous = this.sources.get(sourceId); this.sources.set(sourceId, source); await previous?.close(); this.sourceChanged(sourceId); },
+      close: async () => { if (!activated) await source.close(); },
+    };
+  }
+  async restoreRecognitionInputs(directories: ConfigurationDirectories) {
+    for (const row of this.database.connection.prepare("SELECT i.source_id,i.directory_id FROM recognition_input i ORDER BY i.source_id LIMIT 1000").all() as { source_id: string; directory_id: string }[]) {
+      if (this.closed) return;
+      try {
+        const grant = directories.grant(row.directory_id), previous = this.database.connection.prepare("SELECT source_grant_json FROM ingestion_source WHERE source_id=?").get(row.source_id) as { source_grant_json: string };
+        if (!sameVolumeRoot(JSON.parse(previous.source_grant_json).volume, grant.volume)) throw conflict("原输入卷身份已变化");
+        await directories.reader(row.directory_id).check(); const source = await SourceRoot.open(grant), old = this.sources.get(row.source_id); this.sources.set(row.source_id, source); await old?.close();
+        this.database.connection.prepare("UPDATE ingestion_source SET source_grant_json=?,available=1 WHERE source_id=?").run(JSON.stringify(grant), row.source_id); this.sourceChanged(row.source_id);
+      } catch { this.database.connection.prepare("UPDATE ingestion_source SET available=0 WHERE source_id=?").run(row.source_id); }
+    }
+  }
+  taskTargets(taskId: string): CoreOutput<"recognition.task-targets"> { const row = this.database.connection.prepare("SELECT source_id FROM media_task WHERE id=?").get(taskId) as { source_id: string } | undefined, snapshot = row ? recognitionSnapshot(this.database, row.source_id) : null; return { ...(snapshot && row ? { scopeToken: fingerprint({ context: recognitionCandidateContext(this.database, row.source_id), bindings: snapshot.targets.map((target) => recognitionEmbyBinding(this.database, target.targetId)) }) } : {}), ruleId: snapshot?.ruleId ?? null, ruleVersion: snapshot?.ruleVersion ?? 0, automatic: snapshot?.configuration.automatic ?? false, targets: snapshot?.configuration.targets ?? [] }; }
+  assertRecognitionAutomaticSample(snapshot: RecognitionRuleSnapshot, id: string) {
+    const row = this.database.connection.prepare("SELECT p.plan_json,p.expires_at FROM ingestion_preview p WHERE p.id=?").get(id) as { plan_json: string; expires_at: number } | undefined;
+    const plan = row ? JSON.parse(row.plan_json) as Plan : null;
+    if (!plan?.recognitionSnapshot || row!.expires_at <= this.now() || fingerprint(plan.recognitionSnapshot) !== fingerprint(snapshot) || !snapshot.configuration.targets.some((target) => target.id === plan.logicalTargetId)) throw conflict("首次样本预览与当前识别规则不一致或已过期，请核对目标、命名和文件完整性后重新预览授权");
+    this.assertRecognitionPlanCurrent(plan);
+  }
+  private assertRecognitionPlanCurrent(plan: Plan) {
+    if (!plan.recognitionSnapshot) return;
+    const current = recognitionSnapshot(this.database, plan.sourceId);
+    if (!current || fingerprint(current) !== fingerprint(plan.recognitionSnapshot) || fingerprint(recognitionCandidateContext(this.database, plan.sourceId)) !== fingerprint(plan.recognitionContext) || JSON.stringify(recognitionEmbyBinding(this.database, plan.logicalTargetId!)) !== JSON.stringify(plan.embyBinding ?? null)) throw conflict("识别规则、默认设置或 Emby 关联已变化，请重新预览；未提交旧计划不改用新目标");
+  }
   start() { if (!this.timer && !this.closed) { this.recognitionBatches.start(); this.organizeBatches.start(); this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 10000); void this.tick().catch(() => {}); } }
   private organizeWaiting(taskId: string) {
     if (!this.connections.installed) return "等待核心恢复服务凭据，不重放确认";
@@ -168,14 +234,15 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const db = this.database.connection, task = db.prepare("SELECT * FROM media_task WHERE id=?").get(taskId) as { source_id: string; status: string; parsed_json: string | null } | undefined, row = db.prepare("SELECT * FROM ingestion_candidate WHERE task_id=?").get(taskId) as CandidateRow | undefined;
     if (!task || !row || task.status !== "AWAITING_CONFIRMATION" || db.prepare("SELECT 1 FROM ingestion_operation WHERE task_id=?").get(taskId)) throw conflict("此文件不在待确认状态或已有整理计划，请查看原任务");
     this.assertCandidateCurrent(row);
-    if (!row.managed_item_id && db.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? AND deleted_at IS NOT NULL").get(row.source_id)) throw conflict("所属来源已删除，请先恢复来源再预览整理");
+    if (!recognitionOwner(this.database, row.source_id) && !row.managed_item_id && db.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? AND deleted_at IS NOT NULL").get(row.source_id)) throw conflict("所属来源已删除，请先恢复来源再预览整理");
     const source = db.prepare(sourceQuery + " WHERE i.source_id=?").get(row.source_id) as SourceRow | undefined;
     if (!source) throw conflict("来源尚未取得整理授权，请在来源页核对目录");
     const policy = this.candidatePolicy(row), configured = !!policy || !!db.prepare("SELECT 1 FROM source_rule WHERE local_source_id=?").get(row.source_id), route = !configured ? db.prepare("SELECT target_root_id FROM media_library_route WHERE media_type=?").get(selection.mediaType) as { target_root_id: string } | undefined : undefined;
-    const targetId = policy?.target_root_id ?? route?.target_root_id ?? source.target_root_id, target = db.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(targetId) as { grant_json: string } | undefined;
+    const independent = recognitionRoute(this.database, source.source_id, selection.mediaType, selection.targetId);
+    const targetId = independent?.target.directory.id ?? policy?.target_root_id ?? route?.target_root_id ?? source.target_root_id, target = db.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(targetId) as { grant_json: string } | undefined;
     if (!target) throw conflict("媒体目标授权已不存在，请重新选择并预览");
     const stableGrant = (value: string) => { const grant = managedRootGrantSchema.parse(JSON.parse(value)), { observedDevice: _device, ...volume } = grant.volume; return { id: grant.id, path: grant.path, volume }; };
-    return fingerprint({ candidateId: row.id, version: row.version_key, snapshot: row.snapshot_json, sha256: row.expected_sha256, source: this.recognitionContext(row.id), sourceGrant: stableGrant(source.source_grant_json), target: stableGrant(target.grant_json), parsed: task.parsed_json, recognition: this.recognitionEdits.revision(taskId), connection: this.connections.version });
+    return fingerprint({ candidateId: row.id, version: row.version_key, snapshot: row.snapshot_json, sha256: row.expected_sha256, source: this.recognitionContext(row.id), logicalTargetId: independent?.configuration.id, binding: independent?.binding, sourceGrant: stableGrant(source.source_grant_json), target: stableGrant(target.grant_json), parsed: task.parsed_json, recognition: this.recognitionEdits.revision(taskId), connection: this.connections.version });
   }
   private organizeManifest(previewId: string): BatchManifest {
     const row = this.database.connection.prepare("SELECT plan_json FROM ingestion_preview WHERE id=?").get(previewId) as { plan_json: string }, plan = JSON.parse(row.plan_json) as Plan, target = this.targets.get(plan.target.id);
@@ -183,6 +250,11 @@ export class IngestionPipeline implements ManagedIngestionSink {
   }
   private recognitionContext(id: string) {
     const row = this.candidate(id), db = this.database.connection, source = db.prepare("SELECT version FROM desktop_source WHERE id=?").get(row.source_id) as { version: number };
+    const independent = recognitionCandidateContext(this.database, row.source_id);
+    if (independent) {
+      if (independent.deleted || !independent.active) throw conflict("此候选的识别规则已删除或输入已切换，请核对原任务");
+      return { sourceVersion: source.version, rules: [{ id: independent.ruleId, version: independent.version, lifecycle_revision: independent.lifecycle, deleted_at: null }], policy: fingerprint(independent) };
+    }
     const rules = db.prepare("SELECT DISTINCT s.id,s.version,s.lifecycle_revision,s.deleted_at FROM source_rule s LEFT JOIN download_source_demand d ON d.source_id=s.id LEFT JOIN download_job_item ji ON ji.job_id=d.job_id WHERE s.local_source_id=? OR (ji.item_id=? AND d.source_version=s.version AND EXISTS(SELECT 1 FROM source_rule_version v WHERE v.source_id=s.id AND v.version=d.source_version AND json_extract(v.configuration_json,'$.organization') IS NOT NULL)) ORDER BY s.id").all(row.source_id, row.managed_item_id) as { id: string; version: number; lifecycle_revision: number; deleted_at: string | null }[];
     if (rules.length && rules.every((rule) => rule.deleted_at)) throw conflict("所属来源已删除，请先恢复来源再重新选择候选");
     return { sourceVersion: source.version, rules: rules.filter((rule) => !rule.deleted_at), policy: this.candidatePolicy(row)?.policy_key ?? null };
@@ -345,7 +417,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const owned = this.watches.get(id); if (owned) { clearTimeout(owned.timer); owned.watcher.close(); this.watches.delete(id); }
   }
   bootstrap(): PrivateCoreOutput<"media.sources.bootstrap"> {
-    return (this.database.connection.prepare("SELECT i.*,t.grant_json FROM ingestion_source i JOIN media_target_root t ON t.id=i.target_root_id ORDER BY i.source_id LIMIT 1000").all() as (SourceRow & { grant_json: string })[])
+    return (this.database.connection.prepare("SELECT i.*,t.grant_json FROM ingestion_source i JOIN media_target_root t ON t.id=i.target_root_id WHERE NOT EXISTS(SELECT 1 FROM recognition_input ri WHERE ri.source_id=i.source_id) ORDER BY i.source_id LIMIT 1000").all() as (SourceRow & { grant_json: string })[])
       .map((row) => ({ sourceId: row.source_id, sourceVersion: row.source_version, mode: row.mode, downloadRootId: row.download_root_id, source: managedRootGrantSchema.parse(JSON.parse(row.source_grant_json)), target: managedRootGrantSchema.parse(JSON.parse(row.grant_json)) }));
   }
   libraryBootstrap(): PrivateCoreOutput<"media.library.bootstrap"> {
@@ -390,12 +462,16 @@ export class IngestionPipeline implements ManagedIngestionSink {
     return {};
   }); }
   libraries(): CoreOutput<"media.libraries"> {
-    const rows = this.database.connection.prepare("SELECT t.id,t.grant_json,t.available,r.media_type FROM media_library_route r JOIN media_target_root t ON t.id=r.target_root_id UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(v.configuration_json,'$.organization.mediaType') AS media_type FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version JOIN media_target_root t ON t.id=v.target_root_id WHERE s.deleted_at IS NULL AND json_extract(v.configuration_json,'$.organization') IS NOT NULL UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM emby_delivery d JOIN ingestion_operation o ON o.id=d.operation_id JOIN media_target_root t ON t.id=o.target_root_id WHERE d.state!='COLLECTED' UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM media_correction_operation o JOIN media_task mt ON mt.id=o.new_task_id JOIN media_target_root t ON t.id=o.target_root_id WHERE o.phase='RECORDED' AND mt.status='DONE' LIMIT 2000").all() as { id: string; grant_json: string; available: number; media_type: "AUTO" | "MOVIE" | "TV_SHOW" }[];
+    const rows = this.database.connection.prepare("SELECT t.id,t.grant_json,t.available,r.media_type FROM media_library_route r JOIN media_target_root t ON t.id=r.target_root_id UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(v.configuration_json,'$.organization.mediaType') AS media_type FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version JOIN media_target_root t ON t.id=v.target_root_id WHERE s.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM legacy_configuration_owner lo WHERE lo.source_id=s.id AND lo.recognition_claimed=1) AND json_extract(v.configuration_json,'$.organization') IS NOT NULL UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM emby_delivery d JOIN ingestion_operation o ON o.id=d.operation_id JOIN media_target_root t ON t.id=o.target_root_id WHERE d.state!='COLLECTED' AND json_extract(o.plan_json,'$.logicalTargetId') IS NULL UNION ALL SELECT t.id,t.grant_json,t.available,json_extract(o.plan_json,'$.selection.mediaType') AS media_type FROM media_correction_operation o JOIN media_task mt ON mt.id=o.new_task_id JOIN media_target_root t ON t.id=o.target_root_id WHERE o.phase='RECORDED' AND mt.status='DONE' AND json_extract(o.plan_json,'$.logicalTargetId') IS NULL LIMIT 2000").all() as { id: string; grant_json: string; available: number; media_type: "AUTO" | "MOVIE" | "TV_SHOW" }[];
     const targets = new Map<string, CoreOutput<"media.libraries">[number]>();
     for (const row of rows) { const previous = targets.get(row.id); targets.set(row.id, { targetId: row.id, mediaType: previous && previous.mediaType !== row.media_type ? "AUTO" : row.media_type, path: managedRootGrantSchema.parse(JSON.parse(row.grant_json)).path, available: !!row.available }); }
+    const logical = this.database.connection.prepare("SELECT x.id,x.directory_id,x.media_type,x.name,d.version,d.path,t.available FROM recognition_target_identity x JOIN configuration_directory d ON d.id=x.directory_id LEFT JOIN media_target_root t ON t.id=d.id WHERE EXISTS(SELECT 1 FROM recognition_rule r JOIN recognition_rule_version v ON v.rule_id=r.id AND v.version=r.version,json_each(v.snapshot_json,'$.configuration.targets') j WHERE r.deleted_at IS NULL AND json_extract(j.value,'$.id')=x.id) OR EXISTS(SELECT 1 FROM ingestion_operation o WHERE json_extract(o.plan_json,'$.logicalTargetId')=x.id) OR EXISTS(SELECT 1 FROM media_correction_operation o WHERE json_extract(o.plan_json,'$.logicalTargetId')=x.id) ORDER BY x.id LIMIT 2000").all() as { id: string; directory_id: string; media_type: "MOVIE" | "TV_SHOW"; name: string; version: number; path: string; available: number | null }[];
+    for (const target of logical) targets.set(target.id, { targetId: target.id, directoryId: target.directory_id, directoryVersion: target.version, name: target.name, mediaType: target.media_type, path: target.path, available: !!target.available });
     return [...targets.values()];
   }
-  private targetFor(source: SourceRow, type: "MOVIE" | "TV_SHOW") {
+  private targetFor(source: SourceRow, type: "MOVIE" | "TV_SHOW", targetId?: string) {
+    const independent = recognitionRoute(this.database, source.source_id, type, targetId);
+    if (independent) return this.targets.get(independent.target.directory.id);
     const configured = !!source.policy_key || !!this.database.connection.prepare("SELECT 1 FROM source_rule WHERE local_source_id=?").get(source.source_id);
     const route = !configured ? this.database.connection.prepare("SELECT target_root_id FROM media_library_route WHERE media_type=?").get(type) as { target_root_id: string } | undefined : undefined;
     return this.targets.get(route?.target_root_id ?? source.target_root_id);
@@ -518,13 +594,16 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (this.pauseStatus().paused) throw conflict("全部整理已暂停，请先恢复整理");
     const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(id) as SourceRow | undefined;
     if (!row || !row.available || row.source_version !== row.version || !this.sources.has(id)) throw new DesktopError("LOCAL_UNAVAILABLE", "来源需重新授权或原卷尚未就绪", true);
-    if (row.paused || this.database.connection.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? AND deleted_at IS NOT NULL").get(id)) throw conflict("来源已暂停或已删除"); return row;
+    const owner = recognitionOwner(this.database, id);
+    if (row.paused || owner?.paused || owner?.deleted_at || !owner && this.database.connection.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? AND deleted_at IS NOT NULL").get(id)) throw conflict("识别输入已暂停或已删除，请恢复对应识别规则"); return row;
   }
   private checkContentReview(id: string, version: number) {
     if (this.closed) throw new DesktopError("INTERRUPTED", "内容复核正在停止", true);
     const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(id) as SourceRow | undefined;
-    if (!row || row.mode !== "local") throw conflict("全量内容复核仅用于本地目录来源；网盘内容替换请在来源页使用强制重新下载");
-    if (this.database.connection.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? AND review_required=1").get(id)) throw conflict("来源归属待核对，请先在来源配置重新预览确认");
+    const owner = recognitionOwner(this.database, id);
+    if (!row || row.mode !== "local" || owner?.mode === "managed-completed") throw conflict("全量内容复核仅用于普通已有目录；受管输入请补扫正式成功收据，不将外部文件当作同步成果");
+    if (owner && (!owner.active || owner.deleted_at)) throw conflict("识别输入已切换或规则已删除，请先核对当前配置");
+    if (!owner && this.database.connection.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? AND review_required=1").get(id)) throw conflict("来源归属待核对，请先在来源配置重新预览确认");
     if (row.version !== version || row.source_version !== version) throw conflict("来源配置已变化，本次复核已停止；请按新配置重新发起");
     if (row.paused || this.pauseStatus().paused) throw new DesktopError("LOCAL_UNAVAILABLE", "来源或全部整理已暂停；恢复后继续只读复核", true);
     if (!row.available || !this.sources.has(id)) throw new DesktopError("LOCAL_UNAVAILABLE", "来源原磁盘尚未恢复；请连接原盘并核对权限后继续复核", true);
@@ -577,6 +656,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private candidate(id: string) { const row = this.database.connection.prepare("SELECT * FROM ingestion_candidate WHERE id=?").get(id) as CandidateRow | undefined; if (!row) throw conflict("候选文件已不存在"); return row; }
   private candidatePolicy(row: CandidateRow) { return this.database.connection.prepare("SELECT policy_key,configuration_json,target_root_id FROM ingestion_candidate_policy WHERE candidate_id=?").get(row.id) as { policy_key: string; configuration_json: string; target_root_id: string } | undefined; }
   private managedCandidateEnabled(row: CandidateRow) {
+    const owner = recognitionOwner(this.database, row.source_id);
+    if (owner) return !!owner.active && !owner.deleted_at && !owner.paused;
     if (!row.managed_item_id || !row.managed_version_key) return true;
     const policy = this.candidatePolicy(row), current = resolveManagedOrganization(this.database, row.managed_item_id, row.managed_version_key);
     return policy ? current.state === "ENABLED" && current.policy.key === policy.policy_key : current.state === "LEGACY";
@@ -584,6 +665,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private candidateSource(row: CandidateRow): SourceRow {
     const source = this.source(row.source_id), policy = this.candidatePolicy(row);
     if (!this.managedCandidateEnabled(row)) throw conflict("来源暂停、配置变化或历史归属待核对，请核对整理需求");
+    if (recognitionOwner(this.database, row.source_id)) return { ...source, media_type: "AUTO" };
     if (!policy) return source;
     const configuration = JSON.parse(policy.configuration_json) as OrganizationConfiguration;
     return { ...source, policy_key: policy.policy_key, media_type: configuration.mediaType, target_root_id: policy.target_root_id, target_path: configuration.targetPath };
@@ -592,9 +674,18 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (this.correctionLeases.has(operation.task_id) || this.database.connection.prepare("SELECT 1 FROM correction_item WHERE task_id=? AND state IN ('PENDING','RUNNING','NEEDS_ATTENTION')").get(operation.task_id) || this.database.connection.prepare("SELECT 1 FROM media_task WHERE id=? AND status='CORRECTED'").get(operation.task_id)) return false;
     const candidate = this.candidate(operation.candidate_id);
     if (this.contentReviews.active(candidate.source_id)) return false;
+    const plan = JSON.parse(operation.plan_json) as Plan;
+    if (plan.recognitionSnapshot || recognitionOwner(this.database, plan.sourceId)) { const rule = this.database.connection.prepare("SELECT paused,deleted_at FROM recognition_rule WHERE id=?").get(plan.recognitionSnapshot?.ruleId ?? recognitionOwner(this.database, plan.sourceId)!.rule_id) as { paused: number; deleted_at: string | null } | undefined; return !!rule && !rule.paused && !rule.deleted_at; }
     return this.managedCandidateEnabled(candidate) || (!!candidate.managed_item_id && !this.candidatePolicy(candidate) && ["COPYING", "VERIFIED", "FILE_COMMITTED"].includes(operation.phase));
   }
   private operationSource(operation: OperationRow, plan: Plan) {
+    if (plan.recognitionSnapshot || recognitionOwner(this.database, plan.sourceId)) {
+      const row = this.database.connection.prepare(sourceQuery + " WHERE i.source_id=?").get(plan.sourceId) as SourceRow | undefined;
+      const rule = this.database.connection.prepare("SELECT paused,deleted_at FROM recognition_rule WHERE id=?").get(plan.recognitionSnapshot?.ruleId ?? recognitionOwner(this.database, plan.sourceId)!.rule_id) as { paused: number; deleted_at: string | null } | undefined;
+      if (!row || !rule || rule.paused || rule.deleted_at || this.pauseStatus().paused) throw conflict("原识别规则或全局整理已暂停，已受理计划保留原目标，恢复后继续");
+      // 已验收的暂存／正式证据不再依赖输入在线；未开始复制仍核对原卷与文件版本。
+      return { ...row, version: plan.sourceVersion, media_type: plan.selection.mediaType, target_root_id: plan.target.id, target_path: plan.target.path };
+    }
     const candidate = this.candidate(plan.candidateId);
     if (candidate.managed_item_id && !this.candidatePolicy(candidate) && !this.managedCandidateEnabled(candidate) && this.operationRunnable(operation)) {
       // 已开始的旧人工确认操作只沿原计划恢复，不能把未知历史重新套用当前根级策略。
@@ -603,6 +694,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     return this.candidateSource(candidate);
   }
   canAccept(input: { itemId: string; versionKey: string }) {
+    const independent = this.database.connection.prepare("SELECT i.source_id,r.paused,r.deleted_at,p.candidate_id FROM download_item d JOIN recognition_input i ON i.directory_id=d.target_root_id AND i.active=1 AND i.mode='managed-completed' JOIN recognition_rule r ON r.id=i.rule_id LEFT JOIN sync_receipt s ON s.result_kind='download-item' AND s.result_id=d.id LEFT JOIN recognition_receipt p ON p.receipt_id=s.id WHERE d.id=? AND d.version_key=?").get(input.itemId, input.versionKey) as { source_id: string; paused: number; deleted_at: string | null; candidate_id: string | null } | undefined;
+    if (independent) { if (independent.candidate_id) return true; if (independent.paused || independent.deleted_at || this.closed || this.pauseStatus().paused) return false; try { this.source(independent.source_id); return true; } catch { return false; } }
     if (this.database.connection.prepare("SELECT 1 FROM ingestion_candidate WHERE managed_item_id=? AND managed_version_key=?").get(input.itemId, input.versionKey)) return true;
     if (this.closed || this.pauseStatus().paused) return false;
     const resolved = resolveManagedOrganization(this.database, input.itemId, input.versionKey);
@@ -623,6 +716,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
     } catch { /* 事件只是提示；不支持递归监听的环境仍用相同就绪规则定时补扫。 */ }
   }
   private ignored(source: SourceRow) {
+    const independent = recognitionSnapshot(this.database, source.source_id);
+    if (independent) return discoveryIgnore(independent.configuration.ignoredFilePatterns);
     if (source.mode !== "local") return () => false;
     const cached = this.ignorePolicies.get(source.source_id); if (cached?.version === source.version) return cached.ignored;
     const row = this.database.connection.prepare("SELECT v.configuration_json FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.local_source_id=?").get(source.source_id) as { configuration_json: string } | undefined;
@@ -630,11 +725,11 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const ignored = discoveryIgnore(configuration?.type === "local" ? configuration.ignoredFilePatterns : null);
     this.ignorePolicies.set(source.source_id, { version: source.version, ignored }); return ignored;
   }
-  private async observe(row: CandidateRow, check?: () => void) {
+  private async observe(row: CandidateRow, check?: () => void, frozenSource?: SourceRow, frozenPatterns?: string[] | null) {
     check?.();
     if (!row.managed_item_id && !this.candidate(row.id).is_current) return false;
-    const configuration = this.candidateSource(row), relative: string[] = JSON.parse(row.relative_json), source = this.sources.get(row.source_id)!;
-    if (this.ignored(configuration)(relative)) {
+    const configuration = frozenSource ?? this.candidateSource(row), relative: string[] = JSON.parse(row.relative_json), source = this.sources.get(row.source_id)!;
+    if ((frozenSource ? frozenPatterns === undefined ? () => false : discoveryIgnore(frozenPatterns) : this.ignored(configuration))(relative)) {
       this.observations.delete(row.id);
       this.database.connection.prepare("UPDATE ingestion_candidate SET state=CASE WHEN state='READY' THEN 'OBSERVING' ELSE state END,reason='文件符合当前来源的忽略规则，请在来源配置核对后重新预览' WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(row.id);
       return false;
@@ -686,7 +781,48 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(previous.state)) await this.observe(previous, check);
     return { candidateId: previous.id };
   }
+  private async receiveReceipt(sourceId: string, receiptId: string, skipReason?: string, check?: () => void) {
+    const db = this.database.connection, owner = recognitionOwner(this.database, sourceId);
+    if (!owner?.active || owner.mode !== "managed-completed") throw conflict("成果尚未被独立识别输入接管");
+    const row = db.prepare("SELECT r.*,e.evidence_json FROM sync_receipt r LEFT JOIN sync_receipt_evidence e ON e.receipt_id=r.id WHERE r.id=? AND r.target_directory_id=?").get(receiptId, owner.directory_id) as { target_segments_json: string; local_sha256: string; size: number; evidence_json: string | null } | undefined;
+    if (!row) throw conflict("正式同步成功收据已不存在，请核对原任务；不会补下载");
+    const relative = ["completed", ...JSON.parse(row.target_segments_json)], previous = db.prepare("SELECT candidate_id FROM recognition_receipt WHERE receipt_id=?").get(receiptId) as { candidate_id: string | null } | undefined;
+    try {
+      check?.(); this.source(sourceId); const source = this.sources.get(sourceId)!, snapshot = await source.inspect(relative); check?.();
+      const evidence = row.evidence_json ? localFileEvidenceSchema.parse(JSON.parse(row.evidence_json)) : null;
+      if (!evidence || evidence.volumeId !== source.grant.volume.volumeId || evidence.inode !== snapshot.inode || evidence.birthtimeNs !== snapshot.birthtimeNs || evidence.modifiedNs !== snapshot.modifiedNs || evidence.size !== snapshot.size || row.size !== snapshot.size || evidence.sha256 !== row.local_sha256) throw conflict("正式成果与原成功收据的文件身份不一致，请核对原同步文件，识别不会补下载或接管外部替换文件");
+      let candidate = previous?.candidate_id ? this.candidate(previous.candidate_id) : db.prepare("SELECT * FROM ingestion_candidate WHERE source_id=? AND relative_json=? AND is_current=1 ORDER BY created_at DESC LIMIT 1").get(sourceId, JSON.stringify(relative)) as CandidateRow | undefined;
+      if (candidate && (!sameSnapshot(JSON.parse(candidate.snapshot_json), snapshot) || candidate.expected_sha256 && candidate.expected_sha256 !== evidence.sha256)) throw conflict("成果候选在接入后已有变化，请核对原文件和任务，未创建重复候选");
+      if (!previous?.candidate_id) await source.read(relative, snapshot, async (handle) => { if ((await handle.stat()).nlink !== 1) throw conflict("正式成果正在清理提交暂存或存在额外硬链接，请等待同步收尾后补扫"); if (await source.digest(handle, snapshot.size, this.controller?.signal ?? new AbortController().signal) !== evidence.sha256) throw conflict("正式成果摘要与成功收据不一致，请保留原文件并核对同步任务"); });
+      check?.(); this.source(sourceId);
+      const result = db.transaction(() => {
+        const latestOwner = recognitionOwner(this.database, sourceId); if (!latestOwner || latestOwner.rule_id !== owner.rule_id || latestOwner.version !== owner.version || latestOwner.paused || latestOwner.deleted_at) throw conflict("识别接管在读取期间变化，请按当前配置补扫");
+        const joined = db.prepare("SELECT c.* FROM recognition_receipt r JOIN ingestion_candidate c ON c.id=r.candidate_id WHERE r.receipt_id=?").get(receiptId) as CandidateRow | undefined;
+        candidate = joined ?? db.prepare("SELECT * FROM ingestion_candidate WHERE source_id=? AND relative_json=? AND is_current=1 ORDER BY created_at DESC LIMIT 1").get(sourceId, JSON.stringify(relative)) as CandidateRow | undefined;
+        if (candidate && (!sameSnapshot(JSON.parse(candidate.snapshot_json), snapshot) || candidate.expected_sha256 && candidate.expected_sha256 !== evidence.sha256)) throw conflict("成果在并发交接期间变化，请核对原任务");
+        if (!candidate) candidate = this.newLocalVersion(sourceId, relative, snapshot, evidence.sha256, skipReason);
+        else if (!candidate.expected_sha256) db.prepare("UPDATE ingestion_candidate SET expected_sha256=? WHERE id=? AND expected_sha256 IS NULL").run(evidence.sha256, candidate.id);
+        db.prepare("INSERT INTO recognition_receipt VALUES(?,?,?,'ACCEPTED',NULL,?) ON CONFLICT(receipt_id) DO UPDATE SET candidate_id=excluded.candidate_id,state='ACCEPTED',failure=NULL,updated_at=excluded.updated_at").run(receiptId, sourceId, candidate.id, timestamp(this.now));
+        return { candidateId: candidate.id };
+      })();
+      if (associated.test(relative.at(-1)!)) await this.observeAccessory(sourceId, relative, undefined, "local", check);
+      else if (!["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(this.candidate(result.candidateId).state)) await this.observe(this.candidate(result.candidateId), check);
+      return result;
+    } catch (error) {
+      check?.(); const reason = error instanceof DesktopError ? error.message.slice(0, 500) : "正式成果不可读取，请恢复原输入卷、目录和文件后补扫；识别不会要求重新下载";
+      db.transaction(() => { db.prepare("INSERT INTO recognition_receipt VALUES(?,?,?,'UNAVAILABLE',?,?) ON CONFLICT(receipt_id) DO UPDATE SET state='UNAVAILABLE',failure=excluded.failure,updated_at=excluded.updated_at").run(receiptId, sourceId, previous?.candidate_id ?? null, reason, timestamp(this.now)); if (previous?.candidate_id) db.prepare("UPDATE ingestion_candidate SET state='UNAVAILABLE',reason=? WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(reason, previous.candidate_id); })();
+      throw error;
+    }
+  }
   async accept(input: Parameters<ManagedIngestionSink["accept"]>[0], signal: AbortSignal) {
+    const independent = this.database.connection.prepare("SELECT i.source_id,s.id FROM recognition_input i JOIN sync_receipt s ON s.target_directory_id=i.directory_id AND s.result_kind='download-item' JOIN download_item d ON d.id=s.result_id JOIN recognition_rule r ON r.id=i.rule_id WHERE i.mode='managed-completed' AND i.active=1 AND r.deleted_at IS NULL AND d.id=? AND d.version_key=? AND s.target_directory_id=?").get(input.itemId, input.versionKey, input.rootId) as { source_id: string; id: string } | undefined;
+    if (independent) {
+      const receipt = this.database.connection.prepare("SELECT target_segments_json,local_sha256,size FROM sync_receipt WHERE id=?").get(independent.id) as { target_segments_json: string; local_sha256: string; size: number };
+      if (receipt.target_segments_json !== JSON.stringify(input.completedSegments) || receipt.local_sha256 !== input.sha256 || receipt.size !== input.size) throw conflict("完成交接与成功收据不一致，请核对原同步任务");
+      const prior = this.database.connection.prepare("SELECT candidate_id FROM recognition_receipt WHERE receipt_id=? AND state='ACCEPTED'").get(independent.id) as { candidate_id: string } | undefined;
+      if (prior?.candidate_id) return { candidateId: prior.candidate_id };
+      return this.receiveReceipt(independent.source_id, independent.id, undefined, () => { if (signal.aborted || this.closed) throw new DesktopError("INTERRUPTED", "完成交接已中断，恢复后补查成功收据", true); });
+    }
     if (this.closed || signal.aborted) throw new DesktopError("INTERRUPTED", "候选接收已中断", true);
     const db = this.database.connection;
     const committed = db.prepare("SELECT i.target_segments_json,c.file_evidence_json FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.id=? AND i.version_key=? AND i.target_root_id=? AND i.state='COMPLETED'").get(input.itemId, input.versionKey, input.rootId) as { target_segments_json: string; file_evidence_json: string } | undefined;
@@ -740,7 +876,14 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const checkRoot = async () => { check(); await root!.check(); await access(root!.grant.path, constants.R_OK | constants.X_OK); check(); };
     const failed = async (relative: string[], error: unknown) => { await checkRoot(); const reason = error instanceof DesktopError ? error.message.slice(0, 500) : "文件暂不可读，请检查原文件、磁盘和读取权限后重新扫描"; issues.set(relative.join("/"), reason); };
     try {
-      if (row.mode === "managed") {
+      const independent = recognitionOwner(this.database, sourceId);
+      if (independent && !independent.active) return { discovered: 0, checkedPaths: [], issues: [] };
+      if (independent?.mode === "managed-completed") {
+        const files = this.database.connection.prepare("SELECT id,target_segments_json FROM sync_receipt WHERE target_directory_id=? ORDER BY completed_at,id LIMIT 10001").all(independent.directory_id) as { id: string; target_segments_json: string }[];
+        if (files.length > 10000) throw conflict("受管成果超过一万项，请先按规则拆分同步目标");
+        const samples = sampleVideos(files.map((file) => ["completed", ...JSON.parse(file.target_segments_json)]), (name) => video.test(name));
+        for (const file of files) { const relative = ["completed", ...JSON.parse(file.target_segments_json)]; check(); try { await this.receiveReceipt(sourceId, file.id, samples.has(JSON.stringify(relative)) ? "同目录存在精确同基名主视频，已跳过样片；正式成果保留" : undefined, check); check(); discovered++; checkedPaths.push(relative.join("/")); } catch (error) { await failed(relative, error); } }
+      } else if (row.mode === "managed") {
         const files = this.database.connection.prepare("SELECT i.id,i.version_key,i.target_segments_json,c.file_evidence_json FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.target_root_id=? AND i.state='COMPLETED' ORDER BY i.id LIMIT 10001").all(row.download_root_id) as { id: string; version_key: string; target_segments_json: string; file_evidence_json: string }[];
         if (files.length > 10000) throw conflict("已完成下载超过一万项，请按来源拆分目录");
         for (const file of files) {
@@ -866,7 +1009,11 @@ export class IngestionPipeline implements ManagedIngestionSink {
       const name = entry.at(-1)!; if (!associated.test(name) || this.ignored(source)(entry)) continue;
       const sameBase = name.startsWith(base + "."), generic = /^(?:poster|folder|cover)\.jpg$/i.test(name); if (!sameBase && !generic) continue;
       let expectedSha256: string | null = null;
-      if (source.mode === "managed") {
+      const independent = recognitionOwner(this.database, source.source_id);
+      if (independent?.mode === "managed-completed") {
+        const proof = this.database.connection.prepare("SELECT r.local_sha256 FROM sync_receipt r JOIN recognition_receipt p ON p.receipt_id=r.id WHERE r.target_directory_id=? AND r.target_segments_json=? AND p.source_id=? AND p.state='ACCEPTED'").get(independent.directory_id, JSON.stringify(entry.slice(1)), source.source_id) as { local_sha256: string } | undefined;
+        if (!proof) continue; expectedSha256 = proof.local_sha256;
+      } else if (source.mode === "managed") {
         const proof = this.database.connection.prepare("SELECT i.id,i.version_key,c.file_evidence_json FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.target_root_id=? AND i.target_segments_json=? AND i.state='COMPLETED'").get(source.download_root_id, JSON.stringify(entry.slice(1))) as { id: string; version_key: string; file_evidence_json: string } | undefined;
         if (!proof) continue;
         if (source.policy_key) { const policy = resolveManagedOrganization(this.database, proof.id, proof.version_key); if (policy.state !== "ENABLED" || policy.policy.key !== source.policy_key) continue; }
@@ -881,6 +1028,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private previewDto(row: PreviewRow): CoreOutput<"ingestion.preview"> { const plan = JSON.parse(row.plan_json) as Plan; return { id: row.id, taskId: row.task_id, title: plan.metadata.title, mediaType: plan.metadata.mediaType, targetPath: join(plan.target.path, ...plan.targetSegments), sourcePath: join(plan.source.path, ...plan.sourceSegments), size: plan.snapshot.size, season: plan.selection.season, episode: plan.selection.episode, episodeEnd: plan.selection.episodeEnd, expiresAt: row.expires_at, operationId: row.operation_id, accessories: plan.accessories?.map((asset) => ({ sourcePath: join(plan.source.path, ...asset.sourceSegments), targetPath: join(plan.target.path, ...asset.targetSegments), size: asset.snapshot.size })) ?? [] }; }
   private previewScope(candidate: CandidateRow) {
     const db = this.database.connection;
+    const independent = recognitionOwner(this.database, candidate.source_id);
+    if (independent) return independent.active && !independent.paused && !independent.deleted_at ? [{ id: independent.rule_id, revision: independent.lifecycle_revision }] : [];
     const sql = candidate.managed_item_id
       ? "SELECT DISTINCT s.id,s.lifecycle_revision AS revision FROM source_rule s JOIN download_source_demand d ON d.source_id=s.id AND d.source_version=s.version JOIN download_job j ON j.id=d.job_id JOIN download_job_item ji ON ji.job_id=j.id JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE ji.item_id=? AND d.review_required=0 AND ji.demand_state='ACTIVE' AND j.state NOT IN ('CANCELLED','CANCELLING') AND s.deleted_at IS NULL AND s.paused=0 AND s.review_required=0 AND json_extract(v.configuration_json,'$.organization') IS NOT NULL"
       : "SELECT id,lifecycle_revision AS revision FROM source_rule WHERE local_source_id=? AND deleted_at IS NULL AND paused=0";
@@ -901,13 +1050,14 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const recognitionRevision = this.recognitionEdits.revision(input.taskId);
     if (!row || !await this.observe(row)) throw conflict("任务或文件尚未就绪");
     this.assertCandidateCurrent(row);
-    const source = this.candidateSource(row), sourceLifecycles = this.previewScope(row), target = this.targetFor(source, input.selection.mediaType), connectionVersion = this.connections.version;
+    const source = this.candidateSource(row), sourceLifecycles = this.previewScope(row), target = this.targetFor(source, input.selection.mediaType, input.selection.targetId), connectionVersion = this.connections.version;
     const parsedRow = db.prepare("SELECT parsed_json FROM media_task WHERE id=?").get(input.taskId) as { parsed_json: string | null };
     if (!parsedRow.parsed_json) throw conflict("请先完成名称识别");
     const parsed = JSON.parse(parsedRow.parsed_json) as ParsedMedia;
     const { selection, metadata, episodeTitle } = await validateMediaSelection(this.database, this.connections.tmdb, input.selection, { taskId: input.taskId, fileName: (JSON.parse(row.relative_json) as string[]).at(-1)!, signal });
     const variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(parsed.originalFilename).slice(1) };
-    const template = input.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}");
+    const route = recognitionRoute(this.database, row.source_id, input.selection.mediaType, input.selection.targetId);
+    const template = input.template ?? route?.configuration.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}");
     const segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments); assertCorrectionTarget(this.database, target, segments, input.taskId); await target.assertVacant(segments); await target.check();
     const accessories = input.includeAccessories === false ? [] : await this.accessories(source, row, segments); target.assertMappings([segments, ...accessories.map((asset) => asset.targetSegments)]); for (const asset of accessories) assertCorrectionTarget(this.database, target, asset.targetSegments, input.taskId);
     if (connectionVersion !== this.connections.version || this.candidateSource(row).version !== source.version || !await this.observe(row)) throw conflict();
@@ -916,7 +1066,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     this.assertPreviewScope(row, sourceLifecycles);
     if (recognitionRevision !== this.recognitionEdits.revision(input.taskId)) throw conflict("识别信息已变化，请重新预览整理范围");
     signal?.throwIfAborted();
-    const plan: Plan = { taskId: input.taskId, candidateId: row.id, sourceId: row.source_id, sourceVersion: source.version, recognitionRevision, sourceLifecycles, connectionVersion, source: JSON.parse(source.source_grant_json), target: target.grant, sourceSegments: JSON.parse(row.relative_json), targetSegments: segments, snapshot: JSON.parse(row.snapshot_json), expectedSha256: row.expected_sha256, parsed, metadata, selection, episodeTitle, accessories };
+    const plan: Plan = { ...(route ? { recognitionSnapshot: route.snapshot, recognitionContext: recognitionCandidateContext(this.database, row.source_id), logicalTargetId: route.configuration.id, embyBinding: route.binding } : {}), taskId: input.taskId, candidateId: row.id, sourceId: row.source_id, sourceVersion: source.version, recognitionRevision, sourceLifecycles, connectionVersion, source: JSON.parse(source.source_grant_json), target: target.grant, sourceSegments: JSON.parse(row.relative_json), targetSegments: segments, snapshot: JSON.parse(row.snapshot_json), expectedSha256: row.expected_sha256, parsed, metadata, selection, episodeTitle, accessories };
     const result: PreviewRow = { id: randomUUID(), request_key: input.requestKey, task_id: input.taskId, input_hash: digest, plan_json: JSON.stringify(plan), expires_at: this.now() + 10 * 60 * 1000, operation_id: null };
     const concurrent = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (concurrent) { if (concurrent.input_hash !== digest) throw conflict(); return this.previewDto(concurrent); }
@@ -948,11 +1098,11 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!receipt) throw conflict("预览不存在"); if (receipt.operation_id) return { operationId: receipt.operation_id };
     automaticCheck?.();
     const plan = JSON.parse(receipt.plan_json) as Plan, candidate = this.candidate(plan.candidateId), source = this.candidateSource(candidate);
-    this.assertPreviewScope(candidate, plan.sourceLifecycles);
+    this.assertPreviewScope(candidate, plan.sourceLifecycles); this.assertRecognitionPlanCurrent(plan);
     if ((plan.recognitionRevision ?? 0) !== this.recognitionEdits.revision(receipt.task_id)) throw conflict("识别信息已变化，请重新预览整理范围");
     this.assertCandidateCurrent(candidate);
     if (plan.expectedSha256 !== candidate.expected_sha256) throw conflict("内容复核证据已更新，请重新预览后确认");
-    if (receipt.expires_at <= this.now() || source.version !== plan.sourceVersion || this.targetFor(source, plan.selection.mediaType).grant.id !== plan.target.id || this.connections.version !== plan.connectionVersion || candidate.task_id !== receipt.task_id || !["QUEUED", "READY"].includes(candidate.state) || !await this.observe(candidate)) throw conflict("预览已过期或文件变化，请重新预览");
+    if (receipt.expires_at <= this.now() || source.version !== plan.sourceVersion || this.targetFor(source, plan.selection.mediaType, plan.logicalTargetId).grant.id !== plan.target.id || this.connections.version !== plan.connectionVersion || candidate.task_id !== receipt.task_id || !["QUEUED", "READY"].includes(candidate.state) || !await this.observe(candidate)) throw conflict("预览已过期或文件变化，请重新预览");
     const target = this.targets.get(plan.target.id); await target.assertVacant(plan.targetSegments); for (const asset of plan.accessories ?? []) if (!await this.observeAccessory(plan.sourceId, asset.sourceSegments, asset.snapshot, source.policy_key)) throw conflict("附属文件需重新观察"); assertSpaceBudget(await target.check(), plan.snapshot.size + (plan.accessories ?? []).reduce((sum, asset) => sum + asset.snapshot.size, 0), this.reserved(plan.target.id));
     const id = randomUUID(), current = timestamp(this.now);
     const concurrent = db.prepare("SELECT id FROM ingestion_operation WHERE candidate_id=?").get(candidate.id) as { id: string } | undefined;
@@ -960,7 +1110,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     db.transaction(() => {
       automaticCheck?.();
       if (this.candidateSource(candidate).version !== plan.sourceVersion || this.connections.version !== plan.connectionVersion) throw conflict();
-      this.assertPreviewScope(candidate, plan.sourceLifecycles);
+      this.assertPreviewScope(candidate, plan.sourceLifecycles); this.assertRecognitionPlanCurrent(plan);
       if ((plan.recognitionRevision ?? 0) !== this.recognitionEdits.revision(receipt.task_id)) throw conflict("识别信息已变化，请重新预览整理范围");
       this.assertCandidateCurrent(candidate);
       if (plan.expectedSha256 !== this.candidate(candidate.id).expected_sha256) throw conflict("内容复核证据已更新，请重新预览后确认");
@@ -980,8 +1130,9 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!sameVolumeRoot(target.grant.volume, plan.target.volume)) throw conflict();
     let evidence = operation.evidence_json ? localFileEvidenceSchema.parse(JSON.parse(operation.evidence_json)) : undefined;
     if (!evidence) {
-      if (sourceRow.version !== plan.sourceVersion || this.targetFor(sourceRow, plan.selection.mediaType).grant.id !== plan.target.id) throw conflict("来源规则或路由已变化，未开始计划需要重新预览");
-      if (table === "ingestion_operation" ? !await this.observe(this.candidate(plan.candidateId)) : !await this.observeAccessory(plan.sourceId, plan.sourceSegments, plan.snapshot, sourceRow.policy_key)) return;
+      if (!source || source.grant.path !== plan.source.path || !sameVolumeRoot(source.grant.volume, plan.source.volume)) throw conflict("原识别输入卷或目录身份已变化，请恢复原目录后重试原任务");
+      if (!plan.recognitionSnapshot && !recognitionOwner(this.database, plan.sourceId) && (sourceRow.version !== plan.sourceVersion || this.targetFor(sourceRow, plan.selection.mediaType).grant.id !== plan.target.id)) throw conflict("来源规则或路由已变化，未开始计划需要重新预览");
+      if (table === "ingestion_operation" ? !await this.observe(this.candidate(plan.candidateId), undefined, plan.recognitionSnapshot || recognitionOwner(this.database, plan.sourceId) ? sourceRow : undefined, plan.recognitionSnapshot?.configuration.ignoredFilePatterns) : !await this.observeAccessory(plan.sourceId, plan.sourceSegments, plan.snapshot, sourceRow.policy_key)) return;
       assertSpaceBudget(await target.check(), plan.snapshot.size, this.reserved(target.grant.id, operation.id)); await target.assertVacant(plan.targetSegments);
       // COPYING 重启时仅清理持有本操作标记的残留暂存，再换新尝试 ID。
       if (operation.phase === "COPYING") { await target.cleanupAttempt(operation.attempt_id).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); operation.attempt_id = randomUUID(); db.prepare(`UPDATE ${table} SET attempt_id=? WHERE id=?`).run(operation.attempt_id, operation.id); }
@@ -1015,7 +1166,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("UPDATE ingestion_operation SET phase='RECORDED',failure_code=NULL,updated_at=? WHERE id=?").run(timestamp(this.now), operation.id);
       db.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(plan.accessories?.length ? "COPYING_ACCESSORIES" : "DONE", timestamp(this.now), operation.id);
       const connection = db.prepare("SELECT id,version FROM emby_connection ORDER BY verified_at DESC LIMIT 1").get() as { id: string; version: number } | undefined;
-      db.prepare("INSERT INTO emby_delivery(task_id,operation_id,connection_id,connection_version,state,next_attempt_at,updated_at) VALUES(?,?,?,?,'REFRESH_PENDING',?,?) ON CONFLICT(task_id) DO NOTHING").run(plan.taskId, operation.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, timestamp(this.now));
+      db.prepare("INSERT INTO emby_delivery(task_id,operation_id,connection_id,connection_version,state,next_attempt_at,updated_at,binding_json) VALUES(?,?,?,?,'REFRESH_PENDING',?,?,?) ON CONFLICT(task_id) DO NOTHING").run(plan.taskId, operation.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, timestamp(this.now), plan.embyBinding ? JSON.stringify(plan.embyBinding) : null);
     })(); await target.cleanupAttempt(operation.attempt_id).catch(() => {});
   }
   private async copyAccessory(operation: OperationRow & { operation_id: string }, signal: AbortSignal) {
@@ -1059,7 +1210,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const db = this.database.connection, controller = new AbortController(); this.controller = controller;
     try {
       for (const source of db.prepare(sourceQuery + " WHERE i.available=1 AND s.paused=0 AND i.source_version=s.version ORDER BY i.source_id LIMIT 1000").all() as SourceRow[]) { if (controller.signal.aborted) return; await this.scan(source.source_id).catch(() => {}); }
-      for (const row of db.prepare("SELECT id FROM ingestion_candidate WHERE state='READY' AND task_id IS NULL AND NOT EXISTS(SELECT 1 FROM ingestion_automatic a WHERE a.candidate_id=ingestion_candidate.id) AND EXISTS(SELECT 1 FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE json_extract(v.configuration_json,'$.organization.automatic')=1 AND s.deleted_at IS NULL AND (s.local_source_id=ingestion_candidate.source_id OR EXISTS(SELECT 1 FROM download_source_demand d JOIN download_job_item ji ON ji.job_id=d.job_id WHERE d.source_id=s.id AND d.source_version=s.version AND ji.item_id=ingestion_candidate.managed_item_id))) ORDER BY created_at,id LIMIT 1000").all() as { id: string }[]) { const intent = this.automaticPolicies.capture(row.id); if (intent) this.automatic.enqueue(intent); }
+      for (const row of db.prepare("SELECT id FROM ingestion_candidate WHERE state='READY' AND task_id IS NULL AND NOT EXISTS(SELECT 1 FROM ingestion_automatic a WHERE a.candidate_id=ingestion_candidate.id) AND (EXISTS(SELECT 1 FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE json_extract(v.configuration_json,'$.organization.automatic')=1 AND s.deleted_at IS NULL AND (s.local_source_id=ingestion_candidate.source_id OR EXISTS(SELECT 1 FROM download_source_demand d JOIN download_job_item ji ON ji.job_id=d.job_id WHERE d.source_id=s.id AND d.source_version=s.version AND ji.item_id=ingestion_candidate.managed_item_id))) OR EXISTS(SELECT 1 FROM recognition_input ri JOIN recognition_rule r ON r.id=ri.rule_id JOIN recognition_rule_version rv ON rv.rule_id=r.id AND rv.version=r.version WHERE ri.source_id=ingestion_candidate.source_id AND ri.active=1 AND r.deleted_at IS NULL AND json_extract(rv.snapshot_json,'$.configuration.automatic')=1)) ORDER BY created_at,id LIMIT 1000").all() as { id: string }[]) { const intent = this.automaticPolicies.capture(row.id); if (intent) this.automatic.enqueue(intent); }
       await this.automatic.tick();
       const candidates = db.prepare("SELECT c.* FROM ingestion_candidate c JOIN media_task t ON t.id=c.task_id JOIN desktop_source s ON s.id=c.source_id WHERE t.status='PENDING' AND s.paused=0 ORDER BY t.created_at,t.id LIMIT 10").all() as CandidateRow[];
       for (const row of candidates) { if (controller.signal.aborted) return; if (!this.managedCandidateEnabled(row) || this.contentReviews.active(row.source_id)) continue; try { await this.withSourceWork(row.id, controller.signal, (signal) => this.identify(row, signal)); } catch (error) {

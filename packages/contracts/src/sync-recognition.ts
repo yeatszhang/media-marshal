@@ -103,7 +103,7 @@ const ruleFields = {
 };
 export const syncSourceRuleSchema = z.strictObject({ ...ruleFields, draft: syncSourceConfigurationSchema, snapshot: syncSourceSnapshotSchema.nullable(), runtime: z.strictObject({ claimed: z.boolean(), nextScanAt: z.number().int().nullable(), failure: z.string().max(500).nullable() }).optional() });
 export type SyncSourceRule = z.infer<typeof syncSourceRuleSchema>;
-export const recognitionRuleSchema = z.strictObject({ ...ruleFields, draft: recognitionRuleConfigurationSchema, snapshot: recognitionRuleSnapshotSchema.nullable() });
+export const recognitionRuleSchema = z.strictObject({ ...ruleFields, draft: recognitionRuleConfigurationSchema, snapshot: recognitionRuleSnapshotSchema.nullable(), runtime: z.strictObject({ claimed: z.boolean(), sourceId: id.nullable(), failure: z.string().max(500).nullable(), unavailableInputs: revision, automaticAuthorized: z.boolean() }).optional() });
 export type RecognitionRule = z.infer<typeof recognitionRuleSchema>;
 
 export const embyPathConversionWriteSchema = z.strictObject({

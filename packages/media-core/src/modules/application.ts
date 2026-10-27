@@ -34,6 +34,7 @@ import { MediaConnections, MediaConnectionsToken } from "../application/media-co
 import { IngestionPipeline } from "../ingestion/pipeline.js";
 import { EmbyDelivery } from "../ingestion/emby-delivery.js";
 import { SourceRules } from "../sources/rules.js";
+import { RecognitionRules } from "../sources/recognition-rules.js";
 import { ConfigurationDirectories } from "../sources/configuration-directories.js";
 import { LocalSync } from "../sources/local-sync.js";
 import { SyncRules } from "../sources/sync-rules.js";
@@ -78,6 +79,15 @@ declare module "@yeatz/app-framework/command" {
     "media.source-rules.apply": (input: CoreInput<"source-rules.apply">) => CoreOutput<"source-rules.apply">;
     "media.media.libraries": () => CoreOutput<"media.libraries">;
     "media.emby.configuration": () => CoreOutput<"emby.configuration">;
+    "media.recognition.list": (input: CoreInput<"recognition.list">) => CoreOutput<"recognition.list">;
+    "media.recognition.save": (input: CoreInput<"recognition.save">) => CoreOutput<"recognition.save">;
+    "media.recognition.preview": (input: CoreInput<"recognition.preview">) => Promise<CoreOutput<"recognition.preview">>;
+    "media.recognition.get-preview": (input: CoreInput<"recognition.get-preview">) => CoreOutput<"recognition.get-preview">;
+    "media.recognition.confirm": (input: CoreInput<"recognition.confirm">) => Promise<CoreOutput<"recognition.confirm">>;
+    "media.recognition.control": (input: CoreInput<"recognition.control">) => Promise<CoreOutput<"recognition.control">>;
+    "media.recognition.scan": (input: CoreInput<"recognition.scan">) => CoreOutput<"recognition.scan">;
+    "media.recognition.authorize-automatic": (input: CoreInput<"recognition.authorize-automatic">) => CoreOutput<"recognition.authorize-automatic">;
+    "media.recognition.task-targets": (input: CoreInput<"recognition.task-targets">) => CoreOutput<"recognition.task-targets">;
     "media.sync.list": (input: CoreInput<"sync.list">) => CoreOutput<"sync.list">;
     "media.sync.save": (input: CoreInput<"sync.save">) => CoreOutput<"sync.save">;
     "media.sync.preview": (input: CoreInput<"sync.preview">) => Promise<CoreOutput<"sync.preview">>;
@@ -222,6 +232,8 @@ export function createMediaApplication(
       ctx.disposables.add(() => configurationDirectories.close());
       syncRules = new SyncRules(ctx.get(DatabaseToken), configurationDirectories, downloads, new LocalSync(ctx.get(DatabaseToken), configurationDirectories, roots), Date.now, () => sourceRules.synchronize());
       ctx.disposables.add(() => syncRules.close());
+      recognitionRules = new RecognitionRules(ctx.get(DatabaseToken), configurationDirectories, ingestion, Date.now, () => sourceRules.synchronize());
+      ctx.disposables.add(() => recognitionRules.close());
       ctx.disposables.add(() => sourceRules.close());
       outbox = new IngestionOutbox(ctx.get(DatabaseToken), roots, options.ingestion ?? ingestion);
       ctx.disposables.add(() => outbox.close());
@@ -269,6 +281,15 @@ export function createMediaApplication(
       add(registry.register("media.emby.configuration", () => delivery.configuration()));
       add(registry.register("media.configuration.directories", () => configurationDirectories.list()));
       add(registry.register("media.configuration.default", () => configurationDirectories.defaults()));
+      add(registry.register("media.recognition.list", (_, input) => recognitionRules.list(input.includeDeleted)));
+      add(registry.register("media.recognition.save", (_, input) => recognitionRules.save(input)));
+      add(registry.register("media.recognition.preview", (_, input) => recognitionRules.preview(input)));
+      add(registry.register("media.recognition.get-preview", (_, input) => recognitionRules.getPreview(input.id)));
+      add(registry.register("media.recognition.confirm", (_, input) => recognitionRules.confirm(input)));
+      add(registry.register("media.recognition.control", (_, input) => recognitionRules.control(input)));
+      add(registry.register("media.recognition.scan", (_, input) => recognitionRules.scan(input)));
+      add(registry.register("media.recognition.authorize-automatic", (_, input) => recognitionRules.authorizeAutomatic(input)));
+      add(registry.register("media.recognition.task-targets", (_, input) => ingestion.taskTargets(input.taskId)));
       add(registry.register("media.sync.list", (_, input) => syncRules.list(input.includeDeleted)));
       add(registry.register("media.sync.save", (_, input) => syncRules.save(input)));
       add(registry.register("media.sync.preview", (_, input) => syncRules.preview(input)));
@@ -361,8 +382,8 @@ export function createMediaApplication(
       );
     },
   };
-  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); syncRules.start(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); } };
-  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories, syncRules: SyncRules;
+  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); recognitionRules.start(); syncRules.start(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); } };
+  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories, syncRules: SyncRules, recognitionRules: RecognitionRules;
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],
   });
@@ -376,7 +397,7 @@ export function createMediaApplication(
     // 取消等待不等同于文件回滚或写入者已停止；后者仍由 Main／Host 回收证明。
     let cancelFailure: unknown;
     try { options.cancelHostRequests?.(); } catch (error) { cancelFailure = error; }
-    return quiescence = Promise.allSettled([syncRules?.close(), configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
+    return quiescence = Promise.allSettled([recognitionRules?.close(), syncRules?.close(), configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
   }
   return {
     app,
@@ -390,8 +411,9 @@ export function createMediaApplication(
       return requests.run(request.requestId, async () => {
         const task = (async () => {
           if (request.action === "media.observations.reset") { ingestion.resetObservations(); return {}; }
+          if (request.action === "recognition.restore") { await recognitionRules.restore(); return {}; }
           if (request.action === "configuration.bootstrap") return configurationDirectories.bootstrap();
-          if (request.action === "configuration.authorize") { const input = privateCoreActions["configuration.authorize"].input.parse(payload); return configurationDirectories.authorize(input.grant, input.kind); }
+          if (request.action === "configuration.authorize") { const input = privateCoreActions["configuration.authorize"].input.parse(payload); const result = await configurationDirectories.authorize(input.grant, input.kind); if (input.kind === "media") await ingestion.authorizeRecognitionTarget(input.grant); return result; }
           if (request.action === "desktop.state.reconcile-restored") { ingestion.reconcileRestored(); corrections.reconcileRestored(); downloads.reconcileRestored(); return {}; }
           if (request.action === "source-rules.apply") { const input = privateCoreActions["source-rules.apply"].input.parse(payload); return sourceRules.apply({ previewId: input.previewId, requestKey: input.requestKey, runOnce: input.runOnce, ...(input.automaticConsent ? { automaticConsent: input.automaticConsent } : {}) }, input.grants); }
           if (request.action === "media.targets.find") return ingestion.targetGrant((payload as { path: string }).path);

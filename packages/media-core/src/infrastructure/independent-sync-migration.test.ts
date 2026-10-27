@@ -21,7 +21,7 @@ async function fixture(invalidFilters = false) {
 }
 it("补齐 v28 后旧配置并保留原行、暂停和不可信目录授权，不重写已发布迁移", async () => {
   const f = await fixture(), before = f.db.connection.prepare("SELECT * FROM source_rule").all(); f.db.close();
-  const db = await CoreDatabase.open(f.path); cleanup.push(() => db.close());
+  const db = await CoreDatabase.open(f.path, migrations.slice(0, 32)); cleanup.push(() => db.close());
   expect(db.connection.prepare("SELECT * FROM source_rule").all()).toEqual(before);
   expect(db.connection.prepare("SELECT paused,version FROM sync_source_rule WHERE id=?").get(f.id)).toEqual({ paused: 1, version: 3 });
   expect(db.connection.prepare("SELECT grant_json FROM configuration_directory WHERE id=?").get(f.root)).toEqual({ grant_json: null });
@@ -32,7 +32,7 @@ it("补齐 v28 后旧配置并保留原行、暂停和不可信目录授权，�
 });
 it("不可表示的旧筛选保留原文且不扩大范围或生成可执行快照", async () => {
   const f = await fixture(true), invalid = f.config; f.db.close();
-  const db = await CoreDatabase.open(f.path); cleanup.push(() => db.close());
+  const db = await CoreDatabase.open(f.path, migrations.slice(0, 32)); cleanup.push(() => db.close());
   const row = db.connection.prepare("SELECT draft_json,legacy_configuration_json,review_json FROM sync_source_rule WHERE id=?").get(f.id) as { draft_json: string; legacy_configuration_json: string; review_json: string };
   expect(JSON.parse(row.draft_json).filters).toEqual([{ action: "exclude", pattern: "**", caseSensitive: true }]);
   expect(JSON.parse(row.legacy_configuration_json).draft.filters).toEqual(invalid.filters);
@@ -44,6 +44,6 @@ it("迁移中断整体回滚，重试保留原备份且旧核心拒绝新库", a
   await expect(CoreDatabase.open(f.path, [...migrations.slice(0, 31), { ...migration, apply(db) { migrateIndependentSync(db); throw new Error("模拟迁移中断"); } }])).rejects.toThrow("模拟迁移中断");
   const backup = await readFile(f.path + ".before-v32.bak"), old = new Database(f.path);
   expect(old.pragma("user_version", { simple: true })).toBe(31); expect(old.prepare("SELECT name FROM sqlite_master WHERE name='sync_job'").get()).toBeUndefined(); old.close();
-  const db = await CoreDatabase.open(f.path); db.close(); expect(await readFile(f.path + ".before-v32.bak")).toEqual(backup);
+  const db = await CoreDatabase.open(f.path, migrations.slice(0, 32)); db.close(); expect(await readFile(f.path + ".before-v32.bak")).toEqual(backup);
   await expect(CoreDatabase.open(f.path, migrations.slice(0, 31))).rejects.toMatchObject({ code: "STORAGE_ERROR" });
 });

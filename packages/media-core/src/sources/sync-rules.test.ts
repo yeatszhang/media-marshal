@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, lstat, statfs, realpath, rm, writeFile, readFile, renam
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
-import type { SyncSourceRule } from "@media-marshal/contracts";
+import { sourceConfigurationSchema, syncSourceConfigurationSchema, type SyncSourceRule } from "@media-marshal/contracts";
+import { legacyConfigurationFingerprint } from "../infrastructure/independent-sync-migration.js";
 import { CoreDatabase } from "../infrastructure/database.js";
 import { CloudRoots } from "../cloud/roots.js";
 import { CloudDownloads } from "../cloud/downloads.js";
@@ -35,6 +36,13 @@ async function fixture() {
   return { directory, db, roots, directories, input, target, secondTarget, downloads, local, rules, content, now, version, save, preview, enable, advance };
 }
 describe("独立本地单向同步、成功历史和阶段控制", () => {
+  it("识别已独立接管但旧网盘同步尚未确认时，仍可幂等暂停旧同步而不撤销识别所有权", async () => {
+    const f = await fixture(), id = randomUUID(), stamp = new Date(f.now()).toISOString(), configuration = sourceConfigurationSchema.parse({ type: "cloud", name: "尚未接管的同步", accountId: randomUUID(), remoteRef: randomUUID(), downloadRootId: f.target.id }), projected = syncSourceConfigurationSchema.parse({ type: "cloud", name: configuration.name, accountId: configuration.type === "cloud" ? configuration.accountId : "", remoteRef: configuration.type === "cloud" ? configuration.remoteRef : "", target: { kind: "directory", directoryId: f.target.id } });
+    const db = f.db.connection; db.prepare("INSERT INTO source_rule(id,type,version,draft_revision,lifecycle_revision,draft_json,paused,created_at,updated_at) VALUES(?,'cloud',1,1,0,?,0,?,?)").run(id, JSON.stringify(configuration), stamp, stamp); db.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,created_at) VALUES(?,1,?,?)").run(id, JSON.stringify(configuration), stamp); db.prepare("INSERT INTO legacy_configuration_owner VALUES(?,0,1)").run(id);
+    db.prepare("INSERT INTO sync_source_rule(id,version,draft_revision,lifecycle_revision,draft_json,paused,review_json,created_at,updated_at) VALUES(?,1,1,0,?,0,'[\"LEGACY_SCOPE_REVIEW_REQUIRED\"]',?,?)").run(id, JSON.stringify(projected), stamp, stamp); db.prepare("INSERT INTO sync_source_version VALUES(?,1,?)").run(id, JSON.stringify({ sourceId: id, sourceVersion: 1, configuration: projected, inputDirectory: null, targetDirectory: f.directories.binding(f.target.id), defaultDirectoryVersion: null })); db.prepare("INSERT INTO sync_runtime(source_id,legacy_fingerprint) VALUES(?,?)").run(id, legacyConfigurationFingerprint(db, id));
+    const input = { ...f.version(f.rules.get(id)), requestKey: randomUUID(), operation: "pause" as const }, paused = await f.rules.control(input); expect(await f.rules.control(input)).toEqual(paused); expect(paused.paused).toBe(true); expect(db.prepare("SELECT paused FROM source_rule WHERE id=?").get(id)).toEqual({ paused: 1 }); expect(db.prepare("SELECT sync_claimed,recognition_claimed FROM legacy_configuration_owner WHERE source_id=?").get(id)).toEqual({ sync_claimed: 0, recognition_claimed: 1 });
+    await expect(f.rules.control({ ...f.version(paused), requestKey: randomUUID(), operation: "resume" })).rejects.toThrow(/预览确认接管/);
+  });
   it("默认目录改变后普通编辑保留已绑定目录，只有明确改绑才使用新默认值", async () => {
     const f = await fixture(), source = await f.enable();
     f.directories.setDefault({ expectedVersion: 1, directoryId: f.secondTarget.id, requestKey: randomUUID() });

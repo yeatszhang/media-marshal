@@ -305,6 +305,7 @@ async function bootstrap() {
             await supervisor.requestPrivate("media.sources.authorize", { ...previous, source, target });
           } catch { /* 原卷或授权未恢复时保持未验证，不重新绑定相同路径的新硬盘。 */ }
         }
+        await supervisor.requestPrivate("recognition.restore", {});
         if (await backups.reconciliationNeeded()) { await supervisor.requestPrivate("desktop.state.reconcile-restored", {}); await backups.acknowledgeReconciliation(); }
         await accounts.restore();
         await supervisor.requestPrivate("cloud.runtime.wake", { hostGeneration: ctx.get(sidecarToken).generation });
@@ -461,18 +462,20 @@ async function bootstrap() {
             }
             if (action === "desktop.configuration.choose-directory") {
               const { kind } = nativeActions["desktop.configuration.choose-directory"].parse(parsed.data);
-              const selected = await dialog.showOpenDialog(window!, { title: kind === "managed" ? "选择本地下载目录" : "选择本机输入目录", properties: ["openDirectory", "createDirectory"] });
+              const selected = await dialog.showOpenDialog(window!, { title: kind === "managed" ? "选择本地下载目录" : kind === "media" ? "选择识别映射媒体目标" : "选择本机输入目录", properties: ["openDirectory", "createDirectory"] });
               if (selected.canceled || !selected.filePaths[0]) return { ok: true, result: null };
               const controller = ctx.get(downloadRootsToken), path = await controller.validateDirectory(selected.filePaths[0]);
               const known = (await supervisor.request("configuration.directories", {})).find((row) => row.path === path);
               const managed = (await supervisor.request("cloud.roots.list", {})).find((row) => row.path === path);
+              if (kind === "media" && (managed || known?.kind === "managed")) throw new DesktopError("UNSAFE_PATH", "受管下载根不能同时作为媒体目标，请选择独立媒体目录");
               if (kind === "managed" || managed || known?.kind === "managed") {
                 const root = await controller.choose(path), grant = (await supervisor.requestPrivate("cloud.roots.bootstrap", {})).find((row) => row.id === root.id)!;
                 await supervisor.requestPrivate("configuration.authorize", { kind: "managed", grant });
                 return { ok: true, result: (await supervisor.request("configuration.directories", {})).find((row) => row.id === root.id)! };
               }
-              const grant = await probeReadOnlyVolume(path, known?.id);
-              await supervisor.requestPrivate("configuration.authorize", { kind: "ordinary", grant });
+              const previousTarget = kind === "media" ? await supervisor.requestPrivate("media.targets.find", { path }) : null;
+              const grant = await (kind === "media" ? probeManagedVolume(path, known?.id ?? previousTarget?.id) : probeReadOnlyVolume(path, known?.id));
+              await supervisor.requestPrivate("configuration.authorize", { kind, grant });
               return { ok: true, result: (await supervisor.request("configuration.directories", {})).find((row) => row.id === grant.id)! };
             }
             if (action === "desktop.credentials.save") {
