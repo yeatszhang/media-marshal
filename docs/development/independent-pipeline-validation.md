@@ -34,3 +34,5 @@ npm run test:desktop -- --grep '三者闭环|独立普通目录|Emby 显式路�
 ```
 
 当前平台目录包先运行 `CSC_IDENTITY_AUTO_DISCOVERY=false npm run desktop:pack`。按桌面开发文档设置 `MARSHAL_APP_PATH` 与 `MARSHAL_EXECUTABLE=1` 后执行同一窗口选择，另运行 `scripts/check-desktop-artifact.mjs` 核验资源。实际命令、结果、源码与构建／截图摘要保存在 `tools/desktop-files/fixtures/`；复现时重新生成摘要，不从阶段记录推定当前产物通过。
+
+2026-10-28 最终结果：全量 1004 通过、13 条件跳过；最后账号返回分支 35 项定向通过；当前 arm64 未签名目录包 6 项窗口检查通过（6.0 分钟），资源检查 9534 条目通过。源码提交 `d1c1cec`，完整构建／截图摘要见 `tools/desktop-files/fixtures/mac-independent-pipeline-2026-10-28.json`。三个变更 8/8 实施任务均由 CLI 复核为 `all_done`，未归档或发布。
