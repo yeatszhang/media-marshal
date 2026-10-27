@@ -9,5 +9,7 @@ import java.nio.file.Path;
 public interface AssetOrganizerStrategy {
     boolean supports(MediaAssetType assetType);
 
+    Path previewTarget(MediaTask task);
+
     Path organize(MediaTask task) throws IOException;
 }

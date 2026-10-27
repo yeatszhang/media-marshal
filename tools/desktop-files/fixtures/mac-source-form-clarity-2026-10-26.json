@@ -1,0 +1,46 @@
+{
+  "capturedAt": "2026-10-25T21:54:49.758700+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "schema": 25,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "50567ef0278b7b677dce055141a66b37f5833babbe67b189fba8dd99b73b2370",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/renderer/src/components/SourceEditorForm.tsx": "c5df1acf7793075e86b03f0bc1d7b554ca9e0741cbdc31780e1eddcec4f185ea",
+    "apps/desktop/src/renderer/src/styles.css": "a0c06b9d1a60a6861e6df113aa6d50f2415978a4cf9bb73ced08c95068102868",
+    "apps/desktop/tests/desktop.spec.ts": "f89a78cc2c5b9b7ea17911c910ba732090ea7513446acf88ffbfa6202eba5b68",
+    "apps/desktop/src/renderer/src/source-rules.test.tsx": "f3753f68b71267249f61cd5609ef96476485ece6b5bac34b56e1fcb7b0b1626d"
+  },
+  "screenshots": {
+    "docs/public/desktop/source-form-cloud-download.png": "849cccb599f00e15a66943e64a7b26319ec2e50150cc3b9159125f270448b334",
+    "docs/public/desktop/source-form-cloud-organize-minimum.png": "8b1979828cb352a2dd0c56468ea0f53c151ea548b7016e5e121ac7746cc9013a",
+    "docs/public/desktop/source-form-local-minimum.png": "14e44bcaa1c4bf43be15e194e01bb72b379fea8ea626d6dd83685abb05495bbc"
+  },
+  "checks": {
+    "typecheck": true,
+    "sourceRendererTests": 23,
+    "boundaries": true,
+    "docsBuild": true,
+    "artifactWhitelist": true,
+    "devWindowTests": 1,
+    "packagedWindowTests": 1
+  },
+  "assertions": [
+    "四个配置分组与文件去向分别说明范围、保存位置、触发方式和可选整理。",
+    "周期及整理复选框保持 16–20px，与标题间距 8–16px，分别在 1280 与 920 宽实际窗口检查，页面无横向溢出。",
+    "可选下载筛选默认隐藏；展开填写再折叠不会清空输入，摘要显示已设置筛选；再次展开保留原值。",
+    "执行摘要位于配置后、提交前，随周期与整理开关变化；只下载不展示整理目标与媒体类型。",
+    "实际键盘空格切换及整行点击开关；切换本地来源后无云端周期和可选整理开关。",
+    "仅编辑配置，未保存或确认，无来源、下载或媒体任务被创建。"
+  ],
+  "boundaries": [
+    "隔离临时目录，目录选择对话框使用受控替身；未操作个人目录或凭据。",
+    "最终目录包运行窗口验证，未签名、公证或完整安装态验证。",
+    "本阶段为现有表单改进，不增加 OpenSpec 完成数量。"
+  ]
+}

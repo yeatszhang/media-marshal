@@ -53,6 +53,7 @@ export interface MediaTask {
   lastFailedAt: string | null
   operationType: string | null
   errorMessage: string | null
+  metadataWarning?: string | null
   skipReason: string | null
   correctedFromTaskId: number | null
   correctedToTaskId: number | null
@@ -143,6 +144,12 @@ export interface QueueRecognitionRequest {
 export interface QueueRecognitionResponse {
   task: MediaTask
   candidates: TaskCandidate[]
+}
+
+export interface QueueDirectoryRecognitionResponse {
+  directory: string
+  updated: QueueRecognitionResponse[]
+  skipped: { taskId: number; reason: string }[]
 }
 
 export type BatchRecognitionField =

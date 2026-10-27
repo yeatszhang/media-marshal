@@ -1,0 +1,169 @@
+{
+  "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java",
+  "cases": [
+    {
+      "id": "optionalSegmentIsKeptWhenAllVariablesArePresent",
+      "template": "{title} ({year})[[ - {resolution}]]{ext}",
+      "variables": {
+        "title": "影片名",
+        "year": 2026,
+        "resolution": "2160p",
+        "ext": ".mkv"
+      },
+      "expected": "影片名 (2026) - 2160p.mkv",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsKeptWhenAllVariablesArePresent"
+    },
+    {
+      "id": "optionalSegmentIsRemovedWhenVariableIsMissing",
+      "template": "{title} ({year})[[ - {resolution}]]{ext}",
+      "variables": {
+        "title": "影片名",
+        "year": 2026,
+        "ext": ".mkv"
+      },
+      "expected": "影片名 (2026).mkv",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenVariableIsMissing"
+    },
+    {
+      "id": "optionalSegmentIsRemovedWhenAnyVariableIsMissing",
+      "template": "{title} ({year})[[ - {resolution} - {codec}]]{ext}",
+      "variables": {
+        "title": "影片名",
+        "year": 2026,
+        "resolution": "2160p",
+        "ext": ".mkv"
+      },
+      "expected": "影片名 (2026).mkv",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenAnyVariableIsMissing"
+    },
+    {
+      "id": "missingVariableOutsideOptionalSegmentKeepsPlaceholder",
+      "template": "{title} ({year}) - {resolution}{ext}",
+      "variables": {
+        "title": "影片名",
+        "year": 2026,
+        "ext": ".mkv"
+      },
+      "expected": "影片名 (2026) - {resolution}.mkv",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#missingVariableOutsideOptionalSegmentKeepsPlaceholder"
+    },
+    {
+      "id": "stringVariablesAreSanitizedBeforeRenderingPathSegments",
+      "template": "{title}[[ - {release_group}]]{ext}",
+      "variables": {
+        "title": "Bad/Movie:Name?",
+        "release_group": "TEAM|A",
+        "ext": ".mkv"
+      },
+      "expected": "Bad_Movie_Name_ - TEAM_A.mkv",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#stringVariablesAreSanitizedBeforeRenderingPathSegments"
+    },
+    {
+      "id": "optionalSegmentIsRemovedWhenSanitizedVariableIsBlank",
+      "template": "{title}[[ - {release_group}]]{ext}",
+      "variables": {
+        "title": "Movie",
+        "release_group": "   ",
+        "ext": ".mkv"
+      },
+      "expected": "Movie.mkv",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenSanitizedVariableIsBlank"
+    },
+    {
+      "id": "emptyExtRendersAsEmptyString",
+      "template": "{title}{ext}",
+      "variables": {
+        "title": "Movie",
+        "ext": ""
+      },
+      "expected": "Movie",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#emptyExtRendersAsEmptyString"
+    },
+    {
+      "id": "formattedVariablesWorkInsideOptionalSegment",
+      "template": "{title}[[ - S{season:02d}E{episode:02d}]]{ext}",
+      "variables": {
+        "title": "剧名",
+        "season": 3,
+        "episode": 7,
+        "ext": ".mkv"
+      },
+      "expected": "剧名 - S03E07.mkv",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#formattedVariablesWorkInsideOptionalSegment"
+    },
+    {
+      "id": "placeholderParametersRenderAffixesForSingleValues",
+      "template": "{season:02d;prefix=S}{episode:02d;prefix=E}",
+      "variables": {
+        "season": 1,
+        "episode": 16
+      },
+      "expected": "S01E16",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParametersRenderAffixesForSingleValues"
+    },
+    {
+      "id": "placeholderParametersRenderAffixesForRanges",
+      "template": "{season:02d;prefix=S}{episode:02d;prefix=E}",
+      "variables": {
+        "season": 1,
+        "episode": {
+          "start": 16,
+          "end": 17
+        }
+      },
+      "expected": "S01E16-E17",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParametersRenderAffixesForRanges"
+    },
+    {
+      "id": "rangeRenderingCanSkipRepeatedAffixes",
+      "template": "{episode:02d;prefix=E;suffix=X;repeatPrefix=false;repeatSuffix=false}",
+      "variables": {
+        "episode": {
+          "start": 21,
+          "end": 28
+        }
+      },
+      "expected": "E21-28X",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#rangeRenderingCanSkipRepeatedAffixes"
+    },
+    {
+      "id": "rangeRenderingUsesCustomSeparator",
+      "template": "{episode:03d;prefix=EP;separator=_}",
+      "variables": {
+        "episode": {
+          "start": 1,
+          "end": 2
+        }
+      },
+      "expected": "EP001_EP002",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#rangeRenderingUsesCustomSeparator"
+    },
+    {
+      "id": "placeholderParameterValuesAreSanitized",
+      "template": "{episode:02d;prefix=E/;suffix=:X;separator=/}",
+      "variables": {
+        "episode": {
+          "start": 1,
+          "end": 2
+        }
+      },
+      "expected": "E_01_X_E_02_X",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParameterValuesAreSanitized"
+    },
+    {
+      "id": "parameterizedPlaceholderWorksInsideOptionalSegment",
+      "template": "{title}[[ - S{season:02d}{episode:02d;prefix=E}]]{ext}",
+      "variables": {
+        "title": "Friends",
+        "season": 1,
+        "episode": {
+          "start": 16,
+          "end": 17
+        },
+        "ext": ".mkv"
+      },
+      "expected": "Friends - S01E16-E17.mkv",
+      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#parameterizedPlaceholderWorksInsideOptionalSegment"
+    }
+  ]
+}

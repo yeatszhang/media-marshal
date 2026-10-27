@@ -1,0 +1,36 @@
+{
+  "appVersion": "0.2.1",
+  "schemaVersion": 6,
+  "target": "darwin-arm64",
+  "releaseStatus": "unsigned-preview",
+  "artifact": {
+    "bytes": 219451733,
+    "sha256": "82734e9f005fffb160c9288bf84ef872e579f68d3f69b95dd30e17ea766a46ad"
+  },
+  "readOnlyInstallVerified": true,
+  "typecheckPassed": true,
+  "boundariesPassed": true,
+  "nativeTests": {
+    "files": 36,
+    "passed": 188,
+    "skipped": 1
+  },
+  "rateLimitValidation": {
+    "source": "controlled-http-fixture-and-core-fault-injection",
+    "nonJsonHttp429Normalized": true,
+    "jsonMountCleanupIdRetained": true,
+    "sameAccountBackoff": true,
+    "maxAttemptsPerItem": 3,
+    "wakeDoesNotResetExhaustedBudget": true,
+    "realQuarkNaturalThrottleObserved": false
+  },
+  "realQuarkBaseline": "mac-v0.2.0-readonly.json",
+  "newRealQuarkFullDownloadClaimed": false,
+  "signed": false,
+  "packagedWindowTests": {
+    "passed": 10,
+    "source": "read-only-dmg",
+    "actualArtifactEntries": 9528
+  },
+  "docsBuildPassed": true
+}

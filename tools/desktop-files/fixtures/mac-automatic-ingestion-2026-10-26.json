@@ -1,0 +1,88 @@
+{
+  "capturedAt": "2026-10-25T23:38:55.162024+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "appVersion": "0.2.1",
+  "schema": 27,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "758e4ac705982a9f12e052a893179ca1926cc141408816ff0d5c80e61cdd3044",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/main/cloud/downloads.test.ts": "3456fe7810ab299608207e17e6383e4241ba20229badd94fdef065f730e20e34",
+    "apps/desktop/src/renderer/src/components/SourceEditorForm.tsx": "ee9fceb38b3fe9455160fc17d3fe7e9de8e0ac3b3b19dd83b96a141b11cadcb2",
+    "apps/desktop/src/renderer/src/pages/Ingestion.tsx": "e00207e6cfd25e29a2f146418e636f9306e65c504dc1603e94edef5459b475eb",
+    "apps/desktop/src/renderer/src/pages/Sources.tsx": "5dbdec4e626f8d15f64b08e208b2bfea5600e5611783bb0f18de86b648d11b27",
+    "apps/desktop/src/renderer/src/source-rules-model.ts": "3170829e35496717a47bfd4bda1dc48041af8ee9125771cc47294286922436b8",
+    "apps/desktop/src/renderer/src/source-rules.test.tsx": "cd2e38aa6320325265d05b8090cc986d0bab81cc2b14f1a64bd8eee182b7fb41",
+    "apps/desktop/src/renderer/src/styles.css": "c0e0f54d84c842f319bcb3c15cc9fce40ea761827ebcfbb66eaed22a51395d74",
+    "apps/desktop/tests/desktop.spec.ts": "f6849f0f43ba67dbcc17c47303203f36c6477a34adf6d44a8b0b846a402a1b57",
+    "docs/architecture/cloud-downloads.c4": "fa7326249c9244139483ef2b90f6667631adef7c913ecda1b0d8d4018eeacb62",
+    "packages/contracts/src/contracts.test.ts": "47d96f85c6244b4815a9a130f3be0b2c181a76e39074cfd5783066dcff6a0387",
+    "packages/contracts/src/index.ts": "b887b2728b67297ea3de24984abbfa2a3ab77690983c33646ded556d9b6237d2",
+    "packages/contracts/src/ingestion.ts": "90fd48fd243be20064876b76833e101984c58e73f27c99da081a14df4999b2fe",
+    "packages/contracts/src/internal/core.ts": "b9b190d19e3ab639658f98471d4b0de30be86489a3c7117eb595099cb4db48e2",
+    "packages/contracts/src/source-rules.test.ts": "d30eb20b0611c1b55d64d147485e2aec7e1c2cbed70995200b47e250d1a4afe8",
+    "packages/contracts/src/source-rules.ts": "c4bfd470a15de454d4398a69bb2e4be48aafe6ea36eb0f8110af78e13ff6155f",
+    "packages/media-core/src/application/core-service.ts": "3fc5885b24e857d39b59d680b7ff3edad1195661eca55e55221fdb7cc9007337",
+    "packages/media-core/src/infrastructure/automatic-ingestion-migration.ts": "375485b8f23231d3b8dc61df32fb8bc2c6028e4fea5b4fef0028f3e644cbfa2f",
+    "packages/media-core/src/infrastructure/database.test.ts": "7088d6964649a1e8fcd1f10b13de3b356ead030611dfe0aa6f0e2846c7072b28",
+    "packages/media-core/src/infrastructure/database.ts": "678838dab5056830ffd8ab0978f3906972d13889dd86eb10da332f8231e61e03",
+    "packages/media-core/src/ingestion/automatic-policy.ts": "502867b4c7236b3fbe9349e157a14162103500e30db7c4ed0e366803b363b5e3",
+    "packages/media-core/src/ingestion/automatic-selection.ts": "76e23ca372c0dba10a1d3ed1913821057ce794aaf6b1bc1142fee829387a34d0",
+    "packages/media-core/src/ingestion/automatic.test.ts": "9de396aad33cca66b85f4fe87b835fdba340d696d40f0f958f497870d65acfb8",
+    "packages/media-core/src/ingestion/automatic.ts": "bff00d023b48c3c7828447c21fe7f426a00d61424a1fb3e1d2bc34186e561f66",
+    "packages/media-core/src/ingestion/pipeline.ts": "0d7d88c14f455ea513e4bdff62d1f34e65c70676a2d693d0469912edfdb32694",
+    "packages/media-core/src/modules/application.ts": "88db4b442baf71f3d254cdbb6b371b20604664ed125ba55387b76df4f67d73c9",
+    "packages/media-core/src/sources/automatic-consent.ts": "25abbc6bb654dc1bee3efc2a0a4a3cbb6eba7f6e6b2e57c598d306675d6d91bd",
+    "packages/media-core/src/sources/rules.test.ts": "be0d9fdbace36887452d818d5b7dec285eb30d698cc8754f20be224fbe39268a",
+    "packages/media-core/src/sources/rules.ts": "2fbeeb1c3a7d9516a2cb91a67a50242205a3b73acd8c8ea813d021919b4d8c24"
+  },
+  "screenshots": {
+    "docs/public/desktop/automatic-source-consent-minimum.png": "168fcbb7d11f02c7c32df1ad9ced61e88ae5dccede3a5fe5bcc5bc910085e398",
+    "docs/public/desktop/source-form-cloud-download.png": "3e083f2d0c9b7c59e467f8b0a8b4498c80028db5b255c6f7519600b48c661564",
+    "docs/public/desktop/source-form-cloud-organize-minimum.png": "925f77fa3ec7d854adefb7265b0966ba133b37a2e6eec1784770be3de860aede",
+    "docs/public/desktop/source-form-local-minimum.png": "65b6512aa4bf0ec4fda44dde4918ba5a2d484e3ceac7b3d27c2def28097180ec",
+    "docs/public/desktop/source-form-processing-minimum.png": "35b5aecd2bd66561112313ec01c8c44b83feac06926178c64bc1b9c0db88518a"
+  },
+  "architectureImages": {
+    "docs/public/architecture/cloud-downloads/index.png": "893a44d1fecbd41264992add05236c0dee8a6753400aea6301ec1a576377a80f",
+    "docs/public/architecture/cloud-downloads/ingestion.png": "61e7e2a13339cb44f66c6f9e7319abd933b09bd1370f414e3d341d988bd5dc16",
+    "docs/public/architecture/cloud-downloads/sources.png": "644875103dcfef0a473b3d4876fe1449a5549e7a632ffaf6875279a016261fa9"
+  },
+  "checks": {
+    "fullTestsPassed": 875,
+    "fullTestsSkipped": 13,
+    "testFilesPassed": 83,
+    "testFilesSkipped": 3,
+    "packagedWindowTests": 5,
+    "artifactEntries": 9534,
+    "typecheck": true,
+    "boundaries": true,
+    "artifactWhitelist": true,
+    "docsBuild": true,
+    "openspecStrict": true
+  },
+  "assertions": [
+    "首份真实人工预览与原授权根身份对应，明确勾选后同来源版本原子提交；自动预览不能自授权。",
+    "旧来源迁移仍为人工，不迁移自动意图；v27 失败回滚并保留 v26 备份，旧 Core 拒绝新库。",
+    "后续单来源受管文件自动执行复用原识别、共享季集校验、预览、确认及 COPY／Emby 作业。",
+    "真实隔离文件测试覆盖唯一正片季映射、有效 S0、缺集、跨季歧义、必要列表失败及重复坐标；预检通过后预览仍再次核验。",
+    "暂停恢复、Core 重建、成果恢复核验、人工先领取与人工编辑保持原意图并重新核对；丢失确认响应读取原操作。",
+    "最终目录包实际窗口验证明确授权、重载／Core 重启不重做文件、原生修正、候选预检和整包升级备份恢复。",
+    "表单四步明确文件来源、下载位置、下载时间和下载后处理，筛选可折叠，开关文字相邻；1280 与 920×640 窗口长路径无横向溢出，TMDB／目标必需与 Emby 可选分列。"
+  ],
+  "testPreparationHistory": [
+    "窗口验证发现默认忽略的缺省值与 null 语义相同但摘要不同；统一归一化并保留显式空列表差异，增加回归。",
+    "整套测试中的后台扫描可能超过默认 1 秒断言期限，测试等待改为有界 10 秒；未修改生产调度或稳定窗口。",
+    "Electron contextBridge 不保留自定义 Error.code，窗口断言改为具体受控原因及未变更配置；Core 用例继续核对错误代码。",
+    "成果恢复复核进行中保留等待，明确失败转人工；自动预览暂停后被人工编辑的任务停止自动确认。"
+  ],
+  "boundaries": [
+    "本地 HTTP 与受控时钟只证明 Core 路径和实际文件操作；窗口首次预览由生产 Core 隔离准备，目录选择器为受控结果。",
+    "没有访问或修改个人媒体、凭据、网盘限速和系统登录项。",
+    "本地官方客户端行为矩阵不完整，仍转人工；共享自动权限产品规则待用户选择，7.3／4.4 不视为完成。",
+    "未签名 arm64 目录包，不替代 Intel、DMG 安装、原生 OS 生命周期、真实账号故障矩阵、Developer ID 或公证。"
+  ]
+}

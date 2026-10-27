@@ -339,13 +339,6 @@
                   </div>
                   <el-switch v-model="form.moveAssociatedFiles" />
                 </div>
-                <div class="switch-row">
-                  <div>
-                    <div class="switch-title">{{ t('watchRule.generateNfo') }}</div>
-                    <div class="switch-desc">{{ t('watchRule.generateNfoHelp') }}</div>
-                  </div>
-                  <el-switch v-model="form.generateNfo" />
-                </div>
                 <div v-if="form.operation === 'MOVE'" class="switch-row">
                   <div>
                     <div class="switch-title">{{ t('watchRule.cleanupEmptyDirs') }}</div>

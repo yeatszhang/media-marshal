@@ -1,0 +1,75 @@
+{
+  "capturedAt": "2026-10-25T16:43:50.362Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "os": "25.5.0",
+  "electron": "44.9.0",
+  "node": "24.22.0",
+  "schema": 21,
+  "build": {
+    "format": 1,
+    "target": "darwin-arm64",
+    "napi": 8,
+    "sdk": "26.2",
+    "electronHeaders": "44.9.0",
+    "source": {
+      "path": "tools/desktop-files/rename-exclusive.c",
+      "sha256": "ddeeea2effb8f18b259320238d0bc458dec35d52c2c83349653fd5f78f466a12"
+    },
+    "headers": {
+      "node_api.h": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a",
+      "node_api_types.h": "a25356630d3058f0a0c8937d9f297e9471e037fda58c2696d8a505c2bd99cb00",
+      "js_native_api.h": "239e46a0e9f74ded674fab6cd693e231a04b79732cdc044831f0b8b5307c569f",
+      "js_native_api_types.h": "4f19cb90d240765cc0961d92a1ee20f65fdc50db7de1ab0a5cb6bc227224e1a0"
+    },
+    "binary": {
+      "name": "rename-exclusive.node",
+      "size": 53544,
+      "sha256": "3750a9d894fab0f9eb0d0329dc25c52cebadd5cbbf64381310e72e3e997634f3"
+    },
+    "compiler": "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+    "releaseStatus": "unintegrated-development"
+  },
+  "core": {
+    "files/relocations.js": "663196ac4290a5021a11a2d235c19b57fb75158b3652583dacde908b1fb2f7b2",
+    "infrastructure/file-relocation-migration.js": "96b84fbc41a8cf390548ce443f7bf2f5c70c71d8e3085b95f71d1857cd605d38"
+  },
+  "filesystems": {
+    "host": "apfs",
+    "target": "hfs"
+  },
+  "results": [
+    {
+      "label": "APFS → HFS+",
+      "mode": "COPY",
+      "differentDevices": true,
+      "bytes": 5242880,
+      "sha256": "71369eb468df4efbaae8bd7decd831c07f8d8f32680b5725ecdef31db6b5f236",
+      "done": true,
+      "stagedBeforeHistory": true,
+      "targetPreservedAfterCleanup": true
+    },
+    {
+      "label": "HFS+ → APFS",
+      "mode": "COPY",
+      "differentDevices": true,
+      "bytes": 5242880,
+      "sha256": "71369eb468df4efbaae8bd7decd831c07f8d8f32680b5725ecdef31db6b5f236",
+      "done": true,
+      "stagedBeforeHistory": true,
+      "targetPreservedAfterCleanup": true
+    },
+    {
+      "label": "HFS+ 本卷改名",
+      "mode": "MOVE",
+      "differentDevices": false,
+      "bytes": 5242880,
+      "sha256": "71369eb468df4efbaae8bd7decd831c07f8d8f32680b5725ecdef31db6b5f236",
+      "done": true,
+      "stagedBeforeHistory": false,
+      "targetPreservedAfterCleanup": true
+    }
+  ],
+  "downloadOriginalPreserved": true,
+  "cleanup": true
+}

@@ -1,0 +1,121 @@
+{
+  "capturedAt": "2026-10-26T00:52:55.319Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "electron": "44.9.0",
+  "appVersion": "0.2.1",
+  "schema": 27,
+  "applicationCodeRevision": "4eeeba8",
+  "productionCodeChangedInThisStage": false,
+  "reusedExistingDirectoryPackage": true,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "80dd79d13048ec304e026a872236998adc6bae4d73610f57269630a0488c9010",
+  "packagedMainMatchesCurrentBuild": true,
+  "builtMainSha256": "3dad9b5e327015d84f4b1165aeb05f8f75be996ce8355befe2927a3b0006b2fa",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/tests/core-termination.spec.ts": "cd29fc3e2f8fbad31602624e1e5b0a419819b1df2b8fdc346e0e7d5d4429ac9a",
+    "apps/desktop/src/main/core-supervisor.ts": "4e082670bd20c9de619dc64063d8cfd72be1a80c745e313842f26fc55106a54b",
+    "apps/desktop/src/main/index.ts": "5831fe76da61ae444800346b8c1d0a48e0cd234db64aafe83fa2608a0769abb6",
+    "apps/desktop/src/worker/index.ts": "43e991857641da3505d8fd452087ce23d11b1892adde5efbb9161fd34d58ad31"
+  },
+  "checks": {
+    "strictWindowTestTypecheck": true,
+    "developmentWindows": 2,
+    "packagedWindows": 4,
+    "artifactEntries": 9534,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "fullUnitSuiteRerun": false,
+    "fullWorkspaceTypecheckRerun": false,
+    "reason": "仅新增进程故障 E2E 与记录，生产源码及构建未变；严格检查新增窗口测试并实际运行相应构建。",
+    "openSpecProgress": {
+      "total": 109,
+      "complete": 95,
+      "remaining": 14
+    }
+  },
+  "receipts": {
+    "development": {
+      "exit": {
+        "stoppedStateVerifiedByOS": true,
+        "exitedBeforeRescue": true,
+        "elapsedMs": 10126,
+        "coreStopped": true,
+        "parserStopped": true,
+        "resumedCoreForSuccess": false,
+        "nativeOsQuitClick": false
+      },
+      "restart": {
+        "stoppedStateVerifiedByOS": true,
+        "resumedCoreForSuccess": false,
+        "elapsedMs": 10402,
+        "oldCoreStopped": true,
+        "oldParserStopped": true,
+        "sameMain": true,
+        "newCore": true,
+        "replacementParserReady": true,
+        "persistedDraftId": "59a4785d-2a69-4b72-b91b-fc74579c4e29",
+        "draftRevision": 1,
+        "draftNotActivated": true,
+        "organizePaused": true,
+        "downloadsPaused": false,
+        "fileJobs": 0
+      }
+    },
+    "packaged": {
+      "exit": {
+        "stoppedStateVerifiedByOS": true,
+        "exitedBeforeRescue": true,
+        "elapsedMs": 10149,
+        "coreStopped": true,
+        "parserStopped": true,
+        "resumedCoreForSuccess": false,
+        "nativeOsQuitClick": false
+      },
+      "restart": {
+        "stoppedStateVerifiedByOS": true,
+        "resumedCoreForSuccess": false,
+        "elapsedMs": 10408,
+        "oldCoreStopped": true,
+        "oldParserStopped": true,
+        "sameMain": true,
+        "newCore": true,
+        "replacementParserReady": true,
+        "persistedDraftId": "270b9213-74a8-49e4-b649-47c833e2e072",
+        "draftRevision": 1,
+        "draftNotActivated": true,
+        "organizePaused": true,
+        "downloadsPaused": false,
+        "fileJobs": 0
+      }
+    }
+  },
+  "existingPackagedRegressions": [
+    "Core SIGKILL 后恢复同一持久草稿并回收原 parser",
+    "Main SIGKILL 后 Core 与离线 parser 不残留"
+  ],
+  "logSha256": {
+    "development": "d2a7542ae12e934624cc799a5b12c076e0b4ba600f45bcaf429893988985bbe4",
+    "packaged": "1f73650aac652a4ecce06cf4e3489af6a4d28e7d97158c30c631e1d520aa5476",
+    "artifact": "45773d0b334ab3d567471ad257d4678c8836cc542aceb8173ca7bf13d4449e22",
+    "docs": "791db7c0cf4eef1ffc13bbf87e0bff13534a14ebb05080d28b7e2e2153716253",
+    "openSpec": "2bd978271980cfa48aa1e1a0c212001da5ab425ad67f92f839f72f8d792f65dd"
+  },
+  "reproduction": {
+    "development": "npm run test:desktop -- core-termination.spec.ts",
+    "packaged": "node scripts/check-desktop-artifact.mjs && MARSHAL_EXECUTABLE=1 MARSHAL_APP_PATH=\"当前目录包可执行路径\" npm run test:desktop -- --grep \"永久冻结|核心异常退出后恢复持久草稿|主进程异常退出后核心\""
+  },
+  "interpretation": "源码中的 UtilityProcess.kill 不能单独证明持续 SIGSTOP 必然无法退出；本机实际回收通过，未因猜测修改生产退出实现。",
+  "limits": [
+    "SIGSTOP 已通过 OS stat 的 T 状态核对；成功路径测试不发 SIGCONT、不额外杀 Core，失败时仅按已复核身份清理本次进程。",
+    "显式退出由 Playwright Electron 发起，不能作为原生托盘图标或退出菜单点击证明；上一阶段原生菜单观察单独记录。",
+    "只覆盖本机持续 SIGSTOP、原 Main/Core SIGKILL 场景，不证明内核不可中断 I/O、Main 与 Core 同时故障或其他永久失效组合。",
+    "沿用同一 arm64 未签名目录包，未新建或重验 DMG、Intel、Developer ID、公证及真实登录启动。",
+    "没有真实账号、个人凭据、个人媒体或 COPY；创建的是隔离目录与未生效来源草稿。",
+    "任务 2.6 仍有原生托盘点击、真实登录启动及完整矩阵，不能据本次分项检查勾选。"
+  ]
+}

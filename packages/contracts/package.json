@@ -1,0 +1,28 @@
+{
+  "name": "@media-marshal/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./internal/core": { "types": "./dist/internal/core.d.ts", "import": "./dist/internal/core.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal/index.d.ts",
+      "import": "./dist/internal/index.js"
+    },
+    "./internal/rpc": {
+      "types": "./dist/internal/rpc.d.ts",
+      "import": "./dist/internal/rpc.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "capturedAt": "2026-10-25T19:46:14.011082+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "schema": 24,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "063c0b52b0401f98b74c342909178bfb8b1f6cfd322fc700822b4cb1247932e8",
+  "nativeManifestSha256": "f17e2bb546c95259b2651238a88c754a7c2484eafeff24b7cb1f6cdc63069e54",
+  "source": {
+    "apps/desktop/src/renderer/src/correction-batches-model.ts": "43a27ee225b0e8d0ed1f9f1777e495bb883153ab81858bf22a37cb5f6fd1804e",
+    "apps/desktop/src/renderer/src/pages/CorrectionBatches.tsx": "cd84e27eed1c1060e7969d868cbf4337451ab1e14ef0736cba85172c798f42e9",
+    "apps/desktop/src/renderer/src/pages/Corrections.tsx": "2d65a44caf21fcd43f2de2ee7466e0f572fe419fc5b689c71946bbbb61509c54",
+    "apps/desktop/src/renderer/src/pages/Tasks.tsx": "221986011af9a0a31ee12a861c40e2e747f21a95e4ce606cee44111f936517a3",
+    "apps/desktop/src/renderer/src/styles.css": "251a2cf763c4aed9836abeacbb8b0b2ef11528d5aa7d63ccd0c52bb0a71109be",
+    "apps/desktop/src/preload/index.ts": "64a1ba9153e5c92ff4c2d43c728611765691d75cf18f2f1e3495b5656637c20a",
+    "packages/contracts/src/corrections.ts": "2ff4097ec22835466ad91efcfbc0df7bb9cdaf5d9e043892c3c47ef1a8d0a277",
+    "packages/media-core/src/ingestion/correction-batches.ts": "d86e4a081653f1121d69931e6d7cc40588aa5ff82cdfa8a53cf5895c1865527d",
+    "packages/media-core/src/ingestion/corrections.ts": "21466c85b4325143c9998798254f6d4677581c83d03b353ee702fbaa23c1ae82"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 736,
+      "skipped": 13
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "artifactWhitelist": true,
+    "likec4Export": {
+      "version": "1.60.0",
+      "views": 4
+    },
+    "finalPackagedUiWindows": 2,
+    "minimumFormIncludedInPackagedWindows": true
+  },
+  "assertions": {
+    "scopeReadDoesNotCreateJob": true,
+    "scopeSelectionFingerprintRecheckedBeforePreview": true,
+    "crossPageExclusionAndReview": {
+      "coreMembers": 28,
+      "componentMembers": 26
+    },
+    "parametersRestoredWithoutPreviewOrConfirmationReplay": true,
+    "eachSelectedMemberNeedsCompleteLoadedManifest": true,
+    "reloadRequiresReviewAgain": true,
+    "coreRestartExpiresUnconfirmedBatch": true,
+    "knownConfirmationFailureIdentifiesMember": true,
+    "restoreAuditPendingDoesNotCountAsDone": true,
+    "subtitleConflictDoesNotOverwriteForeignFile": true,
+    "retryRetainsBatchOperationAndNewTaskIds": true,
+    "otherCompletedMemberInodePreserved": true,
+    "downloadOriginalPreserved": true,
+    "oldAndNewHistoryNavigation": true,
+    "minimumWindowHorizontalOverflow": false,
+    "minimumFormCheckboxWidthBetween16And20": true,
+    "minimumFormCheckboxTextGapBetween8And16": true,
+    "restoringChangedScopeClearsStaleExclusions": true
+  },
+  "sigkill": {
+    "checkpoints": [
+      "after-first-history",
+      "before-second-history"
+    ],
+    "executedByCurrentFullSuite": true,
+    "sourceOffline": true,
+    "sameBatchOperationAndTaskIds": true,
+    "completedInodeUnchanged": true,
+    "uniqueEmbyIntentPerMember": true
+  },
+  "screenshots": {
+    "correction-batch-draft-minimum.png": "0f99957fcb3db51c7b8302342ce86e4660fa2d6d7cb2345697b9e5ca408b19a6",
+    "correction-batch-preview-minimum.png": "b1f8e9440871f619af59a73c43c29ce8e85c11402cc867510b034b03bdc8b59a",
+    "correction-batch-conflict-minimum.png": "922ff7d1bde334ab49572d85133e22cb0241dac2cb11bb33ec0b2064da77aee4",
+    "correction-batch-recovered-minimum.png": "be57f57397a89bfe04af958afa05cf82b830d5b93b69bda65f71dbc10c30832d"
+  },
+  "fixtureLimits": [
+    "目录选择为受控对话框替身，原生授权与卷探测走实际 Main 实现",
+    "原始 COPY 使用隔离就绪时钟及离线元数据；不是官方客户端下载行为验收",
+    "跨页 26／28 项分别由组件与真实数据库文件用例验证；窗口流程为两成员",
+    "Emby 意图唯一不等于真实服务器收录，本轮不操作个人凭据或真实媒体"
+  ],
+  "notVerified": [
+    "Mac Intel 运行",
+    "完整安装故障矩阵",
+    "Developer ID 与公证"
+  ]
+}

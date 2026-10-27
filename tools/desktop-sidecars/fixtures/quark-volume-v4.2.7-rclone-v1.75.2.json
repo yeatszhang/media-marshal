@@ -1,0 +1,16 @@
+{
+  "target": "darwin-arm64",
+  "packaged": false,
+  "actualApfsImageForceDetachedDuringTransfer": true,
+  "missingOriginalRootNotRecreated": true,
+  "replacementMountPathReceivedNoFiles": true,
+  "originalVolumeRestored": true,
+  "resumedSameLogicalJob": true,
+  "completedSize": 604951500,
+  "localSha256": "01663a977dc49a136db3f257113a3125b0de00358c54406a28d2991f75abb503",
+  "externalPhysicalDiskClaimed": false,
+  "signed": false,
+  "openlist": "v4.2.7",
+  "rclone": "v1.75.2",
+  "fixtureSchemaVersion": 1
+}

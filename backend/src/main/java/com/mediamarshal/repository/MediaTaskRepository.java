@@ -33,9 +33,10 @@ public interface MediaTaskRepository extends JpaRepository<MediaTask, Long> {
     boolean existsBySourcePath(String sourcePath);
 
     /**
-     * ADR-028 后的当前有效任务查重：
+     * 手动全量补扫的有效任务查重（沿用 ADR-028）：
      * PENDING / PROCESSING / AWAITING_CONFIRMATION / DONE / SKIPPED 视为有效记录；
-     * FAILED / CORRECTED 只保留历史，不阻止后续发现。
+     * FAILED / CORRECTED 只保留历史，允许用户主动补扫；自动发现使用 existsBySourcePath，
+     * 避免历史失败在周期扫描和文件修改事件中反复触发识别。
      */
     boolean existsBySourcePathAndStatusIn(String sourcePath, Collection<MediaTask.TaskStatus> statuses);
 

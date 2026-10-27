@@ -1,0 +1,88 @@
+{
+  "capturedAt": "2026-10-25T22:04:53.180783+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "schema": 25,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "2f5ab2ddcb7681c1647483c585a2a39ab64600fbf99660413cc861686555980c",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/main/core-supervisor.test.ts": "57c3af0618992f79f5156e1ed33b779cae20ac8286288862cc4a7d9ac9a59d5f",
+    "apps/desktop/src/main/core-supervisor.ts": "4e082670bd20c9de619dc64063d8cfd72be1a80c745e313842f26fc55106a54b",
+    "apps/desktop/src/worker/index.ts": "43e991857641da3505d8fd452087ce23d11b1892adde5efbb9161fd34d58ad31",
+    "apps/desktop/tests/desktop.spec.ts": "a1bf71e5debc01606a76b502d1c2e164cd50ee73c24c014d0df267b9a107d323",
+    "packages/contracts/src/contracts.test.ts": "08fbcd0e386303245840fdc99c02d384ebea5b3f5a29a6ba246502088007c59c",
+    "packages/contracts/src/internal/core.ts": "f63fded1d543b575dadae712379567fcaba1016ea49e4b3ce1e1d8ce7de83ccd",
+    "packages/media-core/src/modules/application.test.ts": "6ed174b6dd1870e66f9e32f1dff7cecf1283b78059affffec2ceba8f9bfebbbc",
+    "packages/media-core/src/modules/application.ts": "481eafeab2a8bf1e0688560353990765a02855f0f12a19aedf117807f22d2768",
+    "packages/media-core/src/application/request-executions.test.ts": "006dd76dbc3ac41bcfa4115ed0e7f0b820f2f939bd9a8278a7f7bfae23c1b00c",
+    "packages/media-core/src/application/request-executions.ts": "bdead8e6372e2bcfa86bc11b73b4d61314d5681e38cbac008f9cecfc05ee5dd4"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 807,
+      "skipped": 13,
+      "filesPassed": 80,
+      "filesSkipped": 3
+    },
+    "targetedTests": 48,
+    "typecheck": true,
+    "boundaries": true,
+    "frameworkFixedPackageAndContents": true,
+    "artifactWhitelist": true,
+    "artifactEntries": 9534,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "devUtilityProcessTests": 1,
+    "finalPackagedTests": 3
+  },
+  "realUtilityProcessResult": {
+    "malformedIgnored": true,
+    "canceled": "INTERRUPTED",
+    "stillOwned": "CONFLICT",
+    "restored": {
+      "items": [],
+      "nextCursor": null,
+      "total": 0,
+      "complete": true
+    },
+    "expired": {
+      "code": "TIMEOUT",
+      "message": "请求执行等待超时；已接收的作业可能继续，请查询原状态，不要重复提交",
+      "retryable": true
+    },
+    "firstResponses": 1,
+    "hostCalls": 3,
+    "sameJob": true,
+    "jobState": "SUCCEEDED",
+    "coreAlive": true,
+    "exitCode": 0
+  },
+  "assertions": [
+    "公共及私有请求的执行等待由 Core RequestExecutions 统一持有，默认期限 15 秒、64 项在途执行上限；超时或取消后底层工作完成前仍占名额。",
+    "Main 原端口发送严格的请求取消收据；发送前取消不发出原业务动作，所有终态清理定时器和信号监听；没有重放到新核心。",
+    "取消等待不撤销落库草稿或持久业务作业；相同在途请求 ID 拒绝再次执行，落库请求键仍幂等。",
+    "停止先中断等待并禁止新请求，真实执行完成后才释放 Application／SQLite；迟到成功和失败均回收且不重复回复。",
+    "Renderer 业务动作不能伪造取消收据或任意命令；未知动作、额外字段、任意路径和无效原因被拒绝。"
+  ],
+  "boundaries": [
+    "实际 Electron Utility Process、生产 worker 和私有 MessagePort；宿主网盘 RPC 使用受控替身延迟，实际等待 15 秒验证 Core 期限。",
+    "使用独立临时数据库及虚构账号，不访问个人凭据、下载或媒体目录。",
+    "同步 SQLite／原生调用不能由 JavaScript 定时器抢占；宿主退出强杀及持久恢复边界继续生效。",
+    "未验证 Intel、Developer ID、公证、完整安装态或真实账号故障矩阵。"
+  ],
+  "openSpec": {
+    "change": "add-local-desktop-emby-ingestion",
+    "progress": {
+      "total": 109,
+      "complete": 93,
+      "remaining": 16
+    },
+    "task2_9Complete": false,
+    "remaining": "手动目录枚举等长执行入口仍需核对并转换为可查询的持久作业；本阶段不缩小 2.9 范围。"
+  }
+}

@@ -1,0 +1,859 @@
+---
+search: false
+---
+
+> 旧 Java/Vue/Docker 工程历史快照，迁移于 2026-10-25。下文“当前”、完成状态、维护要求和待办均保留原记录口径，不作为当前桌面客户端的指令、进度或接口依据。新工作使用 OpenSpec；旧路径和 `.mdc` 文件名仅用于历史追溯。参见[旧工程资料索引](./index.md)。
+
+# Media Marshal API 契约
+
+> **维护规则**
+> - 后端 Agent 每新增或变更接口，必须同步更新本文件
+> - 前端 Agent 开发前必须先读本文件，以此为准，不以代码注释为准
+> - 所有接口统一前缀 `/api`，由 Nginx 代理到后端 `:8080`
+> - 所有响应格式：`{ "success": boolean, "data": T, "message": string }`
+
+---
+
+## 媒体任务 `/api/tasks`
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/tasks` | 查询所有任务，可按状态过滤 | — | `MediaTask[]` |
+| GET | `/api/tasks?status={status}` | 过滤状态（PENDING/PROCESSING/AWAITING_CONFIRMATION/DONE/FAILED/SKIPPED/CORRECTED） | — | `MediaTask[]` |
+| GET | `/api/tasks/{id}` | 查询单个任务详情 | — | `MediaTask` |
+| DELETE | `/api/tasks/{id}` | 删除任务记录及其候选记录（不影响文件） | — | — |
+| POST | `/api/tasks/{id}/correction/rematch` | ADR-028：按已完成任务的编辑后识别信息重新获取 TMDB 候选；不修改数据库、不操作文件 | `TaskCorrectionRequest` | `TaskCorrectionRematchResponse` |
+| POST | `/api/tasks/{id}/correction/preview` | ADR-028：预览已完成任务纠错计划；不修改数据库、不操作文件 | `TaskCorrectionRequest` | `TaskCorrectionPreview` |
+| POST | `/api/tasks/{id}/correction/apply` | ADR-028：重新校验并应用纠错；移动/重命名当前目标资产，创建修正历史链路 | `TaskCorrectionRequest` | `TaskCorrectionApplyResponse` |
+| GET | `/api/tasks/{id}/correction/scopes` | ADR-030：返回锚点剧集的仅当前集、同季和同剧集数量；范围由后端跨分页查询 | — | `TaskCorrectionScopesResponse` |
+| POST | `/api/tasks/{id}/correction/batch/preview` | ADR-030：按同季或同剧集重新解析完整范围，获取一次剧集详情并生成批次级只读预览 | `TaskCorrectionBatchRequest` | `TaskCorrectionBatchPreview` |
+| POST | `/api/tasks/{id}/correction/batch/apply` | ADR-030：重新解析范围、校验指纹和阻断项，持久化后台作业后立即返回；请求线程不移动文件 | `TaskCorrectionBatchRequest` | `TaskCorrectionBatchApplyResponse` |
+
+> 当前 `/api/tasks` 返回数组，仅支持上表中的状态参数；Dashboard 的分页与其他筛选在前端执行。后端分页、路径 / 时间 / 错误筛选属于 REQ-06，尚未生效。
+> 当前批次支持按已知 ID 查询及失败重试，尚无批次列表或按任务找回批次的接口。Dashboard 最近批次入口依赖浏览器本地索引；服务端检索属于 REQ-05。
+> 删除任务记录不删除媒体文件，但当前删除入口尚未协调活跃文件作业；系统重置和规则变更的互斥边界同样待 REQ-03 设计补齐，不能将“仅删记录”等同于“可以与作业任意并发”。
+
+### MediaTask 字段
+```typescript
+interface MediaTask {
+  id: number
+  sourcePath: string                  // 源媒体资产路径；普通视频/ISO 为文件路径，蓝光原盘为外层根目录
+  targetPath: string | null           // 目标媒体资产路径；目录型资产表示目标根目录
+  assetType: 'VIDEO_FILE' | 'ISO_IMAGE' | 'BLURAY_DIRECTORY'
+  status: 'PENDING' | 'PROCESSING' | 'AWAITING_CONFIRMATION' | 'DONE' | 'FAILED' | 'SKIPPED' | 'CORRECTED'
+  mediaType: 'MOVIE' | 'TV_SHOW' | null
+  parsedTitle: string | null
+  parsedYear: number | null
+  parsedSeason: number | null
+  parsedEpisode: number | null
+  parsedEpisodeEnd: number | null
+  parsedResolution: string | null    // guessit screen_size，用于 {resolution} 模板变量
+  parsedCodec: string | null         // guessit video_codec，用于 {codec} 模板变量
+  parsedReleaseGroup: string | null  // guessit release_group，用于 {release_group} 模板变量
+  tmdbId: number | null
+  confirmedTitle: string | null
+  confirmedOriginalTitle: string | null // TMDB original_title / original_name，用于 {original_title} 模板变量
+  confirmedYear: number | null
+  confirmedGenre1: string | null        // TMDB genres[0].name，用于 {genre_1} 模板变量
+  confirmedGenre2: string | null        // TMDB genres[1].name，用于 {genre_2} 模板变量
+  confirmedGenre3: string | null        // TMDB genres[2].name，用于 {genre_3} 模板变量
+  confirmedGenre4: string | null        // TMDB genres[3].name，用于 {genre_4} 模板变量
+  confirmedCountry: string | null       // TMDB origin_country[0]，回退 production_countries[0].iso_3166_1，用于 {country}
+  confirmedEpisodeTitle: string | null  // TV 单集 TMDB episode name，用于 {episode_title}
+  confirmationSource: 'AUTO_MATCH' | 'MANUAL_SINGLE' | 'MANUAL_BATCH' | 'MANUAL_CORRECTION' | null
+  matchConfidence: number | null   // 0.0 ~ 1.0
+  operationType: string | null
+  errorCode: 'TARGET_CONFLICT' | 'UNSAFE_TARGET_PATH' | 'SOURCE_MISSING' | 'PIPELINE_FAILED' | null // status=FAILED 时用于系统内部判定和重复失败聚合
+  failureCount: number | null      // status=FAILED 时同源文件、同规则、同 errorCode 的累计失败次数
+  lastFailedAt: string | null      // 最近一次失败时间，ISO 8601
+  errorMessage: string | null       // FAILED 或退回 AWAITING_CONFIRMATION 时说明具体失败/阻断原因
+  skipReason: string | null         // status=SKIPPED 时说明跳过原因
+  correctedFromTaskId: number | null // status=DONE 且来自纠错时，指向被修正的旧任务
+  correctedToTaskId: number | null   // status=CORRECTED 时，指向修正后的新 DONE 任务；关联记录被删除时可能悬空
+  correctedAt: string | null         // 旧任务被修正的时间，ISO 8601
+  ruleId: number | null            // 触发此任务的 WatchRule ID
+  createdAt: string                // ISO 8601
+  updatedAt: string
+}
+```
+
+> 前端任务列表“详情”列组合展示：`FAILED` 读取 `failureCount` + `errorMessage`，`SKIPPED` 读取 `skipReason`。
+> Queue 批量提交的 success 仅代表接收；页面通过任务事件和进行中每 2 秒查询 `/api/tasks` 更新逐文件结果。退回 `AWAITING_CONFIRMATION` 同样算未完成，保留 `errorMessage`，提交成功提示不代替最终结果。
+> `CORRECTED` 表示旧的已完成任务已经被用户手动修正，仅作为历史记录展示，不代表当前有效媒体资产；当前有效资产由新的 `DONE` 任务承载，且 `confirmationSource=MANUAL_CORRECTION`。
+> 系统内部判断同类失败必须使用 `errorCode`，不能依赖 `errorMessage` 文案；重复失败聚合维度为 `sourcePath + ruleId + errorCode`，命中后只递增 `failureCount` 并刷新 `lastFailedAt` / `errorMessage`，不新增失败任务记录。扫描成功后历史失败记录保留，用于用户溯源。
+> 当前有效任务查重口径：同一路径存在 `PENDING` / `PROCESSING` / `AWAITING_CONFIRMATION` / `DONE` / `SKIPPED` 时视为已有有效记录；只有 `FAILED` / `CORRECTED` 历史记录时，不阻止后续发现或重新扫描。
+> `assetType` 文案：`VIDEO_FILE`=普通视频，`ISO_IMAGE`=ISO 镜像，`BLURAY_DIRECTORY`=蓝光原盘。v0.2.x 当前仅完整支持 `VIDEO_FILE` 和电影蓝光原盘；扫描到 ISO、裸 `sourceDir/BDMV`、剧集蓝光原盘时会记录为 `SKIPPED`，并通过 `skipReason` 返回原因。
+
+### 已完成任务纠错
+
+```typescript
+interface TaskCorrectionRequest {
+  mediaType: 'MOVIE' | 'TV_SHOW'
+  parsedTitle: string
+  parsedYear: number | null
+  parsedSeason: number | null
+  parsedEpisode: number | null
+  parsedEpisodeEnd: number | null
+  tmdbId?: number | null        // preview/apply 必填；rematch 可为空
+  regenerateNfo?: boolean       // true 时应用成功后按修正后的 TMDB 详情重生成 NFO
+}
+
+interface TaskCorrectionRematchResponse {
+  candidates: MatchResult[]
+}
+
+interface TaskCorrectionPreview {
+  currentTargetPath: string | null
+  correctedTargetPath: string | null
+  sameTargetPath: boolean
+  selectedMatch: MatchResult | null
+  operations: TaskCorrectionOperation[]
+  blockers: string[]            // 非空时 canApply=false
+  warnings: string[]             // 非阻断提示
+  canApply: boolean
+}
+
+interface TaskCorrectionOperation {
+  type:
+    | 'MOVE_MAIN_ASSET'
+    | 'MOVE_ASSOCIATED_FILE'
+    | 'GENERATE_NFO'
+    | 'CLEAN_EMPTY_DIR'
+    | 'CREATE_CORRECTION_TASK'
+    | 'MARK_ORIGINAL_CORRECTED'
+  sourcePath: string | null
+  targetPath: string | null
+  description: string | null
+}
+
+interface TaskCorrectionApplyResponse {
+  originalTask: MediaTask        // status=CORRECTED
+  correctedTask: MediaTask       // status=DONE, confirmationSource=MANUAL_CORRECTION
+  preview: TaskCorrectionPreview
+}
+
+interface TaskCorrectionScopesResponse {
+  anchorTaskId: number
+  batchSupported: boolean
+  singleCount: 1
+  sameSeasonCount: number
+  sameSeriesCount: number
+  currentSeason: number | null
+  minSeason: number | null
+  maxSeason: number | null
+  warnings: string[]
+  unsupportedReasons: string[]
+}
+
+interface TaskCorrectionBatchRequest {
+  scope: 'SAME_SEASON' | 'SAME_SERIES'
+  parsedTitle: string
+  parsedYear: number | null
+  tmdbId: number
+  regenerateNfo?: boolean
+  excludedTaskIds?: number[]
+  groupFingerprint?: string       // batch/apply 使用；preview 可省略
+  idempotencyKey?: string         // batch/apply 使用；preview 可省略
+}
+
+interface TaskCorrectionBatchPreview {
+  scope: 'SAME_SEASON' | 'SAME_SERIES'
+  totalCount: number
+  selectedCount: number
+  applicableCount: number
+  blockerCount: number
+  warningCount: number
+  canApply: boolean
+  groupFingerprint: string
+  selectedMatch: MatchResult | null
+  blockers: string[]
+  warnings: string[]
+  items: Array<{
+    taskId: number
+    season: number | null
+    episode: number | null
+    episodeEnd: number | null
+    currentTargetPath: string | null
+    correctedTargetPath: string | null
+    sameTargetPath: boolean
+    associatedFileCount: number
+    operations: TaskCorrectionOperation[]
+    blockers: string[]
+    warnings: string[]
+    selected: boolean
+  }>
+}
+
+interface TaskCorrectionBatchApplyResponse {
+  batchId: number
+  status: TaskCorrectionBatchStatus
+}
+
+type TaskCorrectionBatchStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'PARTIAL_FAILED'
+  | 'FAILED'
+  | 'INTERRUPTED'
+
+type TaskCorrectionBatchItemStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'EXCLUDED'
+
+interface TaskCorrectionBatchResponse {
+  id: number
+  anchorTaskId: number
+  scope: 'SAME_SEASON' | 'SAME_SERIES'
+  originalTmdbId: number
+  targetTmdbId: number
+  ruleId: number
+  parsedTitle: string
+  parsedYear: number | null
+  regenerateNfo: boolean
+  groupFingerprint: string
+  status: TaskCorrectionBatchStatus
+  totalCount: number
+  successCount: number
+  failedCount: number
+  excludedCount: number
+  errorMessage: string | null
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
+  currentItem: TaskCorrectionBatchItemResponse | null
+  items: TaskCorrectionBatchItemResponse[]
+}
+
+interface TaskCorrectionBatchItemResponse {
+  id: number
+  originalTaskId: number
+  correctedTaskId: number | null
+  season: number | null
+  episode: number | null
+  episodeEnd: number | null
+  currentTargetPath: string
+  correctedTargetPath: string | null
+  status: TaskCorrectionBatchItemStatus
+  executionOrder: number
+  retryCount: number
+  errorMessage: string | null
+  recoveryDetails: string | null
+  startedAt: string | null
+  completedAt: string | null
+}
+```
+
+> 纠错入口只面向 `status=DONE` 且 `assetType=VIDEO_FILE | BLURAY_DIRECTORY` 的任务；`ISO_IMAGE`、`CORRECTED`、待确认、失败和跳过任务不允许应用纠错。
+> 纠错流程只操作当前 `targetPath` 指向的目标媒体库资产，不检查、不读取、不移动原始 `sourcePath`。`sourcePath` 仅作为历史来源展示。
+> 应用纠错时不按原 WatchRule 的 `operation` 重新执行 COPY/HARD_LINK/SYMBOLIC_LINK；当前版本统一移动/重命名目标资产本身。路径模板仍使用任务所属 WatchRule 的 `targetDir` 与电影/剧集模板计算修正后的目标路径；WatchRule 缺失时预览阻断。
+> `preview` 和 `apply` 都会由后端重新拉取所选 TMDB ID 的详情并重新计算目标路径、附属文件、NFO 和空目录清理计划。`apply` 不信任前端传回的预览结果。
+> 普通视频纠错时，当前目标同目录中与当前目标文件同 basename 的 `.srt`、`.ass`、`.ssa`、`.sub`、`.idx`、`.nfo`、`.jpg`、`.jpeg`、`.png`、`.webp`、`.md5` 会按新 basename 预览并移动；`.md5` 文件只移动/改名，不修改内容。`poster.jpg`、`folder.jpg`、`cover.jpg` 通用封面当前版本不自动移动，仅返回 warning。
+> 蓝光原盘纠错只支持电影蓝光目录，移动/重命名当前 `targetPath` 指向的蓝光目标根目录；内部 `BDMV/`、`CERTIFICATE/` 结构不修改。`mediaType=TV_SHOW` 时预览阻断。
+> 即使修正前后目标路径完全相同，`apply` 成功后也会创建新的 `DONE` 修正记录，并将旧任务标记为 `CORRECTED`，用于保存新的 TMDB 快照和历史链路。
+> 删除旧 `CORRECTED` 或新 `DONE` 修正任务仍是单条删除，不做级联删除；另一端链路可能悬空，前端仅按现有任务展示。
+> ADR-030 范围只查询当前 `DONE + TV_SHOW + tmdbId + ruleId` 任务；`SAME_SEASON` 额外匹配锚点季号。返回数量和预览不受 Dashboard 当前页或筛选条件影响，`CORRECTED` 历史任务不会进入范围。
+> 批量预览不修改数据库、不操作文件。前端只提交显式排除的 `excludedTaskIds`，不提交完整任务 ID 作为权威范围；不属于范围的排除 ID 会形成批次级 blocker。
+> `groupFingerprint` 覆盖范围任务 ID、更新时间、状态、当前目标路径、资产类型、TMDB、规则和季集字段；后续应用接口必须重新解析范围并比较该指纹。
+> `POST /api/tasks/{id}/correction/batch/apply` 要求同时提交 preview 返回的 `groupFingerprint` 和不超过 100 字符的非空 `idempotencyKey`。同一个 key 重复提交返回原批次，不创建或重复调度作业。
+> 批次后台按稳定季集顺序串行执行。每条任务独立完成文件移动、短数据库事务和历史链路；单条失败不会回滚其它成功条目，最终状态可能为 `PARTIAL_FAILED`。
+> 查询和失败重试接口如下；重试复用原批次 ID，只把 `FAILED` 条目恢复为 `PENDING` 并递增 `retryCount`，不会重复执行 `SUCCEEDED` 条目。
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/task-correction-batches/{batchId}` | 查询持久化批次状态、计数、当前条目和逐条结果，供前端轮询 | — | `TaskCorrectionBatchResponse` |
+| POST | `/api/task-correction-batches/{batchId}/retry-failed` | 重新校验失败条目的旧任务状态和当前路径，只重试失败项 | — | `TaskCorrectionBatchApplyResponse` |
+
+> 服务启动时，遗留 `QUEUED / RUNNING` 批次转为 `INTERRUPTED`，未完成条目转为 `FAILED` 并保留 `recoveryDetails`。重试前若旧任务不再是 `DONE` 或当前目标路径与作业快照不一致，接口拒绝自动重试，要求人工核对。
+
+---
+
+## 待确认队列 `/api/queue`
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/queue` | 查询所有 AWAITING_CONFIRMATION 任务 | — | `MediaTask[]` |
+| GET | `/api/queue/{id}/candidates` | 查询任务已保存候选列表 | — | `TaskCandidate[]` |
+| PUT | `/api/queue/{id}/recognition` | ADR-021：仅保存单个 Queue 任务的当前有效识别信息；不触发 TMDB 重新匹配，不清空候选 | `QueueRecognitionRequest` | `QueueRecognitionResponse` |
+| POST | `/api/queue/{id}/recognition/rematch` | ADR-021：保存识别信息并基于新字段重新 TMDB 匹配；替换旧候选，任务仍保持 AWAITING_CONFIRMATION，不自动确认 | `QueueRecognitionRequest` | `QueueRecognitionResponse` |
+| POST | `/api/queue/recognition/batch/preview` | ADR-029：预览当前页已选 Queue 任务的公共识别信息批量编辑和顺序集号生成结果；不落库、不访问 TMDB | `QueueBatchRecognitionRequest` | `QueueBatchRecognitionPreview` |
+| PATCH | `/api/queue/recognition/batch` | ADR-029：仅保存批量识别信息；不访问 TMDB、不替换候选、不自动确认 | `QueueBatchRecognitionRequest` | `QueueBatchRecognitionSaveResponse` |
+| POST | `/api/queue/recognition/batch/rematch` | ADR-029：先保存批量识别信息，再逐任务重新 TMDB 匹配；替换旧候选，任务仍保持 AWAITING_CONFIRMATION，不自动确认 | `QueueBatchRecognitionRequest` | `QueueBatchRecognitionRematchResponse` |
+| POST | `/api/queue/{id}/codex-rematch` | Codex 重新识别并校验；可靠且无冲突的文件后台自动整理，其余保留待确认并返回具体原因 | — | `QueueRecognitionResponse` |
+| POST | `/api/queue/{id}/codex-directory-rematch` | 同规则同直接父目录整体识别，先完成全批校验，再自动整理无冲突项；逐项返回更新及跳过原因 | — | `QueueDirectoryRecognitionResponse` |
+| GET | `/api/queue/{id}/search?q={keyword}` | **Deprecated**：旧任务绑定搜索接口，前端新功能不再使用；保留兼容，结果不写入候选表 | — | `MatchResult[]` |
+| POST | `/api/queue/{id}/confirm` | 人工确认：指定 TMDB ID 后继续处理；源文件不存在时任务转为 FAILED 并返回失败信息 | `ConfirmRequest` | — |
+| POST | `/api/queue/batch-confirm` | 批量人工确认；逐条提交后台整理，源文件缺失或单条提交失败不回滚整个批次 | `BatchConfirmRequest` | `BatchConfirmResponse` |
+| POST | `/api/queue/{id}/skip` | 跳过此任务（标记为 SKIPPED，写入 `skipReason`） | — | — |
+
+### ConfirmRequest
+```typescript
+interface ConfirmRequest {
+  tmdbId: number
+  mediaType: 'MOVIE' | 'TV_SHOW'
+}
+```
+
+### BatchConfirmRequest
+```typescript
+interface BatchConfirmRequest {
+  items: Array<{
+    taskId: number
+    tmdbId: number
+    mediaType: 'MOVIE' | 'TV_SHOW'
+  }>
+}
+```
+
+### BatchConfirmResponse
+```typescript
+interface BatchConfirmResponse {
+  results: Array<{
+    taskId: number
+    success: boolean              // true 表示已接收并进入后台整理，不表示文件整理已完成
+    message: string | null         // success=false 时返回提交失败原因；源文件缺失时为“源文件不存在，无法继续处理”
+  }>
+}
+```
+
+### QueueRecognitionRequest
+```typescript
+interface QueueRecognitionRequest {
+  mediaType: 'MOVIE' | 'TV_SHOW'
+  parsedTitle: string              // 必填，保存前会 trim
+  parsedYear: number | null        // 可为空
+  parsedSeason: number | null      // TV_SHOW 必填；MOVIE 保存时清空
+  parsedEpisode: number | null     // TV_SHOW 必填；MOVIE 保存时清空
+  parsedEpisodeEnd: number | null  // 多集范围结束集号；MOVIE 保存时清空
+}
+```
+
+### QueueRecognitionResponse
+```typescript
+interface QueueRecognitionResponse {
+  task: MediaTask
+  candidates: TaskCandidate[]      // 仅保存时为原候选快照；保存并重新匹配时为替换后的候选快照
+}
+```
+
+### QueueBatchRecognitionRequest
+```typescript
+type BatchRecognitionField = 'MEDIA_TYPE' | 'PARSED_TITLE' | 'PARSED_YEAR' | 'PARSED_SEASON'
+type EpisodeAssignmentMode = 'PRESERVE' | 'SEQUENTIAL'
+type EpisodeSortDirection = 'ASC' | 'DESC'
+
+interface QueueBatchRecognitionRequest {
+  taskIds: number[]                // 当前页明确选中的 AWAITING_CONFIRMATION 任务；不跨页
+  updateFields: BatchRecognitionField[]
+  mediaType?: 'MOVIE' | 'TV_SHOW'  // updateFields 包含 MEDIA_TYPE 时生效
+  parsedTitle?: string             // updateFields 包含 PARSED_TITLE 时 trim 后不能为空
+  parsedYear?: number | null       // updateFields 包含 PARSED_YEAR 时生效；null 表示明确清空
+  parsedSeason?: number | null     // updateFields 包含 PARSED_SEASON 时生效
+  episodeAssignmentMode: EpisodeAssignmentMode
+  episodeStart?: number | null     // SEQUENTIAL 时必填，最小 0
+  episodeSortDirection?: EpisodeSortDirection // 默认 ASC
+}
+```
+
+### QueueBatchRecognitionPreview
+```typescript
+interface QueueBatchRecognitionPreview {
+  totalCount: number
+  editableCount: number
+  sequentialCount: number
+  blockerCount: number
+  warningCount: number
+  canApply: boolean
+  blockers: string[]
+  warnings: string[]
+  items: Array<{
+    taskId: number
+    sourcePath: string
+    currentMediaType: 'MOVIE' | 'TV_SHOW' | null
+    effectiveMediaType: 'MOVIE' | 'TV_SHOW' | null
+    currentTitle: string | null
+    effectiveTitle: string | null
+    currentYear: number | null
+    effectiveYear: number | null
+    currentSeason: number | null
+    effectiveSeason: number | null
+    currentEpisode: number | null
+    currentEpisodeEnd: number | null
+    effectiveEpisode: number | null
+    effectiveEpisodeEnd: number | null
+    sequenceIndex: number | null
+    blockers: string[]
+    warnings: string[]
+  }>
+}
+```
+
+### QueueBatchRecognitionSaveResponse
+```typescript
+interface QueueBatchRecognitionSaveResponse {
+  updatedCount: number
+  tasks: MediaTask[]
+  preview: QueueBatchRecognitionPreview
+}
+```
+
+### QueueBatchRecognitionRematchResponse
+```typescript
+type QueueBatchRecognitionRematchStatus = 'MATCHED' | 'EMPTY' | 'FAILED'
+
+interface QueueBatchRecognitionRematchResponse {
+  updatedCount: number
+  matchedCount: number
+  emptyCount: number
+  failedCount: number
+  preview: QueueBatchRecognitionPreview
+  results: Array<{
+    taskId: number
+    status: QueueBatchRecognitionRematchStatus
+    message: string | null
+    candidates: TaskCandidate[]
+  }>
+}
+```
+
+> ADR-021 识别信息编辑接口只允许 `AWAITING_CONFIRMATION` 任务调用；`PENDING` / `PROCESSING` / `DONE` / `FAILED` / `SKIPPED` / `CORRECTED` 均返回 `success=false`。
+> `PUT /api/queue/{id}/recognition` 只更新 `MediaTask.mediaType`、`parsedTitle`、`parsedYear`、`parsedSeason`、`parsedEpisode`、`parsedEpisodeEnd`，不会修改 `task_candidate`。
+> `POST /api/queue/{id}/recognition/rematch` 会先保存上述字段，再使用新的识别信息调用 TMDB 匹配并替换该任务旧候选；`matchConfidence` 更新为新首位候选置信度，若无候选则为 `null`。该接口不会触发高置信度自动确认。
+> ADR-029 批量接口沿用当前页选择语义，后端会重新按源文件名自然排序生成顺序集号。`PATCH /api/queue/recognition/batch` 不访问 TMDB，也不替换候选；前端应清除这些任务的临时候选选择。`POST /api/queue/recognition/batch/rematch` 会先原子保存识别信息，再逐任务清空旧候选并重新匹配；单个任务 TMDB 失败不会回滚已保存识别信息，也不会保留该任务旧候选。批量保存和批量重新匹配都不会自动确认候选。
+
+> 人工单条确认成功后任务最终状态仍为 `DONE`，`confirmationSource=MANUAL_SINGLE`；批量确认接口会快速返回提交结果，成功提交的任务先进入 `PROCESSING`，后台整理完成后最终状态仍为 `DONE`，`confirmationSource=MANUAL_BATCH`。系统高置信度自动采纳时 `confirmationSource=AUTO_MATCH`。
+> `POST /api/queue/batch-confirm` 支持来自全局手动搜索的候选：若 `tmdbId + mediaType` 不在该任务 `task_candidate` 中，后端确认时会新建候选记录并标记为 `selected=true`。
+> ADR-025 后所有确认路径（自动高置信度、人工单条、批量确认、全局搜索候选确认、TMDB ID 直接确认）都会在最终确认所选候选时拉取 TMDB 详情；详情失败会导致该次确认失败。TV 单集的 episode 详情失败时，若当前路径模板使用 `{episode_title}`，确认失败；未使用该变量时继续整理并保持 `episodeTitle=null`。
+> 后台删除事件监听、周期扫描巡检和确认前最终校验都会将源文件缺失的 `PENDING` / `AWAITING_CONFIRMATION` 任务标记为 `FAILED`，固定失败信息为：`源文件不存在，无法继续处理`。v1 不自动失败 `PROCESSING` 任务，避免误伤正在执行的文件操作。
+
+### TaskCandidate
+```typescript
+interface TaskCandidate {
+  id: number
+  taskId: number
+  tmdbId: number
+  title: string | null
+  originalTitle: string | null
+  year: number | null
+  mediaType: 'MOVIE' | 'TV_SHOW'
+  confidence: number | null        // 0.0 ~ 1.0
+  posterUrl: string | null
+  overview: string | null
+  genre1: string | null            // 确认候选时的 TMDB genre 快照
+  genre2: string | null
+  genre3: string | null
+  genre4: string | null
+  country: string | null           // 确认候选时的 TMDB country 快照
+  episodeTitle: string | null      // TV 单集候选的 TMDB episode name 快照；多集范围为空
+  rank: number                     // 1 = 系统最高推荐
+  selected: boolean
+  createdAt: string
+}
+```
+
+### MatchResult
+```typescript
+interface MatchResult {
+  source: 'tmdb'
+  sourceId: string
+  title: string | null
+  originalTitle: string | null
+  year: number | null
+  mediaType: 'MOVIE' | 'TV_SHOW'
+  overview: string | null
+  posterUrl: string | null
+  genres: string[] | null          // TMDB detail genres[].name；最多 4 个，搜索候选可为空
+  country: string | null           // TMDB origin_country[0]，回退 production_countries[0].iso_3166_1
+  episodeTitle: string | null      // TV 单集详情名；多集范围或缺失时为空
+  confidence: number | null
+}
+```
+
+> ADR-018 升级后端内部匹配策略：全局 metadata 搜索和自动匹配仍返回 `MatchResult[]`。后端会基于原始文件名与 guessit 标题生成多 query，使用进程内 TMDB 搜索 / 详情缓存与 in-flight 去重，并按标题、年份、媒体类型、文件结构综合评分；评分解释仅在 `media-marshal.debug=true` 时写入后端日志。
+> ADR-025 起，最终确认路径会拉取所选 TMDB 条目的详情并补齐 `genres`、`country`；TV 单集且非多集范围时会拉取 episode 详情补齐 `episodeTitle`。这些字段会写入 `MediaTask.confirmed*` 和 `TaskCandidate` 快照，用于路径模板渲染。普通搜索候选不批量拉详情，字段可为空。
+
+---
+
+## 元数据搜索 `/api/metadata`
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/metadata/search?q={keyword}&mediaType={mediaType}` | Queue 页全局手动搜索候选；结果只作为前端临时候选，不立即写入 `task_candidate` | — | `MatchResult[]` |
+
+### Metadata Search 参数
+```typescript
+interface MetadataSearchQuery {
+  q: string
+  mediaType: 'MOVIE' | 'TV_SHOW'
+}
+```
+
+> `q` 支持关键词或纯数字 TMDB ID。纯数字会先按 `mediaType` 查询 TMDB ID，再合并关键词搜索结果。用户点击批量确认后，候选才按任务维度写入 `task_candidate`。
+
+---
+
+## 系统配置 `/api/settings`
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/settings` | 查询所有配置（敏感项脱敏显示） | — | `AppSetting[]` |
+| GET | `/api/settings/effective?keys=tmdb.proxy.enabled,tmdb.proxy.http-url` | 查询指定配置的当前有效值，用于读取环境变量 / application.yml / 数据库合并后的运行时配置 | — | `EffectiveSetting[]` |
+| PUT | `/api/settings/{key}` | 更新单项配置（写入数据库） | `UpdateRequest` | — |
+| PUT | `/api/settings/tmdb-proxy` | 原子保存 TMDB HTTP 代理开关和地址；`tmdb.proxy.enabled` / `tmdb.proxy.http-url` 不通过单项接口分别保存 | `TmdbProxyUpdateRequest` | — |
+| POST | `/api/settings/reset` | 重置系统：删除数据库中的配置、监控规则、任务和候选数据，使系统回到首次初始化状态；不会删除媒体文件 | — | — |
+
+### AppSetting 字段
+```typescript
+interface AppSetting {
+  key: string
+  value: string
+  description: string | null
+  sensitive: boolean
+}
+```
+
+### UpdateRequest
+```typescript
+interface UpdateRequest {
+  value: string
+  description?: string
+  sensitive?: boolean
+}
+```
+
+### EffectiveSetting 字段
+```typescript
+interface EffectiveSetting {
+  key: string
+  value: string
+  source: 'DATABASE' | 'ENVIRONMENT' | 'APPLICATION' | 'DEFAULT' | 'INFERRED_FROM_HTTP_URL' | 'SENSITIVE'
+  overriddenByDatabase: boolean
+}
+```
+
+### TmdbProxyUpdateRequest
+```typescript
+interface TmdbProxyUpdateRequest {
+  enabled: boolean
+  httpUrl?: string
+}
+```
+
+### TMDB HTTP 代理配置语义
+- 配置键：`tmdb.proxy.enabled`、`tmdb.proxy.http-url`。
+- 环境变量：`MEDIA_MARSHAL_TMDB_PROXY_ENABLED`、`MEDIA_MARSHAL_TMDB_PROXY_HTTP_URL`。
+- 生效优先级：数据库代理配置优先；未被数据库接管时，再按环境变量、`application.yml`、默认值读取。
+- 数据库中存在 `tmdb.proxy.enabled=false` 时强制直连，即使环境变量或 `application.yml` 中存在代理地址。
+- `tmdb.proxy.enabled` 未配置但 `tmdb.proxy.http-url` 存在且非空时，视为启用代理。
+- 第一版仅支持不带认证信息的 HTTP 代理，例如 `http://127.0.0.1:7890`；不支持 SOCKS、HTTPS 代理和代理认证。
+
+---
+
+## 监控规则 `/api/watch-rules`
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/watch-rules` | 查询所有规则 | — | `WatchRule[]` |
+| POST | `/api/watch-rules` | 新建规则 | `RuleRequest` | `WatchRule` |
+| PUT | `/api/watch-rules/{id}` | 更新规则 | `RuleRequest` | `WatchRule` |
+| DELETE | `/api/watch-rules/{id}` | 删除规则 | — | — |
+| PATCH | `/api/watch-rules/{id}/toggle` | 启用/禁用规则 | — | `WatchRule` |
+| POST | `/api/watch-rules/{id}/scan` | 异步触发该规则源目录全量扫描 | — | — |
+| POST | `/api/watch-rules/validate` | 保存前校验规则路径与文件操作能力 | `RuleRequest` | `WatchRuleValidationResult` |
+| GET | `/api/watch-rules/export` | ADR-026：导出当前全部监控规则配置包；后端返回 JSON，前端负责下载为文件 | — | `WatchRuleImportPackage` |
+| POST | `/api/watch-rules/import/preview` | ADR-026：解析并预览导入包，不落库 | `WatchRuleImportRequest` | `WatchRuleImportPreview` |
+| POST | `/api/watch-rules/import` | ADR-026：重新校验导入包并追加创建可导入规则 | `WatchRuleImportRequest` | `WatchRuleImportResult` |
+
+> 规则变更后后端自动触发 `FileDiscoveryService.reload()`，无需前端额外操作。
+> 全量扫描会递归遍历 `sourceDir` 下已有视频文件，并复用数据库查重；接口返回时仅表示扫描任务已开始。同一路径已有扫描未结束时，接口返回 `success=false`，提示稍后再试。
+> ADR-013 第一阶段暂不开放 `POST /api/discovery/notify` Webhook 接口；`webhookEnabled` 为后续预留字段，当前保存为 `false`。
+
+### WatchRule 字段
+```typescript
+interface WatchRule {
+  id: number
+  name: string
+  sourceDir: string
+  targetDir: string
+  mediaType: 'MOVIE' | 'TV_SHOW' | 'AUTO'
+  moviePathTemplate: string | null // null = 使用全局电影默认模板
+  tvPathTemplate: string | null    // null = 使用全局剧集默认模板
+  operation: 'MOVE' | 'COPY' | 'HARD_LINK' | 'SYMBOLIC_LINK'
+  enabled: boolean
+  moveAssociatedFiles: boolean
+  cleanupEmptyDirs: boolean
+  generateNfo: boolean
+  ignoredFilePatterns: string[] | null  // 可编辑忽略规则；null = 使用系统默认，[] = 不启用任何忽略规则
+  discoveryMode: 'WATCH_EVENT' | 'PERIODIC_SCAN' | 'HYBRID'
+  scanIntervalMinutes: number      // 周期补扫间隔分钟，仅 PERIODIC_SCAN / HYBRID 生效，最小 5
+  webhookEnabled: boolean          // Webhook 预留开关，当前接口未开放
+  userId: number | null            // v1 始终为 null，多用户版本启用
+  createdAt: string
+  updatedAt: string
+}
+```
+
+### RuleRequest
+```typescript
+interface RuleRequest {
+  name: string                     // required
+  sourceDir: string                // required
+  targetDir: string                // required
+  mediaType: 'MOVIE' | 'TV_SHOW' | 'AUTO'   // required
+  moviePathTemplate?: string       // 电影模板；不填 = 使用全局电影默认模板
+  tvPathTemplate?: string          // 剧集模板；不填 = 使用全局剧集默认模板
+  operation: 'MOVE' | 'COPY' | 'HARD_LINK' | 'SYMBOLIC_LINK'  // required
+  enabled?: boolean                // 不填默认 true
+  moveAssociatedFiles?: boolean    // 不填默认 true
+  cleanupEmptyDirs?: boolean       // 不填默认 false
+  generateNfo?: boolean            // 不填默认 false
+  ignoredFilePatterns?: string[] | null // 完整忽略规则列表；传 null = 恢复系统默认，传 [] = 不启用任何忽略规则
+  discoveryMode?: 'WATCH_EVENT' | 'PERIODIC_SCAN' | 'HYBRID' // 不填默认 HYBRID
+  scanIntervalMinutes?: number     // 不填默认 10；保存时小于 5 会按 5 处理
+  webhookEnabled?: boolean         // Webhook 预留开关；当前前端不暴露，默认 false
+}
+```
+
+> v0.2.x 前端路径设置页开放 `MOVE`、`COPY`、`HARD_LINK`、`SYMBOLIC_LINK`。保存规则前必须先调用 `POST /api/watch-rules/validate`，校验失败时不得保存。后端可通过配置 `watch-rule.preflight.enabled=false`（环境变量 `MEDIA_MARSHAL_WATCH_RULE_PREFLIGHT_ENABLED=false`）关闭保存前校验；关闭后该接口直接返回 `valid=true`。
+> 忽略规则支持文件名、通配符和目录规则（如 `sample/`）；命中规则的文件或目录会被静默忽略，不生成 `SKIPPED` 任务。
+> ADR-027 起，系统默认忽略规则包含 `sample/`、`samples/`，并在实时监听注册、周期扫描和手动全量扫描时剪枝整个目录子树。仅当 `ignoredFilePatterns=null` 时，系统还会识别同目录中以 `.sample`、`-sample`、`_sample` 结尾且存在 basename 完全相同正片的视频；命中后静默忽略，不创建任务。`ignoredFilePatterns=[]` 或自定义列表不会被强制追加默认项，也不会启用同目录 Sample 后缀识别。
+
+### WatchRuleValidationResult
+```typescript
+interface WatchRuleValidationResult {
+  valid: boolean
+  message: string | null
+  details?: string[]
+}
+```
+
+### WatchRuleImportPackage
+```typescript
+interface WatchRuleImportPackage {
+  kind: 'media-marshal.watch-rules'
+  schemaVersion: 1
+  appVersion: string | null
+  exportedAt: string | null
+  rules: WatchRuleImportRule[]
+}
+
+interface WatchRuleImportRule {
+  name: string
+  sourceDir: string
+  targetDir: string
+  mediaType: 'MOVIE' | 'TV_SHOW' | 'AUTO'
+  moviePathTemplate: string | null
+  tvPathTemplate: string | null
+  operation: 'MOVE' | 'COPY' | 'HARD_LINK' | 'SYMBOLIC_LINK'
+  enabled: boolean
+  moveAssociatedFiles: boolean
+  cleanupEmptyDirs: boolean
+  generateNfo: boolean
+  ignoredFilePatterns: string[] | null
+  discoveryMode: 'WATCH_EVENT' | 'PERIODIC_SCAN' | 'HYBRID'
+  scanIntervalMinutes: number
+  webhookEnabled: boolean
+}
+```
+
+> 导出包只包含监控规则字段，不包含 `id`、`userId`、`createdAt`、`updatedAt`、任务、候选、缓存、日志、TMDB Key、代理、邮件、置信度或其它系统配置。`moviePathTemplate` / `tvPathTemplate` 为 `null` 时，表示导入目标实例继续使用其当前全局默认模板。
+
+### WatchRuleImportRequest
+```typescript
+interface WatchRuleImportRequest {
+  package: WatchRuleImportPackage
+  preserveEnabledState: boolean // 默认 false；false 时新增规则全部导入为 disabled
+}
+```
+
+> `POST /api/watch-rules/import/preview` 与 `POST /api/watch-rules/import` 都使用 `WatchRuleImportRequest`。前端切换 `preserveEnabledState` 后必须重新预览；后端真正导入时会重新执行结构校验、重复判断、冲突判断和必要的路径预检，不信任前端预览结果。
+
+### WatchRuleImportPreview
+```typescript
+type WatchRuleImportPreviewStatus =
+  | 'READY'
+  | 'SKIPPED_DUPLICATE'
+  | 'CONFLICT'
+  | 'INVALID'
+  | 'WARNING'
+
+interface WatchRuleImportPreview {
+  kind: string | null
+  schemaVersion: number | null
+  appVersion: string | null
+  exportedAt: string | null
+  ruleCount: number
+  fileValid: boolean
+  hasBlockingIssues: boolean
+  fileMessage: string | null
+  preserveEnabledState: boolean
+  summary: WatchRuleImportSummary
+  items: WatchRuleImportPreviewItem[]
+}
+
+interface WatchRuleImportSummary {
+  importable: number
+  ready: number
+  skipped: number
+  conflicts: number
+  invalid: number
+  warnings: number
+}
+
+interface WatchRuleImportPreviewItem {
+  index: number
+  status: WatchRuleImportPreviewStatus
+  message: string
+  warnings: string[]
+  rule: WatchRuleImportRule | null
+}
+```
+
+### WatchRuleImportResult
+```typescript
+interface WatchRuleImportResult {
+  preserveEnabledState: boolean
+  reloadTriggered: boolean
+  createdCount: number
+  skippedCount: number
+  conflictCount: number
+  invalidCount: number
+  warningCount: number
+  createdRules: WatchRule[]
+  items: WatchRuleImportPreviewItem[]
+}
+```
+
+### ADR-026 导入规则
+- 第一版仅支持追加导入，不删除、不覆盖、不修改现有规则，不修改任何现有 `MediaTask.ruleId`。
+- 默认导入时新增规则全部写入 `enabled=false`；只有 `preserveEnabledState=true` 时，新增规则才按导出文件中的 `enabled` 写入。
+- 完全重复规则跳过。重复判断基于 `sourceDir`、`targetDir`、`mediaType`、`moviePathTemplate`、`tvPathTemplate`、`operation`、`moveAssociatedFiles`、`cleanupEmptyDirs`、`generateNfo`、`ignoredFilePatterns`、`discoveryMode`、`scanIntervalMinutes`、`webhookEnabled`；不包含 `name` 和 `enabled`。
+- 路径重复判断只做轻量字符串规范化：去空白、反斜杠转 `/`、去除非根路径末尾 `/`，不访问文件系统、不解析符号链接。
+- `ignoredFilePatterns` 比较保持顺序语义，只去除空白项和行尾换行差异，不重新排序。
+- 同 `sourceDir` 但行为不同的导入规则会标记为 `CONFLICT`；导入文件内部相同 `sourceDir` 但行为不同也会标记为 `CONFLICT`。
+- 导入文件内部完全重复规则：第一条按正常规则预览，后续相同项标记为 `SKIPPED_DUPLICATE`。
+- 默认禁用导入时，路径不可用仅作为 `WARNING` 展示，不阻止创建禁用规则。
+- `preserveEnabledState=true` 时，如果导入后会出现启用规则之间的父子 `sourceDir` 包含关系，标记为 `CONFLICT`。
+- `preserveEnabledState=true` 且导入规则将以 `enabled=true` 写入时，真正导入阶段会复用保存前完整路径预检；预检失败则本次导入失败并回滚。
+- 导入事务内创建所有可导入规则；任意创建失败或启用预检失败则回滚。本次导入创建了新规则时，后端只触发一次 `FileDiscoveryService.reload()`。
+
+校验规则：
+- `MOVE`：`sourceDir` 必须存在且可读写；`targetDir` 必须可创建 / 可写。目录写权限以真实临时文件写入/删除探测为准，避免 Windows 网络盘下 `Files.isWritable()` 误判。
+- `COPY`：`sourceDir` 必须存在且可读；`targetDir` 必须可创建 / 可写。目录写权限以真实临时文件写入/删除探测为准。
+- `HARD_LINK`：除基础读写校验外，后端会创建临时文件并真实尝试创建硬链接；失败时返回明确原因。
+- `SYMBOLIC_LINK`：除基础读写校验外，后端会创建临时文件并真实尝试创建符号链接；失败时返回明确原因。
+- 校验使用随机临时文件名，完成后清理临时文件和链接，不覆盖用户已有文件。
+
+---
+
+## 模板变量 `/api/template-variables`
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/template-variables` | 查询路径模板中可用的变量、解释、样例和适用媒体类型 | — | `TemplateVariableGroup[]` |
+| POST | `/api/template-variables/preview` | 使用后端渲染器预览并校验路径模板；前端保存自定义模板前必须调用 | `TemplatePreviewRequest` | `TemplatePreviewResponse` |
+
+### TemplateVariableGroup
+```typescript
+interface TemplateVariableGroup {
+  category: 'BASIC' | 'EPISODE' | 'CLASSIFICATION' | 'TECHNICAL'
+  categoryName: string
+  variables: TemplateVariableItem[]
+}
+```
+
+### TemplateVariableItem
+```typescript
+interface TemplateVariableItem {
+  name: string              // 如 title、season:02d
+  placeholder: string       // 如 {title}、{season:02d}
+  type: string              // String / Integer / Long 等展示类型
+  source: string            // TMDB / guessit / Pipeline / Source file
+  description: string       // 变量说明
+  example: string           // 示例值
+  mediaTypes: Array<'MOVIE' | 'TV_SHOW'>
+  status: 'AVAILABLE' | 'RESERVED' | 'DEPRECATED' | 'UNAVAILABLE'
+}
+```
+
+### TemplatePreviewRequest
+```typescript
+interface TemplatePreviewRequest {
+  template: string                 // 待预览 / 校验的路径模板
+  mediaType: 'MOVIE' | 'TV_SHOW'   // 使用电影或剧集样例上下文
+  targetDir?: string | null        // WatchRule.targetDir；用于校验最终路径是否仍位于目标根目录内
+  context?: Record<string, unknown> // 可选调试上下文，key 使用变量名，如 title、year、codec、episode_end
+}
+```
+
+### TemplatePreviewResponse
+```typescript
+interface TemplatePreviewResponse {
+  output: string             // 后端 TemplateRenderer 渲染后的相对路径预览
+  warnings: string[]         // 废弃变量等非阻断提示
+  errors: string[]           // 未知变量、预留变量、媒体类型不适用变量、不安全路径等阻断错误
+  usedVariables: string[]    // 模板中识别到的变量名，按出现顺序去重；格式化变量返回基础名，如 season
+  unknownVariables: string[] // 模板中未登记的变量名
+  reservedVariables: string[] // 当前版本未启用的变量名
+  unsafePath: boolean        // true 表示渲染结果不满足 targetDir 下相对路径安全边界
+}
+```
+
+> 变量名来源以 `TemplateVariables` 上的 `@TemplateVar` 注解为准；格式化变量目前按 ADR-001 暴露 `{season:02d}`、`{season:04d}`、`{episode:02d}`、`{episode:04d}`。
+> 前端帮助面板仅展示 `AVAILABLE` 和 `DEPRECATED` 变量；`DEPRECATED` 变量需展示废弃提示，`RESERVED` / `UNAVAILABLE` 不展示。
+> 路径模板支持可选片段语法 `[[ ... ]]`：片段内所有变量都可填充时渲染片段，任意变量缺失时移除整个片段。可选片段外的缺失变量仍保留占位符原样。例如 `{title} ({year})[[ - {resolution}]]{ext}` 在分辨率缺失时渲染为 `{title} ({year}){ext}` 的替换结果。
+> 当前正式可用 TMDB 模板变量包含 `{original_title}`、`{genre_1}`~`{genre_4}`、`{country}`、`{episode_title}`；`{episode_title}` 仅适用于 `TV_SHOW` 单集任务，多集范围保持为空，建议放在可选片段中。`{genre_1}`~`{genre_4}` 和 `{country}` 适用于 `MOVIE` / `TV_SHOW`，缺失时为空，建议放在可选片段中。
+> 后端渲染会清洗变量值和格式参数值中的路径非法字符（`/ \ : * ? " < > |` 与控制字符），但模板本身的 `/` 仍表示目录层级。真实文件操作前必须校验渲染结果为 `targetDir` 下相对路径：禁止绝对路径、Windows 盘符路径、UNC 路径、`..` 路径段，以及 normalize 后逃逸目标根目录的路径。不安全时任务进入 `FAILED`，`errorCode=UNSAFE_TARGET_PATH`。
+
+---
+
+## 文件系统
+
+### GET /api/filesystem/browse
+列出指定路径下的子目录，供前端目录浏览器使用。
+
+**Query Parameters**
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `path` | string | `/` | 要浏览的绝对路径；Windows 下 `/` 表示虚拟根目录，返回可用盘符列表 |
+
+**Response**
+```typescript
+interface BrowseResult {
+  currentPath: string         // 当前路径（已规范化，斜杠统一；Windows 盘符示例 D:/）
+  parentPath: string | null   // 父目录路径，根目录时为 null；Windows 盘符根目录的父级为 /
+  dirs: Array<{
+    name: string              // 目录名
+    path: string              // 完整绝对路径
+  }>
+}
+```
+
+---
+
+## WebSocket（STOMP）
+
+| 订阅地址 | 事件触发时机 | payload |
+|---|---|---|
+| `/topic/tasks` | 任务状态变更时 | `TaskEvent` |
+
+### TaskEvent
+```typescript
+interface TaskEvent {
+  type: 'task.created' | 'task.processing' | 'task.confirm' | 'task.done' | 'task.failed' | 'task.corrected'
+  taskId: number
+  status: 'PENDING' | 'PROCESSING' | 'AWAITING_CONFIRMATION' | 'DONE' | 'FAILED' | 'SKIPPED' | 'CORRECTED'
+  sourcePath: string
+  errorMessage?: string
+}
+```
+
+连接地址：`ws://{host}/ws`（SockJS endpoint）
+
+
+### Codex 自动整理响应语义
+
+`QueueRecognitionResponse` 为 `{ task: MediaTask, candidates: TaskCandidate[] }`。`QueueDirectoryRecognitionResponse` 为 `{ directory: string, updated: QueueRecognitionResponse[], skipped: { taskId: number, reason: string }[] }`。
+
+- `updated[].task.status` 可为 `PROCESSING` / `DONE`（自动通过）、`AWAITING_CONFIRMATION`（保留人工处理，`errorMessage` 包含具体原因及识别依据）、`FAILED`（文件操作等执行失败）。前端按实际状态统计，不能把 `updated.length` 当成整理成功数量。
+- Codex 自动整理要求模型置信度至少 0.9、TMDB 候选达到 `watcher.confidence-threshold`，并通过类型、季集存在性、重复/重叠、目标路径存在性及批内目标冲突校验。历史 `codex.require-confirmation` 值不再生效。
+- 路径季号仅作初始线索；原季缺失或不包含全部集号时，依据实际分集列表寻找唯一匹配正片季。可靠映射保留集号及 `metadataWarning` 后继续自动校验，不因季号不同或历史映射提示固定转人工；多季歧义、缺集和列表获取失败仍保留具体原因并暂停。人工确认首次修正季号仍需再次核对。
+- 单条与目录重新识别都会后台自动整理通过项，来源记录为 `AUTO_MATCH`；只有仍待确认的任务才进入人工面板。显式“仅保存”及手动编辑的 TMDB rematch 接口保持其原契约。

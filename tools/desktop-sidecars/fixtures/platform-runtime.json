@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "runId": 40099007218,
+  "commit": "e5050245ea4f319d9dea36b63eaab5d4d33b5584",
+  "url": "https://github.com/yeatszhang/media-marshal/actions/runs/40099007218",
+  "scope": "M1 正式监管器、真实 Rclone 写入强杀、私有权限/清理、白名单诊断与五项窗口回归；不代表真实账号完整下载或签名发行",
+  "targets": [
+    {
+      "target": "win32-x64",
+      "conclusion": "success",
+      "processCases": [
+        {
+          "case": "normal",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "core",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "host",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "openlist",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "guardian",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "main",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": false
+        }
+      ],
+      "requiredChecks": [
+        {
+          "name": "Run npm test",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run node tools/desktop-sidecars/host_smoke.mjs",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run node tools/desktop-sidecars/supervisor_smoke.mjs",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm run test:desktop",
+          "conclusion": "success"
+        }
+      ],
+      "artifact": {
+        "id": 12562555197,
+        "digest": "sha256:f073052276c022ad79f922422863eae30fbfd482e26697196d5f079df891c118"
+      }
+    },
+    {
+      "target": "darwin-x64",
+      "conclusion": "success",
+      "processCases": [
+        {
+          "case": "normal",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "core",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "host",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "openlist",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "guardian",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "main",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": false
+        }
+      ],
+      "requiredChecks": [
+        {
+          "name": "Run npm test",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run node tools/desktop-sidecars/host_smoke.mjs",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run node tools/desktop-sidecars/supervisor_smoke.mjs",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm run test:desktop",
+          "conclusion": "success"
+        }
+      ],
+      "artifact": {
+        "id": 12561868698,
+        "digest": "sha256:12ca91a26cca0cd2f8f5de89dc6106ca05c7df7baf765ec3cb74f4c0ce393e31"
+      }
+    },
+    {
+      "target": "darwin-arm64",
+      "conclusion": "success",
+      "processCases": [
+        {
+          "case": "normal",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "core",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "host",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "openlist",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "guardian",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": true
+        },
+        {
+          "case": "main",
+          "actualProductionSupervisors": true,
+          "oldProcessesStopped": true,
+          "recoveredWithNewGeneration": false
+        }
+      ],
+      "requiredChecks": [
+        {
+          "name": "Run npm test",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run node tools/desktop-sidecars/host_smoke.mjs",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run node tools/desktop-sidecars/supervisor_smoke.mjs",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm run test:desktop",
+          "conclusion": "success"
+        }
+      ],
+      "artifact": {
+        "id": 12562032677,
+        "digest": "sha256:1b97b4fec9545b791655b54369a13af81b5cfa4624f19a7a8ea67591ba327f65"
+      }
+    }
+  ]
+}

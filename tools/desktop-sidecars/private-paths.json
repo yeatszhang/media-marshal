@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "scope": "userData-relative",
+  "defaultExportExcluded": [
+    "credentials.json",
+    "credentials.json.tmp",
+    "credentials.json.*.tmp",
+    "credentials.enc.json",
+    "sidecars/openlist/**",
+    "sidecars/sessions/**",
+    "runtime/rclone/**",
+    "backups/sidecars/**"
+  ],
+  "rawStreamsExcluded": [
+    "openlist.stdout",
+    "openlist.stderr",
+    "rclone.stdout",
+    "rclone.stderr"
+  ],
+  "redactedFields": [
+    "cookie",
+    "password",
+    "token",
+    "jwt_secret",
+    "addition",
+    "raw_url",
+    "sign",
+    "authorization"
+  ]
+}

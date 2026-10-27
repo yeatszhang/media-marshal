@@ -6,6 +6,9 @@ export const releaseNotes: ReleaseNote[] = [
     date: '2026-08-29',
     items: [
       { type: 'feature', key: 'releaseNotes.v0_2_13_1.items.floatingBackToTop' },
+      { type: 'fix', key: 'releaseNotes.v0_2_13_1.items.organizationFailures' },
+      { type: 'optimization', key: 'releaseNotes.v0_2_13_1.items.automaticRecognition' },
+      { type: 'optimization', key: 'releaseNotes.v0_2_13_1.items.tmdbCache' },
     ],
   },
   {

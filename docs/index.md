@@ -1,48 +1,32 @@
 ---
 layout: home
-
 hero:
   name: Media Marshal
-  text: 让媒体文件整理更可靠
-  tagline: 自动识别电影与剧集，在低置信度时保留人工确认，按你的命名规则整理到 Emby、Jellyfin 或 Plex 媒体库。
+  text: 你的本地媒体库
+  tagline: 桌面客户端的开发、架构与验收文档。
   actions:
     - theme: brand
-      text: 阅读用户手册
-      link: /user-guide
+      text: 客户端下载与使用条件
+      link: /download
     - theme: alt
-      text: 查看部署指南
-      link: /deployment
+      text: 桌面客户端开发
+      link: /architecture/desktop-development
     - theme: alt
-      text: GitHub
-      link: https://github.com/media-marshal/media-marshal
-
-features:
-  - title: 自动发现与识别
-    details: 监控或扫描源目录，使用 guessit 解析文件名，并通过 TMDB 匹配电影和剧集信息。
-  - title: 人工确认保护
-    details: 低置信度任务进入待确认队列，避免错误识别直接污染媒体库。
-  - title: 灵活整理规则
-    details: 支持路径模板以及移动、复制、硬链接和符号链接等文件操作方式。
+      text: 架构文档
+      link: /architecture/
+    - theme: alt
+      text: 旧工程资料
+      link: /legacy/
 ---
 
-## 产品边界
+## 当前工程
 
-Media Marshal 是自托管媒体文件整理工具，不下载内容，不集成 PT 站或下载器，也不替代 Emby、Jellyfin 或 Plex 的播放能力。
+当前开发主体为 Electron + React 桌面客户端、共享契约和 TypeScript 媒体核心。桌面运行不依赖旧 Java 服务或旧数据库。
 
-当前版本不提供用户认证。应用 Web UI 和后端 API 建议仅部署在本机、家庭局域网或可信内网；如需远程访问，请在外部配置 VPN、反向代理认证或其它访问控制。
+开发与验证从[桌面客户端开发](./architecture/desktop-development.md)开始，业务边界见[架构总览](./architecture/index.md)。产品方向见[产品定位](./product/positioning.md)与[商业策略](./product/business-and-operations.md)。
 
-## 当前能力
+产品范围、设计和任务状态以仓库 OpenSpec 变更及已落地主规格为准；规划、代码实现、测试通过和发行验收分别记录，文档中的开发能力不代表已经正式发行。
 
-以下按 2026-09-05 的 v0.2.13.1 工作区核对；安装时仍需确认所用镜像的实际版本。
+## 旧工程资料
 
-| 能力 | 状态 |
-|---|---|
-| 普通电影、普通剧集、连续多集、电影蓝光目录 | 支持 |
-| 四种文件操作、路径模板、Sample 过滤、常见附属文件 | 支持，具体范围见用户手册 |
-| Queue 编辑 / 搜索 / 批量确认 / 顺序集号 | 支持，批量操作限当前页 |
-| 已完成任务修正、普通剧集同季 / 同剧集批量修正 | 支持预览、后台执行和失败重试；范围由后端跨页解析 |
-| TMDB HTTP 代理、路径规则导入导出 | 支持；代理仅用于 TMDB API |
-| ISO、剧集蓝光、裸 BDMV、离散多集 | 当前不支持整理 |
-| Webhook、内置认证、邮件通知页面、独立媒体库 / 播放统计 | 尚未开放 |
-
-最近修正作业的重新打开依赖同一浏览器的本地记录；尚无服务端作业检索页面。完整使用边界见[用户手册](./user-guide.md)，安装与升级见[部署指南](./deployment.md)。
+Java / Vue / Docker 工程的[项目介绍](./legacy/overview.md)、[用户手册](./legacy/user-guide.md)、[部署指南](./legacy/deployment.md)和[常见问题](./legacy/faq.md)已归档。完整入口见[旧工程资料](./legacy/index.md)，仅在维护旧工程或迁移规则时参考。

@@ -1,0 +1,47 @@
+{
+  "target": "darwin-arm64",
+  "version": "v4.2.7",
+  "driver": "Quark",
+  "membership": "VIP（用户声明）",
+  "checks": [
+    {
+      "check": "真实账号挂载",
+      "passed": true
+    },
+    {
+      "check": "父目录读取",
+      "passed": true,
+      "count": 12
+    },
+    {
+      "check": "匿名读取拒绝",
+      "passed": true
+    },
+    {
+      "check": "代理下载",
+      "passed": true,
+      "bytes": 8388608,
+      "wholeFile": false
+    },
+    {
+      "check": "Range 字节一致性",
+      "passed": true,
+      "bytes": 1024
+    },
+    {
+      "check": "失效 Cookie",
+      "passed": true,
+      "createCode": 500,
+      "listCode": 500
+    }
+  ],
+  "passed": true,
+  "fileSize": 604951500,
+  "versionEvidence": {
+    "stableId": false,
+    "hashAvailable": false,
+    "mtimeAvailable": true,
+    "comparison": "弱元数据比较"
+  },
+  "scope": "用户指定视频的前 8 MiB 与重复 Range 核对；不代表整文件下载完成或其他账号可用"
+}

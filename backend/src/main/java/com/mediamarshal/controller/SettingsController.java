@@ -49,6 +49,9 @@ public class SettingsController {
 
     @PutMapping("/{key}")
     public ApiResponse<Void> update(@PathVariable String key, @RequestBody UpdateRequest request) {
+        if (key.startsWith("emby.")) {
+            return ApiResponse.fail("请使用 Emby 配置接口保存服务器地址、API Key 和开关");
+        }
         if (tmdbProxySettingsService.supports(key)) {
             return ApiResponse.fail("请使用 TMDB 代理配置接口同时保存开关和地址");
         }
@@ -90,7 +93,7 @@ public class SettingsController {
         if (tmdbProxySettingsService.supports(key)) {
             return tmdbProxySettingsService.getEffectiveSettings(List.of(key)).getFirst();
         }
-        if ("tmdb.api-key".equals(key)) {
+        if ("tmdb.api-key".equals(key) || "emby.api-key".equals(key)) {
             return new EffectiveSettingResponse(key, "", "SENSITIVE", false);
         }
         SettingsService.EffectiveValue value = settingsService.getEffectiveValue(key, "");

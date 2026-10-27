@@ -1,0 +1,55 @@
+{
+  "capturedAt": "2026-10-25T18:17:51.612Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "os": "25.5.0",
+  "minimalPath": "/usr/bin:/bin:/usr/sbin:/sbin",
+  "manifestSha256": "d37ae8af7826e37094d46a684bb9ed58976a2903b36ac198d22a46f9d132031f",
+  "originalBinarySha256": "e66b7071ba7521f6dc95f5dd526f5e5ce44a124ab044f29ebf19360a77d165c0",
+  "results": [
+    {
+      "label": "原目录包组件加载",
+      "core": "ready",
+      "native": "ready",
+      "parser": "ready",
+      "schema": 23
+    },
+    {
+      "label": "外部模块和清单同时变化",
+      "core": "ready",
+      "native": "unavailable",
+      "parser": "ready",
+      "rejectedWithoutFileOperation": true
+    }
+  ],
+  "cleanup": true,
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "releaseStatus": "unsigned-preview",
+  "nativeSignature": "linker-ad-hoc",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "be9b3c2b78d3f8bdb4fdb00448984b8b1147a436242203f43743e4296149b688",
+  "sourceSha256": "ddeeea2effb8f18b259320238d0bc458dec35d52c2c83349653fd5f78f466a12",
+  "napi": 8,
+  "electronHeaders": "44.9.0",
+  "validation": {
+    "coreContractsComponents": {
+      "passed": 697,
+      "skipped": 13
+    },
+    "developmentWindows": 2,
+    "packagedWindows": 2,
+    "fileHistoryThroughMainWorkerPreload": true,
+    "originalDownloadPreserved": true,
+    "mainInodePreserved": true,
+    "coreRestartRetainedOperation": true
+  },
+  "notVerified": [
+    "修正页面与修复交互",
+    "同季／同剧批量修正",
+    "Intel 实机与 x64 运行",
+    "完整安装故障矩阵",
+    "Developer ID 与公证"
+  ]
+}

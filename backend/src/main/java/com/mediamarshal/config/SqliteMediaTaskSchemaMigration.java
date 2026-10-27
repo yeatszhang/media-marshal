@@ -57,6 +57,7 @@ public class SqliteMediaTaskSchemaMigration implements ApplicationRunner {
                 confirmed_original_title varchar(255),
                 confirmed_title varchar(255),
                 error_message TEXT,
+                metadata_warning TEXT,
                 media_type varchar(255) check (media_type in ('MOVIE','TV_SHOW')),
                 operation_type varchar(255),
                 parsed_codec varchar(255),

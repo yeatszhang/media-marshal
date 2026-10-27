@@ -1,0 +1,62 @@
+name: 桌面原型验证
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - '*config*.json'
+      - 'vitest.config.ts'
+      - '.github/workflows/desktop-prototype.yml'
+      - 'tools/desktop-parser/**'
+      - 'tools/desktop-files/**'
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15-intel, windows-2022]
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.14'
+      - run: python -m pip install --require-hashes -r tools/desktop-parser/requirements-build.txt
+      - run: python -m unittest discover -s tools/desktop-parser/tests
+      - run: python tools/desktop-parser/build.py
+      - run: python tools/desktop-parser/smoke.py
+      - run: npm ci
+      - if: runner.os == 'macOS'
+        run: npm run desktop:prepare-native-files
+      - run: npm run typecheck
+      - run: npm run check:boundaries
+      - run: npm run check:framework
+      - run: npm test
+      - run: npm run desktop:rebuild
+      - run: npm run desktop:build
+      - run: npm run test:electron-node
+      - run: npm run test:desktop
+      - run: npm run desktop:pack
+      - run: npm run test:packaged
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-evidence-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: ignore

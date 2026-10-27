@@ -1,0 +1,521 @@
+{
+  "cases": [
+    {
+      "id": "jujutsuKaisenRetainsEpisode48WhenSourceSeasonThreeMapsToSingleMetadataSeason",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#jujutsuKaisenRetainsEpisode48WhenSourceSeasonThreeMapsToSingleMetadataSeason",
+      "coordinate": {
+        "season": 3,
+        "episode": 48,
+        "episodeEnd": null
+      },
+      "seasons": [
+        0,
+        1
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 48,
+            "title": ""
+          }
+        ]
+      },
+      "expected": {
+        "season": 1,
+        "episode": 48,
+        "episodeEnd": null,
+        "episodeTitle": null,
+        "changed": true
+      },
+      "error": null,
+      "calls": [
+        1
+      ]
+    },
+    {
+      "id": "blueBoxUsesTmdbSeasonOneAndRetainsAbsoluteEpisodeNumber",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#blueBoxUsesTmdbSeasonOneAndRetainsAbsoluteEpisodeNumber",
+      "coordinate": {
+        "season": 2,
+        "episode": 26,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 26,
+            "title": "似曾相识"
+          }
+        ]
+      },
+      "expected": {
+        "season": 1,
+        "episode": 26,
+        "episodeEnd": null,
+        "episodeTitle": "似曾相识",
+        "changed": true
+      },
+      "error": null,
+      "calls": [
+        1
+      ]
+    },
+    {
+      "id": "validSeasonIsNotChangedEvenWhenOtherSeasonsHaveSameEpisode",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#validSeasonIsNotChangedEvenWhenOtherSeasonsHaveSameEpisode",
+      "coordinate": {
+        "season": 2,
+        "episode": 1,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1,
+        2
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 1,
+            "title": "第一季首集"
+          }
+        ],
+        "2": [
+          {
+            "season": 2,
+            "episode": 1,
+            "title": "第二季首集"
+          }
+        ]
+      },
+      "expected": {
+        "season": 2,
+        "episode": 1,
+        "episodeEnd": null,
+        "episodeTitle": "第二季首集",
+        "changed": false
+      },
+      "error": null,
+      "calls": [
+        2
+      ]
+    },
+    {
+      "id": "missingTitleDoesNotMeanEpisodeDoesNotExist",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#missingTitleDoesNotMeanEpisodeDoesNotExist",
+      "coordinate": {
+        "season": 1,
+        "episode": 26,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 26,
+            "title": ""
+          }
+        ]
+      },
+      "expected": {
+        "season": 1,
+        "episode": 26,
+        "episodeEnd": null,
+        "episodeTitle": null,
+        "changed": false
+      },
+      "error": null,
+      "calls": [
+        1
+      ]
+    },
+    {
+      "id": "doesNotGuessOffsetsForMultiSeasonSeries",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#doesNotGuessOffsetsForMultiSeasonSeries",
+      "coordinate": {
+        "season": 2,
+        "episode": 26,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1,
+        2
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 1,
+            "title": "首集"
+          }
+        ],
+        "2": [
+          {
+            "season": 2,
+            "episode": 1,
+            "title": "首集"
+          }
+        ]
+      },
+      "expected": null,
+      "error": "EPISODE_INVALID",
+      "calls": [
+        2,
+        1
+      ]
+    },
+    {
+      "id": "missingSeasonInMultiSeasonSeriesIsAmbiguous",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#missingSeasonInMultiSeasonSeriesIsAmbiguous",
+      "coordinate": {
+        "season": 3,
+        "episode": 1,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1,
+        2
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 1,
+            "title": "第一季"
+          }
+        ],
+        "2": [
+          {
+            "season": 2,
+            "episode": 1,
+            "title": "第二季"
+          }
+        ]
+      },
+      "expected": null,
+      "error": "EPISODE_INVALID",
+      "calls": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "existingPathSeasonWithoutEpisodeIsCorrectedUsingActualEpisodeLists",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#existingPathSeasonWithoutEpisodeIsCorrectedUsingActualEpisodeLists",
+      "coordinate": {
+        "season": 3,
+        "episode": 48,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1,
+        2,
+        3
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 48,
+            "title": "累计第48集"
+          }
+        ],
+        "2": [
+          {
+            "season": 2,
+            "episode": 1,
+            "title": "第二季首集"
+          }
+        ],
+        "3": [
+          {
+            "season": 3,
+            "episode": 1,
+            "title": "第三季首集"
+          }
+        ]
+      },
+      "expected": {
+        "season": 1,
+        "episode": 48,
+        "episodeEnd": null,
+        "episodeTitle": "累计第48集",
+        "changed": true
+      },
+      "error": null,
+      "calls": [
+        3,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "multipleSeasonsContainingTheEpisodeRemainAmbiguous",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#multipleSeasonsContainingTheEpisodeRemainAmbiguous",
+      "coordinate": {
+        "season": 3,
+        "episode": 48,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1,
+        2
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 48,
+            "title": "第一季"
+          }
+        ],
+        "2": [
+          {
+            "season": 2,
+            "episode": 48,
+            "title": "第二季"
+          }
+        ]
+      },
+      "expected": null,
+      "error": "EPISODE_INVALID",
+      "calls": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "seasonEpisodeCountAloneCannotProveTheEpisodeExists",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#seasonEpisodeCountAloneCannotProveTheEpisodeExists",
+      "coordinate": {
+        "season": 3,
+        "episode": 48,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 47,
+            "title": "第47集"
+          }
+        ]
+      },
+      "expected": null,
+      "error": "EPISODE_INVALID",
+      "calls": [
+        1
+      ]
+    },
+    {
+      "id": "anotherSeasonMustBeAvailableToProveTheMappingIsUnique",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#anotherSeasonMustBeAvailableToProveTheMappingIsUnique",
+      "coordinate": {
+        "season": 3,
+        "episode": 48,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1,
+        2
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 48,
+            "title": "第48集"
+          }
+        ],
+        "2": {
+          "error": "NETWORK_UNAVAILABLE"
+        }
+      },
+      "expected": null,
+      "error": "METADATA_UNAVAILABLE",
+      "calls": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "specialsAreNeverMappedToRegularSeason",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#specialsAreNeverMappedToRegularSeason",
+      "coordinate": {
+        "season": 0,
+        "episode": 1,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 1,
+            "title": "首集"
+          }
+        ]
+      },
+      "expected": null,
+      "error": "EPISODE_INVALID",
+      "calls": []
+    },
+    {
+      "id": "validatesEveryEpisodeInMergedRangeBeforeChangingSeason",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#validatesEveryEpisodeInMergedRangeBeforeChangingSeason",
+      "coordinate": {
+        "season": 2,
+        "episode": 26,
+        "episodeEnd": 28
+      },
+      "seasons": [
+        1
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 26,
+            "title": "首集"
+          },
+          {
+            "season": 1,
+            "episode": 28,
+            "title": "末集"
+          }
+        ]
+      },
+      "expected": null,
+      "error": "EPISODE_INVALID",
+      "calls": [
+        1
+      ]
+    },
+    {
+      "id": "mapsMergedRangeWhenEveryEpisodeExists",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#mapsMergedRangeWhenEveryEpisodeExists",
+      "coordinate": {
+        "season": 2,
+        "episode": 26,
+        "episodeEnd": 27
+      },
+      "seasons": [
+        1
+      ],
+      "lists": {
+        "1": [
+          {
+            "season": 1,
+            "episode": 26,
+            "title": "首集"
+          },
+          {
+            "season": 1,
+            "episode": 27,
+            "title": "次集"
+          }
+        ]
+      },
+      "expected": {
+        "season": 1,
+        "episode": 26,
+        "episodeEnd": 27,
+        "episodeTitle": null,
+        "changed": true
+      },
+      "error": null,
+      "calls": [
+        1
+      ]
+    },
+    {
+      "id": "missingTmdbSeasonListCannotBypassValidation",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#missingTmdbSeasonListCannotBypassValidation",
+      "coordinate": {
+        "season": 1,
+        "episode": 1,
+        "episodeEnd": null
+      },
+      "seasons": [],
+      "lists": {},
+      "expected": null,
+      "error": "EPISODE_INVALID",
+      "calls": []
+    },
+    {
+      "id": "networkFailureDoesNotFallBackToFilename",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#networkFailureDoesNotFallBackToFilename",
+      "coordinate": {
+        "season": 2,
+        "episode": 26,
+        "episodeEnd": null
+      },
+      "seasons": [
+        1
+      ],
+      "lists": {
+        "1": {
+          "error": "NETWORK_UNAVAILABLE"
+        }
+      },
+      "expected": null,
+      "error": "METADATA_UNAVAILABLE",
+      "calls": [
+        1
+      ]
+    },
+    {
+      "id": "seasonZeroCanBeValidatedNormally",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java#seasonZeroCanBeValidatedNormally",
+      "coordinate": {
+        "season": 0,
+        "episode": 1,
+        "episodeEnd": null
+      },
+      "seasons": [
+        0,
+        1
+      ],
+      "lists": {
+        "0": [
+          {
+            "season": 0,
+            "episode": 1,
+            "title": "特别篇"
+          }
+        ],
+        "1": [
+          {
+            "season": 1,
+            "episode": 1,
+            "title": "首集"
+          }
+        ]
+      },
+      "expected": {
+        "season": 0,
+        "episode": 1,
+        "episodeEnd": null,
+        "episodeTitle": "特别篇",
+        "changed": false
+      },
+      "error": null,
+      "calls": [
+        0
+      ]
+    }
+  ]
+}

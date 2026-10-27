@@ -1,0 +1,78 @@
+{
+  "recordedAt": "2026-10-26T16:48:43.285774+00:00",
+  "scope": "OpenSpec 21.5 部分：普通扫描的成功收据、本地移除与显式重新下载；重新登录身份关联待决策，任务不勾选",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "osVersion": "26.5.2",
+    "electronVersion": "44.9.0",
+    "build": "当前工作区开发构建，非打包或签名验收"
+  },
+  "checks": {
+    "unit": {
+      "passed": 918,
+      "skipped": 13,
+      "command": "npm test"
+    },
+    "workspaceTypecheck": "passed",
+    "boundaries": "passed",
+    "desktopBuild": "passed",
+    "docsBuild": "passed",
+    "desktopWindow": {
+      "passed": 1,
+      "command": "npm run test:desktop -- -g 成功同步的本地移除状态",
+      "fixture": "Main 授权的隔离测试根；预置成功收据后移除副本，不访问个人账号",
+      "assertions": [
+        "固定 IPC 返回已同步本地移除",
+        "920×640 无水平溢出",
+        "重载和 Core 重启保留同一作业",
+        "只读核对一个成功收据、一个作业、零个传输 attempt",
+        "本地副本没有被重新创建"
+      ]
+    },
+    "realSigkillCommitCheckpoints": 7,
+    "newWindowTestIsolatedStrictTypecheck": "passed",
+    "historicalWindowSpecTypecheckComparison": {
+      "baselineDiagnostics": 357,
+      "currentDiagnostics": 357,
+      "addedDiagnostics": 0,
+      "note": "历史测试文件的整文件类型检查原有问题未在本轮扩大；新增窗口用例独立严格检查通过"
+    }
+  },
+  "covered": [
+    "普通重复执行不补回同版本",
+    "周期扫描及 Core 服务重建不补回",
+    "缺盘与本地移除区分",
+    "本地内容改动或同内容替换不覆盖",
+    "弱版本同尺寸 mtime 改变不绕过成功记录",
+    "可靠新版本可以生成新传输",
+    "显式重新下载经过预览并使用独立目录",
+    "清理下载项历史保留收据且不伪造新传输",
+    "收据提交故障按原 inode 补记",
+    "v28→v29 备份、回滚、保留和旧版拒绝"
+  ],
+  "notVerified": [
+    "生产夸克重新授权后的跨引用关联",
+    "本地同步新入口接线（21.4）",
+    "新来源与独立识别完整流程",
+    "本轮真实夸克账号或 Emby 链路",
+    "Intel、签名、公证和安装态完整矩阵"
+  ],
+  "blockerEvidence": {
+    "provider": "apps/desktop/src/sidecar-host/openlist/provider.ts: accountIdentity unavailable / objectIdentity path",
+    "reauthorization": "packages/media-core/src/cloud/accounts.ts: 无可信映射时创建新远端根引用",
+    "receiptIdentity": "packages/media-core/src/sources/sync-receipts.ts: 当前按稳定应用账号与原远端引用查询，不能把新引用静默当旧对象"
+  },
+  "sha256": {
+    "packages/media-core/src/sources/sync-receipts.ts": "491e960a90577eefef47c5849adb8f3c475db389d099404d4b9756f4d6ecfe9c",
+    "packages/media-core/src/infrastructure/sync-receipt-migration.ts": "4c7d21e33110fbc0119a491a389cb16b99961de4b1633055586e3beddc520d21",
+    "packages/media-core/src/cloud/previews.ts": "9971fc6490846ccd733ce6ea38cd576407238283c82797925c4db144d0244cb6",
+    "packages/media-core/src/cloud/commits.ts": "f42c6c73c04f137bdebfdcf4bf4538cd6d5fa19aa677b46c11670413c3bf1fcd",
+    "packages/media-core/src/cloud/downloads.ts": "9717b224fa80e35f8418e6995af8bf9098ada019cd31b4707681710c95a8f35f",
+    "apps/desktop/out/main/index.js": "99efe45d2a31c1f130801b5b544e279a1f98b6355fb88fdbe1bfe1846e348445",
+    "apps/desktop/out/main/worker.js": "18f2f02b679e344be23918f689b48372aabf1cbf9cecc76d57fdf72196e9f3b2",
+    "docs/public/desktop/sync-receipt-local-removed-minimum.png": "a4a27305c534345455258ffb74b642be27b6b9e83266b8615ab6708a5363884f",
+    "apps/desktop/out/renderer/assets/index-CUN9WAlg.js": "43238fe66a8435e2a2c71153e2e9461eb2249cb3c10cabee50a96c09880ec02d",
+    "apps/desktop/out/renderer/assets/index-CrgNsP47.css": "ce04f489ab74d84f84390adecdc8ef1f36f665569ac66e02508de5e3b339d14d"
+  }
+}

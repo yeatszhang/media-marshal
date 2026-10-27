@@ -1,0 +1,40 @@
+{
+  "capturedAt": "2026-10-26T02:03:05.680934+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "applicationSourceRevision": "8bf13cf",
+  "productionCodeChanged": false,
+  "actualFrozenBinary": true,
+  "binaryPath": "tools/desktop-parser/dist/media-marshal-parser/media-marshal-parser",
+  "binarySha256": "4f8cabf53f20b0dd3b8565c7960c8d4e084c39073264e126fdc2161fce026473",
+  "testSourceSha256": "caa7d767afbcf6d1c21ba74bacab7ad2b85fce4c074cf52ce3ce4bf3c29442bf",
+  "parserSourceSha256": "04c7b7d14fea9c1f1c24b04c8f754e798f70f30a28be2a741a4d94d83593ef4a",
+  "checks": {
+    "parserTestsPassed": 8,
+    "parserTestsSkipped": 0,
+    "fullUnitPassed": 887,
+    "fullUnitSkipped": 13,
+    "osParentVerified": true,
+    "osStoppedStateVerified": true,
+    "defaultTimeoutMs": 5000,
+    "timeOutCodeVerified": true,
+    "oldProcessGoneBeforeNextParse": true,
+    "replacementPidDiffers": true,
+    "replacementMovieParsed": true,
+    "oldAndReplacementGoneAfterClose": true,
+    "successUsesSigcont": false,
+    "successUsesTestKill": false
+  },
+  "logSha256": {
+    "targeted": "fd72df3c85a67a29ed4b628fa94185319d4d751ac5097aaab4112f5c2dcb2e2e",
+    "full": "b4f0e773cc0a996ea5f674b3fa8562d352976f18fa9104cdd11b27fc1c5e3159"
+  },
+  "reproduction": "npm test -- packages/media-core/src/infrastructure/parser-process.test.ts",
+  "limits": [
+    "本机 arm64 冻结 guessit 与生产 ParserProcess 的直接测试，不作为完整应用安装态或 Intel 证明。",
+    "未准备冻结组件或非 macOS 时明确跳过；不能将跳过视作解析器已验证。",
+    "成功路径由生产代码回收实际停止的子进程，失败 finally 才允许清理本测试身份已复核的进程。",
+    "未修改生产生命周期；托盘图标点击、真实登录启动和完整生命周期矩阵仍由 2.6 验收。"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "target": "darwin-arm64",
+  "packaged": false,
+  "size": 604951500,
+  "localSha256": "01663a977dc49a136db3f257113a3125b0de00358c54406a28d2991f75abb503",
+  "durationMs": 27772,
+  "firstScopeConfirmed": true,
+  "literalNameFilterOnlyApprovedFile": true,
+  "directoryLayoutVerified": true,
+  "incrementalLocalEvidenceReused": true,
+  "rescanCreatedNoDuplicateJob": true,
+  "pauseRetainedAfterReloadAndCoreRestart": true,
+  "minimumWindowNoHorizontalOverflow": true,
+  "remoteEvidence": "weak",
+  "endToEndDigestClaimed": false,
+  "signed": false,
+  "openlist": "v4.2.7",
+  "rclone": "v1.75.2",
+  "fixtureSchemaVersion": 1
+}

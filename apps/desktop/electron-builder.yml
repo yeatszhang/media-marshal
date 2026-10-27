@@ -1,0 +1,83 @@
+appId: org.mediamarshal.desktop
+productName: Media Marshal
+directories:
+  output: release
+files:
+  - out/**
+  - resources/framework-origin.json
+  - resources/app-framework.LICENSE
+  - resources/media-marshal.LICENSE
+  - resources/pinyin4j-NOTICE.txt
+  - package.json
+asarUnpack:
+  - '**/*.node'
+mac:
+  category: public.app-category.video
+  files:
+    - out/**
+    - resources/framework-origin.json
+    - resources/app-framework.LICENSE
+    - resources/media-marshal.LICENSE
+    - resources/pinyin4j-NOTICE.txt
+    - package.json
+    - '!**/better-sqlite3/prebuilds/!(darwin-${arch}).node'
+    - from: resources/sidecars/darwin-${arch}
+      to: resources/sidecars
+      filter: [guardian.json, manifest.json, distribution.json]
+    - from: resources/parser/darwin-${arch}
+      to: resources/parser
+      filter: [manifest.json]
+    - from: resources/native-files/darwin-${arch}
+      to: resources/native-files
+      filter: [manifest.json, distribution.json]
+  extraResources:
+    - from: resources/native-files/darwin-${arch}
+      to: native-files
+      filter: [manifest.json, distribution.json, rename-exclusive.node, SOURCE-NOTICE.txt, 'sources/**', 'licenses/**']
+    - from: resources/parser/darwin-${arch}/runtime
+      to: parser
+      filter: ['**/*']
+    - from: resources/sidecars/darwin-${arch}/bin
+      to: bin
+      filter: [openlist, rclone, guardian]
+    - from: resources/sidecars/darwin-${arch}
+      to: sidecars
+      filter: [manifest.json, guardian.json, distribution.json, SOURCE-NOTICE.txt, 'licenses/**', 'sources/**']
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+win:
+  files:
+    - out/**
+    - resources/framework-origin.json
+    - resources/app-framework.LICENSE
+    - resources/media-marshal.LICENSE
+    - resources/pinyin4j-NOTICE.txt
+    - package.json
+    - '!**/better-sqlite3/prebuilds/!(win32-${arch}).node'
+    - from: resources/sidecars/win32-${arch}
+      to: resources/sidecars
+      filter: [guardian.json, manifest.json, distribution.json]
+    - from: resources/parser/win32-${arch}
+      to: resources/parser
+      filter: [manifest.json]
+  extraResources:
+    - from: resources/parser/win32-${arch}/runtime
+      to: parser
+      filter: ['**/*']
+    - from: resources/sidecars/win32-${arch}/bin
+      to: bin
+      filter: [openlist.exe, rclone.exe, guardian.exe]
+    - from: resources/sidecars/win32-${arch}
+      to: sidecars
+      filter: [manifest.json, guardian.json, distribution.json, SOURCE-NOTICE.txt, 'licenses/**', 'sources/**']
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+publish: null
+beforePack: ../../tools/desktop-sidecars/builder-before-pack.mjs
+afterSign: ../../tools/desktop-sidecars/builder-after-sign.mjs

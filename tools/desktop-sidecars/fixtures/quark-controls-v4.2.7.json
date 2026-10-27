@@ -1,0 +1,12 @@
+{
+  "target": "darwin-arm64",
+  "scope": "真实窗口与正式 Main/Core/Host/OpenList/Rclone 控制",
+  "unknownProgressWithoutPercentage": true,
+  "pausedOnlyAfterNativeExit": true,
+  "pausedJobRetainedAfterReload": true,
+  "resumeCreatedDifferentNativeWriter": true,
+  "cancelledOnlyAfterNativeExit": true,
+  "priorCompletedFileRetained": true,
+  "openCompletedDirectory": true,
+  "signed": false
+}

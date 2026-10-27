@@ -1,0 +1,11 @@
+{
+  "package": "@yeatz/app-framework",
+  "version": "0.1.0",
+  "resolved": "https://registry.npmjs.org/@yeatz/app-framework/-/app-framework-0.1.0.tgz",
+  "integrity": "sha512-vgqsvBZPo4EURYZg4KTBnbGZUVsoStI/Rzcgt2gJ2zcNH8QYpd/MgtbNVLtOpBxh2tjC628khkTa2Yqc/aFV5Q==",
+  "repository": "https://github.com/yeatszhang/yeats-wenger.git",
+  "directory": "packages/app-framework",
+  "reviewedSourceCommit": "002887f3537db2714e6bd5ea72c2ca9312f81b8e",
+  "sourceNote": "公开 registry 未提供 gitHead；源码评估引用与正式安装包以各自的 commit 和 integrity 分别追踪，不声称二者构建字节一致。",
+  "license": "MIT"
+}

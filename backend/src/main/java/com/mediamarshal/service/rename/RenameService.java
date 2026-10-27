@@ -102,6 +102,12 @@ public class RenameService {
         return target;
     }
 
+    public Path previewTarget(MediaTask task) {
+        WatchRule rule = watchRuleRepository.findById(Objects.requireNonNull(task.getRuleId()))
+                .orElseThrow(() -> new IllegalArgumentException("监控规则不存在：" + task.getRuleId()));
+        return resolveSafeTargetPath(rule.getTargetDir(), renderRelativePath(task, rule, null));
+    }
+
     /**
      * 模板选取优先级：对应媒体类型的规则自定义模板 > 全局配置模板 > 内置默认模板
      */

@@ -8,9 +8,13 @@ It watches your staging folders, identifies media with guessit and TMDB, sends u
 
 Source tree version: `v0.2.13.1` · 源码版本（已发布镜像以实际 Release 为准）
 
-[用户手册](docs/user-guide.md) · [部署指南](docs/deployment.md) · [常见问题](docs/faq.md)
+旧 Java / Vue / Docker 文档：[用户手册](docs/legacy/user-guide.md) · [部署指南](docs/legacy/deployment.md) · [常见问题](docs/legacy/faq.md)
 
-Maintainer documents / 维护文档：[当前需求与验收](.cursor/rules/requirements-status.mdc) · [路线图](.cursor/rules/project-roadmap.mdc)
+开发协作入口：[Codex 仓库指引](AGENTS.md)。旧工程规则按目录放在 `backend/`、`frontend/`、`parser/` 的 `AGENTS.md`；历史资料见下方入口。
+
+Maintainer documents / 维护文档：[产品定位与运营方向](docs/product/positioning.md) · [商业与付费策略](docs/product/business-and-operations.md) · [架构总览](docs/architecture/index.md) · [旧处理流程](docs/legacy/architecture/processing.md) · [旧数据与恢复](docs/legacy/architecture/data-and-recovery.md) · [旧工程资料与历史验收](docs/legacy/index.md) · [当前变更](openspec/changes/)
+
+桌面客户端迁移已开始，当前为 Electron + React 原型，接入 `@yeatz/app-framework`，尚未接通自动整理。开发方式见[桌面客户端开发](docs/architecture/desktop-development.md)，旧能力迁移范围见[迁移基线](docs/architecture/desktop-migration.md)。
 
 ---
 

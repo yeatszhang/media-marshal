@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@media-marshal/contracts/internal": ["../../packages/contracts/src/internal/index.ts"],
+      "@media-marshal/contracts/internal/core": ["../../packages/contracts/src/internal/core.ts"],
+      "@media-marshal/contracts/internal/rpc": ["../../packages/contracts/src/internal/rpc.ts"],
+      "@media-marshal/contracts": ["../../packages/contracts/src/index.ts"],
+      "@media-marshal/media-core/files": ["../../packages/media-core/src/files/index.ts"],
+      "@media-marshal/media-core": ["../../packages/media-core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "electron.vite.config.ts", "playwright.config.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+}

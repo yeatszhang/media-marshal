@@ -1,0 +1,818 @@
+{
+  "schemaVersion": 1,
+  "capturedOn": "2026-10-25",
+  "platform": {
+    "os": "macOS 26.5.2",
+    "arch": "arm64",
+    "filesystem": "APFS"
+  },
+  "client": {
+    "name": "夸克网盘 macOS 官方客户端",
+    "bundleId": "com.quark.clouddrive.desktop",
+    "version": "7.4.2.822",
+    "build": "2.822"
+  },
+  "scenario": "normal-download-and-final-rename",
+  "sample": {
+    "finalName": "01.mp4",
+    "temporaryNameExample": "01-000000000000.mp4.qkdownloading",
+    "temporaryNameTokenRedacted": true,
+    "bytes": 392608240,
+    "sha256": "c063e18bfb819a879279e6667e32f3e3074e810549aa73cff552981a00fcf818"
+  },
+  "capture": {
+    "method": "fs.watch + lstat 每 100 ms；官方界面选择独立临时下载目录",
+    "rawRecords": 85,
+    "selectedRecords": 77,
+    "rawReportCommitted": false,
+    "pathsAndAccountOmitted": true
+  },
+  "observations": {
+    "normalDownload": true,
+    "finalRename": true,
+    "sameFileIdentityAcrossRename": true,
+    "fullLogicalSizeFirstObservedMs": 8929,
+    "finalNameFirstObservedMs": 9870,
+    "fullSizeBeforeFinalNameMs": 941,
+    "sizePlateausWhileModificationContinues": true,
+    "paused": false,
+    "networkDisconnected": false,
+    "preallocationScenarioExercised": false,
+    "sameNameRedownload": false,
+    "preferencesChanged": false,
+    "automaticReadinessValidated": false
+  },
+  "limitations": [
+    "只覆盖这一客户端版本、APFS 和一个文件的正常完成；不是完整 4.1 行为矩阵。",
+    "短暂尺寸不变、达到最终尺寸或本地摘要相同不能单独作为云端下载完成回调。",
+    "暂停、断网、预分配故障与同名重下尚未测试；来源仍要求人工确认。"
+  ],
+  "timeline": [
+    {
+      "atMs": 0,
+      "kind": "temporary",
+      "event": "rename",
+      "exists": true,
+      "size": 0,
+      "blocks": 0,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 352,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 0,
+      "blocks": 4096,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": false
+    },
+    {
+      "atMs": 454,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 6291456,
+      "blocks": 4096,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 579,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 14680064,
+      "blocks": 20480,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 680,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 31457280,
+      "blocks": 36864,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 808,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 33554432,
+      "blocks": 45056,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 919,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 33554432,
+      "blocks": 53248,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 1030,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 35651584,
+      "blocks": 61440,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 1151,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 39845888,
+      "blocks": 69632,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 1251,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 60817408,
+      "blocks": 98304,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 1353,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 60817408,
+      "blocks": 118784,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 1558,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 62914560,
+      "blocks": 122880,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 1759,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 81788928,
+      "blocks": 131072,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 1859,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 94371840,
+      "blocks": 155648,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 1961,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 98566144,
+      "blocks": 159744,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2088,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 102760448,
+      "blocks": 188416,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2220,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 106954752,
+      "blocks": 200704,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2351,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 106954752,
+      "blocks": 204800,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2451,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 106954752,
+      "blocks": 212992,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2553,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 106954752,
+      "blocks": 217088,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2656,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 111149056,
+      "blocks": 217088,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2756,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 123731968,
+      "blocks": 233472,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2856,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 127926272,
+      "blocks": 245760,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 2958,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 140509184,
+      "blocks": 262144,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3058,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 140509184,
+      "blocks": 266240,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3159,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 148897792,
+      "blocks": 278528,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3261,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 148897792,
+      "blocks": 282624,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3360,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 148897792,
+      "blocks": 286720,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3461,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 148897792,
+      "blocks": 290816,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3562,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 150994944,
+      "blocks": 323584,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3662,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 169869312,
+      "blocks": 344064,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3761,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 178257920,
+      "blocks": 348160,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3862,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 186646528,
+      "blocks": 368640,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 3967,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 186646528,
+      "blocks": 372736,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4071,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 186646528,
+      "blocks": 376832,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4172,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 199229440,
+      "blocks": 385024,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4274,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 199229440,
+      "blocks": 385024,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4488,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 203423744,
+      "blocks": 413696,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4588,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 207618048,
+      "blocks": 417792,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4688,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 211812352,
+      "blocks": 417792,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4793,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 220200960,
+      "blocks": 442368,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4894,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 224395264,
+      "blocks": 446464,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 4995,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 224395264,
+      "blocks": 446464,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 5095,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 232783872,
+      "blocks": 450560,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 5196,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 245366784,
+      "blocks": 479232,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 5304,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 245366784,
+      "blocks": 483328,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 5405,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 245366784,
+      "blocks": 487424,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 5510,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 249561088,
+      "blocks": 487424,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 5611,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 266338304,
+      "blocks": 495616,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 5814,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 266338304,
+      "blocks": 503808,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 5914,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 274726912,
+      "blocks": 524288,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 6014,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 278921216,
+      "blocks": 536576,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 6116,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 291504128,
+      "blocks": 552960,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 6647,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 291504128,
+      "blocks": 585728,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 6659,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 291504128,
+      "blocks": 585728,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 6977,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 293601280,
+      "blocks": 585728,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 7077,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 304087040,
+      "blocks": 614400,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 7178,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 306184192,
+      "blocks": 618496,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 7279,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 316669952,
+      "blocks": 618496,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 7505,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 333447168,
+      "blocks": 626688,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 7604,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 335544320,
+      "blocks": 667648,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 7704,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 341835776,
+      "blocks": 667648,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 7811,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 346030080,
+      "blocks": 684032,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 7912,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 346030080,
+      "blocks": 684032,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8113,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 362807296,
+      "blocks": 704512,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8214,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 367001600,
+      "blocks": 704512,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8316,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 367001600,
+      "blocks": 716800,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8425,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 371195904,
+      "blocks": 749568,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8525,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 375390208,
+      "blocks": 749568,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8627,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 379584512,
+      "blocks": 749568,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8727,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 379584512,
+      "blocks": 749568,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8828,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 392167424,
+      "blocks": 782336,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 8929,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 392608240,
+      "blocks": 782336,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 9131,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 392608240,
+      "blocks": 782336,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 9232,
+      "kind": "temporary",
+      "event": "sample",
+      "exists": true,
+      "size": 392608240,
+      "blocks": 782336,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    },
+    {
+      "atMs": 9869,
+      "kind": "temporary",
+      "event": "rename",
+      "exists": false
+    },
+    {
+      "atMs": 9870,
+      "kind": "final",
+      "event": "rename",
+      "exists": true,
+      "size": 392608240,
+      "blocks": 782336,
+      "fileIdentity": "sample-file-1",
+      "modifiedSincePrevious": true
+    }
+  ]
+}

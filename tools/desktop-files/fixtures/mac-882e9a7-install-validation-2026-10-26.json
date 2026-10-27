@@ -1,0 +1,174 @@
+{
+  "capturedAt": "2026-10-26T02:02:26.525568+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "schema": 27,
+  "artifactCodeCommit": "882e9a7",
+  "runtimeCodeCommit": "2afb7f9",
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "publicUpload": false,
+  "dmg": {
+    "path": "build-artifacts/desktop-install-validation/882e9a7/Media Marshal-0.2.1-arm64.dmg",
+    "bytes": 255475048,
+    "sha256": "9c8c4b060155b0750c76f2fbad32dc30e506063a9b881fdf4136e4debec5de36",
+    "asarSha256": "6a35a50718d0f0a61fdb160d45186a62fa2046cdd5ed150dafd4e0dd7da08510"
+  },
+  "previousAsarSha256": "1475b3a4c17429d59feb4058b305a227416822c670e3cb851c6967493e7613b8",
+  "sourceAtArtifactRevision": {
+    "apps/desktop/tests/desktop.spec.ts": "85bfa219e67695e9d57b1302685c5cb95259cca86abf5765f1759f46a35df893",
+    "apps/desktop/tests/installation.spec.ts": "e35dc00ce29824808d601f3654704eef408e25481d9cc3d184b440d9a4183a0f",
+    "apps/desktop/tests/native-pause.spec.ts": "8a59d630202f3090d9a8a6b44df75b2ac31f6d933ed2a3d7081d494d4fd9ca55",
+    "apps/desktop/tests/core-termination.spec.ts": "cd29fc3e2f8fbad31602624e1e5b0a419819b1df2b8fdc346e0e7d5d4429ac9a",
+    "packages/media-core/src/ingestion/pipeline.ts": "638d435b3f632d95f34e65ad2cc0cefb575e39928aa5aefbb788b7aed011c98e",
+    "scripts/test-electron-node.mjs": "284eed3f8c6132fb030a8f78463f0056eaf2e761a3bbde04c418cbbcfd32bd91",
+    "apps/desktop/src/main/cloud/ingestion-crash.test.ts": "6ad92c49cef5dc4c655857f6d806a706a3136dde7ca6b86344c92c59f64d4328",
+    "tools/desktop-sidecars/ingestion-crash-fixture.mjs": "2525a019115e81b663f3ad4a8d6d684947d66fddfb58ebfb8e4a6264e182a25b",
+    "scripts/test-packaged-desktop.mjs": "dae1c647d66d98ee4308aaf31662c3d31c1988a7342a6044c400c86a7e50d472",
+    "package-lock.json": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b"
+  },
+  "receipts": {
+    "install-matrix-readonly": {
+      "target": "darwin-arm64",
+      "appVersion": "0.2.1",
+      "schema": 27,
+      "parser": "ready",
+      "correctionFiles": "ready",
+      "asarSha256": "6a35a50718d0f0a61fdb160d45186a62fa2046cdd5ed150dafd4e0dd7da08510",
+      "actualReadOnlyVolume": true,
+      "coreRestarted": true,
+      "systemPathOnly": true
+    },
+    "install-matrix-reinstall": {
+      "target": "darwin-arm64",
+      "asarSha256": "6a35a50718d0f0a61fdb160d45186a62fa2046cdd5ed150dafd4e0dd7da08510",
+      "configurationVersion": 1,
+      "candidatesRetained": 1,
+      "backupsRetained": 1,
+      "backupFilesVerified": 2,
+      "existingFilesRetained": 2,
+      "sameFileIdentityAndContents": true,
+      "unicodeAndSpaceInstallPath": true,
+      "replacementInstall": true,
+      "uninstallAndReinstall": true,
+      "systemPathOnly": true,
+      "directoryDialog": "controlled-result",
+      "upgradeDialog": "controlled-result"
+    },
+    "install-matrix-upgrade": {
+      "target": "darwin-arm64",
+      "previousAppVersion": "0.2.1",
+      "previousSchema": 6,
+      "previousAsarSha256": "1475b3a4c17429d59feb4058b305a227416822c670e3cb851c6967493e7613b8",
+      "currentAsarSha256": "6a35a50718d0f0a61fdb160d45186a62fa2046cdd5ed150dafd4e0dd7da08510",
+      "currentSchema": 27,
+      "previousSchemaBackupPresent": true,
+      "sourceIdentityAndPauseRetained": true,
+      "existingFilesRetained": 2,
+      "systemPathOnly": true,
+      "directoryDialog": "controlled-result"
+    },
+    "core-termination-exit": {
+      "stoppedStateVerifiedByOS": true,
+      "exitedBeforeRescue": true,
+      "elapsedMs": 10089,
+      "coreStopped": true,
+      "parserStopped": true,
+      "resumedCoreForSuccess": false,
+      "nativeOsQuitClick": false
+    },
+    "core-termination-restart": {
+      "stoppedStateVerifiedByOS": true,
+      "resumedCoreForSuccess": false,
+      "elapsedMs": 10333,
+      "oldCoreStopped": true,
+      "oldParserStopped": true,
+      "sameMain": true,
+      "newCore": true,
+      "replacementParserReady": true,
+      "persistedDraftId": "1fc4c9e1-ed03-4ed2-a68e-6b384c0e346f",
+      "draftRevision": 1,
+      "draftNotActivated": true,
+      "organizePaused": true,
+      "downloadsPaused": false,
+      "fileJobs": 0
+    },
+    "native-pause-controls": {
+      "menuItemCallbacks": true,
+      "sameFactoryAsTray": true,
+      "rendererMutationSynchronized": true,
+      "hiddenWindowControl": true,
+      "rendererReloadRetained": true,
+      "coreRestartRetained": true,
+      "appRestartRetained": true,
+      "finalOrganizePaused": false,
+      "finalDownloadPaused": true,
+      "fileJobsCreated": 0,
+      "nativeOsClick": false
+    },
+    "native-pause-timeout": {
+      "realUtilityProcessPaused": true,
+      "actualDeadlineExercised": true,
+      "pauseReceiptCount": 0,
+      "currentPaused": false,
+      "errorReportedOnce": true,
+      "unknownStateDisabled": true,
+      "problemRetained": true,
+      "automaticWriteReplay": false
+    },
+    "native-pause-stop": {
+      "exitWhileControlPending": true,
+      "stoppedOwnedCoreResumedAfterMs": 500,
+      "oldCoreStopped": true,
+      "parserStopped": true,
+      "nativeOsQuitClick": false,
+      "forcedKillOfUnresponsiveCore": false
+    }
+  },
+  "checks": {
+    "unitPassed": 886,
+    "unitSkipped": 13,
+    "developmentPassed": 50,
+    "developmentSkipped": 3,
+    "packagedPassed": 50,
+    "packagedSkipped": 3,
+    "asarEntries": 9534,
+    "typecheck": true,
+    "boundaries": true,
+    "desktopPack": true,
+    "ownedImagesDetached": true,
+    "openSpecProgress": {
+      "complete": 95,
+      "total": 109
+    }
+  },
+  "logs": {
+    "media-marshal-current-dev-windows.log": "0a33f6668b71de4c39e9380e71464140b5e1b20ef682672ea5a740389fcbfd86",
+    "media-marshal-current-packaged-full.log": "fb7294d6d9309867c092e42b3698ebd927de38e510fa65dd2eb16226e1c1381f",
+    "media-marshal-71ec4ab-tests-serialized.log": "88107205b5a9f7a905d8f7c79061bbb1a5980bb21cf15428d20ea789728cfb5f",
+    "media-marshal-full-prep-pack.log": "aac3d51adf75ad2d7c805309cd8b7ffd081de96fa9328655758b29546d493509",
+    "media-marshal-current-artifact.log": "45773d0b334ab3d567471ad257d4678c8836cc542aceb8173ca7bf13d4449e22",
+    "media-marshal-71ec4ab-types-fixed.log": "6954e9e2e4be973645ad826473b1f0c72277609e02379ef33ab61abbb5b540c7",
+    "media-marshal-71ec4ab-boundaries.log": "5aa99f53e785529cfcaeb5740a4684bd99282369a10ad6fd3c609bc7142501cf"
+  },
+  "performanceEvidence": "tools/desktop-files/fixtures/mac-benchmark-2026-10-26.json",
+  "preparationHistory": [
+    "首轮全量 884 passed／1 failed／13 skipped，受管目录补扫将已终态候选的实际 EACCES 误记为发现成功。增加普通与 SUPERSEDED 两种确定性复现，099b105 在幂等接收前重新核验文件可读性，保留 outbox 终态语义。",
+    "下一轮全量 885 passed／1 failed／13 skipped，内容复核崩溃夹具只给出泛化错误，缺少可判断原始原因的证据。补充有界 publicError 与阶段诊断，定向检查通过。",
+    "发现四项测试各自在 beforeAll 编译同一 contracts／Core dist，2afb7f9 将其移到公共测试入口顺序准备；这是消除已证实的共享构建并发风险，不能据此断言上一条泛化夹具失败的具体根因。其后全量 886 passed／13 skipped。",
+    "只读挂载准备时 /var 与 /private/var 路径差异导致匹配失败；检查 hdiutil 实际挂载表后按规范化路径识别已挂载自有映像，未重复挂载。",
+    "两套完整窗口回归各 50 passed／3 skipped；打包回归包含三项实际安装检查，备份逐文件核验字段已经存在。保存结果后按映像路径、挂载点和设备三者复核再卸载自有映像。"
+  ],
+  "scopeLimits": [
+    "仅验证本机 arm64 未签名映像；本机安装有开发工具，system PATH 不等于干净机器验收。",
+    "实际只读映像由 OS 拒绝 App 内写入；目录和升级确认对话框使用受控结果，不能据此声称 Finder 拖放、系统目录选择器、托盘图标或登录启动实测。",
+    "未配置真实网盘／TMDB／Emby，隔离媒体、来源、备份与安装副本不能替代真实账号或官方客户端故障矩阵。",
+    "程序化原生菜单回调与真实 OS 菜单点击分开；本夹具 nativeOsClick=false，之前普通启动的实际任务菜单检查有独立记录。",
+    "打包跳过三项工作区专用夹具，开发回归跳过三项明确环境变量开启的安装场景；两者并非跳过同一组用例。",
+    "8bf13cf 的表单状态增强及新增 parser SIGSTOP 单元测试晚于此映像，不能由本轮完整打包结果证明；其验证分别记录。",
+    "Intel、最低系统版本、Developer ID、公证、完整真实客户端矩阵仍未完成，8.4／9.2／18.4 不勾选。"
+  ]
+}

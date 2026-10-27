@@ -51,6 +51,12 @@
 
       <el-card shadow="never" class="settings-section">
         <template #header>{{ t('settings.matchingSection') }}</template>
+        <el-form-item :label="t('settings.codexFallback')">
+          <div class="field-stack">
+            <el-switch v-model="form.codexEnabled" />
+            <div class="form-hint">{{ t('settings.codexFallbackHelp') }}</div>
+          </div>
+        </el-form-item>
         <el-form-item :label="t('settings.confidenceThreshold')">
           <div class="field-stack">
             <el-slider
@@ -62,6 +68,30 @@
               class="confidence-slider"
             />
             <div class="form-hint">{{ t('settings.confidenceThresholdHelp') }}</div>
+          </div>
+        </el-form-item>
+      </el-card>
+
+      <el-card shadow="never" class="settings-section">
+        <template #header>{{ t('settings.embySection') }}</template>
+        <el-form-item :label="t('settings.embyEnabled')">
+          <div class="field-stack">
+            <el-switch v-model="form.embyEnabled" />
+            <div class="form-hint">{{ t('settings.embyHelp') }}</div>
+          </div>
+        </el-form-item>
+        <el-form-item :label="t('settings.embyServerUrl')">
+          <el-input v-model="form.embyServerUrl" :placeholder="t('settings.embyServerUrlPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('settings.embyApiKey')">
+          <div class="field-stack">
+            <el-input
+              v-model="form.embyApiKey"
+              type="password"
+              show-password
+              :placeholder="t(form.embyApiKeyConfigured ? 'settings.embyApiKeyKeep' : 'settings.embyApiKeyHelp')"
+            />
+            <div class="form-hint">{{ t('settings.embyApiKeyHelp') }}</div>
           </div>
         </el-form-item>
       </el-card>
@@ -130,6 +160,11 @@ const form = reactive({
   tmdbProxyEnabled: false,
   tmdbProxyHttpUrl: '',
   confidenceThreshold: 80,
+  codexEnabled: false,
+  embyEnabled: false,
+  embyServerUrl: '',
+  embyApiKey: '',
+  embyApiKeyConfigured: false,
   emailEnabled: false,
   emailRecipient: '',
 })
@@ -138,7 +173,9 @@ onMounted(async () => {
   await settingsStore.fetchSettings()
   form.tmdbApiKey = settingsStore.getSetting('tmdb.api-key')
   form.tmdbLanguage = settingsStore.getSetting('tmdb.language') || 'zh-CN'
+  form.codexEnabled = settingsStore.getSetting('codex.enabled') === 'true'
   await loadEffectiveTmdbProxy()
+  await loadEmby()
   form.confidenceThreshold = Math.round(
     Number(settingsStore.getSetting('watcher.confidence-threshold') || 0.8) * 100,
   )
@@ -147,12 +184,18 @@ onMounted(async () => {
 })
 
 async function handleSave() {
+  if (form.embyEnabled && (!form.embyServerUrl.trim() || (!form.embyApiKey.trim() && !form.embyApiKeyConfigured))) {
+    ElMessage.warning(t('settings.embyConfigRequired'))
+    return
+  }
   if (form.tmdbProxyEnabled && !form.tmdbProxyHttpUrl.trim()) {
     ElMessage.warning(t('settings.tmdbProxyUrlRequired'))
     return
   }
 
   const updates = [
+    settingsApi.updateEmby(form.embyEnabled, form.embyServerUrl.trim(), form.embyApiKey.trim()),
+    settingsStore.updateSetting('codex.enabled', String(form.codexEnabled)),
     settingsStore.updateSetting('tmdb.language', form.tmdbLanguage),
     settingsApi.updateTmdbProxy(form.tmdbProxyEnabled, form.tmdbProxyHttpUrl.trim()),
     settingsStore.updateSetting(
@@ -166,7 +209,16 @@ async function handleSave() {
   }
 
   await Promise.all(updates)
+  await loadEmby()
   ElMessage.success(t('settings.saved'))
+}
+
+async function loadEmby() {
+  const res = await settingsApi.getEmby()
+  form.embyEnabled = res.data.data.enabled
+  form.embyServerUrl = res.data.data.serverUrl
+  form.embyApiKeyConfigured = res.data.data.apiKeyConfigured
+  form.embyApiKey = ''
 }
 
 async function loadEffectiveTmdbProxy() {

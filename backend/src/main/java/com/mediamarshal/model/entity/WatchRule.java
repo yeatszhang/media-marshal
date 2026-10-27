@@ -75,7 +75,7 @@ public class WatchRule {
     @Column(nullable = false)
     private Boolean cleanupEmptyDirs = false;
 
-    /** 没有用户自带 NFO 时是否自动生成 NFO */
+    /** 兼容旧数据库与规则导入格式；不再生成 NFO。 */
     @Column(nullable = false)
     private Boolean generateNfo = false;
 

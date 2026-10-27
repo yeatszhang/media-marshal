@@ -1,0 +1,66 @@
+{
+  "recordedAt": "2026-10-25",
+  "task": "20.4",
+  "platform": "darwin-arm64",
+  "kind": "local-directory-authorization",
+  "reportedFailure": {
+    "previousMessage": "操作存在冲突，请查询当前状态",
+    "classifiedReason": "OWNERSHIP_MISMATCH",
+    "cause": "所选目录已由另一份应用配置登记，当前窗口的配置没有该下载根授权",
+    "evidence": {
+      "activeProfileHasNoDisplayedDownloadRoots": true,
+      "activeProfileHasNoDisplayedLocalSources": true,
+      "activeProfileHasNoDisplayedMediaTargets": true,
+      "originalProfileSchema": 7,
+      "originalProfileDatabaseReadOnly": true,
+      "originalGrantMatchesMarker": true,
+      "originalVolumeMatchesMarker": true,
+      "originalDirectoryInodeMatches": true,
+      "originalDirectoryBirthtimeMatches": true
+    }
+  },
+  "actualVolumeProbe": {
+    "filesystem": "hfs",
+    "writable": true,
+    "exclusiveCreate": true,
+    "hardLink": true,
+    "noReplace": true,
+    "directorySync": true,
+    "ownedTemporaryFilesRemoved": true,
+    "scope": "仅在所选根内创建独立临时探测目录，不改写原管理标记或既有文件"
+  },
+  "regressionEvidence": {
+    "contractAndNativeTests": "npm test",
+    "passed": 287,
+    "skipped": 13,
+    "electronCommand": "npm run test:desktop -- --grep '受管下载目录原生授权|目录授权经实际 IPC'",
+    "electronPassed": 2,
+    "screenshot": "test-results/desktop/download-root-ownership.png",
+    "scope": "新增窗口测试使用隔离配置与真实临时目录；原生对话框选择结果由测试注入，非手工 OS 选择验收",
+    "notCovered": ["安装包", "正式签名", "跨应用配置迁移", "该 HFS+ 卷上的完整下载与故障恢复"]
+  },
+  "resolution": {
+    "code": "区分目录重叠、私有位置、卷或目录变化、权限、文件系统、提交能力与管理标记；已知同目录重选在探测前复用授权 ID",
+    "data": "未迁移两份应用配置，未自动认领、删除或覆盖管理标记"
+  },
+  "authorizedRecovery": {
+    "recordedAt": "2026-10-25",
+    "userApproved": true,
+    "scope": "一次性释放经核实为空的预览配置授权，通过当前应用的原生目录选择器重新授权原目录",
+    "originalProfileBusinessTablesEmpty": true,
+    "managedStagingAttemptsAndCompletedEmpty": true,
+    "consistentDatabaseBackupVerified": true,
+    "originalMarkerBackupVerified": true,
+    "backupDirectoryMode": "0700",
+    "backupFileMode": "0600",
+    "originalPreviewAuthorizationReleased": true,
+    "newGrantOnSameVolume": true,
+    "nativeDirectoryChooserUsed": true,
+    "availableAfterRendererReload": true,
+    "existingCloudAccountStillConnected": true,
+    "existingUserEntriesUnchanged": true,
+    "downloadStarted": false,
+    "accountAndHistoryMigrationPerformed": false,
+    "scopeLimit": "仅恢复目录授权，不改变产品对未知标记的拒绝策略，不代表完整下载、整理或 Emby 交付验收"
+  }
+}

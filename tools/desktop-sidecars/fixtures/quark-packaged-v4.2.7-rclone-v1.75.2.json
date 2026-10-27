@@ -1,0 +1,39 @@
+{
+  "target": "darwin-arm64",
+  "packaged": true,
+  "readOnlyInstallVerified": true,
+  "developerToolsExcludedFromAppPath": true,
+  "scope": "真实 Main/系统保险箱/Core/Host/OpenList/Rclone，窗口范围预览与确认、完整文件校验提交、重载与 Core 重启",
+  "wholeFileDownloaded": true,
+  "size": 604951500,
+  "localSha256": "01663a977dc49a136db3f257113a3125b0de00358c54406a28d2991f75abb503",
+  "remoteEvidence": "weak",
+  "endToEndDigestClaimed": false,
+  "membership": "user-declared-vip",
+  "durationMs": 37155,
+  "coreReadyMs": 4242,
+  "accountRestoreMs": 5773,
+  "completedItems": 1,
+  "restoredSameCompletedJob": true,
+  "minimumWindowNoHorizontalOverflow": true,
+  "signed": false,
+  "validatedLocalDate": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "controls": {
+    "target": "darwin-arm64",
+    "packaged": true,
+    "scope": "真实窗口与正式 Main/Core/Host/OpenList/Rclone 控制",
+    "unknownProgressWithoutPercentage": true,
+    "pausedOnlyAfterNativeExit": true,
+    "pausedJobRetainedAfterReload": true,
+    "resumeCreatedDifferentNativeWriter": true,
+    "cancelledOnlyAfterNativeExit": true,
+    "priorCompletedFileRetained": true,
+    "openCompletedDirectory": true,
+    "signed": false
+  },
+  "artifact": {
+    "bytes": 219427130,
+    "sha256": "8ae35145818e76c96a9d3cc86a68f5d0b8c0104d416f2551a461511e32ac021c"
+  }
+}

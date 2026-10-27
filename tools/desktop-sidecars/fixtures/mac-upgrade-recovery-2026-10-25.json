@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "capturedOn": "2026-10-25",
+  "dataSchema": 15,
+  "baseCommit": "bba7965",
+  "environment": {
+    "os": "macOS 26.5.2",
+    "build": "25F84",
+    "arch": "arm64",
+    "testFilesystem": "APFS",
+    "artifact": "未签名开发构建"
+  },
+  "sourceSha256": {
+    "apps/desktop/src/main/core-supervisor.ts": "4d3a470599378956256faa3f6b2e8a4a40820c9c81acd908028e8d8faffca2ca",
+    "apps/desktop/src/main/cloud/upgrades.ts": "6d3d1f300cfe2bcea98fd87edd3b3c89a0aaa415c6bf93ec91b85290d866e13c",
+    "apps/desktop/src/main/credentials.ts": "344855fd938a86acceae026fa08a785b884c452a23d46880dc0978b6230bb0cc",
+    "apps/desktop/src/main/index.ts": "8a3bcd16d477ca0ad8f3e874863b58165a2cb838752d1bdf128ee10c5ceb8d6a",
+    "apps/desktop/src/renderer/src/App.tsx": "86b2240421097d5302a2b8f6dbee7641d15c346bd33a37a035396a84025efa4b",
+    "packages/contracts/src/internal/core.ts": "009123dae3ff8e33f7a98525a65287294e7f17f777c6fa2f34a096977cdab8b7",
+    "packages/media-core/src/infrastructure/database.ts": "594e4a7981ff8a5b6a28b6d08b6dde83342eb0558cdb6ebcef7a25c549f5cbc5",
+    "packages/media-core/src/ingestion/pipeline.ts": "37a50ae1222c410311012d41b6c81f77ef0a14eb1ddc23d7404a86876a915ba6",
+    "packages/media-core/src/ingestion/emby-delivery.ts": "fea3b0acba8a3aa79db77db2b5b358033d69c10e5a2aa34ac13a7603dc46a6d0",
+    "packages/media-core/src/modules/application.ts": "f1a2a46038e87ca807f789c509bc9067561c1f967061ae114012fa7504e31db9"
+  },
+  "buildSha256": {
+    "main/index.js": "6f480e9c1757d8202e8fa8e1f3dc8876411bae0659d94e2864432f2c92bba6a9",
+    "main/worker.js": "41edca389e1f29aa3ed7995da3e6436d7ccaa42707dee4b1dc2d618fe77eafed",
+    "preload/index.js": "5488da659356534e46ae971b5939bd585940e2122a64d429a357c9510579614e",
+    "renderer/assets/index-CaW2nZlT.js": "9d1e593c09f30021e5f96ac7d5b73ec3f24c8d7aa0e68c68c5c94fef07241d3d"
+  },
+  "checks": {
+    "unit": {
+      "passed": 470,
+      "skipped": 13,
+      "filesPassed": 53,
+      "filesSkipped": 3
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "desktopBuild": true,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "likec4": {
+      "version": "1.60.0",
+      "validated": true,
+      "exportedViews": 4
+    },
+    "electron": {
+      "passed": 22,
+      "builtWorkspace": true,
+      "nativeConfirmationDialogsAreControlledSubstitutes": true
+    }
+  },
+  "recoveryCases": {
+    "backupIncludesCommittedUncheckpointedWal": true,
+    "privateSnapshotIncludesPostSigkillWal": true,
+    "backupFailureStopsCoreCreationAndManualRetry": true,
+    "stoppingDuringPreflightDoesNotForkLateCore": true,
+    "interruptedStartupUsesUnknownSchemaUntilReady": true,
+    "olderCoreRejectsSchema15": true,
+    "partialRestoreExceptionAndRealSigkillRollBackBeforeCore": true,
+    "wrongArchitectureFutureVersionCorruptHashAndSymlinkRejected": true,
+    "mediaAuditQueueSurvivesDatabaseReopen": true,
+    "mediaAuditContinuesWhileCopyPaused": true,
+    "mediaAuditDoesNotReplayCopy": true,
+    "changedDeletedOrSameContentForeignTargetNotAdopted": true,
+    "subtitleConflictIndependentOfMainVideo": true,
+    "lateEmbyReceiptOrUrlRejectedDuringFileAudit": true,
+    "missingLocalEmbyKeyDoesNotInvalidateRemoteBinding": true,
+    "freshServiceCredentialsSurviveWholeApplicationRestart": true,
+    "oneUndecryptableServiceDoesNotBlockAnotherServiceOrRepair": true
+  },
+  "actualClient": {
+    "schema": 15,
+    "core": "ready",
+    "sourceVersion": 2,
+    "sourcePaused": true,
+    "tasks": 1,
+    "downloadJobs": 2,
+    "fileState": "DONE",
+    "deliveryState": "COLLECTED",
+    "embyVersion": 4,
+    "embyCurrentlyVerified": true,
+    "bindings": 2,
+    "localCredentialIssueVisible": false,
+    "sourceBytes": 392608240,
+    "targetBytes": 392608240,
+    "targetInodePreserved": true,
+    "mediaOrDownloadJobsAdded": false,
+    "migrationBackupPresent": true,
+    "privateBackupsAdded": 3,
+    "backupSchemaAudit": {
+      "thisRunOnly": true,
+      "checked": 3,
+      "schemasFound": [
+        15,
+        15,
+        14
+      ],
+      "correctedMetadata": 2,
+      "originalManifestsPreservedPrivately": true,
+      "mediaOrCredentialFilesChanged": false
+    }
+  },
+  "limitations": [
+    "原有 TMDB／Emby 密文曾无法解密，用户在客户端重存后已通过整应用重启及 Emby 收录复核；旧密文失效原因尚未确定。",
+    "独立新配置的跨进程加密测试通过，旧密文失效原因尚未确定；未签名开发构建不能证明正式签名连续性。",
+    "实际配置迁移和状态核对发生于本轮 v15 开发构建过程；最终构建的窗口验收使用隔离用户目录。",
+    "原生确认对话框在 Electron 用例中为受控替身，缺盘为授权不可用；没有以此代替物理拔盘、其他 Mac 架构或安装态验收。"
+  ],
+  "credentialRepair": {
+    "previousFailureRecorded": true,
+    "userResavedInClient": true,
+    "wholeApplicationRestart": {
+      "schema": 15,
+      "core": "ready",
+      "credentialIssueVisible": false,
+      "connectionVersion": 4,
+      "verified": true,
+      "bindings": 2,
+      "sourceVersion": 2,
+      "sourcePaused": true,
+      "tasks": 1,
+      "fileState": "DONE",
+      "deliveryState": "COLLECTED",
+      "downloadJobs": 2,
+      "sourceBytes": 392608240,
+      "targetBytes": 392608240,
+      "targetInodePreserved": true,
+      "wholeApplicationRestartVerified": true,
+      "startupMarkerCleared": true
+    },
+    "codeCommit": "4e5a18b3cf1908595da28b8d107c55a6c3665ccc"
+  }
+}

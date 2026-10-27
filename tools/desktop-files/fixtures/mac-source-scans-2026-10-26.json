@@ -1,0 +1,159 @@
+{
+  "capturedAt": "2026-10-25T22:30:47.217122+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "schema": 26,
+  "previousSchema": 25,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "8f94f2ea61c908e44aa3091664431e1bd7240bb051d01c6d0901159b2ffaffcc",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/main/cloud/downloads.test.ts": "95d05c9021e6242fffeb02d00c7cff1fa2ba75283f94d2a03df231c333fbebf2",
+    "apps/desktop/src/preload/index.ts": "49695072bfd5de8a0e9c762a88367a2d305ac7f780246d6ffed2a6b3bfa446d4",
+    "apps/desktop/src/renderer/src/ingestion-review.test.tsx": "8338e1d7e7d5eb35ecd68d3bcebade60aa7e650e888b67874af1d839fdca7e74",
+    "apps/desktop/src/renderer/src/pages/Ingestion.tsx": "51022b98b12135ef3662d9e3004b7e10a4239ee001eb4d577a37ee9728fda921",
+    "apps/desktop/src/renderer/src/services.ts": "c2241f3055ef718b009c7bca6c9fcea620ec260fc8182ed6c70d2097c1aa3ac1",
+    "apps/desktop/src/renderer/src/styles.css": "b6f926dba6f9824389f31495ef28cf1b9bdb55d7149f3b3802cf229c9fe4dea8",
+    "apps/desktop/tests/desktop.spec.ts": "50be1d5b1e27b64faebc0d12ccd0a7894760eeab64e1becf5253cbbb0d9a7a92",
+    "packages/contracts/src/contracts.test.ts": "bb2798413b48b2bdea49ff5acc4b6d8d6245b62a6a608d42f83e4fc5aee6a7b0",
+    "packages/contracts/src/index.ts": "83a2b33dff5c9b321b5585570d4597f2b27e760f1a6f50104d92d2b8179ba8bd",
+    "packages/contracts/src/ingestion.ts": "867171b14e9f843af1a6a2aceba0a395affed48ca111e214356561fadee32754",
+    "packages/contracts/src/internal/core.ts": "055ceeb2b12b9b107a16b10abfc3885093e23199aae0d17505873a826b92af91",
+    "packages/media-core/src/files/source-root.ts": "3131b4cd2b5c2763f68b542c10f97ecc107ca2c0cc69a64b5553f6eba2ff87b2",
+    "packages/media-core/src/infrastructure/database.test.ts": "a95691aba8151d9591ded4b82be7c51adeb4a2172ba43b1d934f83aff6884f8e",
+    "packages/media-core/src/infrastructure/database.ts": "aa54c3ce0308b62645b2559910ce9d1d93d436eb1bc4042f2414d760ed38ba9a",
+    "packages/media-core/src/ingestion/pipeline.ts": "d1f67081c2625470e9eec156fb02d6ef235333a1de55c86a5cfdc45a297aad37",
+    "packages/media-core/src/modules/application.test.ts": "173dd814e04d75bdf8a53801d556fed4477cb4693d46be245a1d745434096f18",
+    "packages/media-core/src/modules/application.ts": "3372d09047338ab83191fe5a0131d863f301c6cc3cfe0a93ddde3884f0e6ed21",
+    "packages/media-core/src/sources/rules.test.ts": "b31711d8e4c37c2a583715ead1dcd10a486ec58ca46dcf6bad35a2a45a6d6fb0",
+    "packages/media-core/src/sources/rules.ts": "e8f361616f0ecdc2f8273925156f9ee5766c1999af6f55230eae2745c85e437b",
+    "apps/desktop/src/renderer/src/components/SourceScansPanel.tsx": "01317d27f29810fbb1e7773e3361087c1e8dac1600eed994df4fbbb766779db1",
+    "apps/desktop/src/renderer/src/source-scans-model.ts": "c072504dd43fd05ca3c0a2ba23dd7885d84e8065db44784720730b418b9fdb3e",
+    "apps/desktop/src/renderer/src/source-scans.test.tsx": "7e9b772bae55142383caf953a413acfa0c732f05c2cee9cc2964b01028e59528",
+    "packages/media-core/src/infrastructure/source-scan-migration.ts": "f68dada3221fcae8b8dbee8f9908433a80e6ae695c3c7bafc47c6cb11de83137",
+    "packages/media-core/src/sources/scans.test.ts": "4e4008e4d4f99eed902c50b3564e3b540403310926e16c5886a170a93338142c",
+    "packages/media-core/src/sources/scans.ts": "fa082ffcdfe984fa720a59179cac7660f9f8d3d17b330275fc193eb56892ec5b"
+  },
+  "documentation": {
+    "docs/architecture/cloud-downloads.c4": "4ba537c37f42fa911d532cd030aabfc8d1519c1ec259b72b58b644d3a84680e2",
+    "docs/architecture/desktop-development.md": "824365c6aaea526d1cef8409a2f5770485140341a274a0b7fc94e5079caf5169",
+    "docs/architecture/desktop-ingestion.md": "9174ccc97ac3e55067dc8dd88df90406de56c7ed65beaa0e8576dc663d33c93b",
+    "docs/architecture/source-rules.md": "fc469db174efbebfe9772031c526b9c6aaf49b32079f4b815be1e3a5ec8cc411",
+    "docs/product/cloud-downloads.md": "7b90a58f37e2046ee398b32944e1b04a00f5ed3ee9d503f3aa0041ecf9315922",
+    "docs/public/architecture/cloud-downloads/index.png": "f329a838123339a2ea716dec9eaee404fa55d73352abe7e8764ac39654fd4a07",
+    "docs/public/architecture/cloud-downloads/ingestion.png": "41b445a6c70c033902799c070e94f0ece4094496fb4c86729d8ecbedff3cefcf",
+    "docs/public/architecture/cloud-downloads/sources.png": "cba22e3c6b95ff2747991ee49e23a02caa45392aaf2df14051b77857d6ef5ba1",
+    "docs/public/desktop/source-scan-partial-minimum.png": "ee08d85497cf7030c47a6800966639c6f7ccd312731e21d85a4846de2679c7f5",
+    "docs/public/desktop/source-scan-restored-minimum.png": "a748070967972a0871af55a344b035d029ef2b3c47cf36866d1c911e125075ef"
+  },
+  "planning": {
+    "openspec/changes/add-local-desktop-emby-ingestion/tasks.md": "711fb2660ef54d3d7b165cf0dea228f1e2b7e0981a8e9c88eea36f870f193129"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 823,
+      "skipped": 13,
+      "filesPassed": 82,
+      "filesSkipped": 3
+    },
+    "staticPublicCommands": 92,
+    "devRealWindowTests": 3,
+    "finalPackagedTests": 5,
+    "typecheck": true,
+    "boundaries": true,
+    "frameworkFixedPackageAndContents": true,
+    "artifactWhitelist": true,
+    "artifactEntries": 9534,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "likec4Export": {
+      "version": "1.60.0",
+      "views": 4
+    }
+  },
+  "realUtilityProcessResult": {
+    "malformedIgnored": true,
+    "canceled": "INTERRUPTED",
+    "stillOwned": "CONFLICT",
+    "restored": {
+      "items": [],
+      "nextCursor": null,
+      "total": 0,
+      "complete": true
+    },
+    "expired": {
+      "code": "TIMEOUT",
+      "message": "请求执行等待超时；已接收的作业可能继续，请查询原状态，不要重复提交",
+      "retryable": true
+    },
+    "firstResponses": 1,
+    "hostCalls": 3,
+    "sameJob": true,
+    "jobState": "SUCCEEDED",
+    "coreAlive": true,
+    "exitCode": 0
+  },
+  "requirement2_9": {
+    "validatedStaticCommands": [
+      "packages/contracts/src/contracts.test.ts",
+      "packages/media-core/src/modules/application.test.ts"
+    ],
+    "executionTimeoutAndPrivateCancellation": [
+      "apps/desktop/src/main/core-supervisor.test.ts",
+      "packages/media-core/src/application/request-executions.test.ts",
+      "packages/media-core/src/modules/application.test.ts",
+      "apps/desktop/tests/desktop.spec.ts:真实 Utility Core 区分请求取消与后台工作"
+    ],
+    "managedScanIntentAndRecovery": [
+      "packages/media-core/src/sources/scans.test.ts",
+      "packages/media-core/src/sources/rules.test.ts",
+      "apps/desktop/src/main/cloud/downloads.test.ts",
+      "apps/desktop/src/renderer/src/source-scans.test.tsx",
+      "apps/desktop/tests/desktop.spec.ts:手动补扫立即返回持久作业"
+    ],
+    "persistentLongOperationContracts": [
+      "ingestion.scan → SourceScan.id",
+      "ingestion.review-content → ContentReview.id",
+      "ingestion.recognize → taskId",
+      "ingestion.recognize-batch → RecognitionBatch.id",
+      "ingestion.preview-organize-batch / confirm-organize-batch → OrganizeBatch.id",
+      "ingestion.confirm → operationId",
+      "corrections.preview / confirm → CorrectionPreparation.id",
+      "corrections.preview-batch / confirm-batch → CorrectionBatch.id",
+      "cloud.downloads.preview / confirm → 预览与下载作业身份",
+      "source-rules.run-once → 来源运行身份"
+    ],
+    "noArbitraryPreloadCommand": "固定 scanIngestion、listIngestionScans 和 getIngestionScan；私有取消收据拒绝作为公共业务动作，未知 action 或任意路径／授权字段立即失败。"
+  },
+  "assertions": [
+    "先落库并返回扫描身份，未确认来源不登记；同请求键幂等，同来源与有效版本的并发意图合并。",
+    "页内轮询、离页、重挂载和 Core 重启只查询原作业，不重放扫描、识别或 COPY。",
+    "暂停和旧授权阻断扫描，属性读取后再次验证来源；迟到读取不能新增候选或累计稳定窗口。",
+    "原根枚举后被同名目录替换时保留 WAITING_SOURCE，替代目录没有新标记；原目录恢复后仍需重新观察。",
+    "共享网盘根按本来源当前版本有效需求过滤计数与问题，其他来源的权限故障不误归属。",
+    "逐项权限问题可查询和分页，修复后新扫描保留旧失败历史；不完整枚举不显示虚构总量或百分比。",
+    "配置及删除生命周期变化终止旧意图，不按新目录或配置继续；停止等待真正扫描落定，遗留 RUNNING 重启恢复 PENDING。",
+    "v25 → v26 保留原来源、暂停、健康快照和任务，不因迁移启动扫描；失败整体回滚，原备份保留，旧核心拒绝 v26。",
+    "实际窗口验证原文件字节和 inode 保留，没有识别、下载或文件作业；920 宽度长中文名称没有横向溢出。"
+  ],
+  "boundaries": [
+    "使用隔离临时目录与数据库，未操作个人媒体、目录、凭据或客户端下载偏好。",
+    "真实 Electron / Utility Process / 私有 MessagePort；实际等待 15 秒验证 Core 期限，宿主 RPC 响应使用受控替身。",
+    "实际文件 chmod、目录改名、内容与 inode 检查；个别未知错误脱敏、延迟读取和精确时钟为受控故障注入。",
+    "目录选择器为受控替身；未宣称物理磁盘拔插、真实休眠、官方夸克行为矩阵、Intel 或正式签名安装态验收。"
+  ],
+  "openSpec": {
+    "change": "add-local-desktop-emby-ingestion",
+    "progress": {
+      "total": 109,
+      "complete": 94,
+      "remaining": 15
+    },
+    "task2_9Complete": true,
+    "remaining": "其他十五项保持原范围，自动接入、官方客户端规则及发行矩阵没有由本阶段替代。"
+  }
+}

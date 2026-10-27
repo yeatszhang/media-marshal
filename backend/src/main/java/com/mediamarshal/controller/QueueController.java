@@ -9,6 +9,7 @@ import com.mediamarshal.model.dto.QueueBatchRecognitionRequest;
 import com.mediamarshal.model.dto.QueueBatchRecognitionSaveResponse;
 import com.mediamarshal.model.dto.QueueRecognitionRequest;
 import com.mediamarshal.model.dto.QueueRecognitionResponse;
+import com.mediamarshal.model.dto.QueueDirectoryRecognitionResponse;
 import com.mediamarshal.model.entity.MediaTask;
 import com.mediamarshal.model.entity.TaskCandidate;
 import com.mediamarshal.repository.MediaTaskRepository;
@@ -100,6 +101,24 @@ public class QueueController {
         } catch (Exception e) {
             log.warn("Recognition update failed: taskId={}, error={}", id, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        }
+    }
+
+    @PostMapping("/{id}/codex-rematch")
+    public ApiResponse<QueueRecognitionResponse> codexRematch(@PathVariable Long id) {
+        try {
+            return ApiResponse.ok(pipeline.recognizeWithCodex(id));
+        } catch (Exception error) {
+            return ApiResponse.fail(error.getMessage());
+        }
+    }
+
+    @PostMapping("/{id}/codex-directory-rematch")
+    public ApiResponse<QueueDirectoryRecognitionResponse> codexDirectoryRematch(@PathVariable Long id) {
+        try {
+            return ApiResponse.ok(pipeline.recognizeDirectoryWithCodex(id));
+        } catch (Exception error) {
+            return ApiResponse.fail(error.getMessage());
         }
     }
 

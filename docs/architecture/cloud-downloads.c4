@@ -1,0 +1,126 @@
+specification {
+  element person
+  element system {
+    style { color gray }
+  }
+  element process
+  element component
+  element storage {
+    style { color amber }
+  }
+}
+
+model {
+  user = person '用户'
+  quark = system '夸克网盘'
+  tmdb = system 'TMDB'
+  emby = system '已有 Emby 服务器'
+  desktop = system 'Media Marshal · macOS' {
+    renderer = process 'Renderer' {
+      description 'React 临时草稿；StatefulService 核心 DTO / computed；统一来源、待处理、任务与设置'
+    }
+    main = process 'Electron Main' {
+      description '系统保险箱、原生授权、运行偏好及许可；Renderer 清理握手、进程监管与升级备份'
+    }
+    core = process 'Media Core' {
+      description '唯一业务库写入者；来源版本、调度、识别、COPY、修正与独立交付'
+      sources = component 'SourceRules' {
+        description '唯一配置入口；不可变有效版本、目录健康快照、持久补扫、执行预览及可恢复删除'
+      }
+      subscriptions = component 'CloudSubscriptions' {
+        description '按有效来源版本周期补扫；共享需求和分层暂停'
+      }
+      downloads = component 'CloudDownloads' {
+        description '范围预览、领取、原卷校验、不覆盖提交和持久化 outbox'
+      }
+      ingestion = component 'IngestionPipeline' {
+        description '统一候选与资产版本；只读内容复核、目录及跨目录季集索引、持久批量识别与逐文件预览确认、稳定观察及沿策略快照 COPY'
+      }
+      automatic = component 'AutomaticIngestion（流水线持有）' {
+        description '首次人工预览授权；固定请求键及冻结来源上下文；可靠完成证据、唯一高分和共享季集校验；未知行为转人工'
+      }
+      corrections = component 'Corrections / CorrectionBatches' {
+        description '已整理目标强收据；单条／完整同季同剧范围预览；原子登记执行意图，逐成员完整清单确认、逐文件恢复与独立重试'
+      }
+      delivery = component 'EmbyDelivery' {
+        description '连接与库类型复核；独立交付意图、合并刷新、重试及收录核对'
+      }
+    }
+    parser = process '冻结 stdio parser'
+    host = process 'Sidecar Host' {
+      provider = component 'CloudDriveProvider'
+      engine = component 'TransferEngine'
+    }
+    guardian = process 'Guardian'
+    openlist = process 'OpenList · v4.2.7'
+    rclone = process 'Rclone CLI · v1.75.2'
+    database = storage '业务 SQLite · v27'
+    vault = storage '系统保护的凭据密文'
+    backups = storage '受限升级备份'
+    managed = storage '已授权原卷' {
+      staging = storage '自有 attempt 暂存区'
+      completed = storage 'completed 成果'
+    }
+    local = storage '普通本地来源目录'
+    target = storage '已授权媒体目标'
+  }
+  user -> desktop.renderer '配置、预览并确认'
+  desktop.renderer -> desktop.main '受限公开桥'
+  desktop.main -> desktop.renderer '重载前清理 Renderer'
+  desktop.main -> desktop.core '公开命令 / 私有账号及根授权'
+  desktop.main -> desktop.core.sources '来源命令（私有 Core 桥）；复核原生授权'
+  desktop.core -> desktop.main '反向宿主 RPC；代际、attempt、幂等键'
+  desktop.main -> desktop.host '私有端口；凭据与受管根'
+  desktop.main -> desktop.vault '异步 safeStorage'
+  desktop.main -> desktop.guardian 'OS 身份核验及回收'
+  desktop.main -> desktop.backups '停写后保存；恢复日志先于 Core 启动'
+  desktop.core -> desktop.database '事务、领取、提交意图、完成/outbox'
+  desktop.core -> desktop.managed '原卷身份、独立校验、不覆盖提交'
+  desktop.host.provider -> desktop.openlist '当前网盘适配；可替换为自研 Bridge'
+  desktop.host.engine -> desktop.rclone '参数数组、受控配置；不调用 shell'
+  desktop.guardian -> desktop.openlist '监管生命周期'
+  desktop.guardian -> desktop.rclone '监管生命周期'
+  desktop.rclone -> desktop.openlist '只读回环 WebDAV'
+  desktop.openlist -> quark '本人账号授权；只读获取'
+  desktop.rclone -> desktop.managed.staging '仅写当前 attempt'
+  desktop.core -> desktop.managed.completed '同卷独占发布后记账'
+  desktop.core.sources -> desktop.core.subscriptions '同事务更新执行配置；禁止独立编辑'
+  desktop.core.sources -> desktop.core.downloads '确认版本；一次性意图与执行预览'
+  desktop.core.sources -> desktop.core.ingestion '本地配置、授权根检查、补扫与整理协调'
+  desktop.core.sources -> desktop.database '草稿、版本、健康、首次自动授权及补扫收据'
+  desktop.core.subscriptions -> desktop.core.downloads '完整扫描后建立版本化需求'
+  desktop.core.downloads -> desktop.core.ingestion 'outbox／补扫；按需求及版本核对策略'
+  desktop.local -> desktop.core.ingestion '普通文件观察；不创建云端下载进度'
+  desktop.managed.completed -> desktop.core.ingestion '仅接收已记账完成项；相同 item/version 去重'
+  desktop.core.automatic -> desktop.core.ingestion '复用识别、预览、确认；不接管人工任务'
+  desktop.core.automatic -> desktop.database '冻结自动意图、等待原因及原操作收据'
+  desktop.core.ingestion -> desktop.parser '只传名称文本；有界 JSON Lines'
+  desktop.core.ingestion -> tmdb '候选查询及季集核对'
+  desktop.core.ingestion -> desktop.target '人工确认或有效自动授权后 COPY；保留来源且不覆盖'
+  desktop.core.ingestion -> desktop.core.delivery '文件提交后独立记录交付意图'
+  desktop.core.ingestion -> desktop.core.corrections '已记账 COPY 收据；协调临时租约与旧附属步骤'
+  desktop.core.corrections -> desktop.database '范围／成员快照、确认收据、逐文件日志和历史'
+  desktop.core.corrections -> tmdb '同一真实分集与跨成员坐标核验'
+  desktop.core.corrections -> desktop.target '显式确认后安全改名／跨卷复制；下载原件不动'
+  desktop.core.corrections -> desktop.core.delivery '文件与历史完成后新建独立交付意图'
+  desktop.core.delivery -> emby '明确路径映射；刷新和收录核对'
+}
+
+views {
+  view index {
+    title 'Mac 下载与整理的进程及权限边界'
+    include user, quark, tmdb, emby, desktop.*
+  }
+  view adapters of desktop.host {
+    title '接入与传输的可替换边界'
+    include desktop.host.*, desktop.openlist, desktop.rclone, desktop.managed.staging, quark
+  }
+  view sources {
+    title '统一来源的配置与执行边界'
+    include desktop.renderer, desktop.main, desktop.core.sources, desktop.core.subscriptions, desktop.core.downloads, desktop.core.ingestion, desktop.core.automatic, desktop.database
+  }
+  view ingestion {
+    title '下载与本地文件的整理及独立交付'
+    include desktop.core.downloads, desktop.managed.completed, desktop.local, desktop.core.ingestion, desktop.core.automatic, desktop.core.corrections, desktop.database, desktop.parser, tmdb, desktop.target, desktop.core.delivery, emby
+  }
+}

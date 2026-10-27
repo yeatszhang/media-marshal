@@ -1,0 +1,3957 @@
+---
+search: false
+---
+
+> 旧 Java/Vue/Docker 工程历史快照，迁移于 2026-10-25。下文“当前”、完成状态、维护要求和待办均保留原记录口径，不作为当前桌面客户端的指令、进度或接口依据。新工作使用 OpenSpec；旧路径和 `.mdc` 文件名仅用于历史追溯。参见[旧工程资料索引](./index.md)。
+
+# Media Marshal 实现日志
+
+> **使用规则（开发 Agent 必读）**
+> 1. 每完成一个功能模块，必须在本文件末尾追加一条记录
+> 2. 如有新增或变更的接口，同步更新 `api-contracts.mdc`
+> 3. 发现设计问题或需要 PM 决策的事项，写入"遗留问题"区，**不得直接修改 `design-decisions.mdc`**
+> 4. 记录格式固定，按下方模板填写
+
+---
+
+## 记录模板
+
+```markdown
+## [模块名] YYYY-MM-DD
+
+### 已完成
+- （bullet 列表，描述实际落地的内容）
+
+### 关键文件
+- （新增或大幅修改的文件路径列表）
+
+### 接口变更
+- （若有接口新增/变更，写明；同时更新 api-contracts.mdc）
+
+### 偏离设计的地方
+- （与 design-decisions.mdc 不一致的地方，说明原因）
+
+### 遗留问题 / 需 PM 决策
+- （实现中发现的设计盲点、待确认事项）
+```
+
+---
+
+## [模板渲染 + WatchRule 模块] 2026-04-25
+
+### 已完成
+- 新增 `TemplateVar` 注解和 `TemplateVariables` DTO，字段覆盖 ADR-001 全部预留变量
+- 新增 `TemplateRenderer` 服务，基于反射自动构建替换 Map，支持 `{key:02d}` / `{key:04d}` 格式化语法
+- 新增 `WatchRule` 实体（字段与 ADR-002 一致），`watch_rule` 表由 Hibernate 自动建表
+- 新增 `WatchRuleRepository`、`WatchRuleController`（含 CRUD + toggle 接口）
+- `FileWatcherService` 重构：改为读 `watch_rule` 表，支持 `reload()` 热加载，每条规则独立线程监控
+- `MediaTask` 新增 `ruleId` 字段（关联触发规则）
+- `RenameService` 实现 `buildTargetPath()`，通过规则取 `targetDir` + `pathTemplate` 渲染路径
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateVar.java`（新增）
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateVariables.java`（新增）
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateRenderer.java`（新增）
+- `backend/src/main/java/com/mediamarshal/model/entity/WatchRule.java`（新增）
+- `backend/src/main/java/com/mediamarshal/repository/WatchRuleRepository.java`（新增）
+- `backend/src/main/java/com/mediamarshal/controller/WatchRuleController.java`（新增）
+- `backend/src/main/java/com/mediamarshal/service/watcher/FileWatcherService.java`（重构）
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`（新增 ruleId 字段）
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`（实现 buildTargetPath）
+
+### 接口变更
+- 新增 `WatchRule` 全套 CRUD 接口，已更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- `MediaProcessPipeline` 核心处理流程（Step 2-8）尚未实现，是下一个最高优先级任务
+- `TmdbMetadataMatcher` 尚未实现，pipeline 无法跑通
+- `NfoGeneratorService` 尚未实现
+- `candidatesJson` 字段已加入 `MediaTask`，存储格式待 ADR-003 决策后由下一个 Agent 实现
+
+---
+
+## [环境确认 + 全量编译验证] 2026-04-25
+
+### 已完成
+- 确认本地开发环境升级至 JDK 21.0.10（Oracle HotSpot）+ Maven 3.9.2
+- `mvn clean compile` 全量编译通过，零错误零警告
+- 服务器已通过 `mvn spring-boot:run -Dspring-boot.run.profiles=dev` 正常启动（端口 8080）
+- WebSocket 连接正常（日志可见 STOMP CONNECT/CONNECTED 记录）
+- Hibernate 自动建表正常（SQLite dev 库已创建 `app_setting` 和 `media_task` 表）
+
+### 关键文件
+- 无新增文件，仅环境和编译状态确认
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 当前运行的服务是 ADR-001/002 改动前的旧代码（Hibernate 查询中 `media_task` 缺少 `rule_id` 字段）
+- 需重启服务（`mvn spring-boot:run -Dspring-boot.run.profiles=dev`）使新实体结构生效
+- 重启后 Hibernate DDL-auto=update 会自动为 `media_task` 表新增 `rule_id` 列，并创建 `watch_rule` 新表
+
+---
+
+## [前端导航重构] 2026-04-25
+
+### 已完成
+- `AppLayout.vue`：将原单一 `/settings` 菜单项改为 `el-sub-menu`，包含「路径设置」和「系统设置」两个子项
+  - 使用 `computed` 动态控制 `:default-openeds`，在 `/settings/**` 路由下自动展开设置子菜单
+  - 「高级设置」路由预留但不渲染菜单项（ADR-003 要求）
+  - 子菜单样式适配暗色侧边栏背景
+- `router/index.ts`：路由结构更新
+  - `/settings` 重定向到 `/settings/paths`
+  - 新增 `/settings/paths` → `PathsView.vue`
+  - 新增 `/settings/system` → `SystemSettingsView.vue`
+  - 新增 `/settings/advanced`（占位，暂用 SystemSettingsView，v2 替换）
+- `i18n/zh.ts` + `en.ts`：新增 `nav.settingsPaths`、`nav.settingsSystem`，扩充 `watchRule.*`、`settings.*`、`common.*` i18n key
+- 新增 `src/api/watchRule.ts`：封装 WatchRule CRUD + toggle 接口
+- 新增 `src/views/PathsView.vue`：Watch Rule 管理页（表格 + 新增/编辑对话框 + 删除/启用切换）
+- 新增 `src/views/SystemSettingsView.vue`：系统配置页（原 SettingsView 内容，移除路径相关配置）
+
+### 关键文件
+- `frontend/src/components/AppLayout.vue`（重构菜单）
+- `frontend/src/router/index.ts`（路由拆分）
+- `frontend/src/i18n/zh.ts`、`en.ts`（新增 i18n key）
+- `frontend/src/api/watchRule.ts`（新增）
+- `frontend/src/views/PathsView.vue`（新增）
+- `frontend/src/views/SystemSettingsView.vue`（新增，替代旧 SettingsView）
+
+### 接口变更
+- 无新增后端接口（使用已有的 `/api/watch-rules` 和 `/api/settings` 接口）
+
+### 偏离设计的地方
+- 旧 `SettingsView.vue` 保留未删除（router 已不再指向，可在后续清理时删除）
+
+### 遗留问题 / 需 PM 决策
+- ~~旧 `SettingsView.vue` 文件是否需要删除~~ → 已删除 ✅
+- `PathsView.vue` 中路径模板变量提示目前为硬编码字符串（已确认 v1 保持现状）
+  - 未来版本规划：新增独立「模板变量帮助页」，内容通过后端接口动态获取，已登记至 design-decisions.mdc 待讨论区
+
+---
+
+## [PathsView 交互升级] 2026-04-25
+
+### 已完成
+- **卡片网格布局**：规则列表由 `el-table` 改为响应式卡片网格（`auto-fill minmax(380px, 1fr)`）
+  - 每张卡片展示：规则名、源→目标路径、媒体类型/操作方式标签、路径模板、启用开关、编辑/删除按钮
+  - 禁用状态卡片降低透明度以区分
+- **目录浏览器**：
+  - 后端新增 `FilesystemController`，`GET /api/filesystem/browse?path=` 返回子目录列表
+  - 前端新增 `DirBrowserDialog.vue`：支持面包屑导航、逐级浏览、确认选择
+  - 新增 `api/filesystem.ts` 封装接口调用
+  - 表单中源目录/目标目录输入框右侧新增「浏览」按钮，点击打开目录浏览弹窗
+- **表单 enabled 字段移除**：新规则创建时默认 `enabled=false`，在卡片上通过 switch 手动开启
+- **路径模板下拉**：
+  - 默认展示预设模板下拉（当前硬编码 2 个预设：电影默认、剧集默认）
+  - 下拉框右侧「✏️ 自定义」按钮切换为输入框模式，用户可自由输入模板
+  - 「↩ 返回预设」按钮切换回下拉模式
+  - 编辑已有规则时自动识别是预设模板还是自定义模板并进入对应模式
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/controller/FilesystemController.java`（新增）
+- `frontend/src/api/filesystem.ts`（新增）
+- `frontend/src/components/DirBrowserDialog.vue`（新增）
+- `frontend/src/views/PathsView.vue`（重构）
+
+### 接口变更
+- 新增 `GET /api/filesystem/browse?path={path}` — 返回指定目录的子目录列表
+  - 响应：`{ currentPath, parentPath, dirs: [{ name, path }] }`
+  - 已更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- `DirBrowserDialog` 当前只显示目录，不显示文件；Windows 路径分隔符已统一转换为正斜杠
+- `FilesystemController` 未做权限校验，多用户版本需加 `user_id` 过滤（与 ADR-002 user_id 预留字段对应）
+
+---
+
+## [FileWatcher 递归监听与防护] 2026-04-25
+
+### 已完成
+- 按 ADR-005 改造 `FileWatcherService`
+  - 启动 / reload 时递归遍历 `watch_rule.sourceDir`，注册所有已存在子目录
+  - 运行期间收到新目录创建事件时，立即递归注册新目录
+  - `dirRuleMap` 维护"每个被注册目录 → WatchRule"映射，而不是只维护 sourceDir
+  - `reload()` 重建 `WatchService`，避免禁用/删除规则后旧 `WatchKey` 继续触发
+- 新增防抖与稳定性检测
+  - 使用 `ConcurrentHashMap<String, ScheduledFuture<?>>` 保存同路径防抖任务
+  - 防抖窗口通过 `SettingsService.get("watcher.debounce-seconds", "3")` 读取
+  - 防抖结束后读取文件大小，等待 1 秒再次读取，大小一致才进入 pipeline
+  - 文件消失、读取失败或大小仍变化时跳过并记录日志
+- 新增数据库查重
+  - `MediaTaskRepository` 新增 `existsBySourcePathAndStatusNot(sourcePath, FAILED)`
+  - 同一路径存在非 FAILED 任务时跳过；重复路径仅在 debug 日志中展开，扫描完成日志汇总重复数量
+- 增强健壮性
+  - pipeline 异常不会杀死 WatchService 事件线程或防抖线程
+  - 仅视频扩展名进入防抖流程，目录事件只用于递归注册
+- `application.yml` 新增 `media-marshal.watcher.debounce-seconds`
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/watcher/FileWatcherService.java`（重构）
+- `backend/src/main/java/com/mediamarshal/repository/MediaTaskRepository.java`（新增查重方法）
+- `backend/src/main/resources/application.yml`（新增防抖配置）
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- v1 不做历史文件全量扫描，严格遵循 ADR-005；如果用户希望处理已有目录中的历史文件，需要后续新增"手动扫描"能力
+- 当前稳定性检测在文件大小变化时等待下一次文件事件；某些 NAS / Docker volume 若漏发后续事件，可能需要后续增强为"自动重试 N 次"
+
+---
+
+## [MediaProcessPipeline 主流程] 2026-04-25
+
+### 已完成
+- 新增 `TaskCandidate` 实体和 `TaskCandidateRepository`，按 ADR-004 落地 `task_candidate` 表
+  - `TaskCandidate.task` 使用 `@JsonIgnore`，API 响应通过 `getTaskId()` 暴露任务 ID，避免递归序列化
+- 实现 `GuessitParserClient.parse()`
+  - 调用 parser sidecar `GET /parse?filename=...`
+  - 支持 `parser.timeout-seconds` 超时配置
+  - Debug 模式打印 guessit 原始解析结果
+- 实现 `TmdbMetadataMatcher`
+  - `search()` 调用 TMDB `/search/movie`、`/search/tv`
+  - `getById()` 调用 TMDB `/movie/{id}`、`/tv/{id}`
+  - 使用标题相似度 + 年份匹配计算 v1 置信度
+  - 支持 `tmdb.language`、`tmdb.base-url`、`tmdb.api-key` 配置
+- 实现 `NfoGeneratorService`
+  - 生成基础 movie / episode NFO XML
+  - NFO 与媒体文件同目录、同名 `.nfo`
+- 实现 `MediaProcessPipeline.process()`
+  - Step 1 创建任务并记录 `ruleId`、`operationType`
+  - Step 2 guessit 解析并写入 `parsedTitle/year/season/episode`
+  - Step 3 根据 WatchRule 或 guessit 结果确定媒体类型
+  - Step 4 TMDB 搜索并保存候选列表到 `task_candidate`
+  - Step 5 根据 `watcher.confidence-threshold` 分流：高置信度自动继续，低置信度进入 `AWAITING_CONFIRMATION`
+  - Step 6 重命名，Step 7 生成 NFO，Step 8 标记 `DONE` 并推送 WebSocket
+  - 失败时标记 `FAILED`，推送 WebSocket 并发送邮件通知（如启用）
+- 实现 `MediaProcessPipeline.confirm()`
+  - 校验任务必须为 `AWAITING_CONFIRMATION`
+  - 已存在候选则标记 selected；重新搜索结果则新建候选并 selected
+  - 拉取 TMDB 详情后继续 Step 6-8
+- 扩展 `QueueController`
+  - 新增 `GET /api/queue/{id}/candidates`
+  - 新增 `GET /api/queue/{id}/search?q=xxx`
+- `EventPublisher` 新增 `task.processing` 推送方法
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/entity/TaskCandidate.java`（新增）
+- `backend/src/main/java/com/mediamarshal/repository/TaskCandidateRepository.java`（新增）
+- `backend/src/main/java/com/mediamarshal/service/parser/GuessitParserClient.java`（实现）
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`（实现）
+- `backend/src/main/java/com/mediamarshal/service/nfo/NfoGeneratorService.java`（实现）
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`（实现）
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`（新增候选/搜索接口）
+- `backend/src/main/java/com/mediamarshal/websocket/EventPublisher.java`（新增 processing 事件）
+
+### 接口变更
+- 新增 `GET /api/queue/{id}/candidates`，返回 `TaskCandidate[]`
+- 新增 `GET /api/queue/{id}/search?q={keyword}`，返回 `MatchResult[]`
+- 已更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- TMDB 置信度算法为 v1 简化实现（标题 LCS 相似度 80% + 年份 20%），后续可单独优化
+- NFO 目前只生成核心字段（标题、年份、简介、TMDB ID、海报 URL），演员、分类、海报下载后续扩展
+- `operationType` 当前在任务创建时记录 WatchRule.operation；实际非 MOVE 策略尚未实现
+
+---
+
+## [TaskCandidate Repository 启动修复] 2026-04-25
+
+### 已完成
+- 修复 Spring Data JPA Repository 方法命名错误
+  - 原方法：`findByTaskIdOrderByRankAsc`、`findByTaskIdAndTmdbIdAndMediaType`
+  - 修复为：`findByTask_IdOrderByRankAsc`、`findByTask_IdAndTmdbIdAndMediaType`
+- 原因：`TaskCandidate` 实体字段是 `task`（`@ManyToOne`），不是直接的 `taskId` 字段；Spring Data JPA 查询关联属性需使用下划线路径 `task.id → Task_Id`
+- 同步修复 `QueueController` 和 `MediaProcessPipeline` 调用点
+- 运行 `mvn test` 验证 Spring 上下文启动成功
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/repository/TaskCandidateRepository.java`
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [首次初始化模式与 TMDB API Key 强制配置] 2026-05-07
+
+### 已完成
+- 新增 `/setup` 初始化页面
+  - 使用独立全屏布局，不显示侧边栏主导航
+  - 引导用户配置 TMDB API Key 与 TMDB 返回语言
+  - 支持初始化页中英文切换
+- 在路由层新增初始化守卫
+  - 首次进入前先加载 `/api/settings`
+  - 当 `tmdb.api-key` 为空时，Dashboard / Queue / Paths / System 等主功能路由会被重定向到 `/setup`
+  - 保存配置后解除锁定并跳转回原目标页或 Dashboard
+- `settingsStore` 新增初始化状态判断
+  - `loaded`
+  - `requiresSetup`
+  - `hasConfiguredValue()`
+- 修复 `updateSetting()` 本地状态未 upsert 新配置的问题，避免首次写入 API Key 后前端仍认为未初始化
+- 系统设置页保存时跳过未变更的脱敏 API Key，避免将 `abcd****` 一类脱敏值写回后端
+- 同步补充中英文 i18n 文案
+- 同步更新 ReleaseNote
+
+### 关键文件
+- `frontend/src/views/SetupView.vue`
+- `frontend/src/router/index.ts`
+- `frontend/src/App.vue`
+- `frontend/src/stores/settingsStore.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无新增接口，第一版复用 `GET /api/settings` 与 `PUT /api/settings/{key}` 判断和保存初始化状态
+
+### 偏离设计的地方
+- 暂未做 TMDB API Key 连通性测试，后续可加后端测试接口
+
+### 遗留问题 / 需 PM 决策
+- 是否需要后续新增 `/api/setup/status` 与 TMDB 连通性测试接口
+
+---
+
+## [初始化页面文案精简与 TMDB API Key 帮助入口] 2026-05-07
+
+### 已完成
+- 精简初始化页面文案
+  - 移除“首次初始化”小字
+  - 移除“必须先完成 TMDB 配置”提示框
+  - 页面说明改为“请完成初始化配置”
+- 调整 TMDB API Key 帮助说明
+  - 表单下方文案改为解释 API Key 用途
+  - 在 `TMDB API Key` 标签后新增帮助图标
+  - 鼠标悬停帮助图标时展示获取方式说明
+  - 帮助气泡内提供 TMDB API 设置页外链
+- 同步更新中英文文案
+
+### 关键文件
+- `frontend/src/views/SetupView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [前端国际化补齐与 ReleaseNote 面板对齐优化] 2026-05-07
+
+### 已完成
+- 全量扫描 `frontend/src` 用户可见硬编码文案
+- 将 HTTP 默认错误提示从硬编码中文改为 i18n
+  - `common.requestFailed`
+  - `common.networkError`
+- 移除系统设置保存时提交给后端的硬编码中文描述，避免前端按当前语言写入固定描述
+- 将邮件通知邮箱占位示例改为 i18n key
+- ReleaseNote 面板宽度从 390 调整为 520
+- ReleaseNote 条目标签列固定宽度，英文模式下 `New` / `Fix` / `Improved` 后的正文保持相同缩进
+- 同步更新 ReleaseNote，记录本次国际化与面板显示优化
+
+### 关键文件
+- `frontend/src/api/http.ts`
+- `frontend/src/views/SystemSettingsView.vue`
+- `frontend/src/components/AppVersionInfo.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [仪表盘任务筛选恢复与资产类型筛选] 2026-05-07
+
+### 已完成
+- 排查仪表盘筛选逻辑，确认当前页面仅保留了状态筛选，影片类型筛选入口与逻辑已缺失
+- 恢复仪表盘任务列表按影片类型筛选
+  - 支持全部类型 / 电影 / 剧集
+  - 可与状态筛选组合生效
+- 新增仪表盘任务列表按资产类型筛选
+  - 支持全部资产 / 普通视频 / ISO 镜像 / 蓝光原盘
+  - 对历史任务缺失 `assetType` 的情况按 `VIDEO_FILE` 兼容处理
+  - 可与状态筛选、影片类型筛选组合生效
+- 筛选条件或分页大小变化时清空表格选择并回到第一页，避免批量删除作用于不可见筛选结果
+- 同步补充中英文 i18n 文案
+- 同步更新 ReleaseNote，记录仪表盘组合筛选能力
+
+### 关键文件
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [版本号底部展示与版本元数据同步脚本] 2026-05-06
+
+### 已完成
+- 将左上角标题恢复为纯 `Media Marshal`
+- 将版本号入口移动到侧边栏底部语言切换按钮下方，保留 hover ReleaseNote 气泡交互
+- 优化底部版本号样式为低干扰文本徽标
+- 全仓搜索并移除旧初始版本号 `v0.1.0` / `0.1.0`
+- 新增 `scripts/sync-version.mjs`
+  - 从根目录 `VERSION` 读取唯一版本号
+  - 自动同步 `frontend/package.json`
+  - 自动同步 `frontend/package-lock.json`
+  - 自动同步 `backend/pom.xml`
+  - 自动同步 parser fallback 版本
+- parser 启动版本改为优先读取同目录 `VERSION`
+- 调整 parser Docker 构建上下文，确保容器内也能读取根目录 `VERSION`
+- 同步更新 beta compose 构建上下文，匹配已调整的前后端与 parser Dockerfile
+- 更新前端规范：发布版本变化时只改 `VERSION`，再运行 `node scripts/sync-version.mjs`
+
+### 关键文件
+- `VERSION`
+- `scripts/sync-version.mjs`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `frontend/src/components/AppLayout.vue`
+- `frontend/src/components/AppVersionInfo.vue`
+- `backend/pom.xml`
+- `parser/main.py`
+- `parser/Dockerfile`
+- `docker-compose.yml`
+- `docker-compose.beta.yml`
+- `.cursor/rules/frontend-rules.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [ADR-020 媒体资产识别与蓝光原盘目录支持] 2026-05-06
+
+### 已完成
+- 新增媒体资产类型 `MediaAssetType`：`VIDEO_FILE`、`ISO_IMAGE`、`BLURAY_DIRECTORY`
+- 新增媒体资产识别模块 `service/discovery/asset`
+  - `BluRayDirectoryAssetDetector` 支持标准蓝光目录强特征识别和内部路径向上归一化
+  - `IsoImageAssetDetector` 可识别 ISO，并按本版本范围记录为跳过
+  - `VideoFileAssetDetector` 承接普通视频文件识别
+  - `MediaAssetDetectionService` 按蓝光目录 → ISO → 普通视频优先级聚合 detector
+- 文件发现层改为先识别媒体资产，再执行任务创建 / 查重 / 跳过记录
+  - 标准蓝光目录以外层根目录创建一个任务，并剪枝内部 `BDMV/**`、`CERTIFICATE/**`
+  - 内部 `.m2ts`、`.mpls`、`.clpi` 等不再生成普通视频或 `SKIPPED` 噪音
+  - 裸 `sourceDir/BDMV` 记录为 `SKIPPED`，原因：`非标解析失败：蓝光原盘缺少影片外层目录`
+  - ISO 记录为 `SKIPPED`，原因：`当前版本暂不支持 ISO 镜像`
+  - `TV_SHOW` 规则下的蓝光原盘记录为 `SKIPPED`，原因：`当前版本暂不支持剧集蓝光原盘`
+- `MediaTask` 新增 `assetType` 字段，历史兼容默认 `VIDEO_FILE`
+- Pipeline 支持以 `MediaAsset` 入参处理任务
+  - 蓝光目录使用外层目录名作为 guessit / TMDB 输入
+  - `AUTO` / `MOVIE` 规则下蓝光目录按电影处理
+- 新增资产整理分发层
+  - 普通视频复用现有 `RenameService`
+  - 蓝光原盘目录按电影模板渲染后取父目录作为目标根目录
+  - 模板无父目录时 fallback 到 `{title} ({year})`
+  - `{ext}` 在蓝光模板渲染时为空字符串
+  - `MOVE` 移动整个蓝光根目录
+  - `COPY` 递归复制目录结构
+  - `HARD_LINK` 递归创建目录并为普通文件创建硬链接
+  - `SYMBOLIC_LINK` 创建目录级符号链接
+  - 目标目录存在时失败，不覆盖、不合并、不自动改名
+- 蓝光目录不进入附属文件跟随逻辑；开启 NFO 时在目标根目录生成 `movie.nfo`
+- 前端 Queue / Dashboard 增加资产类型展示标签和中英文文案
+- 补充单元测试覆盖蓝光识别、内部路径归一化、裸 BDMV、ISO 跳过识别、蓝光目录目标路径和 fallback
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaAssetType.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/asset/MediaAsset.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/asset/MediaAssetDetectionService.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/asset/BluRayDirectoryAssetDetector.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/asset/IsoImageAssetDetector.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/asset/VideoFileAssetDetector.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/AssetOrganizerService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/BluRayDirectoryAssetOrganizer.java`
+- `backend/src/main/java/com/mediamarshal/service/nfo/NfoGeneratorService.java`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `MediaTask` 新增字段：`assetType: 'VIDEO_FILE' | 'ISO_IMAGE' | 'BLURAY_DIRECTORY'`
+- `MediaTask.sourcePath` 语义调整为源媒体资产路径
+- `MediaTask.targetPath` 在目录型资产下表示目标根目录
+- 已在 `api-contracts.mdc` 同步说明资产类型文案和本版本跳过范围
+
+### 偏离设计的地方
+- 按当前需求确认，本版本暂不完整支持 ISO 整理；扫描到 ISO 仅记录 `SKIPPED`
+- 按当前需求确认，本版本暂不支持剧集蓝光原盘；扫描到 `TV_SHOW` 规则下蓝光原盘仅记录 `SKIPPED`
+- 裸 `sourceDir/BDMV` 不静默忽略，改为记录 `SKIPPED` 任务，便于用户在 Dashboard 看到非标原因
+
+### 遗留问题 / 需 PM 决策
+- 后续版本可继续补齐 ISO 镜像整理
+- 后续版本可扩展剧集蓝光原盘识别、季集语义和目录整理规则
+- 后续版本可评估蓝光根目录旁同名 poster / folder / nfo 等附属文件跟随策略
+
+---
+
+## [Queue 当前页批量跳过] 2026-05-03
+
+### 已完成
+- Queue 批量操作栏在“批量确认”右侧新增“批量跳过”按钮
+- 批量跳过作用于当前页已选任务，不要求任务已关联候选
+- 点击批量跳过前弹出确认框，说明文件不会被处理
+- 前端复用现有单任务跳过接口逐条提交，部分失败时在对应任务上展示失败原因
+- 成功后刷新待确认队列，并清理当前页已跳过任务的选择状态
+- 补充中英文 i18n 文案和按钮帮助提示
+
+### 关键文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无新增接口；复用 `POST /api/queue/{id}/skip`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 如后续批量跳过任务量很大，可考虑新增后端批量跳过接口以减少前端多请求
+
+---
+
+## [ADR-019 Queue 全局手动搜索候选与任务关联] 2026-05-03
+
+### 已完成
+- 新增全局元数据搜索接口 `GET /api/metadata/search?q=&mediaType=`
+  - 搜索语义不再依赖具体任务 ID
+  - 支持关键词搜索和纯数字 TMDB ID 查询
+  - 搜索结果复用 `MatchResult[]`，不立即写入 `task_candidate`
+- 保留旧 `GET /api/queue/{id}/search?q=` 兼容接口，并在 API 契约中标记为 Deprecated
+- Queue 页改造为“当前候选 + 当前页已选任务 + 任务已关联候选”的批量确认模型
+  - 用户可先搜索候选再选择任务，也可先选择任务再搜索候选
+  - 当前页任务即使没有系统候选，也可以被选中
+  - `应用当前候选到已选任务` 会把当前候选关联到当前页已选任务
+  - 已选任务媒体类型与当前候选不一致时阻止应用
+  - 覆盖已有候选选择前弹出二次确认
+  - `批量确认（N）` 只统计当前页“已选任务，已选择候选”的任务
+- Queue 页顶部新增全局手动搜索面板
+  - 默认展开，可折叠 / 展开
+  - 折叠后仍展示当前候选摘要
+  - 搜索结果作为前端临时候选，应用到任务后再通过批量确认提交
+- 系统推荐快捷面板压缩展示
+  - 默认只展示前 3 个推荐分组
+  - 可展开全部 / 收起
+  - 分组按覆盖任务数、平均置信度、稳定顺序排序
+  - 每个分组支持选择该推荐任务、设为当前候选、应用到已选任务
+- 前端 API、中文 / 英文 i18n 和 API 契约已同步更新
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/controller/MetadataController.java`
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `frontend/src/api/media.ts`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 新增 `GET /api/metadata/search?q={keyword}&mediaType={MOVIE|TV_SHOW}`，返回 `MatchResult[]`
+- `GET /api/queue/{id}/search?q={keyword}` 标记为 Deprecated，前端新流程不再使用
+- `POST /api/queue/batch-confirm` 契约补充：支持确认来自全局手动搜索、不在任务候选表中的候选
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [英文别名命中评分与源文件缺失巡检优化] 2026-05-03
+
+### 已完成
+- 优化英文别名命中文中标题候选的置信度评分
+  - 当 TMDB 通过英文 `ORIGINAL` / `GUESSIT` query 召回中文标题候选，但候选 `title/originalTitle` 不含英文别名时，不再把标题分固定视为 0
+  - 若该英文 query 仅召回 1 个候选，将“搜索唯一命中”作为弱标题证据，显著提升正确中文候选置信度
+  - 若该英文 query 召回 2-3 个候选，给予较低的弱标题证据；结果更多时不加分
+  - 补充单元测试覆盖 `The Flowers of War -> 金陵十三钗`、`For the Sake of the Republic -> 走向共和` 类场景
+- 优化删除源文件后的自动失败检测
+  - 删除事件不再只做即时检查，改为按 `watcher.debounce-seconds` 延迟复核，避免事件顺序和文件系统延迟造成误判
+  - 为每条启用 WatchRule 增加轻量源文件缺失巡检，只检查数据库中 `PENDING` / `AWAITING_CONFIRMATION` 任务的 `sourcePath` 是否存在，不执行全量目录扫描
+  - 新增配置 `watcher.missing-source-check-seconds`，默认 60 秒，最小 10 秒，用于弥补 NAS / Docker volume / 网络盘删除事件漏发
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbConfidenceScorer.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `backend/src/main/resources/application.yml`
+- `backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java`
+
+### 接口变更
+- 无新增接口或前端可见字段
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- `Shameless.U.S...` 这类国家/版本缩写仍未作为通用规则处理；如需要支持，应单独设计英文标题后缀规范化策略，例如同时搜索 `Shameless` 与 `Shameless U.S`
+
+---
+
+## [英文别名唯一命中评分策略调优] 2026-05-03
+
+### 已完成
+- 继续优化英文别名命中中文候选的评分策略
+  - 当英文别名 query 只返回唯一候选，且年份完全匹配、媒体类型完全匹配时，提升标题证据分
+  - 该类场景最终置信度从约 73% 提升到约 82%，可通过当前默认 80% 阈值
+  - 代表场景：`The Flowers of War -> 金陵十三钗`、`For the Sake of the Republic -> 走向共和`
+- 收紧年份评分
+  - 文件名缺少年份时 `yearScore` 从 0.5 降为 0.3
+  - 候选缺少年份时 `yearScore` 从 0.3 降为 0.1
+  - 年份相差 1 年时 `yearScore` 从 0.6 降为 0.3
+  - 年份明显不一致仍为 0
+- 弱别名证据随年份/类型可信度变化
+  - 唯一结果 + 年份/类型全匹配：高证据
+  - 唯一结果但年份缺失或不一致：低证据
+  - 2-3 个候选：更低证据
+  - 超过 3 个候选：不使用搜索命中作为标题证据
+- 补充单元测试覆盖 82% 区间、年份缺失扣分、年份不一致扣分
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbConfidenceScorer.java`
+- `backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+## [ADR-015 模板变量帮助与路径预览] 2026-05-02
+
+### 已完成
+- 补齐模板变量生命周期状态模型
+  - 后端 `TemplateVariableStatus` 扩展为 `AVAILABLE` / `RESERVED` / `DEPRECATED` / `UNAVAILABLE`
+  - 前端 `TemplateVariableStatus` 类型同步扩展
+  - API 契约同步记录完整状态枚举
+- 优化变量帮助面板展示规则
+  - 仅展示 `AVAILABLE` 和 `DEPRECATED` 变量
+  - 过滤隐藏 `RESERVED` 和 `UNAVAILABLE`
+  - `DEPRECATED` 支持展示“即将废弃”标签
+  - 点击变量占位符可复制，复制成功后给轻提示
+- 为自定义路径模板增加预览能力
+  - 电影 / 剧集自定义模板输入框右侧拼接图标预览按钮，鼠标悬停显示“预览”
+  - 预览基于 `GET /api/template-variables` 返回的 `example` 字段替换变量
+  - 预览结果展示在输入框下方，使用等宽字体
+  - 未识别或未展示变量保持原样，并给轻提示
+  - 空模板预览时提示用户先输入模板
+- 同步新增中英文 i18n 文案
+- 已运行 `npm run type-check`，通过
+- 已运行 `mvn test`，通过
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/dto/TemplateVariableGroup.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateVariableCatalogService.java`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `TemplateVariableItem.status` 状态枚举扩展为 `AVAILABLE` / `RESERVED` / `DEPRECATED` / `UNAVAILABLE`
+- 前端帮助面板展示规则：仅展示 `AVAILABLE` 和 `DEPRECATED`
+- 已同步更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 帮助内容国际化仍按 ADR-015 约定暂不处理，继续原样展示后端返回的说明和示例
+
+### 遗留问题 / 需 PM 决策
+- 如后续要求预览与后端渲染器完全一致，可新增 `POST /api/template-variables/preview` 接口替代前端本地示例替换
+
+---
+
+## [Dashboard 媒体类型筛选] 2026-05-02
+
+### 已完成
+- 仪表盘最近任务列表新增媒体类型筛选
+  - 支持全部类型 / 电影 / 剧集
+  - 与现有状态筛选组合生效
+  - 切换筛选或分页大小时清空当前选择并回到第一页
+- 新增中英文 i18n 文案
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无，复用前端已加载任务列表做本地筛选
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## 2026-05-02 Queue 当前页任意候选批量选择
+
+### 背景
+- ADR-012 已支持 Queue 当前页分页、系统推荐候选批量选择、同推荐候选快捷选择和批量确认接口
+- 实际使用中，当前页多个任务可能需要批量选择候选列表中的同一个非首推候选
+- 本次仅实现“当前页任意候选批量选择”，批量手动搜索暂不实现
+
+### 完成内容
+- 将 Queue 顶部同候选提示从“系统推荐候选分组”扩展为“当前页所有候选分组”
+- 分组 key 继续使用 `mediaType + tmdbId`，同一任务内重复候选会去重计数
+- 点击“选择此候选”后，为当前页所有包含该候选且未被用户手动改选的任务批量选中该候选
+- 保留用户手动选择优先级，已经手动改选的任务不会被批量候选选择覆盖
+- 更新中英文 i18n 文案，避免继续表达为“推荐候选”
+
+### 关键文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无；复用现有 `POST /api/queue/batch-confirm`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 批量手动搜索暂未实现，按本次需求延期
+
+---
+
+## 2026-05-02 Queue 批量确认异步提交优化
+
+### 背景
+- 用户批量确认 20 个待确认任务时，前端出现 `timeout of 100000ms exceeded`
+- 原因是 `POST /api/queue/batch-confirm` 在同一个 HTTP 请求中逐条同步执行完整 `pipeline.confirm()`
+- 单条确认会包含 TMDB 详情获取、文件操作、附属文件处理、NFO 生成等耗时步骤，20 条串行处理容易超过前端超时时间
+
+### 完成内容
+- 新增 `MediaProcessPipeline.submitConfirm()`，用于批量确认的快速提交
+- 批量确认接口只做任务存在性、状态和媒体类型校验
+- 校验通过后立即将任务切换为 `PROCESSING`，设置 `confirmationSource=MANUAL_BATCH`，并发布处理中的 WebSocket 事件
+- 后续 TMDB 详情获取、候选标记、重命名、NFO/附属文件处理改为后台执行
+- 后台确认使用固定 4 并发的虚拟线程池，减少 HTTP 等待时间，同时避免一次性并发过高压垮 SQLite 或文件系统
+- 后台处理失败时任务进入 `FAILED`，写入 `errorMessage`，并沿用失败通知逻辑
+- 前端批量确认成功提示改为“已提交 / 进入整理”，避免误解为全部文件已整理完成
+- 同步更新 API 契约，说明 `BatchConfirmResult.success=true` 表示已接收并进入后台整理
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `POST /api/queue/batch-confirm` 响应结构不变
+- 语义调整：`success=true` 表示提交后台整理成功，不再表示该任务文件整理已经完成
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 暂未新增后台批量确认进度查询接口；当前通过任务状态刷新和 WebSocket 追踪最终结果
+
+---
+
+## 2026-05-02 剧集路径模板预设更新
+
+### 背景
+- 用户要求系统自带剧集路径模板改为新的 4 个预设
+- 电影模板保持不变
+- 新的第一个剧集模板作为系统默认模板
+
+### 完成内容
+- 更新后端 `RenameService` 内置剧集 fallback 默认模板
+- 更新 `application.yml` 中 `MEDIA_MARSHAL_TEMPLATE_TV` 未配置时的默认值
+- 更新路径设置页 4 个剧集预设模板和示例
+- 保持 `{ext}` 直接拼接，不额外增加点号，因为 `{ext}` 已包含 `.mkv` 这类扩展名前缀点
+- 同步更新 ADR-001 默认模板说明和预览示例
+- 更新 `RenameServiceTest` 中剧集全局 fallback 期望值
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/main/resources/application.yml`
+- `backend/src/test/java/com/mediamarshal/service/rename/RenameServiceTest.java`
+- `frontend/src/views/PathsView.vue`
+- `.cursor/rules/design-decisions.mdc`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+## [ADR-012 Queue 批量确认流程] 2026-04-30
+
+### 已完成
+- `MediaTask` 新增 `confirmationSource` 字段，区分 `AUTO_MATCH`、`MANUAL_SINGLE`、`MANUAL_BATCH`
+- 高置信度自动采纳时写入 `AUTO_MATCH`
+- 单条人工确认继续使用现有接口，写入 `MANUAL_SINGLE`
+- 新增 `POST /api/queue/batch-confirm`
+  - 逐条复用现有确认流程
+  - 单条失败不回滚整个批次
+  - 返回每个任务的成功 / 失败结果
+- Queue 页面新增本地分页，默认按 `createdAt desc` 展示
+- Queue 页面新增当前页批量操作栏：
+  - 选择当前页系统推荐
+  - 清空当前页选择
+  - 批量确认（N）
+- 当前页按 `mediaType + tmdbId` 聚合同候选推荐，支持一键选择同一组推荐
+- 批量确认前弹出确认框，展示确认数量和低置信度候选数量
+- 批量确认完成后展示成功 / 失败数量，失败任务保留并显示失败原因
+- 同步更新 API 契约
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/api/media.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 新增 `POST /api/queue/batch-confirm`
+- `MediaTask` 响应新增 `confirmationSource`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [QueueView 人工确认页面] 2026-04-25
+
+### 已完成
+- 按 ADR-006 补齐 `/queue` 页面人工确认流程
+  - 页面加载 `GET /api/queue` 的 AWAITING_CONFIRMATION 任务
+  - 每个任务卡片展示源文件路径、解析标题、年份、媒体类型、季集信息、置信度
+  - 调用 `GET /api/queue/{id}/candidates` 展示系统候选列表，包含海报、标题、年份、类型、置信度、排序和简介
+  - 新增重新搜索输入框，调用 `GET /api/queue/{id}/search?q={keyword}`，搜索结果与系统候选合并展示
+  - 用户选中候选后调用 `POST /api/queue/{id}/confirm`，请求体为 `{ tmdbId, mediaType }`
+  - 跳过按钮调用 `POST /api/queue/{id}/skip`，并增加确认弹窗
+- 补齐前端 Queue 相关类型定义：`TaskCandidate`、`MatchResult`，并按 API 契约修正 `MediaTask` 可空字段
+- 扩展 `mediaApi` 队列接口封装，避免组件直接调用 axios
+- Queue 页面所有新增用户可见文案已加入 `zh.ts` / `en.ts`
+- `mediaStore.fetchQueue()` 增加 loading 状态，`confirmTask()` 使用强类型 `MediaType`
+- 已运行 `npm run type-check` 与 `npm run build`，均通过
+
+### 关键文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/api/media.ts`
+- `frontend/src/stores/mediaStore.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无新增或变更后端接口（使用 `api-contracts.mdc` 已定义的 `/api/queue` 系列接口）
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- `npm run build` 仍有 Vite 默认 chunk size warning（Element Plus / 依赖打包体积较大），不影响构建产物；如后续关注首屏体积，可单独规划 manualChunks 拆包优化
+
+---
+
+## [Dashboard 创建时间显示优化] 2026-04-27
+
+### 已完成
+- 优化仪表盘最近任务列表的“创建时间”列显示
+  - 第一行显示日期：`YYYY-MM-DD`
+  - 第二行显示时间：`HH:mm:ss`
+  - 增加轻量样式区分日期和时间
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/DashboardView.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+## [侧边栏待确认徽标对齐优化] 2026-04-27
+
+### 已完成
+- 优化左侧菜单“待确认队列”后的任务数量显示
+  - 将原 `el-badge` 改为菜单项内自定义数字胶囊
+  - 使用 flex 居中布局，使数字与菜单标题上下居中对齐
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/components/AppLayout.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [QueueView 候选卡片标签布局优化] 2026-04-27
+
+### 已完成
+- 优化待确认队列候选卡片的标题与标签布局
+  - 视频标题单独占一行，避免与标签挤在同一行导致溢出
+  - 推荐排序 / 来源标签移动到标题下一行，并支持自动换行
+  - 简介文本支持自动换行，超出卡片显示多行省略号
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/QueueView.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [候选列表与路径规则弹窗布局优化] 2026-04-27
+
+### 已完成
+- 优化 Queue 页面候选列表卡片网格
+  - 候选项改为默认每行 4 列展示
+  - 略微增加卡片内部间距与海报尺寸，让候选项视觉更舒展
+  - 窄屏下自动降为 2 列 / 1 列
+- 优化路径设置页新增 / 编辑规则弹窗
+  - 弹窗宽度从 `580px` 调整为 `960px`
+  - 表单拆为左右两栏：左侧“基本设置”，右侧“文件处理策略”
+  - 文件操作方式、附属文件处理、NFO、清理空目录、忽略规则和路径模板统一放在右侧策略栏
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [路径规则弹窗分栏内容调整] 2026-04-27
+
+### 已完成
+- 按反馈调整路径设置页新增 / 编辑规则弹窗分栏
+  - 左侧保持“基本设置”
+  - 右侧标题改为“高级设置”
+  - 文件操作方式移动到左侧
+  - 电影 / 剧集路径模板移动到左侧
+  - 右侧仅保留自动移动附属文件、自动生成 NFO、自动清理空文件夹、默认忽略文件类型
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [路径规则弹窗垂直居中优化] 2026-04-27
+
+### 已完成
+- 优化路径设置页新增 / 编辑规则弹窗位置
+  - 为 `el-dialog` 增加 `align-center`
+  - 弹窗保持页面垂直居中，减少默认顶部偏移带来的滚动感
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/PathsView.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [路径模板选择体验优化] 2026-04-27
+
+### 已完成
+- 优化路径设置页新增 / 编辑规则弹窗中的路径模板区域
+  - 移除电影路径模板 / 剧集路径模板下方直接展示的可用变量列表
+  - 改为显示“点击查看可用变量”超链接，临时指向 `https://www.media-marshal.com`
+  - 路径模板下拉项显示改为用户友好的自然语言路径描述
+  - 下拉项右侧新增“样例”标签，鼠标悬停展示实际路径示例
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 可用变量链接暂时写死为 `https://www.media-marshal.com`，后续 ADR-007 落地时可替换为正式帮助页
+
+---
+
+## [路径模板可用变量链接位置调整] 2026-04-27
+
+### 已完成
+- 调整路径设置页模板帮助链接展示方式
+  - 移除电影路径模板和剧集路径模板下方重复的“点击查看可用变量”链接
+  - 仅在“电影路径模板”标题右侧显示一个帮助链接
+  - 电影和剧集路径模板共用该帮助入口
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/PathsView.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 可用变量链接仍临时指向 `https://www.media-marshal.com`，后续 ADR-007 落地时可替换为正式帮助页
+
+---
+
+## [路径模板样例标签视觉优化] 2026-04-27
+
+### 已完成
+- 优化路径模板下拉项右侧“样例”标签
+  - 电影 / 剧集模板统一使用同一种蓝色胶囊样式
+  - 增加圆角、渐变背景、悬停阴影和轻微上浮效果
+  - 保留鼠标悬停查看路径示例的交互
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/PathsView.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [路径模板样例标签颜色调整] 2026-04-27
+
+### 已完成
+- 将路径模板下拉项右侧“样例”标签从蓝色胶囊样式调整为绿色胶囊样式
+- 保留悬停阴影与轻微上浮效果
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/PathsView.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [路径设置页说明文案优化] 2026-04-27
+
+### 已完成
+- 优化路径设置页面顶部解释性描述
+  - 将偏技术的“监控目录 / 整理规则 / 策略”说明改为用户视角文案
+  - 同步更新中英文 i18n 文案
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [任务详情手动跳过状态修复] 2026-04-27
+
+### 已完成
+- 排查中文界面任务列表仍显示 `Manually skipped by user` 的原因
+  - 后端 `QueueController.skip()` 直接把英文写入 `errorMessage`
+  - 前端 Dashboard “详情”列直接展示 `errorMessage` / `skipReason`
+- 修复后端跳过逻辑
+  - 人工跳过任务从 `FAILED + errorMessage` 改为 `SKIPPED + skipReason`
+  - `skipReason` 写入稳定原因码 `MANUALLY_SKIPPED_BY_USER`
+  - 清空 `errorMessage`，避免跳过任务被视为失败
+- 修复前端展示逻辑
+  - Dashboard “详情”列按当前原因码直连 `task.details.*` 做 i18n 展示
+  - `mediaStore.skipTask()` 本地状态更新为 `SKIPPED`
+  - 收窄 `statusTagType()` 返回类型，清理 IDE 诊断
+- 已运行 `npm run type-check`，通过
+- 已运行 `mvn test`，通过
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/stores/mediaStore.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 更新 `POST /api/queue/{id}/skip` 行为说明：跳过任务标记为 `SKIPPED`，并写入 `skipReason`
+- 已同步更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [系统设置 TMDB 语言下拉优化] 2026-04-27
+
+### 已完成
+- 优化系统设置页 `TMDB 返回语言` 配置项
+  - 从自由文本输入框改为可搜索下拉选择
+  - 默认值保持 `zh-CN`
+  - 增加 TMDB 常见语言选项：简中、繁中、英文、日文、韩文、法文、德文、西班牙文、意大利文、巴西葡语、俄文、泰文、越南文、印尼文、印地文、阿拉伯文
+  - 同步更新中英文 i18n 文案和帮助说明
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/SystemSettingsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [目录浏览面包屑展示移除] 2026-04-29
+
+### 已完成
+- 移除选择监控源目录弹窗中的 `breadcrumb-bar` 面包屑展示
+  - 避免 `/media`、Windows 盘符路径等场景出现重复斜杠或视觉歧义
+  - 保留路径输入框、返回上级、目录列表和底部当前路径预览
+  - 删除不再使用的面包屑计算逻辑、样式和 i18n key
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/components/DirBrowserDialog.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [目录浏览路径工具栏字号优化] 2026-04-29
+
+### 已完成
+- 优化目录选择弹窗顶部 `path-toolbar`
+  - 将路径输入框文字字号调大到 `13px`
+  - 将“根目录 / 盘符”按钮文字字号调大到 `13px`
+  - 保持原有布局尺寸基本不变
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/components/DirBrowserDialog.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [路径模板变量帮助非阻塞面板样式版] 2026-04-30
+
+### 已完成
+- 在路径设置页新增 / 编辑规则弹窗中，将“点击查看可用变量”从外链改为非阻塞右侧帮助面板开关
+  - 点击后从右侧滑出全高变量帮助抽屉
+  - 再次点击“点击查看可用变量”会关闭面板
+  - 使用自定义固定定位侧栏，不使用 `el-drawer` 的全屏容器，因此不阻塞左侧模板编辑
+  - 面板暂不接后端接口，仅硬编码 1 个变量 `{title}` 和说明，用于预览设计效果
+- 新增变量帮助面板样式
+  - 贴右侧展示，高度撑满屏幕
+  - 顶部说明文案
+  - 分类标题
+  - 变量卡片
+  - 变量名、可用标签、说明和示例展示
+  - 关闭按钮和右侧滑入 / 滑出过渡
+- 同步新增中英文 i18n 文案
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 变量帮助内容暂时前端硬编码，后续再接入后端变量元数据接口
+
+### 遗留问题 / 需 PM 决策
+- 后续需要实现 `GET /api/template-variables` 或同类接口后替换硬编码数据源
+
+---
+
+## [系统设置邮件通知临时禁用] 2026-04-30
+
+### 已完成
+- 在系统设置页面临时禁用邮件通知配置
+  - `启用邮件通知` 开关置灰不可操作
+  - 邮箱输入框在显示时也置灰不可编辑
+  - 增加提示文案说明邮件通知功能暂未开放
+  - 保存系统设置时暂不提交 `notification.email.enabled` 和 `notification.email.recipient`
+- 同步新增中英文 i18n 文案
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/SystemSettingsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 邮件通知后端能力未完成前，前端临时禁用该配置入口
+
+### 遗留问题 / 需 PM 决策
+- 邮件通知功能完成后，需要恢复开关可编辑并重新提交邮件配置项
+
+---
+
+## [网站图标与邮件通知提示样式优化] 2026-05-02
+
+### 已完成
+- 将前端站点 favicon 从 `/favicon.svg` 改为 `/favicon.png`
+- 优化系统设置页邮件通知模块
+  - 禁用提示从开关下方改为开关右侧展示
+  - 增加开关与提示文案的水平间距，避免文字过于贴近
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/index.html`
+- `frontend/src/views/SystemSettingsView.vue`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [清理空文件夹选项按操作方式显示] 2026-05-02
+
+### 已完成
+- 优化路径设置页新增 / 编辑规则弹窗中的“自动清理空文件夹”选项
+  - 文件操作方式为 `MOVE` 时显示该开关
+  - 选择 `COPY` / `HARD_LINK` / `SYMBOLIC_LINK` 时隐藏该开关
+  - 移除“自动清理空文件夹仅在移动模式下生效。”提示文案和对应样式
+  - 非 `MOVE` 保存时强制提交 `cleanupEmptyDirs: false`，避免隐藏字段保留旧值
+- 确认后端 `MediaProcessPipeline.cleanupEmptySourceDirs()` 已同时检查：
+  - `rule.cleanupEmptyDirs == true`
+  - `rule.operation == MOVE`
+  - 因此清理空源目录确实只在移动模式下执行
+- 已运行 `npm run type-check`，通过
+
+### 关键文件
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`（仅确认行为，无代码修改）
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [Windows 目录浏览兼容修复] 2026-04-27
+
+### 已完成
+- 修复 Windows 路径在目录浏览面包屑中被错误拼成 `/D:` 导致后端 `InvalidPathException` 的问题
+- `FilesystemController` 增加 Windows 虚拟根目录处理：请求 `/` 时返回可用盘符列表，盘符根目录的父级返回 `/`
+- `FilesystemController` 对非法路径增加 `InvalidPathException` 捕获，避免请求错误路径时抛出 500 堆栈
+- `DirBrowserDialog` 增加路径输入框，支持直接输入 `D:/Media` 等路径并回车跳转
+- `DirBrowserDialog` 增加“根目录 / 盘符”按钮，方便在 Windows 不同盘符之间切换起始位置
+- 修正 Windows 盘符路径的面包屑生成逻辑，`D:/Data` 会生成 `/` → `D:/` → `Data`
+- 路径输入框和目录浏览新增文案已补充中英文 i18n
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/controller/FilesystemController.java`
+- `frontend/src/components/DirBrowserDialog.vue`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `GET /api/filesystem/browse` 响应结构不变
+- 明确 Windows 下 `path=/` 为虚拟根目录，返回可用盘符列表；已更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+## [本地开发日志格式优化] 2026-04-27
+
+### 已完成
+- 优化 `dev` profile 控制台日志格式，时间只显示 `HH:mm:ss`，不再显示日期
+- 本地开发日志格式简化为：时间、级别、logger、消息，去除进程号、线程名等低频信息
+- dev 环境开启 ANSI 输出，并使用 Spring Boot `%clr` pattern 保留 IDEA 控制台日志颜色
+- 关闭 dev 环境 `spring.jpa.show-sql`，避免 Hibernate SQL 直接刷屏
+- 将 Spring、Hibernate、Tomcat 等框架日志在 dev 环境降为 `WARN`，应用日志 `com.mediamarshal` 保持 `INFO`
+
+### 关键文件
+- `backend/src/main/resources/application-dev.yml`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+## [ADR-008 WatchRule 路径模板拆分] 2026-04-27
+
+### 已完成
+- `WatchRule` 实体按 ADR-008 移除旧单字段模板，新增 `moviePathTemplate` 与 `tvPathTemplate`
+- `WatchRuleController.RuleRequest` 同步改为接收 `moviePathTemplate` / `tvPathTemplate`，不再接收旧 `pathTemplate`
+- `RenameService` 根据任务最终 `mediaType` 选择对应媒体类型模板
+  - `MOVIE`：规则电影模板 → `rename.template.movie` → ADR-001 内置电影模板
+  - `TV_SHOW`：规则剧集模板 → `rename.template.tv` → ADR-001 内置剧集模板
+  - 缺少最终媒体类型时直接报错，避免渲染阶段继续使用不明确模板
+- 新增 `RenameServiceTest` 覆盖电影 / 剧集模板优先级、全局 fallback 和缺少媒体类型的异常场景
+- 前端 `PathsView.vue` 改为按规则媒体类型动态展示模板配置
+  - `AUTO` 同时展示电影路径模板和剧集路径模板
+  - `MOVIE` 只展示电影路径模板
+  - `TV_SHOW` 只展示剧集路径模板
+  - 同一次编辑中切换媒体类型时，暂时隐藏的模板输入状态会保留
+- 模板预设选项增加“电影模板 / 剧集模板”类型标签
+- 前端 WatchRule 类型移除旧 `pathTemplate`，新增 `moviePathTemplate` / `tvPathTemplate`
+- 路径设置页 v1 操作方式只暴露 `MOVE`，不再向用户展示未实现的 `COPY` / `HARD_LINK` / `SYMBOLIC_LINK`
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/entity/WatchRule.java`
+- `backend/src/main/java/com/mediamarshal/controller/WatchRuleController.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/test/java/com/mediamarshal/service/rename/RenameServiceTest.java`
+- `frontend/src/api/watchRule.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `WatchRule` 响应字段新增 `moviePathTemplate: string | null`、`tvPathTemplate: string | null`
+- `RuleRequest` 请求体新增 `moviePathTemplate?: string`、`tvPathTemplate?: string`
+- `WatchRule` / `RuleRequest` 契约移除旧 `pathTemplate`
+- 已同步更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 本地已有旧开发库若仍存在 `watch_rule.path_template` 列，Hibernate `ddl-auto=update` 不会自动删除旧列；按 ADR-008 说明，可手动清理该列或重建开发库
+
+---
+
+## [Dashboard 最近任务删除操作] 2026-04-27
+
+### 已完成
+- 仪表盘最近任务列表新增“操作”列
+- 每行支持删除任务记录，删除前使用 Element Plus 确认弹窗提示“只删除记录，不影响媒体文件”
+- 复用已有 `DELETE /api/tasks/{id}` 接口
+- Pinia `mediaStore` 新增 `deleteTask()`，删除成功后从本地任务列表移除，统计卡片随之更新
+- 删除按钮增加行级 loading 状态，避免重复点击
+- 新增中英文 i18n 文案
+
+### 关键文件
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/stores/mediaStore.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无（复用已有 `DELETE /api/tasks/{id}`）
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [WatchRule 手动全量扫描] 2026-04-27
+
+### 已完成
+- 路径设置页规则卡片底部左侧新增“全量扫描”按钮
+- 点击“全量扫描”前增加确认弹窗，避免误操作
+- 新增 `POST /api/watch-rules/{id}/scan`，用于异步触发当前规则 `sourceDir` 的递归全量扫描
+- `FileWatcherService` 增加手动扫描能力
+  - 递归遍历规则源目录下已有文件
+  - 仅处理视频扩展名文件
+  - 复用数据库查重逻辑，已有非 FAILED 任务的路径不会重复入库
+  - 扫描在虚拟线程中异步执行，接口返回仅表示扫描已开始
+  - 使用规范化 `sourceDir` 作为运行中锁，同一路径扫描未结束时会拒绝重复触发
+- 前端 `watchRuleApi` 新增 `scanRule()`
+- 扫描按钮增加行级 loading 和成功提示文案
+- 同步更新 API 契约
+- 删除任务记录时同步删除该任务候选记录，避免删除任务后重新扫描产生旧候选残留
+- `MediaProcessPipeline.saveCandidates()` 保存候选前会清理同任务旧候选，避免同一任务重复写入候选快照
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/watcher/FileWatcherService.java`
+- `backend/src/main/java/com/mediamarshal/controller/WatchRuleController.java`
+- `frontend/src/api/watchRule.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 新增 `POST /api/watch-rules/{id}/scan`
+- 请求体：无
+- 响应 `data`：无
+- 行为：异步触发该规则源目录全量扫描，接口返回时扫描任务已开始但不代表扫描完成
+- 同一路径扫描未结束时返回 `success=false`，提示稍后再试
+- `DELETE /api/tasks/{id}` 行为补充：删除任务记录时同步删除其候选记录；已更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- ADR-005 曾将“历史文件全量扫描”列为 v1 不做；本次按用户新增需求实现为手动触发能力
+
+### 遗留问题 / 需 PM 决策
+- 当前全量扫描没有前端进度展示，只通过后端日志输出 scanned / queued / skipped 统计；如需要可后续设计扫描任务状态和 WebSocket 进度事件
+
+---
+
+## [SQLite 并发写入锁修复] 2026-04-27
+
+### 已完成
+- 修复测试中多个媒体文件同时进入 pipeline 时触发的 `[SQLITE_BUSY] database is locked`
+- SQLite JDBC URL 增加 `busy_timeout=10000`，锁被短暂占用时等待释放而不是立即失败
+- SQLite 开启 WAL journal mode，提升读写并发下的稳定性
+- Hikari 连接池限制为单连接，避免同一后端进程内多个写事务同时竞争 SQLite 文件锁
+- 本地 dev SQLite URL 同步增加相同参数
+- 已运行 `mvn test`，后端测试通过
+
+### 关键文件
+- `backend/src/main/resources/application.yml`
+- `backend/src/main/resources/application-dev.yml`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- SQLite 适合当前单实例 v1 部署；如果后续需要多后端实例或高并发批量入库，应评估迁移到 PostgreSQL 等服务端数据库
+
+---
+
+## [ADR-009 文件分类与附属文件策略] 2026-04-27
+
+### 已完成
+- `MediaTask` 新增 `SKIPPED` 状态和 `skipReason` 字段
+- `WatchRule` 新增文件处理策略字段
+  - `moveAssociatedFiles` 默认 `true`
+  - `generateNfo` 默认 `false`
+  - `cleanupEmptyDirs` 默认 `false`
+  - `ignoredFilePatterns` v1 保留，接口返回 `string[] | null`
+- `FileWatcherService` 的实时监听和手动全量扫描共用文件分类规则
+  - 视频文件进入现有防抖 / 查重 / pipeline
+  - 系统噪音文件静默忽略
+  - 同目录附属文件不单独建任务，等待主视频成功后跟随移动
+  - 普通杂项文件生成 `SKIPPED` 任务并写入 `skipReason`
+  - 同一路径已有非 FAILED 任务时不会重复创建 `SKIPPED`
+- `MediaProcessPipeline` 增加附属文件处理
+  - 同名字幕、同名 NFO、同名封面按目标视频文件名移动
+  - `poster.jpg` / `folder.jpg` / `cover.jpg` 移动到目标目录并保留文件名
+  - 附属文件移动失败不回滚主视频任务，只记录 warn 日志
+- NFO 生成改为按 `WatchRule.generateNfo` 控制
+  - 默认不生成 NFO
+  - 源目录存在用户 NFO 且启用附属文件移动时，优先移动用户 NFO，不再自动生成
+  - 没有用户 NFO 且 `generateNfo=true` 时才生成新 NFO
+- `cleanupEmptyDirs=true` 且 MOVE 成功后，从源视频父目录向上清理空目录，遇到 `sourceDir` 根目录停止
+- 路径设置页新增文件处理策略配置
+  - 自动移动附属文件
+  - 自动生成 NFO
+  - 自动清理空文件夹
+  - 系统默认忽略文件类型只读展示
+- Dashboard 最近任务支持 `SKIPPED` 状态展示和跳过原因展示
+- Dashboard 最近任务新增状态筛选，包含 `SKIPPED`
+- Dashboard 最近任务支持多选批量删除，复用现有单条删除接口顺序删除
+- 已同步更新 `api-contracts.mdc`
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/WatchRule.java`
+- `backend/src/main/java/com/mediamarshal/service/watcher/FileWatcherService.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/controller/WatchRuleController.java`
+- `frontend/src/api/watchRule.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `MediaTask.status` 增加 `SKIPPED`
+- `MediaTask` 增加 `skipReason: string | null`
+- `WatchRule` / `RuleRequest` 增加 `moveAssociatedFiles`、`cleanupEmptyDirs`、`generateNfo`、`ignoredFilePatterns`
+- 未新增批量删除接口；前端复用现有 `DELETE /api/tasks/{id}` 顺序删除所选任务记录
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 如需要完整任务管理页（区别于 Dashboard 最近任务），可后续单独设计
+- v1 附属文件移动失败仅记录日志，暂未在任务详情中展示提示
+
+---
+
+## [Queue 手动 TMDB 搜索优化] 2026-04-27
+
+### 已完成
+- 优化 `GET /api/queue/{id}/search?q={keyword}` 的手动搜索逻辑
+- 当用户输入纯数字时，按 TMDB ID 直接查询详情
+  - 若任务已有媒体类型，则按该类型查询
+  - 若任务媒体类型未知，则同时尝试 movie / tv，返回存在的结果
+- 纯数字输入完成 ID 查询后，还会继续作为普通关键词搜索，并按 `mediaType + sourceId` 合并去重，兼容标题本身就是数字的电影 / 剧集
+- 当用户输入非数字关键词时，只使用用户输入的关键词搜索 TMDB
+  - 不再携带 `parsedYear`
+  - 不再携带 `parsedSeason` / `parsedEpisode`
+  - 避免错误解析年份导致正确结果被 TMDB 年份过滤排除
+- 同步更新 API 契约说明
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 无新增接口
+- `GET /api/queue/{id}/search?q={keyword}` 行为变更：支持 TMDB ID 查询，关键词搜索不再带解析年份条件
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [ADR-010 目标文件冲突保护] 2026-04-27
+
+### 已完成
+- `RenameService` 渲染目标路径后、执行文件操作前检查目标文件是否已存在
+- 当目标文件已存在时，直接抛出失败原因 `目标文件已存在，文件冲突`
+  - 不移动源文件
+  - 不覆盖目标文件
+  - 不自动追加后缀改名
+  - pipeline 捕获后将任务标记为 `FAILED`，并写入 `errorMessage`
+- `MoveRenameStrategy` 移除 `REPLACE_EXISTING` 覆盖移动
+  - 优先尝试 `ATOMIC_MOVE`
+  - 仅在跨文件系统不支持原子移动时降级为普通 `Files.move(source, target)`
+  - 普通移动仍不覆盖目标文件
+- Dashboard 最近任务中“跳过原因”列改为通用“详情”列
+  - `FAILED` 展示 `errorMessage`
+  - `SKIPPED` 展示 `skipReason`
+  - 其他状态展示为空
+- 同步更新 API 契约说明
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/MoveRenameStrategy.java`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 无新增字段或接口
+- `api-contracts.mdc` 补充说明：`FAILED` 详情来自 `errorMessage`，`SKIPPED` 详情来自 `skipReason`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [路径模板预设更新] 2026-04-27
+
+### 已完成
+- 删除前端路径设置页原有电影/剧集预设模板，替换为新的 4 个电影模板和 4 个剧集模板
+- 更新后端全局 fallback 默认模板：
+  - 电影：`{title} ({year})/{title} ({year})[[ - {resolution}]]{ext}`
+  - 剧集：`{title} ({year})/S{season:02d}/{title} ({year}) - S{season:02d}E{episode:02d}[[ - {resolution}]]{ext}`
+- 自然语言变量映射：
+  - 影片名 → `{title}`
+  - 年份 → `{year}`
+  - 分辨率 → `{resolution}`
+  - 扩展名 → `{ext}`（已包含点）
+  - 视频类型 → `{media_type}`
+  - 首字母 → `{title_initial}`
+  - 季数 → `S{season:02d}`
+  - 集数 → `E{episode:02d}`
+- `MediaTask` 新增 `parsedResolution`，pipeline 从 guessit `screen_size` 写入，RenameService 渲染时填充 `{resolution}`
+- RenameService 渲染时根据确认标题计算 `{title_initial}`
+- 同步更新 API 契约中的 `MediaTask.parsedResolution`
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/main/resources/application.yml`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/types/index.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `MediaTask` 响应新增字段：`parsedResolution: string | null`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- `design-decisions.mdc` 中 ADR-001 的 v1 默认模板仍保留历史描述；按项目规则未由开发 Agent 修改，后续由 PM 统一更新。
+
+---
+
+## [仪表盘完成路径提示与首字母规则优化] 2026-04-27
+
+### 已完成
+- Dashboard 最近任务列表中，`DONE` 状态标签在鼠标悬停时展示任务最终 `targetPath`
+- 优化 `{title_initial}` 计算规则：
+  - 数字开头返回 `#`
+  - 常用中文汉字开头返回第一个字的拼音首字母大写
+  - 英文开头返回第一个英文单词首字母大写
+  - 特殊字符开头返回 `#`
+- 新增单元测试覆盖数字、中文、英文、特殊字符开头的标题首字母计算
+
+### 关键文件
+- `frontend/src/views/DashboardView.vue`
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/test/java/com/mediamarshal/service/rename/RenameServiceTest.java`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [环境变量配置清理] 2026-04-28
+
+### 已完成
+- 清理 `.env.example` 中已废弃的 `MEDIA_MARSHAL_WATCH_DIRS` 和 `MEDIA_MARSHAL_OPERATION_STRATEGY`
+- 清理 `docker-compose.yml` 中对应的废弃环境变量透传
+- 清理 `application.yml`、`application-dev.yml`、`application-test.yml` 中不再生效的 `watch-dirs` 配置
+- 清理前端 `.env.development` / `.env.production` 中未被代码读取的 `VITE_APP_TITLE`
+- 更新 README 和架构文档中关于文件操作配置来源的说明
+- 修正 TMDB 匹配器注释中的 API Key 配置来源说明
+
+### 关键文件
+- `.env.example`
+- `docker-compose.yml`
+- `backend/src/main/resources/application.yml`
+- `backend/src/main/resources/application-dev.yml`
+- `backend/src/main/resources/application-test.yml`
+- `frontend/.env.development`
+- `frontend/.env.production`
+- `README.md`
+- `ARCHITECTURE.md`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [ADR-011 WatchRule 忽略规则与任务分页] 2026-04-29
+
+### 已完成
+- WatchRule `ignoredFilePatterns` 存储语义调整：
+  - `null`：使用系统默认忽略规则
+  - `[]`：不启用任何忽略规则
+  - 非空数组：使用规则自己的完整忽略规则列表
+- 后端新增统一忽略规则匹配逻辑，实时监听和手动全量扫描共用
+- 支持文件名、通配符、隐藏文件和目录规则；被忽略目录不会递归注册或扫描子树
+- 路径设置页将忽略规则从只读展示升级为可编辑：
+  - 展示当前生效规则
+  - 新增规则
+  - 删除规则
+  - 恢复系统默认
+  - 删除默认规则时提示会产生 `SKIPPED` 记录
+- Dashboard 最近任务按更新时间 / 创建时间倒序展示
+- Dashboard 最近任务新增本地分页、每页条数切换、页码切换
+- 状态筛选、单条删除、批量删除与分页联动，删除后自动修正当前页
+- 同步更新 API 契约中 `ignoredFilePatterns` 字段说明
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/entity/WatchRule.java`
+- `backend/src/main/java/com/mediamarshal/service/watcher/FileWatcherService.java`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 复用现有 `POST /api/watch-rules` 与 `PUT /api/watch-rules/{id}`
+- 字段语义变更：`ignoredFilePatterns` 现在可编辑；`null` 表示系统默认，`[]` 表示禁用忽略规则
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [ADR-011 i18n 文案修复] 2026-04-29
+
+### 已完成
+- 为 Element Plus 增加 `el-config-provider`，分页组件内置文案跟随当前语言切换
+- 修复路径设置页规则卡片操作按钮、禁用标签、路径标签、规则名称占位符、校验提示的硬编码中文
+- 确认 Dashboard 最近任务列表新增分页与列名文案均走 vue-i18n
+
+### 关键文件
+- `frontend/src/App.vue`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [Compose Alpha / Beta 环境规划] 2026-04-29
+
+### 已完成
+- 统一 compose 中前端服务命名为 `portal`
+  - 服务名由 `frontend` 改为 `portal`
+  - 容器名由 `media-marshal-frontend*` 改为 `media-marshal-portal*`
+  - 端口变量由 `MEDIA_MARSHAL_FRONTEND_PORT` 改为 `MEDIA_MARSHAL_PORTAL_PORT`
+- `docker-compose.alpha.yml` 调整为完整 alpha 测试部署文件
+  - 后端、portal、parser 均使用 `image` 拉取镜像，不在 compose 中构建
+  - 镜像 tag 统一通过 `MEDIA_MARSHAL_IMAGE_TAG` 覆盖，默认 `alpha`
+- `docker-compose.beta.yml` 调整为完整 beta 测试部署文件
+  - 后端、portal、parser 均使用本仓库 Dockerfile 由 compose 构建
+  - 构建产物 tag 默认 `beta`，可通过 `MEDIA_MARSHAL_IMAGE_TAG` 覆盖
+  - 容器名、网络和数据卷去除 `beta` 标记，与正式名称保持一致
+- beta 构建增加可配置镜像加速
+  - `.env.example` 中 `MAVEN_MIRROR_URL` / `NPM_REGISTRY` 留空并补充说明
+  - `.env.local` 中补充阿里 Maven 镜像源和 npm 镜像源
+  - 生产 compose 不传加速参数，仍使用默认 Maven / npm 源
+- 两个测试 compose 文件均复用生产环境的核心配置：端口映射、`/data` 数据目录、`/media` 媒体目录、后端环境变量、parser 健康检查
+- 已运行 `docker compose -f docker-compose.yml config --quiet`、`docker compose -f docker-compose.alpha.yml config --quiet` 与 `docker compose -f docker-compose.beta.yml config --quiet`，均通过
+
+### 关键文件
+- `.env.example`
+- `.env.local`
+- `backend/Dockerfile`
+- `docker-compose.alpha.yml`
+- `docker-compose.beta.yml`
+- `docker-compose.yml`
+- `frontend/Dockerfile`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [README Compose 参数说明同步] 2026-04-29
+
+### 已完成
+- 按当前 `docker-compose.yml` / `docker-compose.alpha.yml` / `docker-compose.beta.yml` 和 `.env.example` 同步 README 参数说明
+- 英文与中文均新增完整环境变量表，包含参数名、参数解释、默认值、是否必填
+- 补充三份 compose 文件的用途和镜像行为说明
+- 明确监控目录、目标目录、文件操作方式和路径模板在 Web UI 路径设置页面配置
+
+### 关键文件
+- `README.md`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [TMDB Key 仅 Web UI 配置] 2026-04-30
+
+### 已完成
+- 从 `docker-compose.yml`、`docker-compose.alpha.yml`、`docker-compose.beta.yml` 中移除 TMDB API Key 环境变量传递
+- 从 `.env.example` 和本地 `.env*` 文件中清理 TMDB API Key 环境变量
+- `application.yml` 不再从环境变量占位符读取 TMDB API Key
+- `SettingsService` 对 `tmdb.api-key` 做专门处理，只从 `app_setting` 数据库配置读取
+- README 中英文说明改为通过 Web UI 系统设置页配置 TMDB API Key
+- 已确认全仓库无旧 TMDB API Key 环境变量名残留
+- 已运行 `mvn test`，后端测试通过
+- 已运行三份 compose 的 `config --quiet` 校验，均通过
+
+### 关键文件
+- `.env.example`
+- `README.md`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/service/settings/SettingsService.java`
+- `backend/src/main/resources/application.yml`
+- `docker-compose.alpha.yml`
+- `docker-compose.beta.yml`
+- `docker-compose.yml`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [Env 文件编码修复] 2026-04-30
+
+### 已完成
+- 修复 `.env.example` 中文注释乱码问题，重建为 UTF-8 中文模板
+- 修复 `.env.local` 中文注释编码，保留本地构建加速参数
+- 静默重写已存在的 `.env*` 文件，避免打印可能包含敏感值的内容
+- 确认 `.env*` 中无乱码特征和旧 TMDB API Key 环境变量残留
+
+### 关键文件
+- `.env.example`
+- `.env.local`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [模板变量帮助接口接入] 2026-04-30
+
+### 已完成
+- 新增 `GET /api/template-variables`，返回路径模板变量分组、占位符、类型、来源、说明、样例、适用媒体类型和可用状态
+- 后端变量目录以 `TemplateVariables` 的 `@TemplateVar` 注解为支持范围，额外按 ADR-001 暴露季 / 集格式化变量
+- 路径设置页变量帮助面板从硬编码 `{title}` 改为接口驱动渲染
+- 前端新增模板变量 API 封装和类型定义，帮助面板支持 loading 与空状态
+- 同步更新 API 契约
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/controller/TemplateVariableController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TemplateVariableGroup.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateVariableCatalogService.java`
+- `frontend/src/api/templateVariables.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 新增 `GET /api/template-variables`
+- 响应 `data` 为 `TemplateVariableGroup[]`
+- 已同步更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 当前变量说明和样例由后端固定中文内容返回；如后续要求帮助内容随前端语言切换，需要增加 locale 入参或返回多语言字段。
+
+---
+
+## [ADR-013 文件发现核心层] 2026-05-02
+
+### 已完成
+- `WatchRule` 新增 ADR-013 发现相关字段：
+  - `discoveryMode`：`WATCH_EVENT` / `PERIODIC_SCAN` / `HYBRID`，默认 `HYBRID`
+  - `scanIntervalMinutes`：周期补扫间隔，默认 10，保存时最小 5
+  - `webhookEnabled`：Webhook 预留开关，当前默认 `false`
+- 将 `FileWatcherService` 升级为 `FileDiscoveryService`
+  - 迁移递归监听、防抖、稳定性检测、忽略规则、文件分类、数据库查重、手动扫描逻辑
+  - `reload()` 按 `discoveryMode` 分流注册实时监听和周期扫描
+  - `WATCH_EVENT` 只注册 WatchService
+  - `PERIODIC_SCAN` 只调度周期扫描
+  - `HYBRID` 同时启用实时监听与周期补扫
+- 周期扫描与手动扫描共用统一发现链路
+  - 同一 WatchRule 同一时间只允许一个扫描任务运行
+  - 扫描仍依赖数据库查重避免重复入库
+- 新目录创建事件现在会先递归注册目录，再立即对该目录执行一次轻量扫描
+- `WatchRuleController` 改为调用 `FileDiscoveryService`
+- 路径设置页新增“文件发现模式”配置区
+  - 支持实时监听、定时扫描、混合模式
+  - 定时扫描 / 混合模式下展示扫描间隔输入
+  - 规则卡片展示发现模式摘要
+- 同步更新 API 契约
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/model/entity/WatchRule.java`
+- `backend/src/main/java/com/mediamarshal/controller/WatchRuleController.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/watcher/FileWatcherService.java`（删除）
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/repository/WatchRuleRepository.java`
+- `frontend/src/api/watchRule.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `WatchRule` / `RuleRequest` 新增 `discoveryMode`、`scanIntervalMinutes`、`webhookEnabled`
+- `POST /api/watch-rules/{id}/scan` 行为保持不变，但后端实现改为通过 `FileDiscoveryService.triggerFullScan()`
+- 本轮未新增 `POST /api/discovery/notify` Webhook 接口；`webhookEnabled` 仅作为后续预留字段
+- 已同步更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- ADR-013 包含 Webhook 触发扫描设计；本轮按确认后的分阶段实施口径暂不开放 Webhook 接口和 token 鉴权。
+
+### 遗留问题 / 需 PM 决策
+- Webhook 通知接口、token 配置来源和前端开关需后续单独实现。
+
+---
+
+## [ADR-014 文件操作策略与保存前校验] 2026-05-02
+
+### 已完成
+- 新增并开放四种文件操作策略：
+  - `MOVE`：沿用移动策略，不覆盖目标文件
+  - `COPY`：复制文件，源文件保留，不覆盖目标文件
+  - `HARD_LINK`：创建硬链接，不 fallback 到其他策略
+  - `SYMBOLIC_LINK`：创建指向源文件绝对路径的符号链接，不 fallback 到其他策略
+- 新增 `POST /api/watch-rules/validate` 保存前校验接口
+  - 请求体复用 `RuleRequest`
+  - 返回 `WatchRuleValidationResult`
+  - 校验源目录、目标目录读写能力
+  - 硬链接 / 符号链接通过临时文件真实创建验证
+- 附属文件处理改为复用当前 WatchRule 的文件操作策略
+  - 字幕、用户 NFO、封面在 `MOVE` 下移动
+  - 在 `COPY` 下复制
+  - 在 `HARD_LINK` 下创建硬链接
+  - 在 `SYMBOLIC_LINK` 下创建符号链接
+- 路径设置页文件操作方式下拉框正式展示四种操作
+- 前端保存规则前先调用校验接口，校验失败保持弹窗打开并展示原因
+- 非 `MOVE` 模式下提示自动清理空文件夹仅移动模式生效
+- 补充后端策略和 preflight 单元测试
+- 同步更新 API 契约
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/rename/CopyRenameStrategy.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/HardLinkRenameStrategy.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/SymbolicLinkRenameStrategy.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/FileOperationStrategy.java`
+- `backend/src/main/java/com/mediamarshal/service/watchrule/WatchRulePreflightService.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleValidationResult.java`
+- `backend/src/main/java/com/mediamarshal/controller/WatchRuleController.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `frontend/src/api/watchRule.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `backend/src/test/java/com/mediamarshal/service/rename/FileOperationStrategyTest.java`
+- `backend/src/test/java/com/mediamarshal/service/watchrule/WatchRulePreflightServiceTest.java`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 新增 `POST /api/watch-rules/validate`
+- `WatchRule.operation` / `RuleRequest.operation` 四种值均为前端可选
+- 已同步更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [路径模板默认预设改为可选分辨率片段] 2026-05-02
+
+### 已完成
+- 按用户提供的 Markdown 模板更新系统自带路径模板
+- 电影 4 个预设全部改为 `[[ - {resolution}]]` 可选分辨率片段
+- 剧集 4 个预设全部改为 `[[ - {resolution}]]` 可选分辨率片段
+- 后端全局 fallback 默认模板同步更新：
+  - 电影：`{title} ({year})/{title} ({year})[[ - {resolution}]]{ext}`
+  - 剧集：`{title} ({year})/S{season:02d}/{title} ({year}) - S{season:02d}E{episode:02d}[[ - {resolution}]]{ext}`
+- `application.yml` 中 `MEDIA_MARSHAL_TEMPLATE_MOVIE` / `MEDIA_MARSHAL_TEMPLATE_TV` 未配置时的默认值同步更新
+- 保持 `{ext}` 直接拼接，不额外加点，因为 `{ext}` 已包含扩展名前缀点
+- 模板中使用 `[[ - {resolution}]]`，不保留 `]]` 前的空格，避免渲染出 `1080p .mkv`
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/main/resources/application.yml`
+- `backend/src/test/java/com/mediamarshal/service/rename/RenameServiceTest.java`
+- `frontend/src/views/PathsView.vue`
+- `.cursor/rules/design-decisions.mdc`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [批量确认后台 TMDB 详情超时优化] 2026-05-03
+
+### 已完成
+- 排查 `Timeout on blocking read for 10000000000 NANOSECONDS` 根因
+  - 该错误来自 `TmdbMetadataMatcher.getById()` 中硬编码的 `block(Duration.ofSeconds(10))`
+  - 批量确认后台处理时，即使用户选择的候选已经存在于 `task_candidate`，仍会逐条再次调用 TMDB 详情接口
+  - 大批量确认时会产生大量不必要的远程请求，任意一次 10 秒读超时都会导致单个任务进入 `FAILED`
+- 优化人工确认元数据来源
+  - 单条确认和批量后台确认优先使用已保存的 `TaskCandidate` 快照继续 pipeline
+  - 已保存候选包含标题、原始标题、年份、简介、海报和置信度，满足当前重命名与 NFO 生成所需字段
+  - 只有用户确认的 TMDB ID 不在候选表中时，才调用 `getById()` 创建手动候选
+- 为必要的手动候选详情获取增加重试
+  - 新增 `tmdb.confirm-retry-attempts`，默认 3 次
+  - 环境变量：`MEDIA_MARSHAL_TMDB_CONFIRM_RETRY_ATTEMPTS`
+- 将 TMDB 请求超时改为可配置
+  - 新增 `tmdb.timeout-seconds`，默认 30 秒
+  - 环境变量：`MEDIA_MARSHAL_TMDB_TIMEOUT_SECONDS`
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/resources/application.yml`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- ADR-006 原描述为确认时调用 `TMDB getById()` 获取完整元数据；本次基于当前实现已保存候选字段足够支撑重命名和 NFO 生成，改为优先复用候选快照，仅候选不存在时再请求 TMDB。
+
+### 遗留问题 / 需 PM 决策
+- 后续如果 NFO 需要演员、分类、制片国家等更完整字段，可考虑在入队保存候选时扩展 `task_candidate` 字段，或设计独立的详情补全任务，避免批量确认路径直接依赖实时 TMDB 详情请求
+
+---
+
+## [中文标题首字母解析修复] 2026-05-03
+
+### 已完成
+- 排查 `{title_initial}` 中文首字母错误问题
+  - 原实现基于 GB2312 区位码范围近似判断拼音首字母
+  - `巅`、`逍` 等 GBK 扩展字或不在 GB2312 主区间内的汉字会落到最后区间，错误返回 `Z`
+- 引入 `com.belerweb:pinyin4j:2.5.1` 用于中文拼音首字母解析
+- `RenameService.resolveTitleInitial()` 改为：
+  - 数字开头返回 `#`
+  - 英文开头返回大写首字母
+  - 中文开头通过 pinyin4j 获取拼音首字母
+  - 特殊字符或无法解析时返回 `#`
+- 补充测试覆盖：
+  - `黑袍纠察队` → `H`
+  - `巅峰猎杀` → `D`
+  - `逍遥` → `X`
+
+### 关键文件
+- `backend/pom.xml`
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/test/java/com/mediamarshal/service/rename/RenameServiceTest.java`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 多音字目前采用 pinyin4j 返回的第一个读音；如后续需要针对片名上下文处理多音字，需要单独设计词级别拼音解析或维护例外词典
+
+---
+
+## [WatchRule 保存前校验网络盘兼容优化] 2026-05-03
+
+### 已完成
+- 排查 Windows 网络盘目标目录误报不可写问题
+  - 原实现先调用 `Files.isWritable(targetDir)`，该 API 在 Windows 映射网络盘 / SMB 路径下可能返回误判
+  - 误判时直接返回“目标目录不可写”，导致真实写入探测没有机会执行
+- 优化保存前校验策略
+  - 目标目录写权限改为以真实创建 / 删除临时文件为准
+  - `MOVE` 模式下源目录可写校验也改为真实临时文件写入 / 删除探测
+  - 源目录可读校验改为实际 `Files.list()` 探测，减少单纯权限 API 的误判
+- 新增配置开关：`watch-rule.preflight.enabled`
+  - 默认 `true`
+  - 可通过环境变量 `MEDIA_MARSHAL_WATCH_RULE_PREFLIGHT_ENABLED=false` 关闭保存前校验
+  - 关闭后 `/api/watch-rules/validate` 直接返回 `valid=true`
+- 同步更新 API 契约
+- 补充单元测试覆盖校验开关关闭场景
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/watchrule/WatchRulePreflightService.java`
+- `backend/src/main/resources/application.yml`
+- `backend/src/test/java/com/mediamarshal/service/watchrule/WatchRulePreflightServiceTest.java`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `POST /api/watch-rules/validate` 响应结构不变
+- 语义补充：当 `watch-rule.preflight.enabled=false` 时直接返回校验通过
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [ADR-016 源文件缺失检测与待处理任务自动失败] 2026-05-02
+
+### 已完成
+- 文件发现层 WatchService 注册 `ENTRY_DELETE` 删除事件
+- 删除事件命中已有 `PENDING` / `AWAITING_CONFIRMATION` 任务时，自动标记为 `FAILED`
+- 周期扫描和手动全量扫描结束后巡检当前 WatchRule 下 `PENDING` / `AWAITING_CONFIRMATION` 任务的源文件存在性
+- 源文件缺失时统一写入失败原因：`源文件不存在，无法继续处理`
+- 自动失败后推送 `task.failed` WebSocket 事件
+- 单条确认前增加源文件最终校验，缺失时不调用 TMDB 详情、不继续 pipeline，并返回失败信息
+- 批量确认提交前逐条校验源文件，缺失条目返回失败，其他条目继续提交后台整理
+- v1 不自动失败 `PROCESSING` 任务，避免误伤正在执行的文件操作
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `backend/src/main/java/com/mediamarshal/repository/MediaTaskRepository.java`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `POST /api/queue/{id}/confirm` 语义补充：源文件不存在时返回 `success=false`，任务转为 `FAILED`
+- `POST /api/queue/batch-confirm` 语义补充：源文件不存在的条目返回失败结果，其他条目不回滚
+- 已同步更新 `api-contracts.mdc`
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [ADR-017 命名模板可选片段语法] 2026-05-02
+
+### 已完成
+- `TemplateRenderer.render()` 支持 `[[ ... ]]` 可选片段语法
+- 可选片段内所有变量都可填充时渲染片段；任意变量缺失时移除整个片段
+- 可选片段内复用现有占位符替换和 `{season:02d}` / `{episode:02d}` 格式化逻辑
+- 可选片段外缺失变量仍保持占位符原样，兼容旧模板调试行为
+- 新增 `TemplateRendererTest` 覆盖完整变量、缺失变量、多变量缺失、片段外缺失和格式化变量场景
+- 路径设置页自定义模板预览同步支持可选片段语法
+- 模板变量帮助面板新增可选片段说明和示例
+- 同步更新 API 契约中的模板语法说明
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateRenderer.java`
+- `backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 无新增字段或接口
+- 已在 `api-contracts.mdc` 补充模板可选片段语法说明
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [ADR-018 中文 / 双语标题多 Query 匹配] 2026-05-03
+
+### 已完成
+- 新增标题搜索计划构建组件，从 `originalFilename`、guessit 标题、年份和媒体类型提取 titleRegion，并生成中文标题、英文标题、组合标题和 guessit 兜底 query
+- `TmdbMetadataMatcher.search(ParseResult)` 从单 query 搜索升级为多 query 搜索
+  - 根据解析媒体类型选择 movie / tv 搜索端点
+  - 按 `mediaType + tmdbId` 合并去重
+  - 同一候选被多个 query 命中时保留最高置信度结果
+- 新增 TMDB 进程内缓存与 in-flight 去重
+  - 搜索缓存 key：`endpoint|query|year|language`
+  - 详情缓存 key：`mediaType|tmdbId|language`
+  - 普通搜索结果、空搜索结果、详情结果分别使用独立 TTL
+  - 缓存最大容量由配置控制，超限时优先清理过期项
+- 新增多维置信度评分
+  - 公式：`titleScore * 0.60 + yearScore * 0.20 + mediaTypeScore * 0.10 + structureBonus * 0.10`
+  - 明确媒体类型不匹配的候选直接过滤
+  - `media-marshal.debug=true` 时输出最佳候选的评分解释
+- 补充单元测试覆盖 ADR 验收样例、评分逻辑和缓存去重
+- 新增 TMDB 缓存配置默认值
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilder.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TitleSearchPlan.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TitleSearchQuery.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbInMemoryCache.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbConfidenceScorer.java`
+- `backend/src/main/resources/application.yml`
+- `backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java`
+- `backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java`
+- `backend/src/test/java/com/mediamarshal/service/matcher/TmdbInMemoryCacheTest.java`
+- `.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 无新增接口或前端可见字段
+- 已在 `api-contracts.mdc` 补充说明：ADR-018 仅升级后端内部匹配策略，现有 `MatchResult[]` 契约不变
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 当前缓存为进程内内存缓存，服务重启后失效；如后续需要缓存命中率统计、主动清理或跨实例共享，可再评估 Caffeine / Redis 等方案
+
+---
+
+## [ADR-018 验收补充修正] 2026-05-03
+
+### 已完成
+- 补齐 Debug 可解释日志字段
+  - `media-marshal.debug=true` 时输出 `originalFilename`、`guessitTitle`、`titleRegion`
+  - 输出 query 列表、query 类型和权重
+  - 输出每次 TMDB 搜索的 endpoint、query、year、cache `HIT/MISS/IN_FLIGHT` 和结果数量
+  - 输出 top candidates 的核心信息和 `bestQuery`、`titleScore`、`yearScore`、`mediaTypeScore`、`structureBonus`、最终置信度
+- 缓存层新增 `getWithStatus()`，保留原 `get()` 调用能力，同时支持调用方获取缓存命中状态
+- 补充 `方圆八百米.Eight.Hundred.S01E02...` 标题计划测试，确保生成 `方圆八百米`、`Eight Hundred`
+- 按验收补充要求移除 `Shameless.U.S...` 作为 ADR-018 必过测试样例
+- 调整 `structureBonus` 语义
+  - 仅当本地化 query 命中候选本地化标题、原始语言 query 命中候选 `originalTitle`，且二者指向同一候选时加分
+  - 不再按“是否剧集 / 是否非 guessit query / 是否高相似度”泛化加分
+  - 当前实现使用轻量相似度阈值近似判断，不引入 NLP / 分词库
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbInMemoryCache.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbConfidenceScorer.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilder.java`
+- `backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java`
+- `backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java`
+- `backend/src/test/java/com/mediamarshal/service/matcher/TmdbInMemoryCacheTest.java`
+
+### 接口变更
+- 无新增接口或前端可见字段
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [前后端统一版本号与前端 ReleaseNote 悬停展示] 2026-05-06
+
+### 已完成
+- 新增仓库根目录 `VERSION`，作为前后端共用的应用版本号唯一来源
+- 前端 Vite 构建时读取根目录 `VERSION` 并注入 `__APP_VERSION__`
+- 新增页面标题旁版本号展示，鼠标悬停版本号时通过 `el-popover` 展示 ReleaseNote
+- ReleaseNote 采用结构化索引 + 中英文双语文案
+  - `frontend/src/meta/releaseNotes.ts` 维护版本、日期和条目 key
+  - `frontend/src/i18n/releaseNotes/zh.ts` 维护中文文案
+  - `frontend/src/i18n/releaseNotes/en.ts` 维护英文文案
+- 后端新增 `AppVersionProvider`，从 classpath `VERSION` 读取同一版本号
+- Maven 构建将仓库根目录 `VERSION` 复制到后端 classpath
+- 调整前后端 Dockerfile 与 `docker-compose.yml` 构建上下文，确保 Docker 构建也能读取根目录 `VERSION`
+- 在前端规范中新增 ReleaseNote 维护要求：新增功能、修复问题、优化功能或影响前端行为的契约变化，都必须同步更新 ReleaseNote
+
+### 关键文件
+- `VERSION`
+- `frontend/vite.config.ts`
+- `frontend/env.d.ts`
+- `frontend/src/meta/appVersion.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/components/AppVersionInfo.vue`
+- `frontend/src/components/AppLayout.vue`
+- `frontend/src/types/index.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `backend/pom.xml`
+- `backend/src/main/java/com/mediamarshal/service/AppVersionProvider.java`
+- `frontend/Dockerfile`
+- `backend/Dockerfile`
+- `docker-compose.yml`
+- `.cursor/rules/frontend-rules.mdc`
+
+### 接口变更
+- 无新增 REST API 或前端可见接口字段
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+
+---
+
+## [版本号标题旁展示与首版 ReleaseNote 内容优化] 2026-05-06
+
+### 已完成
+- 将版本号入口从侧边栏底部移动到左上角 `Media Marshal` 标题后方
+- 保持原有 hover `el-popover` 交互不变，仅优化版本号按钮为更轻量的标题旁徽标样式
+- 根据 git 提交记录与开发文档整理首版 ReleaseNote
+  - 当前版本校正为 `v0.2.4`
+  - 内容覆盖统一版本号、媒体资产识别、批量队列、双语标题匹配、路径模板工作流、源文件缺失保护等近期核心变化
+- 同步更新中英文 ReleaseNote 文案
+
+### 关键文件
+- `VERSION`
+- `frontend/src/components/AppLayout.vue`
+- `frontend/src/components/AppVersionInfo.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无
+
+### 偏离设计的地方
+- 无
+
+### 遗留问题 / 需 PM 决策
+- 无
+---
+
+## [系统重置危险操作] 2026-05-07
+
+### 已完成
+- 系统设置页新增「危险操作」区域，提供「重置系统」入口。
+- 点击重置时使用二次确认，要求输入 `RESET` 后才会继续执行，避免误触。
+- 新增 `POST /api/settings/reset` 接口，重置数据库中的应用数据：
+  - 配置项 `app_setting`
+  - 监控规则 `watch_rule`
+  - 媒体任务 `media_task`
+  - 任务候选 `task_candidate`
+- 重置后刷新文件发现服务，使监听和周期扫描回到无规则空闲状态。
+- 前端重置成功后清空本地任务/设置状态，并跳转到初始化页面。
+- 中英文 i18n、ReleaseNote 和 API 契约已同步。
+- 新增后端集成测试覆盖重置会清空当前应用数据表。
+
+### 涉及文件
+- `backend/src/main/java/com/mediamarshal/controller/SettingsController.java`
+- `backend/src/main/java/com/mediamarshal/service/settings/SystemResetService.java`
+- `backend/src/test/java/com/mediamarshal/service/settings/SystemResetServiceTest.java`
+- `frontend/src/views/SystemSettingsView.vue`
+- `frontend/src/api/settings.ts`
+- `frontend/src/stores/settingsStore.ts`
+- `frontend/src/stores/mediaStore.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `mvn -q -DskipTests compile`
+- `mvn -q test`
+- `mvn -q -Dtest=SystemResetServiceTest test`
+
+### 待办 / 风险
+- 当前重置仅删除数据库中的应用数据，不删除用户媒体文件或已经整理出的目标文件。
+### 交接备注 / 给 PM 的说明
+- 重置成功后系统会因为 TMDB API Key 缺失进入初始化模式；用户完成初始化后按现有流程跳转到路径设置页。
+---
+
+## [系统设置两栏布局优化] 2026-05-07
+
+### 已完成
+- 系统设置页调整为左右两栏布局：
+  - 左侧展示 TMDB 配置、识别配置、邮件通知和保存按钮。
+  - 右侧独立展示危险操作区域。
+- 危险操作卡片改为适合右侧窄栏的纵向排布，移动端自动回落为单列。
+- ReleaseNote 已补充本次系统设置布局优化记录。
+
+### 涉及文件
+- `frontend/src/views/SystemSettingsView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 待办 / 风险
+- 无
+### 交接备注 / 给 PM 的说明
+- 危险操作仍保留输入 `RESET` 的二次确认逻辑，本次仅调整信息架构与视觉位置。
+---
+
+## [危险设置独立页面与表单说明排版] 2026-05-07
+
+### 已完成
+- 将危险操作从系统设置页拆分到独立的「危险设置」页面。
+- 设置菜单新增「危险设置」入口，与「系统设置」并列。
+- 系统设置页恢复为普通设置页面，仅保留 TMDB、识别和邮件通知配置。
+- 系统设置页与初始化页的表单说明文字统一放在控件下方，避免不同语言下出现左右位置不一致。
+- ReleaseNote 已同步本次 UI 结构调整。
+
+### 涉及文件
+- `frontend/src/views/SystemSettingsView.vue`
+- `frontend/src/views/DangerSettingsView.vue`
+- `frontend/src/views/SetupView.vue`
+- `frontend/src/components/AppLayout.vue`
+- `frontend/src/router/index.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 待办 / 风险
+- 无
+### 交接备注 / 给 PM 的说明
+- 危险设置页面继续使用输入 `RESET` 的二次确认逻辑；本次未变更重置接口行为。
+---
+
+## [ADR-021 Queue 识别信息编辑与重新匹配（v1）] 2026-05-08
+
+### 完成内容
+- Queue 待确认任务新增单任务识别信息编辑能力，当前有效字段直接落在 `MediaTask.mediaType`、`parsedTitle`、`parsedYear`、`parsedSeason`、`parsedEpisode`。
+- 新增后端接口：
+  - `PUT /api/queue/{id}/recognition`：仅保存识别信息，不触发 TMDB 重新匹配，不清空候选。
+  - `POST /api/queue/{id}/recognition/rematch`：保存识别信息后重新 TMDB 匹配，替换旧候选，任务保持 `AWAITING_CONFIRMATION`。
+- 后端按 ADR 限制仅允许 `AWAITING_CONFIRMATION` 任务编辑；电影任务保存时清空季/集；剧集任务要求季号和集号。
+- Queue 前端新增识别信息编辑抽屉，支持查看源路径、资产类型、分辨率、当前候选，并执行“仅保存”与“保存并重新匹配”。
+- 编辑抽屉中源路径、资产类型、分辨率、当前候选等只读信息统一置灰显示。
+- 保存后全局手动搜索默认上下文同步为新媒体类型与解析标题；重新匹配后刷新当前任务候选列表。
+- TMDB 搜索在带年份过滤返回空结果时，会自动退回不带年份再查，避免剧集首播年份与文件解析年份口径不一致导致重新匹配无候选。
+- 同步更新 `api-contracts.mdc`、v0.2.5 ReleaseNote 与版本元数据。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueRecognitionRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueRecognitionResponse.java`
+- `backend/src/test/java/com/mediamarshal/service/pipeline/MediaProcessPipelineRecognitionTest.java`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/api/media.ts`
+- `frontend/src/stores/mediaStore.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `VERSION`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `backend/pom.xml`
+- `parser/main.py`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `npm.cmd run build`
+
+### 遗留问题
+- ADR-021 v1 仅支持单任务编辑，不支持批量识别信息编辑。
+- 保存并重新匹配不会自动高置信度确认，仍需用户在 Queue 中手动确认候选。
+---
+
+## [ReleaseNote 面板折叠展示优化] 2026-05-08
+
+### 完成内容
+- ReleaseNote 悬浮面板按版本折叠展示变更记录。
+- 每个版本默认最多展示 5 条变更；超过 5 条时展示展开按钮，可查看该版本全部变更。
+- 变更条数不超过 5 条时不展示展开按钮。
+- 展开/收起状态按版本独立维护，避免影响其他版本。
+- 同步更新 v0.2.5 ReleaseNote 与中英文按钮文案。
+
+### 影响文件
+- `frontend/src/components/AppVersionInfo.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题
+- 无
+
+## [扫描重复任务日志收敛与 ReleaseNote 整理] 2026-06-13
+
+### 完成内容
+- 文件发现扫描遇到已有非 FAILED 任务时，不再逐条输出 `WARN`，仅在 debug 日志中保留具体重复路径。
+- 扫描完成日志新增 `duplicates` 汇总字段，用于查看本次扫描命中的重复任务数量。
+- 重复的杂项/跳过任务也纳入 `duplicates` 汇总，避免和普通忽略项混在 `skipped` 里。
+- 整理 v0.2.9 ReleaseNote，补充调试日志生效、TMDB 代理诊断和重复扫描日志收敛等近期用户可感知变化。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题
+- 无
+
+---
+
+## [ADR-024 TMDB HTTP 代理配置] 2026-06-09
+
+### 完成内容
+- 新增 TMDB HTTP 代理运行时配置：`tmdb.proxy.enabled`、`tmdb.proxy.http-url`，并在 `application.yml` / `.env.example` 中补充 `MEDIA_MARSHAL_TMDB_PROXY_ENABLED`、`MEDIA_MARSHAL_TMDB_PROXY_HTTP_URL`。
+- 新增 `TmdbProxySettingsService`，按 ADR-024 实现代理配置优先级：数据库代理配置优先；未被数据库接管时，再按环境变量、`application.yml`、默认值读取；数据库保存 `tmdb.proxy.enabled=false` 时强制直连。
+- 新增 `GET /api/settings/effective` 回显有效配置，支持初始化页自动带入环境变量 / `application.yml` 中的代理地址。
+- 新增 `PUT /api/settings/tmdb-proxy` 原子保存代理开关和地址，避免单项保存产生半配置状态；`tmdb.proxy.enabled` / `tmdb.proxy.http-url` 不再通过通用单项设置接口分别保存。
+- `TmdbMetadataMatcher` 搜索、详情查询、手动搜索、TMDB ID 详情查询和人工确认详情请求统一使用 scoped WebClient 代理配置；页面保存后，新发起的 TMDB 请求无需重启即可使用最新代理配置。
+- 代理错误信息补齐：地址格式错误、启用但地址为空、代理连接失败、TMDB 连接超时、代理认证失败等场景会返回可排查的错误信息。
+- 初始化页和系统设置页新增 TMDB HTTP 代理配置入口；关闭代理并保存后可覆盖错误的环境变量 / 配置文件代理。
+- 部署文档补充 TMDB HTTP 代理说明，明确第一版仅代理 TMDB API，不支持海报代理、SOCKS / HTTPS 代理和代理认证。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/settings/SettingsService.java`
+- `backend/src/main/java/com/mediamarshal/service/settings/TmdbProxySettingsService.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/EffectiveSettingResponse.java`
+- `backend/src/main/java/com/mediamarshal/controller/SettingsController.java`
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/resources/application.yml`
+- `backend/src/test/java/com/mediamarshal/service/settings/TmdbProxySettingsServiceTest.java`
+- `frontend/src/api/settings.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/SetupView.vue`
+- `frontend/src/views/SystemSettingsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.env.example`
+- `docs/deployment.md`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `docker compose -f docker-compose.yml config --quiet`
+- `docker compose -f docker-compose.alpha.yml config --quiet`
+- `docker compose -f docker-compose.beta.yml config --quiet`
+
+### 遗留问题
+- 第一版不支持 SOCKS 代理、HTTPS 代理、代理认证和海报图片代理，按 ADR-024 后续规划处理。
+
+## [失败任务错误码与重复失败聚合] 2026-05-09
+
+### 完成内容
+- 为 `MediaTask` 引入 `errorCode`、`failureCount`、`lastFailedAt` 字段，错误码当前包含 `TARGET_CONFLICT`、`SOURCE_MISSING`、`PIPELINE_FAILED`。
+- 后端失败判定改为基于 `errorCode`：同一 `sourcePath + ruleId + errorCode` 的重复失败不再新增任务记录，只递增已有失败任务的 `failureCount`，并刷新失败时间与用户可读错误信息。
+- 目标文件/目录冲突通过 `MediaTaskFailureException` 统一映射为 `TARGET_CONFLICT`，源文件缺失映射为 `SOURCE_MISSING`，未分类异常暂归为 `PIPELINE_FAILED`。
+- 扫描成功后不删除历史失败记录，保留失败记录用于用户溯源。
+- 仪表盘新增“已跳过”任务数量统计；失败任务详情栏左侧显示“失败 x 次”标签，右侧显示 `errorMessage`。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`
+- `backend/src/main/java/com/mediamarshal/model/exception/MediaTaskFailureException.java`
+- `backend/src/main/java/com/mediamarshal/repository/MediaTaskRepository.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/BluRayDirectoryAssetOrganizer.java`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/stores/mediaStore.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+- `npm.cmd run type-check`
+
+### 遗留问题
+- 错误码需要随后续失败类型继续补齐；当前未分类异常统一落到 `PIPELINE_FAILED`。
+
+---
+
+## [附属文件 MD5 支持] 2026-05-30
+
+### 完成内容
+- `moveAssociatedFiles=true` 时，同主视频 basename 的 `.md5` 文件会随主视频一起按 WatchRule 操作移动/复制/链接。
+- 文件发现阶段将同名 `.md5` 识别为附属文件，等待主视频任务处理，不再作为普通杂项文件生成跳过任务。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+
+### 遗留问题
+- 其它校验类附属文件如 `.sfv`、`.sha1`、`.sha256`、`.sha512` 是否跟随移动，待产品确认后再纳入规则。
+---
+
+## [Queue 待确认任务分辨率展示] 2026-05-11
+
+### 完成内容
+- Queue 待确认任务卡片摘要新增「分辨率」字段。
+- 任务摘要从标题、类型、季集 3 项扩展为标题、类型、季集、分辨率 4 项。
+- 分辨率缺失时展示既有的未知文案。
+- 同步更新 v0.2.5 ReleaseNote 中英文记录。
+
+### 影响文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题
+- 无
+
+---
+
+## [ADR-023 路径模板变量正式启用与安全渲染补齐] 2026-06-09
+
+### 完成内容
+- `MediaTask` 新增 `parsedCodec`、`parsedReleaseGroup`、`confirmedOriginalTitle`，分别持久化 guessit `video_codec`、`release_group` 和确认候选的 TMDB `original_title` / `original_name`。
+- `RenameService.buildVariables()` 正式填充 `{codec}`、`{release_group}`、`{original_title}`，`TemplateVariableCatalogService` 将三者状态调整为 `AVAILABLE`。
+- `TemplateRenderer` 对变量值执行路径非法字符清洗，用户模板中的 `/` 仍表示目录层级；清洗为空的变量按缺失变量处理，可选片段按 ADR-017 移除。
+- 新增 `TemplatePathSafetyService`，真实文件操作和模板预览共用路径安全校验：阻止绝对路径、Windows 盘符路径、UNC 路径、`..` 路径段以及 normalize 后逃逸 `targetDir` 的路径。
+- 新增错误码 `UNSAFE_TARGET_PATH`，路径模板渲染结果不安全时任务进入 `FAILED`，不执行文件操作。
+- 新增 `POST /api/template-variables/preview`，使用后端 `TemplateRenderer` 和同一套路径安全规则返回 `output`、`warnings`、`errors`、`usedVariables`、`unknownVariables`、`reservedVariables`、`unsafePath`。
+- 路径设置页自定义模板预览改为调用后端预览接口；保存自定义模板前会阻断未知变量、预留变量、媒体类型不适用变量和不安全路径。
+- 清理路径设置页旧的“后续从 GET /api/template-variables 获取变量”硬编码 TODO。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TemplatePreviewRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TemplatePreviewResponse.java`
+- `backend/src/main/java/com/mediamarshal/controller/TemplateVariableController.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateRenderer.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/BluRayDirectoryAssetOrganizer.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplatePathSafetyService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplatePreviewService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateVariableCatalogService.java`
+- `frontend/src/api/templateVariables.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题
+- `{episode_title}`、`{genre_1}`~`{genre_4}`、`{country}` 仍按 ADR-023 保持 `RESERVED`，后续启用时需补充真实数据来源、持久化字段和前端展示策略。
+
+---
+
+## [v0.2.9 版本号与 ReleaseNote 更新] 2026-06-09
+
+### 完成内容
+- 根目录 `VERSION` 更新为 `v0.2.9`。
+- 后端 Maven 版本更新为 `v0.2.9-SNAPSHOT`。
+- 前端 `package.json` / `package-lock.json` 版本更新为 `0.2.9`。
+- Parser sidecar 本地 fallback 版本更新为 `0.2.9`。
+- ReleaseNote 新增 `v0.2.9`，记录 ADR-023 路径模板变量启用、后端模板预览、路径安全渲染和变量值清洗。
+- 重新优化所有 ReleaseNote 文案，改为用户视角的简洁描述，并移除会被 vue-i18n 当作插值变量解析的模板占位符写法。
+
+### 影响文件
+- `VERSION`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `parser/main.py`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题
+- 无
+
+---
+
+## [ADR-025 剩余 TMDB 模板变量补齐] 2026-06-11
+
+### 完成内容
+- `MediaTask` 新增 `confirmedGenre1`~`confirmedGenre4`、`confirmedCountry`、`confirmedEpisodeTitle`，用于路径模板正式渲染 TMDB 分类、国家和 TV 单集标题。
+- `TaskCandidate` 新增 `genre1`~`genre4`、`country`、`episodeTitle` 快照字段；`MatchResult` 新增 `genres`、`country`、`episodeTitle`。
+- TMDB 确认链路在最终选中候选时拉取详情：补齐 `genres` 与 `country`，TV 单集任务额外拉取 episode 详情补齐单集标题；搜索候选列表不批量拉详情。
+- 所有确认路径共用详情补齐逻辑：自动高置信度、人工单条、批量确认、全局搜索候选确认和 TMDB ID 直接确认。
+- TMDB 详情失败会导致确认失败；TV episode 详情失败时，若当前路径模板使用 `{episode_title}` 则失败，否则继续整理并保持单集标题为空。
+- `TemplateVariableCatalogService` 将 `{genre_1}`~`{genre_4}`、`{country}`、`{episode_title}` 调整为 `AVAILABLE`，并补充数据来源说明和样例。
+- `TemplatePreviewService` 样例上下文补齐 ADR-025 变量；路径设置页变量帮助按电影 / 剧集模板过滤变量，并新增国家 / 分类、单集标题模板预设。
+- `TemplateRenderer` 对格式参数值也执行路径非法字符清洗，避免 `prefix`、`suffix`、`separator` 注入非法路径字符。
+- 同步更新 API 契约、前端类型定义和 v0.2.9 ReleaseNote 条目。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/model/dto/MatchResult.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/TaskCandidate.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/MetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/ParentFolderMatchEnhancer.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplatePreviewService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateRenderer.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/TemplateVariableCatalogService.java`
+- `backend/src/test/java/com/mediamarshal/service/pipeline/MediaProcessPipelineRecognitionTest.java`
+- `backend/src/test/java/com/mediamarshal/service/rename/RenameServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/rename/TemplatePreviewServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题
+- 无
+
+---
+
+## [TMDB 代理环境变量与系统设置收口] 2026-06-13
+
+### 完成内容
+- 修复 Docker Compose 部署未将 `MEDIA_MARSHAL_TMDB_PROXY_ENABLED`、`MEDIA_MARSHAL_TMDB_PROXY_HTTP_URL` 注入后端容器的问题，生产、alpha、beta compose 文件保持一致。
+- `TmdbMetadataMatcher` 在 `media-marshal.debug=true` 时，对 TMDB search / detail / episode detail 请求明确输出访问路径：`proxy=true` 时显示代理地址，`proxy=false` 时显示直连和当前配置的代理地址。
+- 系统设置页临时隐藏未开放的邮件通知面板，保留代码开关，后续邮件功能完成后可重新开放。
+- 同步更新 v0.2.9 ReleaseNote，记录 Docker Compose 代理配置生效修复和系统设置页收口。
+- 修复 `MEDIA_MARSHAL_DEBUG=true` 只进入代码 debug 分支、但日志级别仍为 INFO 导致 `log.debug` 不输出的问题；启动时会将 `com.mediamarshal` logger 提升为 DEBUG。
+
+### 影响文件
+- `docker-compose.yml`
+- `docker-compose.alpha.yml`
+- `docker-compose.beta.yml`
+- `backend/src/main/java/com/mediamarshal/config/DebugLoggingConfigurer.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `frontend/src/views/SystemSettingsView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题
+- 无
+
+---
+
+## [ADR-026 监控路径导入导出] 2026-06-13
+
+### 完成内容
+- 新增监控路径配置包导出能力：`GET /api/watch-rules/export` 返回 `kind=media-marshal.watch-rules`、`schemaVersion=1`、`appVersion`、`exportedAt` 与规则列表。
+- 导出规则仅包含 WatchRule 行为配置字段，不包含 `id`、`userId`、时间戳、任务、候选、缓存、TMDB Key、代理或其它系统配置。
+- 新增导入预览接口 `POST /api/watch-rules/import/preview`，请求体包含导入包与 `preserveEnabledState`，前端切换“保持导出时的启用状态”时会重新预览。
+- 新增导入执行接口 `POST /api/watch-rules/import`，后端重新执行结构校验、重复判断、冲突判断和必要预检，不信任前端预览结果。
+- 默认导入新增规则为 `enabled=false`；仅 `preserveEnabledState=true` 时按导出文件中的 `enabled` 写入。
+- 完全重复规则基于行为字段指纹判断并跳过，指纹不包含 `name` 与 `enabled`；路径比较只做轻量字符串规范化，不访问文件系统或解析符号链接。
+- 同 `sourceDir` 但行为不同的规则标记为 `CONFLICT`；导入文件内部同源目录不同行为同样阻断。
+- 导入文件内部完全重复规则按“第一条参与导入，后续跳过重复”处理。
+- 默认禁用导入时，路径不可用仅作为 warning 展示；保持启用状态时，如会形成启用规则父子源目录包含关系则标记为 `CONFLICT`。
+- 真正导入启用规则时复用 WatchRule 保存前完整预检；导入事务内创建所有可导入规则，任意失败则回滚，创建成功后 Controller 只触发一次 `FileDiscoveryService.reload()`。
+- 路径设置页新增“导出 / 导入”入口；导入弹窗包含上传、预览确认、完成结果三步，明确提示本功能只导入监控路径规则，不导入系统配置和任务数据。
+- 同步更新中英文 i18n、API 契约与 v0.2.9 ReleaseNote。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/WatchRuleController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleImportPackage.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleImportPreview.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleImportPreviewItem.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleImportPreviewRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleImportRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleImportResult.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleImportRule.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/WatchRuleImportSummary.java`
+- `backend/src/main/java/com/mediamarshal/service/watchrule/WatchRuleImportExportService.java`
+- `backend/src/main/java/com/mediamarshal/service/watchrule/WatchRulePreflightService.java`
+- `backend/src/test/java/com/mediamarshal/service/watchrule/WatchRuleImportExportServiceTest.java`
+- `frontend/src/api/watchRule.ts`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题
+- 第一版不支持覆盖导入、路径前缀批量替换、导入时逐条编辑或完整系统备份。
+
+---
+
+## [ADR-027 Sample 视频识别与扫描剪枝] 2026-06-25
+
+### 完成内容
+- 将 WatchRule 忽略匹配抽取到 `DiscoveryIgnoreService`，系统默认忽略规则新增 `sample/`、`samples/`；实时监听目录注册、周期扫描、手动全量扫描和新目录补扫均复用该服务，并在命中目录时剪枝整个子树。
+- 新增 `SampleVideoDetector`：仅识别受支持的视频文件，basename 必须以 `.sample`、`-sample` 或 `_sample` 独立后缀结尾，并且同目录存在去除后缀后 basename 完全相同的正片；正片与样片允许使用不同视频扩展名，比较大小写不敏感。
+- Sample 后缀关联判断位于媒体资产识别、数据库查重、guessit 和 pipeline 之前；命中后静默返回，不创建 `SKIPPED`、`FAILED` 或待确认任务，扫描汇总计入普通 `skipped`。
+- 同目录 Sample 后缀识别仅在 `ignoredFilePatterns=null`、即使用系统默认忽略行为时生效；空列表和自定义规则不强制继承。Debug 日志记录样片路径与对应正片路径。
+- 路径设置页默认忽略规则展示同步新增 `sample/`、`samples/`；自定义或空规则显示非阻断风险提示，并提供只在列表末尾追加缺失 Sample 目录规则的便捷操作，不覆盖、不排序、不删除已有规则。
+- 用户手册补充 Sample 目录剪枝、同目录后缀识别和自定义规则不继承新增默认项的说明；API 契约同步记录 ADR-027 的忽略规则语义。
+- 新增 v0.2.10 ReleaseNote，并将根版本号、后端 Maven、前端包元数据和 Parser fallback 版本统一同步到 v0.2.10。
+- 新增 `scripts/sync-version.mjs`，补齐开发规则要求的单一版本源同步工具。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/discovery/DiscoveryIgnoreService.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/SampleVideoDetector.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `backend/src/test/java/com/mediamarshal/service/discovery/DiscoveryIgnoreServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/discovery/SampleVideoDetectorTest.java`
+- `frontend/src/views/PathsView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `docs/user-guide.md`
+- `VERSION`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `parser/main.py`
+- `scripts/sync-version.mjs`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无新增 REST API 或 WatchRule 字段；仅更新 `ignoredFilePatterns=null` 对应的系统默认行为说明。
+
+### 测试覆盖
+- 默认 Sample / Samples 目录任意层级大小写不敏感剪枝。
+- 空规则和自定义规则不强制继承 Sample 默认规则。
+- `.sample`、`-sample`、`_sample` 后缀识别。
+- 正片与样片使用不同视频扩展名时的关联。
+- 无对应正片、basename 仅部分相似、标题正文包含 Sample 和非视频文件的误伤保护。
+
+### 偏离设计的地方
+- 无。
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [Queue 批量编辑弹窗固定高度与版本信息补齐] 2026-07-31
+
+### 完成内容
+- 修复批量编辑识别信息弹窗固定高度未生效的问题：Element Plus 会将 `class="batch-recognition-dialog"` 应用到 `.el-dialog` 本身，原选择器按“外层容器包含 `.el-dialog`”匹配，导致外层固定高度样式没有命中。
+- 将弹窗高度、body 溢出和 footer 固定规则改为全局选择器，兼容 `.el-dialog.batch-recognition-dialog` 与外层容器两种结构，避免选择大量文件时变更预览继续撑高弹窗。
+- 移除对 `.el-dialog` 的 `margin` 覆盖，保留 Element Plus `align-center` 的居中定位，避免弹窗固定高度修复后跑到左上角。
+- 将当前版本号同步为 `v0.2.12`，并补齐 `v0.2.11` / `v0.2.12` ReleaseNote；`v0.2.11` 记录 Queue 批量编辑，`v0.2.12` 记录文档站和批量编辑弹窗体验修复。
+- ReleaseNote 面板当前只展示最近 3 个版本，因此前端 ReleaseNote 索引和中英文文案仅保留 `v0.2.12`、`v0.2.11`、`v0.2.10`，删除不会展示的旧版本内容。
+- 补齐 `scripts/sync-version.mjs` 对根目录 VitePress 文档站 `package.json` / `package-lock.json` 的版本同步，避免后续升级继续遗漏。
+
+### 影响文件
+- `VERSION`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `package.json`
+- `package-lock.json`
+- `parser/main.py`
+- `scripts/sync-version.mjs`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `mvn -q -DskipTests compile`
+- `npm.cmd run docs:build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [Queue 待确认任务文件名排序] 2026-08-01
+
+### 完成内容
+- Queue 待确认任务列表改为在分页前按源文件名自然升序排列，避免同一剧集的不同集数因为创建时间不同散落到多个分页。
+- 文件名相同时继续按规范化源路径和任务 ID 排序，保证列表顺序稳定。
+- v0.2.12 ReleaseNote 补充待确认队列排序优化说明。
+
+### 影响文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [ADR-028 已完成任务匹配纠错、目标资产重命名与修正历史链路] 2026-06-28
+
+### 完成内容
+- Dashboard `DONE` 任务新增“修正”入口；`ISO_IMAGE` 显示暂不支持提示，`CORRECTED` 作为历史状态展示，不进入再次修正流程。
+- 新增任务纠错接口：
+  - `POST /api/tasks/{id}/correction/rematch`
+  - `POST /api/tasks/{id}/correction/preview`
+  - `POST /api/tasks/{id}/correction/apply`
+- `MediaTask` 新增 `CORRECTED` 状态、`MANUAL_CORRECTION` 确认来源，以及 `correctedFromTaskId`、`correctedToTaskId`、`correctedAt` 修正链路字段。
+- 新增 `TaskCorrectionService`，纠错流程只操作当前 `targetPath` 指向的目标媒体库资产；不检查、不读取、不移动原始 `sourcePath`。
+- `apply` 会重新拉取所选 TMDB ID 的详情并重新计算计划，不信任前端传回的预览结果。
+- 文件操作顺序：
+  1. 校验旧任务为 `DONE` 且目标资产存在。
+  2. 获取 TMDB 详情并补齐模板变量所需字段。
+  3. 重新计算目标路径、附属文件、NFO 和旧目标空目录清理计划。
+  4. 重新执行路径安全和冲突检查。
+  5. 移动 / 重命名当前目标主资产及同名附属文件。
+  6. 用户显式选择时重新生成 NFO。
+  7. 文件操作成功后创建新的 `DONE` 修正任务，保存最终候选快照。
+  8. 将旧任务标记为 `CORRECTED` 并写入修正链路。
+  9. 尝试清理旧目标空目录；失败仅记录 warning，不回滚已完成修正。
+- 普通视频纠错时，同目录同 basename 的字幕、NFO、封面和 `.md5` 会按新 basename 移动；`.md5` 只移动/改名，不修改内容。
+- 蓝光目录纠错按电影蓝光处理，移动/重命名当前目标根目录；剧集蓝光修正在预览阶段阻断。
+- 文件发现查重口径更新为：`PENDING` / `PROCESSING` / `AWAITING_CONFIRMATION` / `DONE` / `SKIPPED` 才视为当前有效记录，`FAILED` / `CORRECTED` 不阻止后续重新扫描。
+- 前端修正弹窗支持识别信息编辑、重新匹配、候选选择、影响预览和二次确认应用。
+- 同步更新中英文 i18n、API 契约、用户手册与 v0.2.10 ReleaseNote。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionApplyResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionOperation.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionPreview.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionRematchResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/MediaTask.java`
+- `backend/src/main/java/com/mediamarshal/repository/MediaTaskRepository.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/main/java/com/mediamarshal/service/discovery/FileDiscoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/RenameService.java`
+- `backend/src/main/java/com/mediamarshal/websocket/EventPublisher.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionServiceTest.java`
+- `frontend/src/api/media.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `docs/user-guide.md`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 新增 `TaskCorrectionRequest`、`TaskCorrectionPreview`、`TaskCorrectionOperation`、`TaskCorrectionRematchResponse`、`TaskCorrectionApplyResponse`。
+- `MediaTask.status` 新增 `CORRECTED`。
+- `MediaTask.confirmationSource` 新增 `MANUAL_CORRECTION`。
+- `MediaTask` 返回字段新增 `correctedFromTaskId`、`correctedToTaskId`、`correctedAt`。
+- WebSocket 任务事件新增 `task.corrected`。
+
+### 测试覆盖
+- 目标路径不变时仍创建新的 `DONE` 修正任务，并将旧任务标记为 `CORRECTED`。
+- 普通视频纠错会移动同 basename 附属文件和 `.md5`，通用封面保持原位。
+- 剧集蓝光原盘纠错在预览阶段阻断。
+
+### 偏离设计的地方
+- 按本次需求确认，纠错文件操作不沿用旧 WatchRule 的 `operation`，统一对当前目标资产执行移动/重命名；WatchRule 仍用于目标目录和路径模板计算。
+- 按本次需求确认，`poster.jpg`、`folder.jpg`、`cover.jpg` 通用封面在纠错流程中不自动移动。
+- 当前仅在 Dashboard 列表展示 `CORRECTED` 历史，不提供“查看修正后记录”的单独入口或详情弹窗。
+
+### 遗留问题 / 需 PM 决策
+- 后续可补充已修正任务详情页 / 修正历史链路弹窗。
+- 后续可评估 ISO 镜像、剧集蓝光原盘、批量修正和自动回滚入口。
+
+---
+
+## [ADR-028 修正面板交互与布局优化] 2026-06-29
+
+### 完成内容
+- 修正面板改为居中弹窗，并调整为上方任务信息、下方左右分栏的紧凑布局，减少打开面板后的纵向滚动需求。
+- 任务信息表中“源路径（历史来源）”和“当前目标路径”分别独占一行，其它信息仍保持一行两个字段。
+- 修复修正面板表单内操作按钮可能触发表单默认行为的问题：`DashboardView.vue` 补充导入 `mediaApi`，并将重新匹配、预览按钮显式标记为普通按钮。
+- v0.2.10 ReleaseNote 补充修正面板布局优化说明。
+
+### 影响文件
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `docs/user-guide.md`
+- `.cursor/rules/implementation-log.mdc`
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题 / 需 PM 决策
+- 如果后续候选数量较多仍需要进一步压缩面板高度，可考虑为候选列表增加分页或“只展示前 N 条 + 展开”交互。
+
+---
+
+## [ADR-028 旧库枚举约束迁移与修正流程收敛] 2026-06-29
+
+### 完成内容
+- 修复旧版本 SQLite 数据库升级后，应用修正时因 `media_task.confirmation_source` 仍只允许 `AUTO_MATCH` / `MANUAL_SINGLE` / `MANUAL_BATCH` 导致 `MANUAL_CORRECTION` 写入失败的问题。
+- 启动时检测 `media_task` 旧版 CHECK 约束，必要时重建表结构并保留已有任务记录，使 `MANUAL_CORRECTION` 和 `CORRECTED` 在旧库中可正常写入。
+- 修正面板去掉候选区的手动输入框和搜索按钮，只保留“重新匹配”，点击后按当前编辑后的识别信息刷新候选。
+- 将“重新匹配”按钮移动到“重新生成 NFO”前，候选区只负责展示和选择候选结果。
+- v0.2.10 ReleaseNote 同步调整为用户视角说明旧库修正失败修复与修正流程优化。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/config/SqliteMediaTaskSchemaMigration.java`
+- `backend/src/test/java/com/mediamarshal/config/SqliteMediaTaskSchemaMigrationTest.java`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无新增或变更 REST API；仅修复旧数据库 schema 兼容和前端交互入口。
+
+### 验证
+- `mvn -q -Dtest=SqliteMediaTaskSchemaMigrationTest test`
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [ADR-028 修正任务更新时间排序优化] 2026-06-29
+
+### 完成内容
+- 明确 Dashboard 当前任务排序逻辑：仍按 `updatedAt || createdAt` 倒序展示，不新增修正链路专用排序规则。
+- 调整应用修正后的数据更新时间：旧任务保存为 `CORRECTED` 后，再刷新新的 `DONE + MANUAL_CORRECTION` 修正任务更新时间，使当前有效任务在普通时间倒序中自然排在已修正历史上方。
+- v0.2.10 ReleaseNote 补充修正历史排序优化说明。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionServiceTest.java`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `mvn -q -Dtest=TaskCorrectionServiceTest test`
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [Queue 批量编辑预览展示优化] 2026-07-25
+
+### 完成内容
+- 批量编辑未选择公共字段且未启用顺序集号时，仅保留后端阻断提示，避免同一句提示以灰色和红色重复展示。
+- 变更预览表首列由任务 ID 调整为序号，降低用户阅读负担。
+- 预览字段未变化时直接显示当前值，不再展示“当前值 -> 当前值”的重复变更；整行无字段变化且无阻断 / 提醒时，在详情列显示“无变化”标签。
+
+### 影响文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [Queue 批量编辑面板布局与重匹配超时优化] 2026-07-25
+
+### 完成内容
+- 批量编辑识别信息弹窗改为视口居中显示，不再依赖固定顶部距离。
+- 弹窗高度固定在可视区域内，左侧公共字段区与右侧变更预览区等高；任务较多时由预览表内部滚动，不再撑高弹窗。
+- 批量预览重新计算时，右侧预览区显示 loading 遮罩并保留上一版内容，避免字段修改时出现短暂空白。
+- 前端为 TMDB 搜索、单任务重新匹配、批量预览和批量重新匹配设置更合适的请求超时，避免批量重新匹配被 Axios 默认 10 秒超时提前中断。
+- ReleaseNote 仍合并在 ADR-029 批量识别条目中，避免拆成过细的实现说明。
+
+### 影响文件
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/api/media.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [ADR-029 Queue 公共识别信息批量编辑与顺序集号生成] 2026-07-25
+
+### 完成内容
+- Queue 页面新增当前页已选任务“批量编辑识别信息”入口，支持按字段勾选后批量修改媒体类型、解析标题、解析年份和季号。
+- 新增后端批量预览能力，统一返回可编辑数量、阻断项、提醒项和逐任务变更明细；保存前必须先通过预览校验。
+- 支持剧集任务按后端自然排序生成顺序集号，起始集号最小为 0，支持升序 / 降序，并会阻断多集范围、非普通视频和最终媒体类型不全为剧集的批次。
+- 新增“仅保存”和“保存并重新匹配”两种批量动作：
+  - 仅保存不访问 TMDB、不替换候选、不自动确认。
+  - 保存并重新匹配会先保存识别信息，再逐任务清空旧候选并重新匹配；单任务 TMDB 失败不回滚已保存识别信息。
+- 前端保存后清除已选任务的临时候选选择状态，重新匹配后不自动选中首位候选。
+- 同步更新 API 契约、用户手册、v0.2.10 ReleaseNote 和中英文文案。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/QueueController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/BatchRecognitionField.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/EpisodeAssignmentMode.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/EpisodeSortDirection.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueBatchRecognitionRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueBatchRecognitionPreview.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueBatchRecognitionPreviewItem.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueBatchRecognitionSaveResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueBatchRecognitionRematchResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueBatchRecognitionRematchResult.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/QueueBatchRecognitionRematchStatus.java`
+- `backend/src/main/java/com/mediamarshal/repository/TaskCandidateRepository.java`
+- `backend/src/main/java/com/mediamarshal/service/queue/QueueBatchRecognitionService.java`
+- `backend/src/test/java/com/mediamarshal/service/queue/QueueBatchRecognitionServiceTest.java`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/types/index.ts`
+- `frontend/src/api/media.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `docs/user-guide.md`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 新增 `POST /api/queue/recognition/batch/preview`
+- 新增 `PATCH /api/queue/recognition/batch`
+- 新增 `POST /api/queue/recognition/batch/rematch`
+- 补齐 `QueueRecognitionRequest.parsedEpisodeEnd` 契约说明。
+
+### 验证
+- `mvn -q -Dtest=QueueBatchRecognitionServiceTest test`
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [ADR-028 修正面板视觉分区与候选自动预览] 2026-07-01
+
+### 完成内容
+- 影响预览中的“当前目标路径”和“修正后目标路径”描述表格加宽 label 区域，并禁止 label 换行，保证表头保持单行展示。
+- 使用浅色高亮背景和轻阴影区分“当前任务信息”“编辑识别信息 / 候选”和“影响预览”三个区域，替代生硬分割线。
+- 去掉影响预览区域的“预览”按钮；打开弹窗已有候选、重新匹配选中候选、点击候选项时会自动刷新并展示预览内容。
+- 勾选“重新生成 NFO”时，如果已有候选会自动刷新预览，避免去掉按钮后没有重新生成预览的入口。
+- v0.2.10 ReleaseNote 同步更新候选自动预览和修正面板分区优化说明。
+
+### 影响文件
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [v0.2.10 ReleaseNote 收敛] 2026-07-01
+
+### 完成内容
+- v0.2.10 ReleaseNote 从多条实现细节收敛为两条用户可感知的核心改动：已完成任务修正、Sample 目录默认静默跳过。
+- 简化中英文描述，避免把预览、旧库兼容、布局、排序等支撑性细节拆成独立更新项。
+
+### 影响文件
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [ADR-030 步骤 2：单项修正执行内核与短事务边界] 2026-08-29
+
+### 完成内容
+- 将 ADR-028 单项修正拆分为计划计算、文件执行和数据库持久化三个职责，保留原有 rematch / preview / apply 接口与用户语义。
+- 文件移动和 NFO 生成在数据库事务外执行；修正任务、候选快照和 `CORRECTED -> DONE` 历史链路由独立短事务写入。
+- 文件执行器返回已完成移动日志；数据库持久化失败时按逆序尝试恢复当前条目文件，避免留下数据库未更新但主资产已移动的静默不一致。
+- `TaskCorrectionService` 暴露包内可复用的 prepare / executePrepared 内核，为后续批次编排提供同一套单任务规则，并允许批次延迟执行空目录清理。
+- 新增数据库失败后的文件回滚测试，继续覆盖目标路径不变、同 basename 附属文件和通用封面保留语义。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionPlan.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileMove.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileExecution.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionFileExecutor.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionPersistenceService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionServiceTest.java`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionServiceTest,QueueBatchRecognitionServiceTest,SqliteMediaTaskSchemaMigrationTest" test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 批次表、后台执行器、任务占用锁和重启恢复由 ADR-030 步骤 3 实现。
+
+---
+
+## [ADR-030 步骤 3：持久化批次基础设施与恢复状态机] 2026-08-29
+
+### 完成内容
+- 新增 `task_correction_batch` 和 `task_correction_batch_item` 实体、Repository 与显式 SQLite 建表迁移，持久化批次参数、计数、逐条路径快照、失败原因和人工恢复信息。
+- 为 `idempotencyKey`、批次内任务唯一性和 `PENDING / RUNNING` 任务占用建立唯一索引，避免重复请求和两个活跃作业同时声明同一旧任务。
+- 新增批次状态服务，统一处理作业开始、条目开始、成功、失败、最终成功 / 部分失败 / 全部失败计数与状态迁移。
+- 新增单实例串行后台执行器；关闭时等待正在执行的工作，并在超时后中断线程。
+- 新增单项与批量共用的并发协调器：单项修正会拒绝已被批次占用的任务，批次预留会拒绝正在执行单项修正或已有活跃预留的任务。
+- 服务启动时将遗留 `QUEUED / RUNNING` 作业转为 `INTERRUPTED`，把未完成条目标记为可重试的 `FAILED` 并保留原路径、计划目标和中断说明；不自动猜测文件是否已完成移动。
+- 系统重置同步删除批次条目和批次记录。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/model/entity/TaskCorrectionBatch.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/TaskCorrectionBatchItem.java`
+- `backend/src/main/java/com/mediamarshal/repository/TaskCorrectionBatchRepository.java`
+- `backend/src/main/java/com/mediamarshal/repository/TaskCorrectionBatchItemRepository.java`
+- `backend/src/main/java/com/mediamarshal/config/SqliteTaskCorrectionBatchSchemaMigration.java`
+- `backend/src/main/java/com/mediamarshal/config/TaskCorrectionBatchRecoveryRunner.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchExecutor.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchRecoveryService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionConcurrencyGuard.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/main/java/com/mediamarshal/service/settings/SystemResetService.java`
+- `backend/src/test/java/com/mediamarshal/config/SqliteTaskCorrectionBatchSchemaMigrationTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionConcurrencyGuardTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/settings/SystemResetServiceTest.java`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无；本步骤只提供后续批量接口使用的持久化和执行基础设施。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=SqliteTaskCorrectionBatchSchemaMigrationTest,TaskCorrectionConcurrencyGuardTest,TaskCorrectionBatchStateServiceTest,TaskCorrectionServiceTest,SystemResetServiceTest" test`
+- `mvn -q test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 范围解析和全批次只读预览由 ADR-030 步骤 4 实现。
+
+---
+
+## [ADR-030 步骤 4：跨分页范围解析与全批次只读预览] 2026-08-29
+
+### 完成内容
+- 新增剧集修正范围接口，按当前错误 `tmdbId + ruleId + DONE + TV_SHOW` 查询同剧集完整范围，同季额外匹配锚点季号，不依赖 Dashboard 分页或筛选。
+- 范围结果按季号、集号、集结束号、目标文件名自然顺序和任务 ID 稳定排序，并以任务状态、路径、更新时间和关键识别字段生成 SHA-256 `groupFingerprint`。
+- 新增批量预览接口；公共标题和年份应用到每个临时单项计划，季号、集号、集结束号继续使用旧任务原值。
+- 同一次预览只获取一次所选 TMDB 剧集详情；每条单集计划复用剧集详情，并沿用现有 TMDB 分集缓存。
+- 预览返回范围汇总、逐任务路径和操作、附属文件数量、阻断项、提示项、选择状态和正确候选快照。
+- 支持显式排除范围内任务；被排除任务仍在预览中可见，但其单项阻断不阻止其它选中任务。
+- 新增批次内部重复当前路径、重复修正目标、主资产 / 附属文件重复目标、修正目标占用其它当前有效任务路径和活跃批次占用检查。
+- 检测剧集共享封面、fanart、季海报和 `tvshow.nfo` 时返回合并 warning，第一版不生成移动计划。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchRequest.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchPreview.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchPreviewItem.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionScopesResponse.java`
+- `backend/src/main/java/com/mediamarshal/repository/MediaTaskRepository.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionResolvedScope.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchPreviewService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchPreviewServiceTest.java`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 新增 `GET /api/tasks/{id}/correction/scopes`。
+- 新增 `POST /api/tasks/{id}/correction/batch/preview`。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionScopeServiceTest,TaskCorrectionBatchPreviewServiceTest,TaskCorrectionServiceTest" test`
+- `mvn -q test`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 批量应用、作业查询和失败项重试由 ADR-030 步骤 5 实现。
+
+---
+
+## [ADR-030 步骤 5：持久化批量应用、进度查询与失败项重试] 2026-08-29
+
+### 完成内容
+- 新增批量应用接口：重新执行完整只读预览、比较 `groupFingerprint`、校验阻断项和任务占用后，在短事务中创建批次及全部条目；HTTP 请求只返回批次 ID，不等待文件操作。
+- `idempotencyKey` 必填并建立持久化唯一约束；重复提交返回既有批次，不重复创建或调度作业。
+- 后台执行器每个批次只获取一次正确 TMDB 剧集详情，按稳定季集顺序逐条重建最终计划、核对旧任务状态 / 当前路径 / 修正目标快照，再复用 ADR-028 内核执行文件和历史链路。
+- 单条成功写入新 `DONE` 任务、选中候选快照和旧任务 `CORRECTED` 双向链路；单条失败保存错误与人工恢复路径并继续其它条目。
+- 所有条目进入最终状态后，按旧目录深度从深到浅去重清理空目录；共享封面等非空内容会保留并阻止继续向上删除。
+- 新增批次查询接口，返回状态、汇总计数、当前运行条目、逐条路径、重试次数、错误和恢复信息，前端可使用轮询展示进度。
+- 新增失败项重试接口；仅允许 `PARTIAL_FAILED / FAILED / INTERRUPTED` 批次，重新校验原任务仍为 `DONE` 且当前路径与快照一致，只重置 `FAILED` 条目，不重复执行成功或排除条目。
+- 新增临时媒体库端到端测试，覆盖“万物生灵”1978 错误条目到 2020 正确条目的跨季主视频和字幕移动、逐条历史链路、共享 poster 保留及延迟空目录清理。
+- 项目、后端和前端包版本统一更新为 `v0.2.13`；前端交互仍作为后续独立步骤，不在本次后端步骤 2–5 范围内声明完成。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionController.java`
+- `backend/src/main/java/com/mediamarshal/controller/TaskCorrectionBatchController.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchApplyResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchResponse.java`
+- `backend/src/main/java/com/mediamarshal/model/dto/TaskCorrectionBatchItemResponse.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchPersistenceService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchService.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchWorker.java`
+- `backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionBatchStateService.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionBatchWorkerTest.java`
+- `VERSION`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `.cursor/rules/project-roadmap.mdc`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 新增 `POST /api/tasks/{id}/correction/batch/apply`。
+- 新增 `GET /api/task-correction-batches/{batchId}`。
+- 新增 `POST /api/task-correction-batches/{batchId}/retry-failed`。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `mvn -q "-Dtest=TaskCorrectionBatchServiceTest,TaskCorrectionBatchWorkerTest,TaskCorrectionBatchStateServiceTest,TaskCorrectionServiceTest" test`
+- `mvn -q test`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- Dashboard 的同季 / 同剧集范围选择、批量预览表、进度轮询和失败项重试交互仍需按 ADR-030 的前端阶段实现；后端接口已就绪。
+
+---
+
+## [ADR-030 步骤 6：Dashboard 批量修正交互与作业进度] 2026-08-29
+
+### 完成内容
+- 保留 Dashboard 单条“修正”入口和 `SINGLE` 默认值；符合条件的已完成普通视频剧集加载后端范围数量，展示仅当前集、同季和同剧集三个选项，范围加载失败时自动保持单条模式。
+- 批量模式固定 `TV_SHOW`，公共标题和年份可编辑，原季号、集号和集结束号只读；候选卡补充原始标题、年份、TMDB ID、类型、海报和置信度，非剧集候选不可用于批量修正。
+- 接入完整批量预览，展示范围、纳入、阻断和提示汇总，以及每条任务的季集、当前 / 修正路径、附属文件、操作、阻断和提示；用户显式排除任务后立即使旧预览失效并向后端重新计算。
+- 应用时提交预览 `groupFingerprint` 和前端生成的稳定 `idempotencyKey`，只调用批量作业接口，不循环调用单条修正接口。
+- 创建作业后弹窗切换为进度状态，按批次查询接口轮询状态，展示已处理 / 总数、成功、失败、排除、当前季集、逐条错误和人工恢复信息；作业终态统一刷新 Dashboard。
+- `PARTIAL_FAILED / FAILED / INTERRUPTED` 且存在失败条目时提供“重试失败项”，后端继续保证成功项不重复执行。
+- 将锚点、范围任务和成功后的新任务与批次 ID 保存在浏览器本地最近作业索引中；关闭弹窗不取消后台作业，从相关任务再次进入时恢复批次详情和未完成轮询。
+- 修正弹窗使用固定视口高度，标题与操作区保持可见，长范围预览和进度明细在内容区滚动；补充中英文交互文案、v0.2.13 发布说明和用户手册中的“万物生灵”同名不同年份示例。
+
+### 影响文件
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/api/media.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/components/AppVersionInfo.vue`
+- `docs/user-guide.md`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无；前端接入 ADR-030 步骤 4、5 已提供的范围、预览、应用、查询和失败重试接口。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- 使用工作区临时 SQLite、三条虚拟《万物生灵》分集和本地 TMDB 模拟响应进行浏览器端到端验证：范围计数、1978 → 2020 候选切换、跨季预览、显式排除、3/3 批量成功、Dashboard 刷新及最近批次恢复均通过。
+- 浏览器控制台无新增 warning / error。
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [ADR-030 步骤 6 修正：统一重新匹配语义与固定面板滚动] 2026-08-29
+
+### 完成内容
+- 定位同季 / 同剧集重新匹配无候选的原因：批量范围此前调用通用元数据搜索，将标题和年份拼成单个关键词；仅当前集调用任务修正重匹配，向匹配器分别传递标题、年份、季号和集号，二者搜索语义不一致。
+- 三种修正范围统一调用 `POST /api/tasks/{id}/correction/rematch`，批量范围仅在响应侧保留剧集候选；标题、年份、季号和集号均继续以结构化字段传递。
+- “编辑识别信息”和“影响预览”左右面板统一固定为 `560px` 高度；候选列表和预览内容设置独立纵向滚动，候选或批量影响项数量增加时不再撑高面板。
+
+### 影响文件
+- `frontend/src/views/DashboardView.vue`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无；复用 ADR-028 已提供的任务修正重匹配接口。
+
+### 验证
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- 使用本地模拟 API 和浏览器回归验证仅当前集、同季、同剧集：三种范围均向同一重匹配接口提交 `TV_SHOW / 万物生灵 / 2020 / S01E01` 结构化字段并返回候选。
+- 使用 18 个候选和 24 个批量影响项验证布局：左右面板高度均为 `560px`，候选列表及批量预览表格均出现内部滚动，面板高度保持不变。
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [v0.2.13.1：Dashboard / Queue 悬浮回顶与补丁版本规则] 2026-08-29
+
+### 完成内容
+- 新增共用悬浮按钮组，Dashboard 和待确认队列滚动超过阈值后在右下角显示“回到顶部”按钮，并绑定主内容滚动容器。
+- 当前应用版本更新为 `v0.2.13.1`；该版本是基于 `v0.2.13` 的独立补丁版本，ReleaseNote 仅记录本补丁新增的悬浮回顶功能。
+- `v0.2.13` 与 `v0.2.13.1` ReleaseNote 拆分为两个独立分组；ReleaseNote 索引统一由 `frontend/src/meta/releaseNotes.ts` 管理，展示组件不再拼接当前版本内容。
+- 项目规则补充四段补丁版本约定；npm 私有包元数据将 `vA.B.C.D` 映射为合法 SemVer `A.B.C+patch.D`，应用展示、Maven 与 Parser 继续使用四段版本。
+
+### 影响文件
+- `frontend/src/components/FloatingActionGroup.vue`
+- `frontend/src/components/AppVersionInfo.vue`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/meta/releaseNotes.ts`
+- `frontend/src/i18n/zh.ts`
+- `frontend/src/i18n/en.ts`
+- `frontend/src/i18n/releaseNotes/zh.ts`
+- `frontend/src/i18n/releaseNotes/en.ts`
+- `VERSION`
+- `package.json`
+- `package-lock.json`
+- `backend/pom.xml`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `parser/main.py`
+- `scripts/sync-version.mjs`
+- `.cursor/rules/frontend-rules.mdc`
+- `.cursor/rules/project-roadmap.mdc`
+- `.cursor/rules/implementation-log.mdc`
+
+### 接口变更
+- 无。
+
+### 验证
+- `mvn -q -DskipTests compile`
+- `npm.cmd run type-check`
+- `npm.cmd run build`
+- `git diff --check`
+
+### 遗留问题 / 需 PM 决策
+- 无。
+
+---
+
+## [需求文档按 v0.2.13.1 工作区进度重整] 2026-09-05
+
+### 已完成
+- 新增 `requirements-status.mdc`，统一当前能力、代码依据、REQ-01～14、优先级、验收条件及候选需求；明确代码落地、历史验证与发行验收的区别。
+- 路线图移除失效的未来 v0.2.11 排期，改按发行硬化、异常恢复、并行工程治理、只读资产索引、播放统计的依赖推进。
+- 保留 ADR 全部 29 个编号及顺序，清理尾部 ADR-027/028/029 的过期待开发条目；ADR-022 标为部分落地，ADR-030 标为核心已落地但恢复体验仍有缺口。
+- 校准项目上下文与 API 能力说明：四种操作已实现、配置来源有例外、任务列表是数组、批次仅按已知 ID 查询。
+- README、文档首页与手册同步当前能力、Queue 当前页边界、批量修正跨页范围、同浏览器作业恢复限制及邮件入口状态。
+- 补齐部署指南与 FAQ；修正三份 Compose 都挂载 `/media`、`.env` 显式 tag 覆盖默认值、容器代理回环地址、完整数据备份及回滚边界。
+- 新增活跃作业与删除 / 重置互斥、解析歧义与重试抑制、服务端作业检索、NFO 语义 / 内容补偿等需求和待验收项。
+
+### 关键文件
+- `.cursor/rules/requirements-status.mdc`（新增）
+- `.cursor/rules/project-roadmap.mdc`
+- `.cursor/rules/design-decisions.mdc`
+- `.cursor/rules/project-context.mdc`
+- `.cursor/rules/api-contracts.mdc`
+- `.cursor/rules/implementation-log.mdc`
+- `README.md`
+- `.env.example`（仅修正注释，配置值不变）
+- `docs/index.md`
+- `docs/user-guide.md`
+- `docs/deployment.md`
+- `docs/faq.md`
+
+### 接口变更
+- 无。仅说明当前契约限制；需求中的新接口未提前加入生效接口表。
+
+### 偏离设计的地方
+- 本次是用户授权的需求 / PM 文档整理，对 ADR 仅校准状态、阅读指引和当前待办，不改既有业务决策，不实现新功能，不变更版本及 ReleaseNote。
+- 保留任务开始前已有的 v0.2.13.1 代码和版本改动。
+
+### 验证
+- 直接执行 `node node_modules/vitepress/bin/vitepress.js build docs`：VitePress 1.6.4 构建与页面渲染通过。`npm.cmd run docs:build` 首次因本机 npm 入口路径的 EPERM 未启动，使用同一项目 CLI 直接构建通过。
+- 检查本轮文档的 Markdown 代码围栏和 29 个本地链接，通过。
+- 对比 HEAD 与工作区 ADR 编号 / 顺序，29 条全部保留；REQ-01～14 齐全；部署 / FAQ 无 TODO 占位。
+- `git diff --check` 通过。
+- 本轮不运行应用业务测试、真实媒体处理、Docker 部署或远端发布验证；历史测试记录仅作为既有证据。
+
+### 遗留问题 / 需 PM 决策
+- REQ-01/02/03/09 的发行门禁及矩阵仍需实施 / 实测；文档补齐不等于升级和恢复已经通过。
+- REQ-04 的歧义人工处理入口、自动重试策略，REQ-03 的并发动作约束，REQ-05 的检索接口等在进入开发前需形成设计结论。
+- 新发现的 NFO 内容补偿、分集 / 多集 NFO 语义纳入 REQ-08，当前没有据此承诺完整回滚。
+
+---
+
+## [可靠识别自动整理，仅异常保留人工处理] 2026-10-17
+
+### 完成内容
+- 自动发现、Codex 单条重新识别和整目录重新识别使用相同自动放行逻辑。模型置信度至少 0.9、TMDB 匹配达到配置阈值，并通过类型、季集存在性、目录重复及目标路径校验后，自动继续整理，来源记录为 `AUTO_MATCH`。
+- 停用历史 `codex.require-confirmation` 固定审批配置，移除设置页的强制确认开关；既有保存值不再使可靠识别固定进入人工队列。
+- 整目录先回填全部解析并完成全批目标检查，再提交后台文件操作；重复或重叠季集号的双方均保留，其他无冲突集可以继续。检查尚未入队的同目录数字文件、动漫方括号集号及哈希副本。
+- 文件操作策略新增只读目标预览，复用实际重命名及蓝光路径规则。目标已存在、批内目标相同、目标正在整理、路径不安全或残留模板变量时保留明确原因；不覆盖已有文件。
+- 队列显示具体拦截原因；识别响应区分自动提交、保留复核、失败或跳过；仅为仍待确认的文件打开面板。按钮改为“识别并整理”，面板保留上次未通过原因，编辑后的季集冲突实时重新校验。
+- 修正目录扫描测试的时间戳夹具：连续增删可能将 mtime 重置到同一毫秒，测试时间改为单调递增；未修改扫描器生产逻辑。
+
+### 影响文件
+- `backend/src/main/java/com/mediamarshal/service/pipeline/MediaProcessPipeline.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/AutomaticOrganizationGuard.java`
+- `backend/src/main/java/com/mediamarshal/service/parser/CodexRecognitionService.java`
+- `backend/src/main/java/com/mediamarshal/service/rename/{AssetOrganizerService,AssetOrganizerStrategy,VideoFileAssetOrganizer,IsoImageAssetOrganizer,BluRayDirectoryAssetOrganizer,RenameService}.java`
+- `backend/src/test/java/com/mediamarshal/service/pipeline/{MediaProcessPipelineRecognitionTest,AutomaticOrganizationGuardTest}.java`
+- `backend/src/test/java/com/mediamarshal/service/parser/CodexRecognitionServiceTest.java`
+- `backend/src/test/java/com/mediamarshal/service/discovery/IncrementalDirectoryScannerTest.java`
+- `frontend/src/views/{QueueView,SystemSettingsView}.vue`
+- `frontend/src/utils/queueRecognition.ts`、`frontend/tests/queueRecognition.test.mjs`
+- `frontend/src/i18n/{zh,en}.ts`、`frontend/src/meta/releaseNotes.ts`、`frontend/src/i18n/releaseNotes/{zh,en}.ts`
+- `docs/codex-fallback.md`、`.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- `POST /api/queue/{id}/codex-rematch` 和 `POST /api/queue/{id}/codex-directory-rematch` 在重新识别后自动校验及提交后台整理。响应结构保持不变，任务状态可为 `PROCESSING` / `DONE` / `AWAITING_CONFIRMATION` / `FAILED`，前端按实际状态统计。
+- 显式“仅保存”及手动编辑的 TMDB rematch 接口保留原契约。
+
+### 验证
+- Docker Maven / Java 21 执行 `mvn -q package`：252 项测试全部通过。
+- `npm run build`：类型检查及生产构建通过。
+- `npm run test:queue`：17 项测试通过。
+- 新增回归覆盖自动发现聚类、单条重识别、目录全通过、重复双方保留且其他集自动整理、已有目标不覆盖、批内目标碰撞、模型/TMDB 低置信度、季号映射冲突、尚未入队哈希副本、合并集重叠及目录检查异常。
+- `git diff --check` 通过。
+
+### 遗留问题 / 需 PM 决策
+- 无。本次按用户明确要求停用固定人工审批，保留异常复核及手动确认能力。
+
+### 本机部署验证
+- 已通过 `scripts/local-service.sh deploy` 构建并更新本机服务，镜像 tag：`ca12543-auto-review-20261017-1331`；部署前自动备份数据库。
+- 部署构建再次通过后端全部测试，Codex 桥接 30 项回归通过。
+- 网页与 Queue API 健康检查均为 HTTP 200；实际提供的前端资源包含“批量识别并整理”和新统计文案，已移除固定人工审批开关。
+- 未主动对现有队列调用识别或整理接口；旧任务由用户点击新按钮触发重新校验。
+
+---
+
+## [咒术回战：来源分季与元数据单季 case] 2026-10-17
+
+### 已完成
+- 补充 `S03/48` 来源目录 case：元数据仅有一个正片季且该季存在第 48 集时，采用 `S01E48`，保留累计集号，不推测季内偏移。
+- 回归验证来源路径保持不变，映射提示同时保留 `S03E48` 和 `S01E48`；特别篇不计入正片季数量。
+- 文档区分用户反馈中的 TVDB 与项目实际使用的 TMDB；单季列表为回归夹具，未据此断言线上季列表。
+
+### 关键文件
+- `backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java`
+- `docs/codex-fallback.md`
+
+### 接口变更
+- 无。
+
+### 偏离设计的地方
+- 无，本次补充 case 与回归，未变更现有自动整理及人工确认行为。
+
+### 验证
+- Docker Maven / Java 21 执行咒术回战定向回归：1 项通过。
+- `git diff --check` 通过。
+
+### 遗留问题 / 需 PM 决策
+- 当时未实施自动映射行为变更；用户后续澄清及实际实现见下一条记录。
+
+---
+
+## [结合路径、季结构与实际分集判断季号] 2026-10-17
+
+### 已完成
+- 路径季号作为线索；来源季缺失或不包含完整集号范围时检查其他正片季的实际分集列表，唯一匹配才修正季号，保留集号及来源路径。已有季号存在也不能绕过分集校验。
+- 自动整理允许可靠季号映射；映射提示继续展示，历史提示不再固定拦截重新识别。人工确认首次修正仍先提示，已完成任务修正保留预览确认。
+- 重复检查兼容修正前季号和来源目录季号，覆盖尚未入队的哈希副本及已映射任务的重试。
+- 咒术回战 `S03/48 → S01E48` 覆盖目录自动整理、累计集号保留、历史映射提示及重复副本拦截。多季歧义、缺集及远端失败保留可定位原因，校验失败不修改任务季号。
+- 模型提示补充数字语义区分，在可信集号候选中通常保留较大的累计集号，再用元数据校验；排除年份、分辨率、编码与哈希。
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbEpisodeService.java`
+- `backend/src/main/java/com/mediamarshal/service/pipeline/{MediaProcessPipeline,AutomaticOrganizationGuard}.java`
+- `backend/src/test/java/com/mediamarshal/service/{matcher/TmdbEpisodeServiceTest,pipeline/MediaProcessPipelineRecognitionTest}.java`
+- `scripts/codex-bridge.py`
+- `docs/codex-fallback.md`、`docs/architecture/processing.md`、`.cursor/rules/api-contracts.mdc`
+
+### 接口变更
+- 响应结构不变；自动识别入口在唯一季集映射及其余校验通过后继续整理，`metadataWarning` 保留采用依据。
+
+### 偏离设计的地方
+- 按用户澄清调整季号判断，未改动 `design-decisions.mdc`。
+
+### 验证
+- Docker Maven / Java 21：季集校验、识别流水线、重复文件拦截及任务修正共 58 项回归通过。
+- 后端全量 `mvn -q test`：45 个测试类、267 项测试通过，无失败或跳过。
+- Codex 桥接 30 项测试通过；`git diff --check` 通过。
+
+### 遗留问题 / 需 PM 决策
+- 无；元数据不完整或多个季均能匹配时保留人工处理，不按集数总量猜测偏移。
+
+
+## [TMDB 大响应、持久缓存与后台整理结果反馈] 2026-10-17
+
+### 已完成
+- 用相同 Java / Reactor 客户端复现《咒术回战》第 1 季返回 HTTP 200 后因 256 KiB 缓冲上限读取失败；提高上限至 8 MiB，并保留响应大小、HTTP 限流与连接错误的具体原因。
+- 修复缓存进行中请求的清理时序；先注册占位再加载，失败后可重新请求。同作品详情、同季分集、同搜索词按各自缓存键合并并发请求。
+- 成功元数据写入 SQLite `tmdb_cache_entry`，重启后恢复未到期结果；保留现有 TTL 与 5000 项上限，错误不写入缓存。
+- Queue 增加逐文件后台结果，接入任务事件并以 2 秒轮询补偿；提交提示区分已接收和最终完成，失败退回待确认时保留具体原因。单条确认也回读实际状态。
+- Dashboard 的待确认任务展示错误及阻断原因，修复历史记录详情为空的问题；同步中英文 ReleaseNote。
+
+### 关键文件
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbMetadataMatcher.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbInMemoryCache.java`
+- `backend/src/main/java/com/mediamarshal/service/matcher/TmdbPersistentCache.java`
+- `backend/src/main/java/com/mediamarshal/model/entity/TmdbCacheEntry.java`
+- `backend/src/main/java/com/mediamarshal/repository/TmdbCacheEntryRepository.java`
+- `frontend/src/views/QueueView.vue`
+- `frontend/src/views/DashboardView.vue`
+- `frontend/src/utils/queueOrganization.ts`
+- `docs/architecture/data-and-recovery.md`
+
+### 接口变更
+- 无新增接口；补充既有 `errorMessage` 在 AWAITING_CONFIRMATION 下的含义和批量提交最终结果查询约定。
+
+### 偏离设计的地方
+- 无；继续保留季集校验阻断，不因网络问题绕过文件安全检查。
+
+### 验证
+- 宿主机与 Docker 的直连 / 代理读请求：搜索、作品详情成功；第 3 季确实返回 404。相同 Java 客户端读取第 1 季 HTTP 200 的大响应稳定复现缓冲溢出，修复后完整读取 59 集。
+- 真实 Java 客户端重复搜索、电影详情及分集请求命中缓存；4 个并发分集请求只发送一次网络请求，未收到 429。
+- 后端全量测试通过，当前 Surefire 报告 267 项、0 失败；覆盖超过 256 KiB 的真实本地 HTTP 响应、缓存并发、失败重试、持久数据恢复及 HTTP 429。
+- 前端 18 项测试通过；类型检查及生产构建通过；Codex 桥接 30 项测试通过。
+- 独立数据库、合成视频和模拟 TMDB 的页面验收：提交后显示处理中，随后自动显示“0 完成、1 未完成”和“限流、等待 3 秒重试”的具体原因；切换历史记录仍显示原因。该测试未挂载真实媒体卷。
+- 本机部署与网页 / API 健康检查通过；SQLite 已有成功搜索缓存，真实 12 个源视频仍在。`git diff --check` 通过。
+
+### 遗留问题 / 需 PM 决策
+- 本次结果面板跟随当前页面会话；任务状态及失败原因保存在服务端，刷新后可在待确认队列和历史记录查看。缓存按有效期刷新，连载数据不永久冻结。

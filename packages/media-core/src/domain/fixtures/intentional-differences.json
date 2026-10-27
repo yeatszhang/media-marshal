@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "id": "decimalEpisodeMustNotTruncate",
+      "source": "backend/src/main/java/com/mediamarshal/model/dto/ParseResult.java#setEpisode",
+      "reason": "Number.intValue 会把小数静默截断；桌面拒绝错误坐标，不把无法证明的文件当成有效单集。",
+      "spec": "openspec/changes/add-local-desktop-emby-ingestion/specs/local-folder-ingestion/spec.md#Requirement: 迁移后的识别与模板行为",
+      "raw": {
+        "type": "episode",
+        "episode": 1.2
+      },
+      "legacyExpected": {
+        "episode": 1
+      },
+      "desktopError": "PARSE_INVALID"
+    },
+    {
+      "id": "weakFilenameSameIdMustNotGainAutomaticConfidence",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/ParentFolderMatchEnhancerTest.java#boostsCandidateOnlyWhenFilenameAndParentFolderAgreeOnSameTmdbId",
+      "reason": "旧实现仅同 ID 就把 0.30 与 0.90 合并为 0.95；新规格要求文件名也有足够支持，弱文件名仍限为 0.75。",
+      "spec": "openspec/changes/add-local-desktop-emby-ingestion/specs/local-folder-ingestion/spec.md#Scenario: 父目录命中但文件名证据不足",
+      "filenameConfidence": 0.3,
+      "parentConfidence": 0.9,
+      "legacyExpected": 0.95,
+      "desktopExpected": 0.75
+    }
+  ]
+}

@@ -24,6 +24,11 @@ public class IsoImageAssetOrganizer implements AssetOrganizerStrategy {
     }
 
     @Override
+    public Path previewTarget(MediaTask task) {
+        return renameService.previewTarget(task);
+    }
+
+    @Override
     public Path organize(MediaTask task) throws IOException {
         return renameService.rename(task);
     }

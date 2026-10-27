@@ -1,0 +1,327 @@
+{
+  "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java",
+  "cases": [
+    {
+      "id": "bilingualMovie",
+      "filename": "飞驰人生3.Pegasus.3.2026.2160p.WEB-DL.mkv",
+      "raw": {
+        "title": "飞驰人生3 Pegasus 3",
+        "year": 2026,
+        "type": "movie"
+      },
+      "expected": [
+        "飞驰人生3",
+        "Pegasus 3",
+        "飞驰人生3 Pegasus 3"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#buildsChineseAndEnglishQueriesForBilingualMovieTitle"
+    },
+    {
+      "id": "bilingualSeries",
+      "filename": "长乐曲.Melody.Of.Golden.Age.S01E01.2024.1080p.mkv",
+      "raw": {
+        "title": "长乐曲",
+        "year": 2024,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "长乐曲",
+        "Melody Of Golden Age",
+        "长乐曲 Melody Of Golden Age"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#buildsChineseAndEnglishQueriesForBilingualSeriesTitle"
+    },
+    {
+      "id": "bracketedBilingual",
+      "filename": "[钢铁森林].Sunsets.Secrets.Regrets.S01E01.2025.1080p.mkv",
+      "raw": {
+        "title": "钢铁森林",
+        "year": 2025,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "钢铁森林",
+        "Sunsets Secrets Regrets",
+        "钢铁森林 Sunsets Secrets Regrets"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsBracketedChineseAndEnglishTitle"
+    },
+    {
+      "id": "shortChineseTitle",
+      "filename": "[逍遥].The.Unclouded.Soul.S01E01.2026.1080p.mkv",
+      "raw": {
+        "title": "逍遥",
+        "year": 2026,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "逍遥",
+        "The Unclouded Soul",
+        "逍遥 The Unclouded Soul"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsBracketedChineseAndEnglishTitleWithShortChineseName"
+    },
+    {
+      "id": "titleNumbers",
+      "filename": "方圆八百米.Eight.Hundred.S01E02.2026.2160p.WEB-DL.H265.AAC-HHWEB.mp4",
+      "raw": {
+        "title": "方圆八百米",
+        "year": 2026,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "方圆八百米",
+        "Eight Hundred",
+        "方圆八百米 Eight Hundred"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#buildsChineseAndEnglishQueriesForEightHundredSeriesTitle"
+    },
+    {
+      "id": "excludeEpisodeTitle",
+      "filename": "Your.Friends.and.Neighbors.S01E01.This.Is.What.Happens.2025.1080p.mkv",
+      "raw": {
+        "title": "Your Friends and Neighbors",
+        "year": 2025,
+        "season": 1,
+        "type": "episode"
+      },
+      "expected": [
+        "Your Friends and Neighbors"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#doesNotUseEpisodeTitleAsSeriesQuery"
+    },
+    {
+      "id": "anime1",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][48][GB][1080P][x264_AAC].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
+    },
+    {
+      "id": "anime2",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][48][GB][1080P][x264_AAC]-4439f0c824f5.mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
+    },
+    {
+      "id": "anime3",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][048v2][CHS][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
+    },
+    {
+      "id": "anime4",
+      "filename": "【BeanSub&FZSD】【Jujutsu_Kaisen】【48】【GB】【1080P】.mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
+    },
+    {
+      "id": "anime5",
+      "filename": "[1080p][BeanSub&FZSD][Jujutsu_Kaisen][48][GB].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
+    },
+    {
+      "id": "anime6",
+      "filename": "[x264_AAC][CHS+CHT][BeanSub&FZSD][Jujutsu_Kaisen][48].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
+    },
+    {
+      "id": "anime7",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][GB][1080P].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
+    },
+    {
+      "id": "anime8",
+      "filename": "（BeanSub&FZSD）（Jujutsu_Kaisen）（48）（GB）.mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub&FZSD"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsAnimeTitleWhenGuessitReturnsNoTitle"
+    },
+    {
+      "id": "subtitleGroupWithoutParsedGroup",
+      "filename": "[BeanSub&FZSD][Jujutsu_Kaisen][48][GB][1080P].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#recognizesExplicitSubtitleGroupWithoutGuessitReleaseGroup"
+    },
+    {
+      "id": "knownReleaseGroup",
+      "filename": "[Example-Raws] Jujutsu_Kaisen [48-49][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "Example-Raws"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#removesKnownReleaseGroupWithoutAssumingEveryLeadingBracketIsAGroup"
+    },
+    {
+      "id": "separateBilingual",
+      "filename": "[字幕组][咒术回战][Jujutsu_Kaisen][48][GB][1080P].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "字幕组"
+      },
+      "expected": [
+        "咒术回战",
+        "Jujutsu Kaisen",
+        "咒术回战 Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#extractsSeparateBilingualBracketedTitles"
+    },
+    {
+      "id": "noReleaseGroup",
+      "filename": "[Jujutsu_Kaisen][48][GB][1080P].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#preservesBracketedTitleWithoutReleaseGroup"
+    },
+    {
+      "id": "numericWorkTitle",
+      "filename": "[86][48][CHS][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "86"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#preservesNumericTitleAndTitleNumbers"
+    },
+    {
+      "id": "numericTitleToken",
+      "filename": "[Mob_Psycho_100][48][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "Mob Psycho 100"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#preservesNumericTitleAndTitleNumbers"
+    },
+    {
+      "id": "unknownLeadingBracket",
+      "filename": "[Odd_Taxi][48][1080p].mkv",
+      "raw": {
+        "type": "episode",
+        "episode": 48
+      },
+      "expected": [
+        "Odd Taxi"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#doesNotDiscardUnknownBracketedTextAsReleaseGroup"
+    },
+    {
+      "id": "parentheticalTitle",
+      "filename": "It.(Chapter.Two).2019.1080p.mkv",
+      "raw": {
+        "year": 2019,
+        "type": "movie"
+      },
+      "expected": [
+        "It Chapter Two"
+      ],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#preservesUnmarkedParentheticalTitle"
+    },
+    {
+      "id": "metadataOnly",
+      "filename": "[BeanSub][GB][1080p][x264_AAC].mp4",
+      "raw": {
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub"
+      },
+      "expected": [],
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#doesNotGenerateQueriesFromMetadataOnlyFilename"
+    },
+    {
+      "id": "guessitFallbackDeduplication",
+      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java#keepsGuessitTitleAsFallbackAndDeduplicatesIt",
+      "filename": "[BeanSub][Jujutsu_Kaisen][48][GB].mp4",
+      "raw": {
+        "title": "Jujutsu Kaisen",
+        "type": "episode",
+        "episode": 48,
+        "release_group": "BeanSub"
+      },
+      "expected": [
+        "Jujutsu Kaisen"
+      ]
+    }
+  ]
+}

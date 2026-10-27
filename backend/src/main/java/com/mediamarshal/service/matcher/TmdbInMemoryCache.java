@@ -1,8 +1,8 @@
 package com.mediamarshal.service.matcher;
 
 import com.mediamarshal.service.settings.SettingsService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -12,18 +12,27 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 class TmdbInMemoryCache {
 
     private final SettingsService settingsService;
+    private final TmdbPersistentCache persistentCache;
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<Object>> inFlight = new ConcurrentHashMap<>();
+
+    @Autowired
+    TmdbInMemoryCache(SettingsService settingsService, TmdbPersistentCache persistentCache) {
+        this.settingsService = settingsService;
+        this.persistentCache = persistentCache;
+    }
+
+    TmdbInMemoryCache(SettingsService settingsService) {
+        this(settingsService, null);
+    }
 
     @SuppressWarnings("unchecked")
     <T> T get(String key, Supplier<T> loader, Function<T, Duration> ttlResolver) {
@@ -41,17 +50,44 @@ class TmdbInMemoryCache {
             cache.remove(key, existing);
         }
 
-        AtomicBoolean createdFuture = new AtomicBoolean(false);
-        CompletableFuture<Object> future = inFlight.computeIfAbsent(key, ignored ->
-                {
-                    createdFuture.set(true);
-                    return CompletableFuture.supplyAsync(() -> (Object) loadAndCache(key, loader, ttlResolver))
-                            .whenComplete((ignoredValue, ignoredError) -> inFlight.remove(key));
-                });
+        // 先注册占位再执行加载，避免快速失败先清理、后插入，永久复用失败的 Future。
+        CompletableFuture<Object> owned = new CompletableFuture<>();
+        CompletableFuture<Object> running = inFlight.putIfAbsent(key, owned);
+        if (running == null) {
+            try {
+                // 在检查缓存和取得加载权之间，前一个请求可能已完成。
+                CacheEntry current = cache.get(key);
+                T value;
+                CacheStatus status;
+                if (current != null && current.expiresAt().isAfter(Instant.now())) {
+                    value = (T) current.value();
+                    status = CacheStatus.HIT;
+                } else {
+                    var persisted = persistentCache == null ? java.util.Optional.<TmdbPersistentCache.Value>empty()
+                            : persistentCache.find(key);
+                    if (persisted.isPresent()) {
+                        var stored = persisted.get();
+                        value = (T) stored.value();
+                        trimIfNeeded();
+                        cache.put(key, new CacheEntry(value, stored.expiresAt()));
+                        status = CacheStatus.HIT;
+                    } else {
+                        value = loadAndCache(key, loader, ttlResolver);
+                        status = CacheStatus.MISS;
+                    }
+                }
+                owned.complete(value);
+                return new CacheLookup<>(value, status);
+            } catch (RuntimeException | Error e) {
+                owned.completeExceptionally(e);
+                throw e;
+            } finally {
+                inFlight.remove(key, owned);
+            }
+        }
 
         try {
-            CacheStatus status = createdFuture.get() ? CacheStatus.MISS : CacheStatus.IN_FLIGHT;
-            return new CacheLookup<>((T) future.join(), status);
+            return new CacheLookup<>((T) running.join(), CacheStatus.IN_FLIGHT);
         } catch (CompletionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof RuntimeException runtimeException) {
@@ -65,8 +101,10 @@ class TmdbInMemoryCache {
         T value = loader.get();
         Duration ttl = ttlResolver.apply(value);
         if (ttl != null && !ttl.isNegative() && !ttl.isZero()) {
+            Instant expiresAt = Instant.now().plus(ttl);
+            if (persistentCache != null) persistentCache.save(key, value, expiresAt, getMaxSize());
             trimIfNeeded();
-            cache.put(key, new CacheEntry(value, Instant.now().plus(ttl)));
+            cache.put(key, new CacheEntry(value, expiresAt));
         }
         return value;
     }

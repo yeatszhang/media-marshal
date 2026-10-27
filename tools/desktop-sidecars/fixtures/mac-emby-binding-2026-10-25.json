@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-25",
+  "platform": "darwin-arm64",
+  "osVersion": "26.5.2",
+  "electronVersion": "44.9.0",
+  "embyVersion": "4.9.3.0",
+  "dataSchemaVersion": 13,
+  "buildKind": "electron-vite production bundles launched from workspace",
+  "packaged": false,
+  "signed": false,
+  "tasks": ["6.1", "6.6"],
+  "verificationBuildSha256": {
+    "main": "25f888c49be0c5a91c31bcbaa9babcf95a2431692aa6df47749cb17cc88dd2a0",
+    "core": "13dbc0822a0aea6d932a491f0d08932cb45098ec11b0beb4704006f814628405",
+    "host": "12d5195d67505fe425f156b34e9e8e37a0905024de8118b24d07a04d9659bd01",
+    "preload": "e17a79d183f114071e398d2f940822dd95b9d5f72ad6d2e01dcd2b9a5a355875",
+    "renderer": "e2f218273a320c4ce0608877f99830b576a13c12d6c929ef4af974eb2e20262c"
+  },
+  "realClient": {
+    "existingServer": true,
+    "selectedExistingMovieAndSeriesDirectories": true,
+    "nativeAuthorizationAlreadyCompleted": true,
+    "runtimeRevalidationPassed": true,
+    "bindingCount": 2,
+    "connectionVersionBeforeAndAfter": 3,
+    "bindingsUnchanged": true,
+    "sourceVersion": 2,
+    "sourcePaused": true,
+    "downloadJobsBeforeAndAfter": 2,
+    "mediaTasksBeforeAndAfter": 1,
+    "fileState": "DONE",
+    "deliveryState": "COLLECTED",
+    "targetInodeUnchanged": true,
+    "downloadSourceRetained": true,
+    "serverLibrariesCreatedOrModified": false
+  },
+  "fixtureCoverage": [
+    "已有非空库根目录和合法子目录",
+    "只配置电影或只配置剧集",
+    "电影、剧集、混合库及不兼容类型",
+    "服务器身份、路径或库类型变化使旧验证失效",
+    "库读取或刷新权限不足不保存部分连接",
+    "离线保留绑定并延迟重试，认证错误停止自动重试",
+    "容器路径不匹配时拒绝且不猜测映射",
+    "缺少绑定时文件保持完成而交付待处理",
+    "迟到凭据代际不得通过验证",
+    "Core 重启后设置页自动显示重新验证结果",
+    "公开错误保留分类且不回显服务器正文"
+  ],
+  "targetedTestsPassed": 28,
+  "targetedElectronTestsPassed": 1,
+  "fullUnitTestsPassed": 365,
+  "fullUnitTestsSkipped": 13,
+  "fullElectronTestsPassed": 18,
+  "screenshots": [
+    "test-results/sidecars/real-emby-binding-restored.png",
+    "test-results/desktop/emby-binding-revalidation.png"
+  ],
+  "privateDataIncluded": false,
+  "limitations": [
+    "目录选择器替身只用于临时配置的窗口回归；真实目录已另用原生选择器授权",
+    "本次不代表安装包、签名、公证或 Mac Intel 验收"
+  ]
+}

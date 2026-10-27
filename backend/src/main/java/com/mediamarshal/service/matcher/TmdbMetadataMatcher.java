@@ -3,6 +3,8 @@ package com.mediamarshal.service.matcher;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.mediamarshal.model.dto.MatchResult;
 import com.mediamarshal.model.dto.ParseResult;
+import com.mediamarshal.model.dto.TmdbEpisode;
+import com.mediamarshal.model.dto.TmdbSeason;
 import com.mediamarshal.service.settings.SettingsService;
 import com.mediamarshal.service.settings.TmdbProxySettingsService;
 import io.netty.channel.ChannelOption;
@@ -10,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.BeanUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -145,10 +148,44 @@ public class TmdbMetadataMatcher implements MetadataMatcher {
         TmdbInMemoryCache.CacheLookup<MatchResult> lookup = cache.getWithStatus(
                 cacheKey,
                 () -> getByIdUncached(sourceId, endpoint),
-                ignored -> getDuration("tmdb.detail-cache-ttl-minutes", 1440)
+                ignored -> "tv".equals(endpoint) ? getDuration("tmdb.series-cache-ttl-minutes", 10)
+                        : getDuration("tmdb.detail-cache-ttl-minutes", 1440)
         );
         logCacheStatus("TMDB detail", cacheKey, lookup.status());
+        // 分集处理会写入标题和置信度，不能修改多个任务共享的缓存对象。
+        MatchResult result = new MatchResult();
+        BeanUtils.copyProperties(lookup.value(), result);
+        return result;
+    }
+
+    @Override
+    public List<TmdbEpisode> getSeasonEpisodes(String sourceId, int seasonNumber) {
+        String cacheKey = String.join("|", "season-episodes", sourceId, String.valueOf(seasonNumber), getLanguage());
+        var lookup = cache.getWithStatus(cacheKey, () -> getSeasonEpisodesUncached(sourceId, seasonNumber),
+                ignored -> getDuration("tmdb.season-cache-ttl-minutes", 10));
+        logCacheStatus("TMDB season", cacheKey, lookup.status());
         return lookup.value();
+    }
+
+    private List<TmdbEpisode> getSeasonEpisodesUncached(String sourceId, int seasonNumber) {
+        TmdbRequestContext context = createRequestContext();
+        JsonNode root = executeTmdbRequest(context, context.client().get()
+                .uri(builder -> builder.path("/tv/{id}/season/{season}")
+                        .queryParam("api_key", getApiKey()).queryParam("language", getLanguage())
+                        .build(sourceId, seasonNumber)));
+        if (root == null || !root.path("season_number").isInt()
+                || root.path("season_number").asInt() != seasonNumber || !root.path("episodes").isArray()) {
+            throw new IllegalStateException("TMDB 季详情缺少有效分集信息");
+        }
+        List<TmdbEpisode> episodes = new ArrayList<>();
+        for (JsonNode episode : root.path("episodes")) {
+            if (!episode.path("season_number").isInt() || episode.path("season_number").asInt() != seasonNumber
+                    || !episode.path("episode_number").isInt() || episode.path("episode_number").asInt() < 1) {
+                throw new IllegalStateException("TMDB 返回了无效季集编号");
+            }
+            episodes.add(new TmdbEpisode(seasonNumber, episode.path("episode_number").asInt(), text(episode, "name")));
+        }
+        return List.copyOf(episodes);
     }
 
     @Override
@@ -338,6 +375,8 @@ public class TmdbMetadataMatcher implements MetadataMatcher {
 
         WebClient client = webClientBuilder.clone()
                 .baseUrl(getBaseUrl())
+                // 动漫整季可能包含数十集，完整季详情会超过 WebClient 默认的 256 KiB。
+                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(8 * 1024 * 1024))
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
         return new TmdbRequestContext(client, proxyConfig, timeoutSeconds);
@@ -364,6 +403,14 @@ public class TmdbMetadataMatcher implements MetadataMatcher {
     ) {
         if (error instanceof WebClientResponseException responseException) {
             int status = responseException.getStatusCode().value();
+            if (hasCauseClassName(error, "DataBufferLimitException")) {
+                return "TMDB 响应内容超过读取上限，请提高响应大小限制后重试";
+            }
+            if (status == 429) {
+                String retryAfter = responseException.getHeaders().getFirst("Retry-After");
+                return "TMDB 请求受到限流，请" + (retryAfter == null || !retryAfter.matches("\\d+")
+                        ? "稍后" : "等待 " + retryAfter + " 秒后") + "重试";
+            }
             if (status == 407) {
                 return "TMDB 代理认证失败：当前版本不支持需要认证的 HTTP 代理";
             }
@@ -469,6 +516,18 @@ public class TmdbMetadataMatcher implements MetadataMatcher {
         result.setGenres(extractGenres(root));
         result.setCountry(extractCountry(root));
         result.setConfidence(1.0);
+        if ("tv".equals(endpoint)) {
+            if (!root.path("seasons").isArray()) throw new IllegalStateException("TMDB 剧集详情缺少季列表");
+            List<TmdbSeason> seasons = new ArrayList<>();
+            for (JsonNode season : root.path("seasons")) {
+                if (!season.path("season_number").isInt() || season.path("season_number").asInt() < 0
+                        || !season.path("episode_count").isInt() || season.path("episode_count").asInt() < 0) {
+                    throw new IllegalStateException("TMDB 返回了无效季信息");
+                }
+                seasons.add(new TmdbSeason(season.path("season_number").asInt(), season.path("episode_count").asInt()));
+            }
+            result.setSeasons(List.copyOf(seasons));
+        }
         return result;
     }
 

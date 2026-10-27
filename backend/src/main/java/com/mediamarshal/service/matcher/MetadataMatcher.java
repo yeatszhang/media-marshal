@@ -2,6 +2,7 @@ package com.mediamarshal.service.matcher;
 
 import com.mediamarshal.model.dto.MatchResult;
 import com.mediamarshal.model.dto.ParseResult;
+import com.mediamarshal.model.dto.TmdbEpisode;
 
 import java.util.List;
 
@@ -31,6 +32,11 @@ public interface MetadataMatcher {
 
     default String getEpisodeTitle(String sourceId, int seasonNumber, int episodeNumber) {
         return null;
+    }
+
+    /** 获取指定季的实际分集，用于校验季集存在性，标题缺失也不影响存在性。 */
+    default List<TmdbEpisode> getSeasonEpisodes(String sourceId, int seasonNumber) {
+        throw new UnsupportedOperationException("元数据源不支持季集校验");
     }
 
     /**

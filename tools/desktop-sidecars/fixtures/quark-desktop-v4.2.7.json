@@ -1,0 +1,14 @@
+{
+  "target": "darwin-arm64",
+  "scope": "真实客户端 Main/保险箱/Core/Host/OpenList，只读账号、目录、元数据与重启重建；不代表文件下载完成",
+  "authorized": true,
+  "browseAndStat": true,
+  "restartRebuiltMountAndReferences": true,
+  "size": 604951500,
+  "type": "file",
+  "versionKind": "weak",
+  "objectIdentity": "path",
+  "accountIdentity": "unavailable",
+  "membership": "用户声明 VIP",
+  "wholeFileDownloaded": false
+}

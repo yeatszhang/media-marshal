@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "capturedOn": "2026-10-25",
+  "dataSchema": 14,
+  "codeCommit": "a30f006f8431e23ac82e10334107474956c32f7a",
+  "environment": {
+    "os": "macOS 26.5.2",
+    "arch": "arm64",
+    "temporaryTestFilesystem": "APFS"
+  },
+  "build": {
+    "main/index.js": "2234de102124d00cb4d4ec587c658d0ab166f88101f3f84db325dafdad3fda3c",
+    "main/worker.js": "1f5fdecaeab5269259d1ba0a467a2e664b99dacf2f23b1f5caf4feed401e6933",
+    "main/sidecar-host.js": "30d6b7fa2dee4c8dd0a46a8518f75a69246f518cfecd3aec1fc59232caaab419",
+    "preload/index.js": "5488da659356534e46ae971b5939bd585940e2122a64d429a357c9510579614e",
+    "main/chunks/binary-resolver-txKpqQZl.js": "5aa931f5353ff1e9a863dfef89c8a939ddbefbe3c148cc5d2b3d0f02930f5f33",
+    "main/chunks/core-rO9KXOqD.js": "fc712728e57b5f9dadac88aa9de4cdcba69250f3a484c3e9da7b3fe8e248ff35",
+    "main/chunks/files-Cc_dEdgv.js": "d480c618347474637908a3306e8a3db36540efb83eff8f3a2ea04dfa1b2d5e75",
+    "renderer/assets/index-BZOI-Emq.js": "6e78102cd98ebf042bb4d0b2ac06f6b56cf19713876c4bcf30a448d120ab2a34",
+    "renderer/assets/index-WwNtFc9P.css": "090b4f6fa5a4cea53e73a7d9416e8b43798d9980dbdc649378b32914a20e6fd7"
+  },
+  "checks": {
+    "targeted": {
+      "passed": 76,
+      "files": 4,
+      "includesRealCopySigkillRecovery": true
+    },
+    "unit": {
+      "passed": 452,
+      "skipped": 13,
+      "filesPassed": 52,
+      "filesSkipped": 3
+    },
+    "electron": {
+      "passed": 21,
+      "sourceOverlapErrorAndRepair": true,
+      "longSourceNameMinimumWindow": {
+        "width": 920,
+        "height": 640,
+        "horizontalOverflow": false
+      }
+    },
+    "typecheck": true,
+    "boundaries": true,
+    "docsBuild": true,
+    "openSpecStrict": true
+  },
+  "authorizationCases": [
+    "来源与目标相同",
+    "来源／目标双向包含",
+    "跨规则相同／子／祖先来源",
+    "目标位于其他来源内",
+    "来源位于其他目标内",
+    "独立来源复用同一合法目标",
+    "根／子目录／文件符号链接拒绝逃逸",
+    "原目录失联／同名替代目录／权限撤销",
+    "卷身份变化拒绝沿用原授权"
+  ],
+  "recovery": {
+    "knownCandidatesRetained": true,
+    "readinessAndAccessoryObservationsResetOnSourceLoss": true,
+    "tenSecondLossStillRestarts120SecondWindow": true,
+    "replacementDirectoryNotAdopted": true,
+    "noFallbackRootCreated": true,
+    "existingConfigurationAndFilesPreserved": true
+  },
+  "actualClient": {
+    "schema": 14,
+    "embyVersion": 3,
+    "embyVerified": true,
+    "bindings": 2,
+    "sourceVersion": 2,
+    "sourcePaused": true,
+    "downloadJobs": 2,
+    "tasks": 1,
+    "fileState": "DONE",
+    "deliveryState": "COLLECTED",
+    "sourceBytes": 392608240,
+    "targetInodePreserved": true,
+    "newDownloadOrCopySubmitted": false
+  },
+  "screenshot": "test-results/desktop/source-overlap-recovery.png",
+  "limitations": [
+    "目录与权限故障使用真实临时文件，卷身份变化使用授权证据故障注入；未声称实际物理拔盘或整机休眠已验收。",
+    "窗口测试的原生目录选择器为受控替身，实际 HFS+ 授权另有既有记录。",
+    "官方客户端暂停／断网／预分配、Intel Mac、完整安装态及正式签名仍按未完成任务验收。"
+  ]
+}

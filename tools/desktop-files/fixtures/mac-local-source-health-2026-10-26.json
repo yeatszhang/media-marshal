@@ -1,0 +1,96 @@
+{
+  "capturedAt": "2026-10-25T21:53:07.243708+00:00",
+  "platform": "darwin",
+  "arch": "arm64",
+  "macOS": "26.5.2",
+  "appVersion": "0.2.1",
+  "schema": 25,
+  "previousSchema": 24,
+  "releaseStatus": "unsigned-preview",
+  "developerIdVerified": false,
+  "notarized": false,
+  "asarSha256": "2844e9f75d8b9cac6d3c16cc7bfbe0a4d6c51631c599455032da67f2e793e230",
+  "dependencyLockSha256": "661dad431d7a109b657b2ffd1e3b691a57745690c2fb21ad65663dbcb25abd9b",
+  "source": {
+    "apps/desktop/src/preload/index.ts": "e8b2861ef781c0788200fa56fa2281ecf6c2456844e88a334ff193ba47f602d7",
+    "apps/desktop/src/renderer/src/components/SourceEditorForm.tsx": "1667b659fe579f6983954f39dbd9c2bca358876d9c48b5c424a2dc0424ec5cb8",
+    "apps/desktop/src/renderer/src/pages/Sources.tsx": "da1116a9ceafffec8fa9177643d1fbbe8b41b7f58943cf6f2a2cb2597a6d2dc9",
+    "apps/desktop/src/renderer/src/source-rules-model.ts": "01a3ea3b7c2bf0626e0b8e006d35e22857e3bbcd39be78f6457ed55be93b1805",
+    "apps/desktop/src/renderer/src/source-rules.test.tsx": "f3753f68b71267249f61cd5609ef96476485ece6b5bac34b56e1fcb7b0b1626d",
+    "apps/desktop/src/renderer/src/styles.css": "75fc39dde7768b205c7ef009cdbb718d810a19ac0c2b26f8365826186272a886",
+    "apps/desktop/tests/desktop.spec.ts": "1461639250c6d958fc481c0077a6b3c18816ed5a9eea33ef5a9823ff13bb83a1",
+    "packages/contracts/src/contracts.test.ts": "d5326c94368e5fca9ead8d8a188861630e859495faf9070e93b171986a3b6389",
+    "packages/contracts/src/index.ts": "eaaa90a17e300f57011fb6d24250b2f7a8f5a1597b3fb557db814c9b1b52c038",
+    "packages/contracts/src/internal/core.ts": "684b9eabb2957fdb895286dea484290b10cf963b778bdf5c2cbc5803d7f5d478",
+    "packages/contracts/src/source-rules.ts": "3213087e7cd2c862d270fe554fa66a2047a52d93fafb4c20d1424d71e1133dc7",
+    "packages/media-core/src/files/index.ts": "2489f38b3a49fdd26851c7d4dbbcc6118dff67857212fb6e904884217c9ab02b",
+    "packages/media-core/src/infrastructure/database.test.ts": "c3b31b9e3567e3ff5de29918ae6598a073e08f9236f758c37a0048c52118c054",
+    "packages/media-core/src/infrastructure/database.ts": "e8f6b8062e45eaf7c64f3ed3bc86840e4040350b9a81acaade70f948a18d88fd",
+    "packages/media-core/src/ingestion/pipeline.ts": "729b651d19122297e754faa54e518d2e3ebab2ab6ff40e81040176f1f52929af",
+    "packages/media-core/src/modules/application.ts": "8ef4fd1b138d6cce485dff86a8b3db49d07607837faa672476bc2aa7d7f3d976",
+    "packages/media-core/src/sources/rules.test.ts": "2cefa354c74f9b2d58650f4780bb53a0fb0bb8061d337376f0d0a949a670661f",
+    "packages/media-core/src/sources/rules.ts": "e8dac49748da58e3311e3b9c3a493b9609aec122a8315a89f39754163203e3f6",
+    "apps/desktop/src/renderer/src/components/LocalSourceHealth.tsx": "1984c642e803af6f05791522b662748e0503a4bb38603c73dd84baa23a1fccba",
+    "packages/media-core/src/infrastructure/source-health-migration.ts": "dee84e340e392a8e30105993dca99fabfd1202e5486bf2880d1b7f3afa593ba4",
+    "packages/media-core/src/sources/local-health.ts": "0321e906b5d070e82ade11f1ec740ed9b9848bf6508ccaa6457f478bd2c43a3d"
+  },
+  "documentation": {
+    "docs/architecture/cloud-downloads.c4": "348d832167b69d6a30c3ff8b1250ea9456b284f6c3f1e1451dc70d050f950a29",
+    "docs/architecture/desktop-development.md": "3a0a296d233911ef2c6a1c6d3b2803d90634773df6f80b67741e5ee7066dac76",
+    "docs/architecture/desktop-ingestion.md": "6a2b9cf910bf4dddcc022a8f88a37db485d45eaf950351a0d639628b75707a54",
+    "docs/architecture/source-rules.md": "e2d805e5b46b105cfae6f9695f3bf5a17b502b340850464dc9fdcba3c62b6ae4",
+    "docs/product/cloud-downloads.md": "a2d848bf350e4b09bcf4a92f6b6c952160a654c0658b48ad13ede43f0d0db72a",
+    "docs/public/architecture/cloud-downloads/index.png": "b95bfb7cca07bae79a9b14d6ca93019e3ed5b14a597e0ff2c682bf6331954b30",
+    "docs/public/architecture/cloud-downloads/ingestion.png": "207410a8ec133890a32d4e5d7e741ff19e4259e8ae6295a683acb57739edd9e7",
+    "docs/public/architecture/cloud-downloads/sources.png": "1b0f3f037f9d86e4ec627c2ac322b050143732507e0581e91bb18f0904039776",
+    "docs/public/desktop/local-source-health-history-after-restart.png": "26da67d19b7977c2c6dee203c56fdd751e79adc09ba2bd7ee43ae809c9c23e29",
+    "docs/public/desktop/local-source-health-replaced-input.png": "99219e189eca46570bbb4cc47ec1d361ac766f17505c7af87c7a3cbd4d431280",
+    "docs/public/desktop/local-source-health-restored.png": "9711e15bdd29c56d574b91b223f17c704bb46118425dbc0627c724e343618192"
+  },
+  "checks": {
+    "allTests": {
+      "passed": 796,
+      "skipped": 13,
+      "filesPassed": 79,
+      "filesSkipped": 3
+    },
+    "finalTargetedCoreAndRenderer": 54,
+    "finalRenderer": 23,
+    "typecheck": true,
+    "boundaries": true,
+    "frameworkFixedPackageAndContents": true,
+    "artifactWhitelist": true,
+    "artifactEntries": 9534,
+    "docsBuild": true,
+    "openSpecStrict": true,
+    "likec4Export": {
+      "version": "1.60.0",
+      "views": 4
+    },
+    "devWindows": 5,
+    "finalPackagedWindows": 5
+  },
+  "assertions": [
+    "输入与整理目标独立检查原目录身份和读取／写入权限；真实改名后的同名替代目录不会被认领或写入管理标记。",
+    "来源暂停时允许只读检查；来源 ID、配置版本、暂停状态、原文件内容及 inode 保持，没有新候选、任务、下载或文件作业。",
+    "Core 重启后当前未核验状态与同版本持久历史失败分开展示；Renderer 重载恢复诊断。恢复原目录后受控宿主 resume 重新核验原授权，目录恢复健康。",
+    "普通与历史客户端标签保留，仍需人工确认，不套用云端账号登录或下载进度。",
+    "固定契约每批最多 25 个来源，只接受身份与版本；Core 最多 32 个并发检查，10 秒缓存，版本、生命周期和停止后迟到结果失效。",
+    "v24 → v25 只新增诊断表；原配置、历史标签、任务、外键和备份保留；迁移失败回滚并可重试，旧 Core 拒绝新库。"
+  ],
+  "boundaries": [
+    "隔离临时目录、测试凭据；目录选择器与 resume 为受控入口。",
+    "目录改名、权限变更及文件身份／内容核对使用真实文件系统；没有物理拔盘、挂载、整机休眠或系统选择器实测。",
+    "未验证官方夸克完成规则、Intel、签名安装包、Developer ID 或公证。"
+  ],
+  "openSpec": {
+    "change": "add-local-desktop-emby-ingestion",
+    "progress": {
+      "total": 109,
+      "complete": 93,
+      "remaining": 16
+    },
+    "task7_3Complete": false,
+    "remaining": "自动接入与客户端就绪规则仍在原范围内，本阶段不完成 7.3。"
+  }
+}

@@ -154,7 +154,7 @@ public class WatchRuleController {
         rule.setEnabled(req.getEnabled() != null ? req.getEnabled() : true);
         rule.setMoveAssociatedFiles(req.getMoveAssociatedFiles() != null ? req.getMoveAssociatedFiles() : true);
         rule.setCleanupEmptyDirs(req.getCleanupEmptyDirs() != null ? req.getCleanupEmptyDirs() : false);
-        rule.setGenerateNfo(req.getGenerateNfo() != null ? req.getGenerateNfo() : false);
+        rule.setGenerateNfo(false);
         rule.setIgnoredFilePatterns(req.getIgnoredFilePatterns());
         rule.setDiscoveryMode(req.getDiscoveryMode() != null ? req.getDiscoveryMode() : WatchRule.DiscoveryMode.HYBRID);
         rule.setScanIntervalMinutes(normalizeScanIntervalMinutes(req.getScanIntervalMinutes()));

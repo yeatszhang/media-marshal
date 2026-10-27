@@ -1,0 +1,6381 @@
+---
+search: false
+---
+
+> 旧 Java/Vue/Docker 工程历史快照，迁移于 2026-10-25。下文“当前”、完成状态、维护要求和待办均保留原记录口径，不作为当前桌面客户端的指令、进度或接口依据。新工作使用 OpenSpec；旧路径和 `.mdc` 文件名仅用于历史追溯。参见[旧工程资料索引](./index.md)。
+
+# Media Marshal 架构决策记录
+
+> 本文件由 PM 角色维护，记录每次讨论形成的设计结论。
+> 开发 Agent 在实现功能前必须先读本文件，确保实现与决策一致。
+> 每条决策标注状态：✅ 已落地 | 🟡 部分落地 / 仍有验收缺口 | 📋 已定稿待开发 | 🔄 讨论中 | ⏳ 待讨论
+> 当前需求状态统一见 [requirements-status.mdc](requirements-status.md)，阶段顺序见 [project-roadmap.mdc](project-roadmap.md)。代码落地不等于正式发行验收通过。
+
+## 当前阅读指引（2026-09-05）
+
+- ADR 保留历史决策与原日期，不重排编号；后续 ADR 明确修订的部分以新决策为准，实际接口以 `api-contracts.mdc` 为准。
+- ADR-001 的未知变量 / 占位符处理、ADR-002 的单一 `path_template` 与“仅 MOVE”，分别已由 ADR-008/014/023/025 等后续决策更新，不能照早期示例恢复旧行为。
+- ADR-027 Sample、ADR-028 单项修正、ADR-029 Queue 批量编辑已落地，原尾部待开发清单已清理。
+- ADR-022 发行硬化部分落地，镜像、升级恢复和完整发行验收仍需补齐。
+- ADR-030 批量修正核心链路已落地；服务端作业检索与浏览器断线恢复仍有缺口。详情见 REQ-05，不能再整体排为待开发。
+- 历史实现日志中各步骤的遗留项需结合后续记录阅读；当前待办只在需求状态文档维护。
+
+---
+
+## ADR-001 命名模板设计（2026-04-25）✅
+
+### 结论
+采用**变量袋 + 模板渲染**架构：
+
+1. **解析阶段**填充标准变量袋（`TemplateVariables`），所有可用变量在此阶段一次性收集完毕
+2. **渲染阶段**纯函数 `render(template, variables)` 生成最终路径，与变量来源无关
+3. **v1 内置电影 / 剧集全局 fallback 默认模板**，并在前端提供多组预设模板供用户选择；用户也可以输入自定义模板
+4. **路径模板即此变量系统的应用场所**：`watch_rule.movie_path_template` / `watch_rule.tv_path_template` 使用本套变量，定义目标目录下的完整目录/文件层级结构
+
+### 渲染引擎实现方式
+使用**注解驱动的反射方案**，`TemplateVariables` 字段上加注解标记变量名，渲染器自动构建替换 Map。
+- 扩展新变量 = 只加一个字段 + 一个注解，渲染器零改动
+- v1 未使用的字段值为 `null`，渲染时对应占位符保持原样或替换为空字符串（可配置）
+
+### 标准变量袋（TemplateVariables）
+**命名约定由此处统一定义，任何 Agent 新增变量必须先在此处登记，不得自行发明变量名。**
+
+#### 基础信息（来自 TMDB）
+| 变量 | 类型 | 来源 | 示例值 |
+|---|---|---|---|
+| `{title}` | String | TMDB 本地化标题（随 `tmdb.language` 变化） | `蝙蝠侠：黑暗骑士` |
+| `{original_title}` | String | TMDB 原语言标题 | `The Dark Knight` |
+| `{year}` | Integer | TMDB 发布年份 | `2008` |
+| `{tmdb_id}` | Long | TMDB 数字 ID | `155` |
+| `{media_type}` | String | 媒体类型（MOVIE / TV_SHOW / 未来可扩展） | `MOVIE` |
+
+#### 剧集专用（来自 guessit + TMDB）
+| 变量 | 类型 | 来源 | 示例值 |
+|---|---|---|---|
+| `{season}` | Integer | guessit 解析季号 | `3` |
+| `{season:02d}` | String | 格式化季号，2 位补零 | `03` |
+| `{season:04d}` | String | 格式化季号，4 位补零（预留，超长剧集） | `0003` |
+| `{episode}` | Integer | guessit 解析集号 | `7` |
+| `{episode:02d}` | String | 格式化集号，2 位补零 | `07` |
+| `{episode:04d}` | String | 格式化集号，4 位补零（预留，超长集数） | `0007` |
+| `{episode_title}` | String | TMDB 分集标题（单集剧集可用，多集范围为空） | `Sunset` |
+
+#### 归类辅助（来自 TMDB）
+| 变量 | 类型 | 来源 | 示例值 |
+|---|---|---|---|
+| `{title_initial}` | String | confirmed title 首字母大写 | `B` |
+| `{genre_1}` | String | 第 1 个 TMDB 分类标签（最多支持 4 个） | `Action` |
+| `{genre_2}` | String | 第 2 个 TMDB 分类标签 | `Crime` |
+| `{genre_3}` | String | 第 3 个 TMDB 分类标签 | — |
+| `{genre_4}` | String | 第 4 个 TMDB 分类标签 | — |
+| `{country}` | String | TMDB 出品国 / 原产国 ISO 代码 | `US` |
+
+#### 技术参数（来自 guessit）
+| 变量 | 类型 | 来源 | 示例值 |
+|---|---|---|---|
+| `{resolution}` | String | guessit screen_size | `1080p` |
+| `{codec}` | String | guessit video_codec | `H.264` |
+| `{release_group}` | String | guessit release_group | `YIFY` |
+| `{ext}` | String | 原始文件扩展名（含点） | `.mkv` |
+
+### v1 全局 fallback 默认模板
+当 WatchRule 未配置对应媒体类型模板时，后端使用以下全局 fallback 默认模板：
+
+- **电影**：`{title} ({year})/{title} ({year})[[ - {resolution}]]{ext}`
+  - 示例：`The Dark Knight (2008)/The Dark Knight (2008) - 1080p.mkv`
+- **剧集**：`{title} ({year})/S{season:02d}/{title} ({year}) - S{season:02d}E{episode:02d}[[ - {resolution}]]{ext}`
+  - 示例：`Breaking Bad (2008)/S03/Breaking Bad (2008) - S03E07 - 1080p.mkv`
+
+### v1 前端预设模板
+路径设置页提供多组电影模板和剧集模板预设，预设模板本质上仍是 ADR-001 变量系统的字符串应用。
+
+- 电影预设：4 个
+- 剧集预设：4 个
+- 每个预设在 UI 中标注“电影模板”或“剧集模板”
+- 用户可以从预设切换为自定义模板输入
+
+### 自然语言变量映射
+前端可用自然语言帮助用户理解常用变量：
+
+| 展示名称 | 变量 |
+|---|---|
+| 影片名 | `{title}` |
+| 年份 | `{year}` |
+| 分辨率 | `{resolution}` |
+| 扩展名 | `{ext}` |
+| 视频类型 | `{media_type}` |
+| 首字母 | `{title_initial}` |
+| 季数 | `S{season:02d}` |
+| 集数 | `E{episode:02d}` |
+
+### 国际化
+- TMDB 查询语言由配置项 `tmdb.language` 控制（默认 `zh-CN`）
+- `{title}` 跟随语言设置返回本地化标题，`{original_title}` 始终为原语言
+- 用户可在模板中自由组合，如 `{title} ({original_title}) ({year})/...`
+
+### 模板配置 Key（AppSetting）
+| Key | 说明 |
+|---|---|
+| `tmdb.language` | TMDB 查询语言，如 `zh-CN`、`en-US` |
+| `rename.template.movie` | 全局默认电影模板（watch_rule 未配置时 fallback） |
+| `rename.template.tv` | 全局默认剧集模板（watch_rule 未配置时 fallback） |
+
+---
+
+## ADR-002 监控规则（Watch Rule）数据模型（2026-04-25）✅
+
+### 结论
+将原来的简单配置字符串（`watcher.watch-dirs`、`output.movie-dir` 等）升级为独立的**规则实体表 `watch_rule`**，每条规则代表一个"源目录 → 目标目录"的完整整理策略。
+
+### 数据库表结构
+
+```sql
+CREATE TABLE watch_rule (
+  id               BIGINT PRIMARY KEY AUTOINCREMENT,
+  name             VARCHAR(100) NOT NULL,          -- 用户起的友好名称，如"电影库"
+  source_dir       VARCHAR(500) NOT NULL,          -- 监控的源目录绝对路径
+  target_dir       VARCHAR(500) NOT NULL,          -- 整理后输出的目标根目录
+  media_type       VARCHAR(20)  NOT NULL           -- MOVIE / TV_SHOW / AUTO（AUTO=系统自动识别）
+                   DEFAULT 'AUTO',
+  path_template    VARCHAR(500),                   -- 目标目录内的路径模板（NULL=使用全局默认模板）
+  operation        VARCHAR(20)  NOT NULL           -- MOVE / COPY / HARD_LINK / SYMBOLIC_LINK
+                   DEFAULT 'MOVE',
+  enabled          BOOLEAN      NOT NULL DEFAULT 1,
+  -- 多用户预留：v1 不使用，v2 实现多用户时直接启用，无需改表结构
+  user_id          BIGINT,
+  created_at       DATETIME     NOT NULL,
+  updated_at       DATETIME     NOT NULL
+);
+```
+
+### 规则属性说明
+- **media_type = AUTO**：系统用 guessit 解析结果判断类型，若无法判断则进入人工确认队列
+- **path_template**：使用 ADR-001 定义的变量系统，为 NULL 时 fallback 到全局 `rename.template.movie` / `rename.template.tv`
+- **operation**：v1 只实现 MOVE，其余策略接口已预留
+- **user_id**：v1 为 NULL，多用户版本启用后按此字段隔离规则
+
+### 对现有代码的影响（开发 Agent 须知）
+| 模块 | 变化 |
+|---|---|
+| `FileWatcherService` | 改为读 `watch_rule` 表，启动时动态注册所有 enabled=true 的规则目录 |
+| `MediaTask` | 新增 `rule_id BIGINT` 字段（FK → watch_rule.id），任务入库时记录触发规则 |
+| `RenameService.buildTargetPath()` | 通过 `task.ruleId` 查规则，取 `target_dir` + `path_template` 渲染路径 |
+| `app_setting` 废弃 key | `watcher.watch-dirs`、`output.movie-dir`、`output.tv-dir` 不再使用 |
+| Settings 页面 | 新增 WatchRule 管理 UI：规则列表 + 新增/编辑/删除/启用开关 |
+
+### 特殊场景（延后处理）
+- **原地重命名**（target_dir = source_dir）：作为特殊场景保留设计空间，v1 不实现
+
+---
+
+## ADR-003 前端导航结构（2026-04-25）✅
+
+### 结论
+侧边栏采用**父菜单 + 子菜单分级**方案，不使用页面内 Tabs。
+
+### 菜单结构
+```
+Dashboard          → /dashboard
+Queue（带徽标）    → /queue
+▼ 设置
+    路径设置       → /settings/paths       （Watch Rule CRUD）
+    系统设置       → /settings/system      （TMDB Key、置信度、邮件通知等全局配置）
+    高级设置       → /settings/advanced    （预留，v1 不显示）
+```
+
+### 实现要点（开发 Agent 须知）
+- 使用 Element Plus `el-sub-menu` 包裹三个 `el-menu-item`
+- **高级设置**：路由 `/settings/advanced` 在 `router/index.ts` 中预留占位，但 `AppLayout.vue` 的菜单中**不渲染该项**，等 v2 有实际内容时再露出
+- 路由结构调整：`/settings` 重定向到 `/settings/paths`，原 `SettingsView.vue` 拆分为 `PathsView.vue` 和 `SystemSettingsView.vue`
+- i18n key 新增：`nav.settings`（父菜单）、`nav.settingsPaths`、`nav.settingsSystem`
+
+### 选型理由
+- Watch Rules 是独立 CRUD 功能，与系统配置表单性质不同，不适合同 Tab
+- 各子页面有独立 URL，支持深度链接和浏览器前进/后退
+- 侧边栏空间充足，分级后不拥挤
+
+---
+
+## ADR-004 低置信度候选列表存储（2026-04-25）✅
+
+### 结论
+采用**独立 `task_candidate` 表**（方案 A），候选数据长期保留，不随任务完成而删除，供未来看板和报表功能使用。
+
+### 数据库表结构
+
+```sql
+CREATE TABLE task_candidate (
+  id             BIGINT PRIMARY KEY AUTOINCREMENT,
+  task_id        BIGINT  NOT NULL,     -- FK → media_task.id
+  tmdb_id        BIGINT  NOT NULL,     -- TMDB 条目 ID
+  title          VARCHAR(500),         -- 本地化标题（随 tmdb.language）
+  original_title VARCHAR(500),         -- 原语言标题
+  year           INTEGER,              -- 发布年份
+  media_type     VARCHAR(20),          -- MOVIE / TV_SHOW
+  confidence     DOUBLE,               -- 匹配置信度 0.0~1.0
+  poster_url     VARCHAR(500),         -- 海报图 URL
+  overview       TEXT,                 -- 简介
+  rank           INTEGER,              -- 候选排序（1=最高分）
+  selected       BOOLEAN NOT NULL DEFAULT 0,  -- 是否被用户最终选中
+  created_at     DATETIME NOT NULL
+);
+```
+
+### 关键设计决策
+- **数据永久保留**：任务 DONE / FAILED / SKIPPED 后候选记录不删除，供看板和报表使用
+- **`selected` 字段**：用户确认时将选中的候选标记为 `selected=true`，其余保持 `false`，便于统计"采纳率"、"平均候选数"等指标
+- **`rank` 字段**：TMDB 搜索结果按置信度降序排列，rank=1 为系统最优推荐
+- 未来报表可查询的典型指标示例：
+  - 低置信度任务占比
+  - 用户采纳系统首推候选（rank=1）的比率
+  - 平均每个待确认任务的候选数量
+  - 各媒体类型的匹配成功率
+
+### 对现有代码的影响（开发 Agent 须知）
+| 模块 | 变化 |
+|---|---|
+| 新增 `TaskCandidate` 实体 | 字段对应上表，`@ManyToOne` 关联 `MediaTask` |
+| 新增 `TaskCandidateRepository` | 至少需要 `findByTaskId(Long taskId)` 方法 |
+| `MediaProcessPipeline` | TMDB 搜索完成后，将候选列表批量保存到 `task_candidate` 表 |
+| `QueueController.confirm()` | 确认时将对应 `task_candidate.selected` 置为 `true` |
+| `api-contracts.mdc` | Queue 相关接口的响应需包含候选列表，待 ADR-006 设计后更新 |
+
+---
+
+## ADR-005 FileWatcher 重复处理防护（2026-04-25）✅
+
+### 结论
+采用**递归监听 + 防抖去重 + 数据库查重**：
+
+- 监听每条 `watch_rule.source_dir` 及其所有子目录中的文件变化
+- 使用防抖和文件大小稳定检测，避免处理尚未拷贝完成的大文件
+- 使用数据库查重，避免同一路径重复生成任务
+
+### 监听范围
+
+**递归监听**：系统应监听规则路径下所有层级的子目录。
+
+示例：规则 `source_dir=/downloads` 时，以下文件都应被检测：
+
+```text
+/downloads/a.mkv
+/downloads/movie/b.mkv
+/downloads/tv/Breaking Bad/S03E07.mkv
+```
+
+实现要求：
+- 启动或 reload 时，递归遍历 `source_dir` 下所有已存在目录，并逐个注册到 `WatchService`
+- 运行期间若收到新目录创建事件，也要立即递归注册该新目录，确保后续子文件可被检测
+- `dirRuleMap` 必须维护"每个被注册目录 → 对应 WatchRule"的映射，而不是只维护 sourceDir
+- `WatchService` 原生不支持递归监听，必须由业务代码递归注册多个目录
+
+### 防护机制
+
+**第一层：防抖（Debounce）+ 文件大小稳定检测**
+
+防止处理拷贝中的不完整文件：
+
+```
+文件事件触发
+  → 将文件路径放入防抖 Map（key: 绝对路径, value: ScheduledFuture）
+  → 若同路径在防抖窗口内再次触发，取消旧任务、重新计时（防抖）
+  → 防抖窗口结束（默认 3 秒）后执行稳定性检查：
+      记录文件大小 size1
+      等待 1 秒
+      再次读取文件大小 size2
+      若 size1 == size2，文件稳定，进入第二层检查
+      若 size1 != size2，文件仍在写入，放弃本次（等下次事件重新触发）
+```
+
+防抖窗口时长由配置项控制：`media-marshal.watcher.debounce-seconds`（默认 3）
+
+**第二层：数据库查重**
+
+防止同一文件被重复入库（程序重启、规则重载等边界场景）：
+
+```
+查询 media_task 表：
+  SELECT * FROM media_task
+  WHERE source_path = ? AND status != 'FAILED'
+  LIMIT 1
+
+若查到记录 → 跳过，打印 WARN 日志
+若无记录   → 创建 MediaTask，进入 pipeline
+```
+
+### 实现要点（开发 Agent 须知）
+- 防抖 Map 类型：`ConcurrentHashMap<String, ScheduledFuture<?>>`，key 为文件绝对路径字符串
+- 使用 `ScheduledExecutorService` 执行延迟任务
+- `FileWatcherService.reload()` 被调用时，应清空防抖 Map，避免旧任务在新规则下误触发
+- `reload()` 应重建 `WatchService` 或取消旧 `WatchKey`，避免已删除/禁用规则的旧目录继续触发事件
+- 文件大小读取用 `Files.size(path)`，若文件已被删除（拷贝完成后源文件移走）则直接跳过
+- 配置项 `watcher.debounce-seconds` 通过 `SettingsService.get()` 读取
+- 仅处理视频文件扩展名，目录事件只用于递归注册，不进入 pipeline
+
+### 递归监听的不良影响与约束
+
+- **资源占用增加**：每个子目录都要注册一个 `WatchKey`，目录数量很多时会占用更多内存和系统监听资源
+- **启动 / reload 变慢**：递归遍历大目录树需要时间，尤其是 NAS 或机械硬盘路径
+- **事件风暴风险**：批量下载、解压、迁移目录时可能产生大量 CREATE/MODIFY 事件，必须依赖防抖和视频扩展名过滤削峰
+- **跨平台差异**：Windows、Linux、Docker volume、NAS 挂载对文件事件支持程度不同，可能存在事件延迟或漏报
+
+v1 约束：
+- 递归监听默认开启，不提供 UI 开关
+- 不做历史文件全量扫描，只监听服务启动后产生的新事件
+- 后续如用户遇到超大目录树性能问题，再增加 `watch_rule.recursive` 开关或"手动扫描"功能
+
+---
+
+## ADR-006 人工确认流程设计（2026-04-25）✅
+
+### 场景描述
+任务进入 `AWAITING_CONFIRMATION` 后，Queue 页面展示该任务，用户有两种操作路径：
+1. **从系统候选中选择**：TMDB 搜索已保存在 `task_candidate` 表，直接展示供用户选择
+2. **手动重新搜索**：用户认为候选不对，输入新关键词实时查 TMDB，从结果中选择
+
+两种路径最终都指向同一个确认接口。
+
+### API 接口设计
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/queue` | 查询所有 AWAITING_CONFIRMATION 任务（已有） |
+| GET | `/api/queue/{id}/candidates` | 返回该任务已保存的候选列表（来自 task_candidate 表） |
+| GET | `/api/queue/{id}/search?q=xxx` | 用关键词实时查 TMDB（结果**不**写入 task_candidate） |
+| POST | `/api/queue/{id}/confirm` | 用户确认选中的候选，继续 pipeline |
+| POST | `/api/queue/{id}/skip` | 跳过，标记为 FAILED（已有） |
+
+### 确认接口（POST /api/queue/{id}/confirm）
+
+请求体：
+```json
+{
+  "tmdbId": 1396,
+  "mediaType": "TV_SHOW"
+}
+```
+
+后端执行逻辑：
+1. 若 `tmdbId` 在该任务的 `task_candidate` 中存在 → 将该候选的 `selected=true`
+2. 若 `tmdbId` 来自用户重新搜索（不在 task_candidate 中）→ 新建一条 `task_candidate` 记录并标记 `selected=true`
+3. 调用 TMDB `getById()` 获取完整元数据，填充 `confirmedTitle`、`confirmedYear` 等字段
+4. 继续执行 pipeline Step 6（重命名）→ Step 7（生成 NFO）→ Step 8（状态改 DONE，推送 WebSocket）
+
+### 候选响应结构（GET /api/queue/{id}/candidates）
+
+```typescript
+interface TaskCandidate {
+  id: number
+  taskId: number
+  tmdbId: number
+  title: string
+  originalTitle: string
+  year: number
+  mediaType: 'MOVIE' | 'TV_SHOW'
+  confidence: number       // 0.0 ~ 1.0
+  posterUrl: string
+  overview: string
+  rank: number             // 1 = 系统最高推荐
+  selected: boolean        // 是否已被用户选中
+}
+```
+
+### 前端 Queue 页面交互设计
+每个待确认任务卡片展示：
+- 文件路径、guessit 解析结果（标题、年份、类型）
+- 系统候选列表（`task_candidate` 数据，带海报、置信度、排序）
+- 「重新搜索」输入框：输入后调用 search 接口，结果与候选列表合并展示
+- 选中某候选后显示「确认」按钮，点击调用 confirm 接口
+- 「跳过」按钮调用 skip 接口
+
+---
+
+## ADR-008 WatchRule 路径模板按媒体类型拆分（2026-04-27）✅
+
+### 背景
+当前 `watch_rule.path_template` 只有一个模板字段，但同一条规则在 `media_type=AUTO` 时可能同时处理电影和剧集。电影与剧集的目录层级和文件命名结构天然不同，单模板无法同时表达两类媒体的最佳路径。
+
+同时，前端路径设置页目前把路径模板作为单一字段配置，且文件操作方式展示了 `COPY`、`HARD_LINK`、`SYMBOLIC_LINK` 等后端尚未真正实现的选项，容易给用户造成这些能力已可用的误解。
+
+### 结论
+`WatchRule` 的路径模板配置从单字段升级为**按媒体类型拆分**：
+
+- 电影模板：`movie_path_template`
+- 剧集模板：`tv_path_template`
+- 原 `path_template` 字段彻底废弃并删除，不做长期兼容
+
+### 数据模型调整
+`watch_rule` 表移除旧模板字段，并新增两个可空字段：
+
+```sql
+-- 开发阶段可直接调整 Entity，由 Hibernate ddl-auto=update 处理新增列；
+-- 如本地已有旧库，可手动清理 path_template 列或重建开发库。
+ALTER TABLE watch_rule DROP COLUMN path_template;
+ALTER TABLE watch_rule ADD COLUMN movie_path_template VARCHAR(500);
+ALTER TABLE watch_rule ADD COLUMN tv_path_template VARCHAR(500);
+```
+
+字段含义：
+
+| 字段 | 说明 |
+|---|---|
+| `movie_path_template` | 电影目标路径模板，NULL 时使用全局 `rename.template.movie` |
+| `tv_path_template` | 剧集目标路径模板，NULL 时使用全局 `rename.template.tv` |
+
+> 当前开发阶段仍使用 Hibernate `ddl-auto: update`，由 JPA Entity 新增字段自动补列；暂不引入 Flyway / Liquibase。
+
+### 模板选择规则
+`RenameService.buildTargetPath()` 必须根据任务最终确认的 `mediaType` 选择模板，而不是直接使用规则上的单一模板。
+
+推荐优先级：
+
+1. 当任务最终类型为 `MOVIE`：
+   - 优先使用 `watch_rule.movie_path_template`
+   - 若为空，使用 AppSetting `rename.template.movie`
+   - 再为空，使用 ADR-001 内置电影默认模板
+2. 当任务最终类型为 `TV_SHOW`：
+   - 优先使用 `watch_rule.tv_path_template`
+   - 若为空，使用 AppSetting `rename.template.tv`
+   - 再为空，使用 ADR-001 内置剧集默认模板
+
+`media_type=AUTO` 只表示规则允许系统自动识别媒体类型，不表示渲染时使用“自动模板”。渲染阶段必须已经拿到任务最终媒体类型，并按 `MOVIE` / `TV_SHOW` 选择对应模板。
+
+### 前端路径设置页交互要求
+`PathsView.vue` 的新增 / 编辑规则表单根据 `mediaType` 动态展示模板配置：
+
+| 当前规则媒体类型 | 表单展示 |
+|---|---|
+| `AUTO` | 同时展示“电影路径模板”和“剧集路径模板” |
+| `MOVIE` | 只展示“电影路径模板” |
+| `TV_SHOW` | 只展示“剧集路径模板” |
+
+交互要求：
+
+- 电影模板与剧集模板各自保留“预设模板 / 自定义模板”的交互能力
+- 模板选择控件中的每个预设模板必须显示类型标签，明确标识“电影模板”或“剧集模板”，帮助用户理解该模板适用的媒体类型
+- 当媒体类型从 `AUTO` 切换到 `MOVIE` 时，不展示剧集模板；从 `AUTO` 切换到 `TV_SHOW` 时，不展示电影模板
+- 隐藏不等于清空：用户在同一次编辑过程中切换媒体类型时，已输入但暂时隐藏的模板值应尽量保留，避免误删
+- 提交到后端时，只要求当前媒体类型相关的模板字段有效：
+  - `AUTO`：可提交两个模板字段
+  - `MOVIE`：提交 `moviePathTemplate`
+  - `TV_SHOW`：提交 `tvPathTemplate`
+- 规则卡片展示时：
+  - `AUTO` 规则同时展示电影 / 剧集模板摘要
+  - `MOVIE` 规则展示电影模板摘要
+  - `TV_SHOW` 规则展示剧集模板摘要
+
+### 文件操作方式 v1 展示范围
+虽然后端策略接口预留了 `MOVE`、`COPY`、`HARD_LINK`、`SYMBOLIC_LINK`，但当前实际可用能力只有 `MOVE`。
+
+前端路径设置页 v1 只展示“移动（MOVE）”：
+
+- 新建 / 编辑规则时，操作方式下拉框暂时只提供 `MOVE`
+- 规则卡片上只显示移动
+- `COPY`、`HARD_LINK`、`SYMBOLIC_LINK` 暂不在 UI 暴露
+- 后端枚举和接口可继续保留这些值作为未来扩展，但前端不得让用户选择尚未实现的操作方式
+
+### API 契约变更要求
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`：
+
+- `WatchRule` 响应字段新增 `moviePathTemplate: string | null`、`tvPathTemplate: string | null`
+- `RuleRequest` 请求体新增 `moviePathTemplate?: string`、`tvPathTemplate?: string`
+- `pathTemplate` 从 `WatchRule` / `RuleRequest` 契约中移除
+
+### 验收标准
+- `mediaType=AUTO` 的规则可以分别配置电影模板和剧集模板，电影任务按电影模板渲染，剧集任务按剧集模板渲染
+- `mediaType=MOVIE` 的规则只需要配置电影模板，处理电影时路径正确
+- `mediaType=TV_SHOW` 的规则只需要配置剧集模板，处理剧集时路径正确
+- `WatchRule` 实体、接口契约、前端类型中不再包含 `pathTemplate`
+- 模板预设选项带有“电影模板”/“剧集模板”类型标签
+- 前端路径设置页不再展示未实现的 `COPY`、`HARD_LINK`、`SYMBOLIC_LINK`
+- 后端测试至少覆盖模板选择优先级；前端至少通过 type-check / build
+
+---
+
+## ADR-009 源目录非视频文件处理、附属文件移动与清理策略（2026-04-27）✅
+
+### 背景
+当前 FileWatcher / 手动全量扫描会递归扫描 `watch_rule.source_dir`，但只有视频扩展名文件进入媒体处理 pipeline。实际使用中，一个下载目录通常还包含字幕、NFO、封面图片、发布说明、临时下载文件、系统缩略图等非视频文件。
+
+如果这些文件完全忽略，用户不知道系统是否扫描到了它们；如果全部记录或移动，又会造成任务列表噪音和误操作风险。因此需要明确源目录中非视频文件、附属文件、NFO 生成和空目录清理的边界。
+
+### 结论
+采用**视频主文件驱动 + 附属文件跟随 + 杂项文件提示 + 系统噪音静默忽略 + 可选清理空目录**的策略：
+
+1. 视频文件仍然是唯一触发媒体识别、重命名、TMDB 匹配和路径模板渲染的主文件
+2. 附属文件在主视频处理成功后跟随移动，不单独进入 TMDB pipeline
+3. 普通杂项文件不处理，但记录为 `SKIPPED` 任务，提示用户“已扫描但未操作”
+4. 系统噪音 / 临时文件按忽略黑名单静默跳过，不生成任务记录
+5. 空源目录清理是可选能力，默认关闭，且绝不能删除 `source_dir` 根目录
+
+### 数据模型调整
+
+#### `media_task`
+
+任务状态新增：
+
+```typescript
+type TaskStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'AWAITING_CONFIRMATION'
+  | 'DONE'
+  | 'FAILED'
+  | 'SKIPPED'
+```
+
+新增字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `skip_reason` | VARCHAR(500) / String | 仅 `status=SKIPPED` 时使用，说明跳过原因 |
+
+设计约束：
+- `SKIPPED` 表示系统扫描到了该文件，但根据规则不进行处理，不属于错误
+- `FAILED` 继续表示处理失败，失败详情写入 `error_message`
+- `SKIPPED` 的原因写入 `skip_reason`，不要复用 `error_message`
+
+#### `watch_rule`
+
+新增字段：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `move_associated_files` | BOOLEAN | `true` | 是否自动移动附属文件 |
+| `cleanup_empty_dirs` | BOOLEAN | `false` | 是否在 MOVE 成功后自动清理空源目录 |
+| `generate_nfo` | BOOLEAN | `false` | 是否在没有用户自带 NFO 时自动生成 NFO |
+| `ignored_file_patterns` | TEXT | `NULL` | 忽略黑名单，v1 保留字段；NULL 表示使用系统默认黑名单 |
+
+`ignored_file_patterns` 规划：
+- v1 只支持系统默认忽略规则，前端可只读展示，不开放编辑
+- 后续版本允许用户在路径设置中追加自定义黑名单
+- 存储格式建议为 JSON array，例如 `["*.tmp", "*.part", "Thumbs.db"]`
+
+### 文件分类规则
+
+#### 视频文件
+
+视频文件继续按现有视频扩展名白名单识别，进入 `MediaProcessPipeline`。
+
+#### 附属文件
+
+当 `watch_rule.move_associated_files=true` 时，视频处理成功后自动移动以下附属文件：
+
+| 类型 | 示例 | 处理方式 |
+|---|---|---|
+| 字幕 | `Movie.srt`、`Movie.zh.srt`、`Movie.en.ass`、`Movie.ssa`、`Movie.sub`、`Movie.idx` | 跟随视频移动，并按目标视频文件名重命名 |
+| 用户自带 NFO | `Movie.nfo` | 优先跟随视频移动，并按目标视频文件名重命名 |
+| 同名封面 | `Movie.jpg`、`Movie.png`、`Movie.webp` | 跟随视频移动，并按目标视频文件名重命名 |
+| 通用封面 | `poster.jpg`、`folder.jpg`、`cover.jpg` | 移动到目标目录，保留原文件名 |
+
+匹配约束：
+- v1 只处理与视频同目录的附属文件
+- 字幕 / 同名 NFO / 同名封面按“源视频 basename 前缀”匹配，例如 `Movie.zh.srt` 属于 `Movie.mkv`
+- 不递归查找附属文件子目录
+- 附属文件移动失败不应回滚已完成的视频移动，但需要记录日志，并可在任务详情中补充提示（后续可扩展）
+
+#### 系统默认忽略文件
+
+系统默认忽略文件静默跳过，不生成 `SKIPPED` 任务。默认规则至少包含：
+
+- 隐藏文件：以 `.` 开头的文件，如 `.DS_Store`
+- 系统缩略图：`Thumbs.db`、`desktop.ini`
+- 下载临时文件：`*.part`、`*.tmp`、`*.crdownload`
+- 临时/锁文件：`*.lock`、`~$*`
+
+#### 普通杂项文件
+
+不属于视频、附属文件、系统默认忽略文件的普通文件，记录为 `SKIPPED` 任务：
+
+- `status=SKIPPED`
+- `sourcePath` 记录该文件路径
+- `ruleId` 记录触发规则
+- `skipReason` 示例：`非视频文件，已跳过处理`
+- 不调用 guessit、TMDB、重命名、NFO 生成
+
+### NFO 策略
+
+`generate_nfo` 默认关闭。
+
+处理规则：
+
+1. 如果 `move_associated_files=true` 且源目录存在用户自带 NFO：
+   - 优先移动用户 NFO
+   - 不覆盖用户 NFO
+   - 即使 `generate_nfo=true`，也不再生成新的 NFO
+2. 如果源目录不存在用户自带 NFO：
+   - `generate_nfo=false`：不生成 NFO
+   - `generate_nfo=true`：在目标目录生成新的 NFO
+
+这意味着自动生成 NFO 是明确开启的增强能力，不再是 pipeline 的默认行为。
+
+### 空目录清理策略
+
+`cleanup_empty_dirs` 默认关闭。
+
+当开启后，仅在以下条件全部满足时执行：
+
+- 当前规则操作方式为 `MOVE`
+- 主视频文件已成功移动
+- 附属文件移动逻辑已执行完成
+- 当前任务最终状态为 `DONE`
+
+清理算法：
+
+1. 从源视频原父目录开始
+2. 如果目录为空，则删除
+3. 向上检查父目录
+4. 遇到非空目录立即停止
+5. 遇到 `watch_rule.source_dir` 立即停止，绝不能删除源根目录
+
+安全约束：
+- 所有路径必须 `toAbsolutePath().normalize()` 后比较
+- 待删除目录必须位于 `source_dir` 下方
+- 只删除空目录，不删除任何非空目录
+- 不因清理失败把已完成任务改为 `FAILED`，只记录 warn 日志
+
+### 前端路径设置页要求
+
+`PathsView.vue` 新增以下配置项：
+
+| 配置项 | 默认值 | 交互 |
+|---|---|---|
+| 自动移动附属文件 | 开启 | switch |
+| 自动生成 NFO | 关闭 | switch |
+| 自动清理空文件夹 | 关闭 | switch |
+| 系统默认忽略文件类型 | 系统默认 | v1 只读展示 |
+
+文案建议：
+- 自动移动附属文件：`自动移动同名字幕、NFO、封面图片`
+- 自动生成 NFO：`没有用户自带 NFO 时自动生成`
+- 自动清理空文件夹：`整理完成后删除源目录中的空文件夹，不会删除源根目录`
+- 系统默认忽略文件类型：`这些文件会被静默忽略，不出现在任务列表中`
+
+### 任务列表要求
+
+任务列表需要支持 `SKIPPED` 状态：
+
+- 状态筛选增加 `SKIPPED`
+- 最近任务中展示跳过原因
+- `SKIPPED` 不计入失败任务
+- Dashboard 统计如显示失败数量，不应把 `SKIPPED` 算作失败
+
+任务列表新增批量删除能力：
+
+- 支持多选任务记录
+- 支持批量删除所选记录
+- 删除前必须有确认提示
+- 批量删除只删除任务记录及其候选记录，不影响任何媒体文件
+- 删除接口可由开发 Agent 评估使用批量 API，或前端并发/顺序调用现有单条删除接口；若新增接口，必须同步更新 `api-contracts.mdc`
+
+### WatchService 与手动全量扫描要求
+
+实时监听和手动全量扫描应使用同一套文件分类规则：
+
+1. 视频文件进入现有防抖、稳定性检测、数据库查重和 pipeline
+2. 系统默认忽略文件静默跳过
+3. 普通杂项文件生成 `SKIPPED` 任务
+4. 附属文件不独立生成任务，由主视频任务处理完成后跟随移动
+
+数据库查重也应覆盖 `SKIPPED`：
+- 同一路径已有非 `FAILED` 任务时，不重复创建任务
+- 对普通杂项文件，避免每次全量扫描重复生成 `SKIPPED` 记录
+
+### API 契约变更要求
+
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`：
+
+- `MediaTask.status` 增加 `SKIPPED`
+- `MediaTask` 增加 `skipReason: string | null`
+- `WatchRule` / `RuleRequest` 增加：
+  - `moveAssociatedFiles: boolean`
+  - `cleanupEmptyDirs: boolean`
+  - `generateNfo: boolean`
+  - `ignoredFilePatterns: string[] | null`（v1 可只读 / 不开放编辑）
+- 如新增批量删除接口，记录接口路径、请求体和响应
+
+### 验收标准
+
+- 普通杂项文件被扫描到后生成 `SKIPPED` 任务，并在任务列表中可筛选、可查看跳过原因
+- 系统默认忽略文件不会生成任务记录
+- `moveAssociatedFiles=true` 时，同名字幕、用户 NFO、封面图片随主视频移动
+- `moveAssociatedFiles=false` 时，附属文件不自动移动
+- `generateNfo=false` 时，不自动生成 NFO
+- `generateNfo=true` 且源目录没有用户 NFO 时，生成新的 NFO
+- 源目录已有用户 NFO 时，优先移动用户 NFO，不生成新的 NFO
+- `cleanupEmptyDirs=true` 时，只删除 MOVE 后产生的空目录，绝不删除 `source_dir` 根目录
+- `cleanupEmptyDirs=false` 时，不自动删除源目录
+- Dashboard / 任务列表正确展示 `SKIPPED`，且不把跳过任务计入失败
+- 任务列表支持批量删除记录，删除不影响文件
+
+---
+
+## ADR-010 目标路径冲突处理策略（2026-04-27）✅
+
+### 背景
+当前文件整理使用 `MOVE` 策略。不同源视频可能被识别为同一影片 / 同一剧集，并通过相同路径模板渲染出同一个目标路径。
+
+如果目标文件已存在时继续移动，可能覆盖用户已经整理好的媒体文件。这类覆盖风险不可接受，尤其在自动监听和全量扫描场景中，用户可能不会立即发现。
+
+### 结论
+目标路径冲突采用**不覆盖、不自动改名、直接失败并记录原因**的策略。
+
+处理规则：
+
+1. `RenameService` 渲染出目标路径后，执行文件操作前必须检查目标路径是否已存在
+2. 如果目标路径不存在，按当前规则继续执行 `MOVE`
+3. 如果目标路径已存在：
+   - 不移动源文件
+   - 不覆盖目标文件
+   - 不自动追加后缀生成新路径
+   - 当前任务标记为 `FAILED`
+   - 失败原因记录为文件冲突，例如：`目标文件已存在，文件冲突`
+4. `MoveRenameStrategy` 不应使用会覆盖目标文件的移动参数作为默认行为
+
+### 设计取舍
+
+不自动覆盖：
+- 优点：保护用户已有媒体文件，避免静默数据损失
+- 缺点：用户需要手动处理重复文件
+
+不自动追加后缀：
+- 优点：避免把重复影片整理成多个难以理解的目标文件，保持媒体库路径确定性
+- 缺点：无法自动保留多个版本（如 1080p / 4K / 导演剪辑版）
+
+后续如需要支持多版本媒体，应通过模板变量或专门的冲突处理策略设计，例如引入 `{resolution}`、`{edition}` 或 WatchRule 级别的冲突策略，而不是在 v1 中隐式改名。
+
+### 前端展示要求
+
+任务列表 / 最近任务中原“跳过原因”列调整为通用“详情”列：
+
+- `FAILED`：展示 `errorMessage`
+- `SKIPPED`：展示 `skipReason`
+- 其他状态：可为空或展示简短状态说明
+
+文案要求：
+- 列名使用“详情”
+- 文件冲突失败需要让用户能明确看到原因，如“目标文件已存在，文件冲突”
+- `SKIPPED` 的详情继续显示跳过原因
+
+### API 契约变更要求
+
+开发实现该 ADR 时，如字段结构不变，可不新增接口字段，但必须确认并在 `api-contracts.mdc` 中体现：
+
+- `FAILED` 任务的失败详情来自 `errorMessage`
+- `SKIPPED` 任务的跳过详情来自 `skipReason`
+- 前端“详情”列组合展示这两个字段
+
+### 验收标准
+
+- 当目标路径不存在时，文件正常移动，任务进入 `DONE`
+- 当目标路径已存在时，源文件保持原地，目标文件不被覆盖，任务进入 `FAILED`
+- 文件冲突失败任务的 `errorMessage` 明确记录冲突原因
+- `MOVE` 策略不再默认覆盖已存在目标文件
+- 最近任务 / 任务列表列名为“详情”，可同时展示失败原因和跳过原因
+
+---
+
+## ADR-011 WatchRule 自定义忽略规则与仪表盘任务分页（2026-04-29）✅
+
+### 背景
+ADR-009 中 `ignored_file_patterns` 已预留为 WatchRule 级别忽略黑名单，但 v0.1.1 仍是系统默认规则只读展示。测试环境使用后，需要允许用户按不同源目录自定义忽略规则，减少 `SKIPPED` 任务噪音。
+
+同时，仪表盘最近任务当前缺少分页能力，任务数较多时会显示不全；任务列表也应按时间倒序展示，让用户优先看到最新扫描 / 整理结果。
+
+### 结论
+将 `ignored_file_patterns` 从只读预留能力升级为 WatchRule 可编辑配置，并采用**类 gitignore 的规则语义**：
+
+1. 每条 WatchRule 可以编辑自己的忽略规则
+2. `ignored_file_patterns = null` 表示使用系统默认忽略规则
+3. `ignored_file_patterns = []` 表示不启用任何忽略规则
+4. `ignored_file_patterns = [...]` 表示使用该规则自己的完整忽略规则列表
+5. 忽略规则既支持文件，也支持目录；被忽略目录下的所有文件和子目录都静默忽略，不生成 `SKIPPED`
+
+### 忽略规则语义
+v0.1.x 采用 gitignore 风格的核心子集，避免一开始引入完整 gitignore 复杂度。
+
+支持语法：
+
+| 类型 | 示例 | 说明 |
+|---|---|---|
+| 精确文件名 | `Thumbs.db` | 匹配任意层级下同名文件 |
+| 扩展名 / 通配符 | `*.tmp`、`*.part` | 匹配任意层级下符合 pattern 的文件 |
+| 隐藏文件 | `.*` | 匹配以 `.` 开头的文件或目录 |
+| 目录规则 | `sample/`、`@eaDir/` | 匹配任意层级下同名目录及其全部内容 |
+| 路径片段 | `__MACOSX/` | 匹配目录及其全部内容 |
+
+暂不支持：
+
+- 正则表达式
+- `!` 反向取消忽略
+- 复杂的根路径锚定语义
+- 完整 `.gitignore` 所有边界行为
+
+规则命名仍叫“忽略文件规则”，但说明文案必须明确：可以忽略文件，也可以忽略文件夹。
+
+### 系统默认忽略规则
+系统默认规则至少包含：
+
+```text
+.DS_Store
+Thumbs.db
+desktop.ini
+*.part
+*.tmp
+*.crdownload
+*.lock
+~$*
+.*
+__MACOSX/
+@eaDir/
+```
+
+说明：
+- 这些规则会静默忽略匹配文件，不生成任务记录
+- 如果匹配目录规则，则目录下所有内容都不进入扫描处理
+- 用户删除默认规则后，这类文件可能会进入 `SKIPPED` 记录
+
+### 前端路径设置页交互
+在 WatchRule 新增 / 编辑面板中，将原“系统默认忽略文件类型”升级为“忽略文件规则”区域。
+
+默认展示：
+- 当前生效规则以 tag / chip 展示
+- 当 `ignoredFilePatterns = null` 时，显示“使用系统默认”
+- 提供“编辑”按钮
+
+编辑模式：
+- 用户可以删除已有规则
+- 用户可以新增规则
+- 提供“恢复系统默认”按钮，将 `ignoredFilePatterns` 置为 `null`
+- 提供必要说明：`匹配这些规则的文件或文件夹会被静默忽略，不会生成跳过任务`
+- 删除系统默认项时给轻提示：`删除默认忽略项后，这类文件将出现在任务列表中并标记为已跳过`
+
+保存行为：
+- 修改随 WatchRule 表单保存一起提交
+- 保存成功后立即生效，后端按现有规则变更机制触发 watcher reload
+- 只影响后续实时监听 / 手动全量扫描，不回溯修改已有任务
+
+### 后端处理要求
+实时监听和手动全量扫描都必须使用同一套忽略规则匹配逻辑。
+
+处理顺序：
+
+1. 先判断路径是否命中忽略规则
+2. 命中忽略规则：静默跳过，不创建 `SKIPPED`
+3. 未命中忽略规则：
+   - 视频文件进入 pipeline
+   - 附属文件等待主视频处理后跟随移动
+   - 普通杂项文件创建 `SKIPPED`
+
+目录规则要求：
+- WatchService 收到新目录事件时，如果目录命中忽略规则，不递归注册该目录
+- 手动全量扫描遇到被忽略目录时，应跳过整个子树，避免目录下文件产生任务
+- 已经注册过的目录如果后续规则修改为忽略，应在 watcher reload 后不再注册
+
+### API 契约变更要求
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`：
+
+- `WatchRule.ignoredFilePatterns` 说明从“v1 只读”改为“可编辑；null 表示系统默认”
+- `RuleRequest.ignoredFilePatterns` 说明支持传入完整规则列表，或传 `null` 恢复系统默认
+- 如新增独立保存接口，必须记录接口；若复用现有 `POST/PUT /api/watch-rules`，只更新字段说明即可
+
+### 仪表盘任务列表要求
+Dashboard 最近任务列表需要补齐分页与排序：
+
+- 默认按 `createdAt` 或 `updatedAt` 时间倒序展示，最新任务在最上方
+- 增加分页控件
+- 支持切换页码
+- 支持设置每页条数，推荐默认 20 条
+- 状态筛选、批量删除应与分页联动
+- 批量删除后当前页数据应刷新，避免空页或残留已删除项
+
+后端可选实现：
+- v0.1.x 可先由前端基于 `GET /api/tasks` 全量结果做本地分页和倒序
+- 如果任务量继续增长，后续再升级为后端分页接口，例如 `GET /api/tasks?page=&size=&status=&sort=createdAt,desc`
+
+### 验收标准
+
+- 用户可以在规则编辑面板中编辑忽略规则
+- 用户可以新增文件规则，如 `*.log`
+- 用户可以新增目录规则，如 `sample/`，并忽略该目录下所有文件
+- 用户可以删除系统默认项，删除后该类文件不再静默忽略
+- 用户可以一键恢复系统默认忽略规则
+- 保存规则后无需重启服务，后续监听 / 全量扫描立即按新规则生效
+- 被忽略文件不会生成 `SKIPPED`
+- 被忽略目录不会递归扫描，不会生成其子文件任务
+- 未被忽略的普通杂项文件仍生成 `SKIPPED`
+- Dashboard 最近任务按时间倒序展示
+- Dashboard 最近任务支持分页，任务数多时仍可浏览全部记录
+
+---
+
+## ADR-012 Queue 批量确认流程（v1）（2026-04-30）✅
+
+### 背景
+v1 的 Queue 页面已经支持单个待确认任务的候选展示、重新搜索、确认和跳过。但真实使用中，低置信度或待确认任务可能一次出现很多条，尤其是剧集场景：同一部剧几十集文件可能都被解析为待确认，每个任务的系统推荐候选相同或高度相似。
+
+如果用户只能逐条确认，操作成本很高。因此 v1 需要在 v0.2.x 文件发现和文件操作策略升级之前，优先补齐待确认队列的批量选择和批量确认能力。
+
+### 结论
+Queue 页面新增**分页 + 批量选择 + 批量确认**能力：
+
+1. 待确认任务分页展示，默认按创建时间倒序
+2. 批量操作只作用于当前分页中的任务
+3. 支持“一键选择当前页所有系统推荐候选”
+4. 支持用户手动为多个任务选择候选后批量确认
+5. 支持同剧 / 同候选场景下快速选择相同候选
+6. 批量确认后，成功任务继续进入现有 pipeline，最终仍为 `DONE`
+7. 为区分自动识别和人工确认，任务增加确认来源字段，不通过最终状态区分
+
+### 待确认队列分页
+Queue 页面必须支持分页：
+
+- 默认每页 20 条
+- 支持切换页码
+- 支持切换每页条数
+- 默认按 `createdAt desc` 展示，最新待确认任务在最上方
+- 页面上的批量选择、批量确认、清空选择都只针对当前页
+
+后端实现可选：
+- v1 可先基于 `GET /api/queue` 返回结果做前端本地分页
+- 若任务量继续增加，后续升级为后端分页接口，例如 `GET /api/queue?page=&size=&sort=createdAt,desc`
+
+### 批量选择交互
+
+Queue 页面新增顶部批量操作栏：
+
+- `选择当前页系统推荐`
+- `清空当前页选择`
+- `批量确认（N）`
+
+选择规则：
+- 每个任务最多选择一个候选
+- “系统推荐候选”定义为该任务候选列表中 `rank=1` 的候选
+- 没有候选的任务不参与自动选择
+- 当前页候选尚未加载完成时，应先加载候选或禁用批量选择按钮
+- 用户手动选择候选后，该任务进入已选择状态
+
+确认前必须弹出确认框，展示：
+- 本次将确认的任务数
+- 其中低置信度候选数量（阈值建议沿用 `watcher.confidence-threshold` 或前端固定提示低于 60% 的数量）
+- 操作不可直接撤销，确认后会继续文件整理
+
+### 同剧 / 同候选优化
+针对“同一部剧几十集都推荐同一候选”的场景，v1 在分页范围内提供轻量优化：
+
+- 当前页按系统推荐候选分组，分组 key 为 `mediaType + tmdbId`
+- 如果当前页多个任务的 rank=1 候选相同，页面可展示提示，例如：`当前页有 18 个任务推荐为 Breaking Bad，可一键选择`
+- 用户点击后，为当前页中该分组任务批量选择同一个候选
+
+范围约束：
+- v1 只对当前页生效，不跨分页批量选择
+- 不自动确认，只自动选择；用户仍需点击批量确认
+- 如果某一集用户手动改选其他候选，以用户手动选择为准
+
+后续可扩展：
+- 按剧集分组的专门确认视图
+- 跨分页选择同一候选
+- 按解析出的剧名 / 季号聚合显示
+
+### 批量确认接口
+建议新增后端批量确认接口，避免前端多次调用单条接口后无法清晰处理部分失败：
+
+```http
+POST /api/queue/batch-confirm
+```
+
+请求体：
+
+```json
+{
+  "items": [
+    { "taskId": 1, "tmdbId": 1396, "mediaType": "TV_SHOW" },
+    { "taskId": 2, "tmdbId": 155, "mediaType": "MOVIE" }
+  ]
+}
+```
+
+响应体：
+
+```typescript
+interface BatchConfirmResponse {
+  results: BatchConfirmResult[]
+}
+
+interface BatchConfirmResult {
+  taskId: number
+  success: boolean
+  message: string | null
+}
+```
+
+处理规则：
+- 后端逐条处理，每条复用现有 `MediaProcessPipeline.confirm()` 语义
+- 单条失败不应导致整个批次回滚
+- 成功任务从待确认队列移除
+- 失败任务保留在待确认队列，并返回失败原因
+- 前端批量确认完成后展示成功 / 失败数量
+
+如果开发 Agent 评估 v1 暂不新增接口，也可以前端顺序调用现有 `POST /api/queue/{id}/confirm`，但必须保留逐条结果展示能力；若新增接口，必须同步更新 `api-contracts.mdc`。
+
+### 人工确认任务的最终状态与可追溯性
+人工确认任务最终处理成功后，状态仍然使用 `DONE`。
+
+理由：
+- `status` 表示任务生命周期结果，人工确认和自动识别成功最终都属于已完成
+- 如果为人工确认新增单独完成状态，会让任务统计和 UI 状态变复杂
+
+为了后续区分自动识别和人工确认，`media_task` 新增确认来源字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `confirmation_source` | VARCHAR(20) / Enum | `AUTO_MATCH` / `MANUAL_SINGLE` / `MANUAL_BATCH` |
+
+含义：
+- `AUTO_MATCH`：系统高置信度自动采纳候选
+- `MANUAL_SINGLE`：用户在单个任务上手动确认
+- `MANUAL_BATCH`：用户通过批量确认完成
+
+前端可暂不在主列表展示该字段，但 API 应返回，便于后续看板、报表和问题排查。
+
+### 前端要求
+
+Queue 页面需要：
+
+- 增加分页控件
+- 每个任务卡片或行支持选择候选
+- 顶部提供当前页批量操作栏
+- 支持“一键选择当前页系统推荐”
+- 支持“清空当前页选择”
+- 支持“批量确认（N）”
+- 批量确认时显示 loading，避免重复点击
+- 批量确认完成后刷新当前页 / 队列
+- 成功任务移除，失败任务保留并展示失败原因
+- 同候选分组提示只作用当前页
+
+### API 契约变更要求
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`：
+
+- 如新增 `POST /api/queue/batch-confirm`，记录请求体和响应体
+- `MediaTask` 新增 `confirmationSource: 'AUTO_MATCH' | 'MANUAL_SINGLE' | 'MANUAL_BATCH' | null`
+- 说明人工确认成功后的最终 `status` 仍为 `DONE`
+
+### 验收标准
+
+- Queue 页面支持分页，默认按创建时间倒序
+- “选择当前页系统推荐”只选择当前页有 rank=1 候选的任务
+- 用户可手动选择多个任务的候选后批量确认
+- 批量确认只确认当前页已选择任务
+- 批量确认前有确认弹窗，展示确认数量和低置信度提示
+- 批量确认部分失败时，成功任务继续处理，失败任务保留并展示原因
+- 同剧 / 同候选场景下，当前页可快速选择相同推荐候选
+- 自动确认、单条人工确认、批量人工确认最终成功状态均为 `DONE`
+- 可通过 `confirmationSource` 区分任务是自动完成、单条人工确认还是批量人工确认
+
+---
+
+## ADR-019 Queue 全局手动搜索候选与任务关联（v1）（2026-05-03）✅
+
+### 背景
+ADR-012 已经定义 Queue 页的分页、批量选择系统推荐、批量确认能力。但实际使用中会出现一种高频场景：
+
+- 当前页的多个待确认任务没有任何系统候选，或系统候选明显错误
+- 用户知道这些文件属于同一部电影 / 剧集，希望手动搜索一次 TMDB，再把同一个候选应用到这一批任务
+
+当前前端批量选择逻辑容易把“选择任务”和“选择候选”绑定在一起：如果任务没有 `rank=1` 系统推荐候选，用户就无法通过“选择当前页系统推荐”进入批量确认流程。这会导致最需要手动搜索的场景反而无法批量操作。
+
+同时，单任务面板内嵌“重新搜索”会造成交互分散：多集剧集需要重复搜索，单个任务也只是批量流程的特例。更合理的方式是把搜索升级为 Queue 页上级能力：用户先搜索候选，或先选择任务，再把候选和任务进行关联。
+
+此外，当当前页存在多个“有 X 个任务推荐为 Y”的一键选择分组时，推荐面板会占据较大版面。如果再加入全局搜索面板，Queue 页顶部会变得拥挤。因此需要同步压缩系统推荐面板，并让搜索面板支持折叠。
+
+### 结论
+Queue 页新增**全局手动搜索候选并关联任务**能力：
+
+1. 搜索候选是 Queue 页上级能力，不再依附于单个待确认任务面板
+2. 用户可以先选择任务再搜索，也可以先搜索候选再选择任务
+3. 手动搜索结果作为前端临时候选，不立即写入 `task_candidate`
+4. 用户将搜索候选应用到一个或多个当前页已选任务后，再点击“批量确认”
+5. 批量确认时后端沿用现有逻辑：若候选不在任务候选表中，则新建 `task_candidate` 并标记为选中
+6. 新增独立 metadata 搜索接口，下线旧的 task 绑定搜索接口
+7. 系统推荐快捷面板默认只展示前 3 条，其余折叠；搜索面板默认展开但支持折叠
+
+### 交互模型
+
+Queue 页批量确认由三个对象组成：
+
+| 对象 | 含义 |
+|---|---|
+| 当前搜索候选 | 用户通过全局搜索选中的 TMDB 条目，或当前系统推荐分组代表的候选 |
+| 当前页已选任务 | 用户勾选的待确认任务，仅限当前分页 |
+| 任务已关联候选 | 某个任务已经被关联到一个候选，可参与批量确认 |
+
+支持两种等价路径：
+
+1. **任务优先**
+   - 勾选当前页一个或多个任务
+   - 使用全局搜索找到候选
+   - 将候选应用到已选任务
+   - 批量确认
+2. **候选优先**
+   - 先使用全局搜索找到候选
+   - 再勾选当前页一个或多个任务
+   - 将候选应用到已选任务
+   - 批量确认
+
+任务卡片 / 行需要表达以下状态：
+
+| UI 状态 | 含义 | 是否可批量确认 |
+|---|---|---|
+| 未选择 | 不参与当前批量操作 | 否 |
+| 已选任务，未选择候选 | 任务已被选中，但还没有可确认候选 | 否 |
+| 已选任务，已选择候选 | 任务已被选中，且已选定候选 | 是 |
+
+### 批量操作栏
+
+Queue 页顶部批量操作栏调整为：
+
+- `选择当前页任务`
+- `应用当前候选到已选任务`
+- `清空选择`
+- `批量确认（N）`
+
+按钮行为：
+
+| 操作 | 行为 |
+|---|---|
+| 选择当前页任务 | 选择当前页所有待确认任务，不要求任务已有候选 |
+| 应用当前候选到已选任务 | 将全局搜索面板当前选中的候选应用到当前页已选任务 |
+| 清空选择 | 清空当前页任务选择和候选选择状态 |
+| 批量确认（N） | 只确认“已选任务，已选择候选”的任务；`N` 为可确认任务数 |
+
+按钮启用条件：
+
+- `应用当前候选到已选任务`：需要同时存在当前候选和至少一个已选任务
+- `批量确认（N）`：`N` 只统计已关联候选的任务
+- 当前页任务即使没有任何系统候选，也可以通过 `选择当前页任务` 进入批量流程
+
+### 全局手动搜索面板
+
+Queue 页顶部新增全局手动搜索面板。
+
+默认行为：
+
+- 搜索面板默认展开
+- 用户可点击 `收起搜索` 折叠面板
+- 折叠后保留当前已选候选摘要，例如：`已选候选：长乐曲（2024）TV_SHOW`
+- 折叠按钮文案在 `收起搜索` / `展开搜索` 之间切换
+
+面板内容：
+
+- 搜索输入框
+- 媒体类型选择：`MOVIE` / `TV_SHOW`
+- 搜索按钮
+- 搜索结果列表
+- 当前已选候选摘要
+
+搜索结果展示：
+
+- 海报
+- 标题
+- 原始标题
+- 年份
+- 媒体类型
+- 简介
+- 置信度（如接口返回）
+
+选择候选行为：
+
+1. 用户输入关键词并搜索
+2. 用户从搜索结果中选择一个候选
+3. 该候选成为“当前搜索候选”
+4. 用户可以继续选择任务，或立即将候选应用到已选任务
+
+说明：
+
+- 搜索候选不要求提前选择任务
+- 搜索结果不写入 `task_candidate`
+- 单任务搜索是该流程的特例：用户只选择一个任务，再应用当前候选即可
+
+### 系统推荐快捷面板
+
+ADR-012 中的同候选推荐分组保留，但需要压缩展示，避免占据过多页面空间。
+
+展示规则：
+
+- 默认只展示前 3 条推荐分组
+- 其余推荐分组默认折叠
+- 展示按钮：`展开全部推荐（还有 X 项）`
+- 展开后按钮切换为：`收起推荐`
+
+推荐分组排序：
+
+1. 覆盖任务数多的优先
+2. 覆盖任务数相同，平均置信度高的优先
+3. 再使用稳定顺序排序，例如标题或首次出现顺序
+
+每个推荐分组仍可提供快捷操作：
+
+- `选择该推荐的任务`
+- `将该候选设为当前候选`
+- `应用到已选任务`
+
+如果当前页没有任何系统推荐候选：
+
+- 系统推荐快捷面板展示空状态或不展示
+- 不影响全局搜索面板和任务选择能力
+
+### 候选应用行为
+
+用户可以从两类来源得到当前候选：
+
+| 来源 | 行为 |
+|---|---|
+| 全局手动搜索结果 | 用户点击搜索结果后设为当前候选 |
+| 系统推荐快捷分组 | 用户点击推荐分组后设为当前候选 |
+
+应用到任务：
+
+1. 用户选择一个当前候选
+2. 用户勾选当前页一个或多个任务
+3. 点击 `应用当前候选到已选任务`
+4. 前端将该候选写入这些任务的候选选择状态
+5. 用户点击 `批量确认（N）`
+
+### 覆盖已有选择
+
+如果当前页已选任务中已有部分任务选择过候选，再应用当前候选时：
+
+- 前端必须弹出二次确认
+- 文案建议：`当前有 X 个任务已选择候选，应用新候选将覆盖这些选择，是否继续？`
+- 用户确认后，当前候选覆盖当前页已选任务的候选选择状态
+- 用户取消后，不改变已有选择
+
+### API 设计
+
+由于搜索已经升级为 Queue 页上级能力，不再依附于单个待确认任务，v1 新增独立 metadata 搜索接口，并下线旧的 task 绑定搜索接口。
+
+#### 新增：全局 metadata 搜索
+
+推荐接口：
+
+```http
+GET /api/metadata/search?q={keyword}&mediaType={MOVIE|TV_SHOW}
+```
+
+响应体复用现有 `MatchResult[]`。
+
+请求参数：
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `q` | 是 | 用户输入的搜索关键词 |
+| `mediaType` | 是 | 搜索媒体类型，`MOVIE` 或 `TV_SHOW` |
+
+设计理由：
+
+- `metadata` 命名符合后端 `MetadataMatcher` 抽象，不把前端绑定到 TMDB
+- 搜索语义不依赖具体任务 ID，支持先搜索候选再选择任务
+- 后续如增加豆瓣等数据源，可保持前端接口语义稳定
+
+搜索结果处理：
+
+- 搜索结果不写入 `task_candidate`
+- 搜索结果只作为前端临时候选
+- 用户确认后才按任务维度写入候选记录
+
+#### 下线：旧 Queue 搜索接口
+
+旧接口：
+
+```http
+GET /api/queue/{id}/search?q={keyword}
+```
+
+处理要求：
+
+- 前端新功能不得再使用该接口
+- 后端可在本次实现中直接删除，或先保留兼容并在 `api-contracts.mdc` 标记 deprecated
+- 如果仍有现有前端单任务搜索依赖，应迁移到全局 metadata 搜索
+- API 契约必须明确旧接口的下线 / 废弃状态
+
+#### 确认
+
+继续复用现有批量确认接口：
+
+```http
+POST /api/queue/batch-confirm
+```
+
+请求体仍为：
+
+```json
+{
+  "items": [
+    { "taskId": 1, "tmdbId": 1396, "mediaType": "TV_SHOW" }
+  ]
+}
+```
+
+后端行为沿用 ADR-006 / ADR-012：
+
+- 如果 `tmdbId` 已存在于该任务的 `task_candidate` 中，将该候选标记为 `selected=true`
+- 如果 `tmdbId` 来自手动搜索且不在该任务候选中，确认时新建 `task_candidate` 并标记为 `selected=true`
+- 批量确认逐条处理，单条失败不回滚整个批次
+
+### 范围约束
+
+v1 明确约束：
+
+- 候选搜索是全局临时状态，不依赖具体任务
+- 候选应用只作用于当前页已选任务
+- 不跨分页选择任务
+- 不跨分页应用搜索结果
+- 不自动确认，必须由用户点击 `批量确认`
+- 不支持混合媒体类型批量应用同一候选
+- 不提前把搜索结果写入 `task_candidate`
+- 不改变 `confirmationSource` 语义；通过批量确认成功的任务仍为 `MANUAL_BATCH`
+
+### 失败与边界处理
+
+| 场景 | 处理方式 |
+|---|---|
+| 未选择任务但已搜索候选 | 允许保留当前候选，等待用户选择任务 |
+| 已选择任务但未搜索候选 | 允许保留任务选择，等待用户搜索或选择推荐候选 |
+| 点击应用候选但没有当前候选 | 禁用按钮或提示 `请先选择一个候选` |
+| 点击应用候选但没有已选任务 | 禁用按钮或提示 `请先选择要关联的任务` |
+| 已选任务没有系统候选 | 允许通过全局搜索关联候选 |
+| 搜索无结果 | 展示空状态，允许用户修改关键词重试 |
+| 搜索接口失败 | 展示错误提示，不改变当前选择 |
+| 已选任务媒体类型和当前候选媒体类型不一致 | 应提示并阻止应用，避免把电影候选应用到剧集任务 |
+| 应用候选后部分任务源文件被删除 | 批量确认时由后端现有源文件缺失校验逐条返回失败 |
+| 批量确认部分失败 | 沿用 ADR-012：成功任务继续处理，失败任务保留并展示原因 |
+
+### 前端验收标准
+
+- 当前页任务即使没有任何系统候选，也可以被选中
+- 用户可以先搜索候选，再选择一个或多个任务并应用候选
+- 用户可以先选择一个或多个任务，再搜索候选并应用候选
+- 当前页没有系统推荐候选时，不阻塞用户使用全局搜索候选
+- 用户可以选择当前页多个无候选任务，手动搜索一次，并将同一候选应用到这些任务
+- 应用候选后，任务显示为“已选任务，已选择候选”
+- `批量确认（N）` 只统计已选择候选的任务
+- 已选但未选择候选的任务不会被提交确认
+- 应用候选不会立即调用确认接口
+- 覆盖已有候选选择前有二次确认
+- 当前候选媒体类型和任务媒体类型不一致时不能应用
+- 全局搜索面板默认展开，并支持折叠 / 展开
+- 搜索面板折叠后仍展示当前候选摘要
+- 系统推荐快捷面板默认只展示前 3 条推荐分组
+- 系统推荐快捷面板可以展开全部推荐，并可再次收起
+- 系统推荐分组按覆盖任务数和平均置信度优先展示
+- 批量确认完成后沿用现有成功 / 失败结果展示与队列刷新逻辑
+
+### API 契约变更要求
+
+开发实现时需确认并同步 `api-contracts.mdc`：
+
+- 新增 `GET /api/metadata/search?q=&mediaType=`
+- 记录请求参数和 `MatchResult[]` 响应
+- 将 `GET /api/queue/{id}/search?q=` 标记 deprecated 或从契约中移除
+- `POST /api/queue/batch-confirm` 支持确认来自手动搜索、不在原任务候选表中的 `tmdbId`
+
+---
+
+## ADR-013 文件发现架构升级（v0.2.x）（2026-04-30）✅
+
+### 背景
+v0.1.1 已实现基于 Java `WatchService` 的递归监听、手动全量扫描和数据库查重，能覆盖普通本地磁盘场景。
+
+但在群晖 NAS、Docker volume、网络挂载、硬链接工具（如 hlink）等场景中，文件系统事件可能漏发或延迟。典型问题是：外部工具在监控目录中创建硬链接文件后，Media Marshal 没有收到实时事件；但用户手动全量扫描时又能发现文件。说明文件本身存在，问题在“发现机制”对环境的依赖。
+
+### 结论
+v0.2.x 将当前 `FileWatcherService` 从“文件监听服务”升级为独立的**文件发现层**，建议命名为 `FileDiscoveryService` 或等价模块。文件发现层统一负责从 WatchRule 源目录发现待处理路径，并向现有 pipeline 投递文件。
+
+文件发现层支持多种发现模式：
+
+| 模式 | 说明 | 适用场景 |
+|---|---|---|
+| `WATCH_EVENT` | 使用当前 WatchService 递归监听文件事件 | 本地磁盘、事件可靠的普通场景 |
+| `PERIODIC_SCAN` | 周期扫描 WatchRule 源目录 | NAS、Docker volume、文件事件不可靠场景 |
+| `HYBRID` | WatchService 实时监听 + 周期补扫 | v0.2.x 推荐默认模式 |
+| `MANUAL_SCAN` | 用户手动点击全量扫描 | 已有能力，继续保留 |
+| `WEBHOOK` | 外部工具通知指定路径或规则触发扫描 | hlink、下载器、自动化脚本集成 |
+
+### WatchRule 数据模型调整
+`watch_rule` 增加发现相关字段：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `discovery_mode` | VARCHAR(20) | `HYBRID` | 文件发现模式：`WATCH_EVENT` / `PERIODIC_SCAN` / `HYBRID` |
+| `scan_interval_minutes` | INTEGER | `10` | 周期补扫间隔，仅 `PERIODIC_SCAN` / `HYBRID` 生效 |
+| `webhook_enabled` | BOOLEAN | `false` | 是否允许外部 webhook 触发该规则扫描 |
+
+说明：
+- `MANUAL_SCAN` 是用户动作，不作为持久化 discovery mode
+- `WEBHOOK` 是额外触发入口，可与任意 discovery mode 共存
+- `scan_interval_minutes` 应设置最小值，例如不低于 1 或 5 分钟，避免用户误设过小导致持续扫描
+
+### 文件发现流程
+所有发现来源必须复用同一套处理链路：
+
+1. 规范化路径
+2. 校验路径位于对应 `watch_rule.source_dir` 下
+3. 应用 ADR-011 忽略规则
+4. 应用 ADR-009 文件分类规则
+5. 视频文件进入稳定性检测 / 数据库查重 / pipeline
+6. 普通杂项文件按规则生成 `SKIPPED`
+7. 附属文件不单独入库，等待主视频处理后跟随移动
+
+不同发现来源只负责“发现候选路径”，不能绕过忽略规则、查重和文件分类。
+
+### HYBRID 模式
+`HYBRID` 是 v0.2.x 推荐默认模式。
+
+行为：
+- 启动 / reload 时递归注册 WatchService
+- 实时事件触发后按当前防抖 + 稳定性检测处理
+- 后台定时对源目录做补扫，弥补 NAS / Docker / 硬链接工具造成的事件漏发
+- 手动全量扫描仍可随时触发
+
+补扫策略：
+- v0.2 初期可复用现有全量扫描逻辑，并依赖数据库查重避免重复入库
+- 后续如目录规模变大，可升级为增量扫描索引，例如记录文件路径、大小、mtime、上次扫描时间
+- 定时补扫不应阻塞 WatchService 事件线程
+- 同一 WatchRule 同一时间只允许一个扫描任务运行
+
+### 新目录创建补扫
+短期修复和长期架构都应保留此规则：
+
+当 WatchService 收到新目录创建事件时：
+1. 若目录命中忽略规则，不注册、不扫描
+2. 若未命中忽略规则，先递归注册该目录
+3. 注册后立即对该新目录执行一次轻量扫描
+
+原因：外部工具可能先创建目录，再快速在目录内创建文件；业务代码注册新目录时，文件创建事件已经错过。注册后立即扫描可补上这个竞态。
+
+### Webhook 触发扫描
+新增外部通知能力，供 hlink、下载器或自动化脚本集成。
+
+建议接口：
+
+```http
+POST /api/discovery/notify
+```
+
+请求体建议：
+
+```json
+{
+  "ruleId": 1,
+  "path": "/media/inbox/Movie/Movie.mkv"
+}
+```
+
+行为：
+- `ruleId` 必填，后端加载对应 WatchRule
+- `path` 可以是文件或目录
+- 如果是文件，仅扫描该文件
+- 如果是目录，扫描该目录子树
+- 必须校验 `path` 位于该 WatchRule 的 `source_dir` 下
+- 必须应用忽略规则、文件分类和数据库查重
+
+安全要求：
+- Webhook 需要独立 token，避免未授权用户触发任意扫描
+- token 可通过环境变量或 AppSetting 配置
+- 没有配置 token 时，webhook 默认关闭或返回明确错误
+- 不允许 webhook 扫描 WatchRule 源目录之外的路径
+
+### 前端路径设置页要求
+WatchRule 新增“文件发现模式”配置区：
+
+- 发现模式：`实时监听` / `定时扫描` / `混合模式`
+- 扫描间隔：分钟，仅定时扫描 / 混合模式显示
+- Webhook：高级开关，默认关闭
+
+文案建议：
+- `实时监听`：适合本地磁盘，实时性好，但 NAS / Docker volume 上可能漏事件
+- `定时扫描`：不依赖文件事件，适合 NAS，但实时性取决于扫描间隔
+- `混合模式`：推荐，实时监听加定时补扫，兼顾实时性和可靠性
+
+### API 契约变更要求
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`：
+
+- `WatchRule` / `RuleRequest` 新增：
+  - `discoveryMode`
+  - `scanIntervalMinutes`
+  - `webhookEnabled`
+- 新增 webhook 接口时记录接口路径、请求体、鉴权方式和响应行为
+
+### 验收标准
+
+- `WATCH_EVENT` 模式下维持现有实时监听能力
+- `PERIODIC_SCAN` 模式下不依赖文件事件，定时发现新增文件
+- `HYBRID` 模式下实时事件和周期补扫都能触发处理，且不会重复入库
+- 新目录创建后立即补扫该目录，能发现目录创建后快速出现的文件
+- Webhook 能触发指定文件 / 目录扫描
+- Webhook 不能扫描 WatchRule 源目录之外的路径
+- 同一路径已有非 `FAILED` 任务时不会重复创建任务
+- 忽略规则、附属文件规则和 `SKIPPED` 规则在所有发现来源中一致生效
+
+---
+
+## ADR-014 文件操作策略正式开放与保存前校验（v0.2.x）（2026-04-30）✅
+
+### 背景
+当前项目已通过 `FileOperationStrategy` 预留了 `MOVE`、`COPY`、`HARD_LINK`、`SYMBOLIC_LINK` 四种文件操作类型，但 v0.1.x 前端只开放 `MOVE`。
+
+v0.2.x 计划正式开放 `COPY`、`HARD_LINK`、`SYMBOLIC_LINK`。其中 `HARD_LINK` 可替代用户外部使用 hlink 的部分场景：用户直接让 Media Marshal 从源目录发现媒体文件，再在目标目录创建硬链接，减少外部工具链和文件事件漏发风险。
+
+### 结论
+v0.2.x 正式实现并开放四种文件操作策略：
+
+| 操作 | 行为 |
+|---|---|
+| `MOVE` | 移动源文件到目标路径，源文件消失 |
+| `COPY` | 复制源文件到目标路径，源文件保留 |
+| `HARD_LINK` | 在目标路径创建指向同一文件内容的硬链接，源文件保留 |
+| `SYMBOLIC_LINK` | 在目标路径创建指向源文件路径的符号链接，源文件保留 |
+
+所有策略都必须遵守 ADR-010：
+- 目标路径已存在时不覆盖
+- 不自动改名
+- 任务失败并记录明确原因
+
+### 策略行为要求
+
+#### MOVE
+- 源路径必须可读写
+- 目标父目录必须可创建 / 可写
+- 成功后源文件不存在
+- `cleanup_empty_dirs` 仅对 `MOVE` 生效
+
+#### COPY
+- 源路径必须可读
+- 目标父目录必须可创建 / 可写
+- 成功后源文件保留
+- 不执行空目录清理
+- 空间不足可能在运行时失败，保存前只能做基础写入校验
+
+#### HARD_LINK
+- 源路径必须可读
+- 目标父目录必须可创建 / 可写
+- 源路径和目标路径必须位于支持硬链接的同一文件系统 / 同一挂载设备
+- 成功后源文件和目标文件是两个目录项，指向同一份文件内容
+- 删除其中一个目录项不会删除另一处目录项，但修改文件内容会影响同一份数据
+- 不执行空目录清理
+- 如果硬链接失败，不允许 fallback 到 COPY 或 MOVE，必须失败并记录原因
+
+#### SYMBOLIC_LINK
+- 目标父目录必须可创建 / 可写
+- 运行环境必须允许创建 symlink
+- 目标路径是指向源路径的符号链接
+- 源文件删除或移动后，符号链接会失效
+- 不执行空目录清理
+- 如果符号链接创建失败，不允许 fallback 到 COPY 或 MOVE，必须失败并记录原因
+
+### 附属文件处理
+ADR-009 的附属文件应跟随当前 WatchRule 的文件操作策略处理：
+
+- `MOVE`：移动字幕、用户 NFO、封面
+- `COPY`：复制字幕、用户 NFO、封面
+- `HARD_LINK`：为字幕、用户 NFO、封面创建硬链接
+- `SYMBOLIC_LINK`：为字幕、用户 NFO、封面创建符号链接
+
+如果某个附属文件操作失败：
+- 不回滚主视频操作
+- 记录 warn 日志
+- 后续可在任务详情中展示提示
+
+### 保存前校验（Preflight）
+创建 / 编辑 WatchRule 时，前端必须在保存前调用后端校验接口。校验失败则拒绝保存，并展示失败原因。
+
+建议接口：
+
+```http
+POST /api/watch-rules/validate
+```
+
+请求体可复用 `RuleRequest`。
+
+校验内容：
+
+| 操作 | 必须校验 |
+|---|---|
+| `MOVE` | sourceDir 存在且可读写；targetDir 可创建 / 可写 |
+| `COPY` | sourceDir 存在且可读；targetDir 可创建 / 可写 |
+| `HARD_LINK` | sourceDir 存在且可读；targetDir 可创建 / 可写；通过临时文件真实创建硬链接验证 |
+| `SYMBOLIC_LINK` | sourceDir 存在；targetDir 可创建 / 可写；通过临时文件真实创建符号链接验证 |
+
+硬链接 / 软链接校验建议：
+- 在 sourceDir 下创建临时测试文件
+- 在 targetDir 下尝试创建对应链接
+- 成功后清理临时文件和链接
+- 任一步失败都返回明确原因
+- 校验过程必须避免覆盖用户已有文件，临时文件名使用随机值
+
+校验返回建议：
+
+```typescript
+interface WatchRuleValidationResult {
+  valid: boolean
+  message: string | null
+  details?: string[]
+}
+```
+
+### 前端路径设置页要求
+路径设置页文件操作方式下拉框正式展示四种操作：
+
+- 移动
+- 复制
+- 硬链接
+- 符号链接
+
+交互要求：
+- 用户选择操作方式后，显示简短说明
+- `HARD_LINK` 说明必须提示“源目录和目标目录需要在同一文件系统”
+- `SYMBOLIC_LINK` 说明必须提示“源文件删除或移动后链接会失效”
+- 保存前调用校验接口
+- 校验失败时保持对话框打开并展示原因
+- 校验通过后再提交创建 / 更新 WatchRule
+
+### 与发现层的关系
+开放 `HARD_LINK` 可减少外部 hlink 依赖，但不能完全替代 ADR-013 文件发现升级：
+
+- 如果用户不再使用 hlink 输出目录，确实可避免“hlink 创建硬链接但 WatchService 未收到事件”的问题
+- 但源文件本身仍可能来自 NAS / Docker volume / 下载器，文件事件仍可能漏发
+- 因此 v0.2.x 仍应推荐 `HYBRID` 发现模式
+
+### API 契约变更要求
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`：
+
+- `WatchRule.operation` / `RuleRequest.operation` 四种值均为前端可选
+- 新增 `POST /api/watch-rules/validate`
+- 记录校验请求体、响应体、失败场景说明
+
+### 验收标准
+
+- 用户可以创建 `MOVE`、`COPY`、`HARD_LINK`、`SYMBOLIC_LINK` 类型 WatchRule
+- 保存前校验失败时拒绝保存，并展示明确错误
+- `HARD_LINK` 在跨文件系统或不支持硬链接时校验失败
+- `SYMBOLIC_LINK` 在系统 / 容器权限不允许时校验失败
+- 四种策略均遵守目标路径冲突不覆盖规则
+- `COPY` 成功后源文件保留，目标文件存在
+- `HARD_LINK` 成功后源文件和目标文件指向同一份文件内容
+- `SYMBOLIC_LINK` 成功后目标路径为符号链接
+- `cleanup_empty_dirs` 仅对 `MOVE` 生效
+- 附属文件按当前策略处理
+- 任何策略失败时不 fallback 到其他策略
+
+---
+
+## ADR-015 模板变量帮助与路径预览体验补齐（v1）（2026-05-02）✅
+
+### 背景
+ADR-007 原规划为模板变量帮助页 / 帮助面板，并补充自定义路径模板预览能力。目前已完成 `GET /api/template-variables` 接口和前端变量帮助面板，但仍有几个体验问题需要补齐：
+
+1. 自定义路径模板输入区域还没有“预览”功能，用户无法在保存前直观看到模板会生成什么路径
+2. 后端当前会返回 `RESERVED` 预留变量，前端展示后容易让用户误以为这些变量已经可正常使用
+3. 变量未来可能出现生命周期变化，例如当前版本可用、未来版本计划废弃、最终下线不可用，需要提前设计状态模型
+4. 帮助内容当前由后端固定中文返回，英文界面下会出现中英文混杂
+
+### 结论
+v1 补齐模板变量帮助体验：
+
+- 自定义路径模板输入区域增加“预览”能力
+- 前端不展示 `RESERVED` 预留变量，等变量真正填充上线后再改为可用状态并展示
+- 后端变量目录支持变量生命周期状态：可用、预留、废弃、不可用
+- 前端仅展示可用和废弃变量；预留和不可用变量不在帮助面板中展示
+- 帮助内容国际化作为后续优化点，可先不阻塞本次前端体验补齐
+
+### 变量生命周期状态
+后端 `TemplateVariableItem.status` 扩展为以下状态：
+
+| 状态 | 含义 | 前端展示 |
+|---|---|---|
+| `AVAILABLE` | 当前版本已填充，可正常使用 | 展示 |
+| `RESERVED` | 渲染器或设计上预留，但当前版本尚未填充 | 不展示 |
+| `DEPRECATED` | 当前版本仍支持，但未来版本计划下线 | 展示，并给废弃提示 |
+| `UNAVAILABLE` | 已下线或当前版本不再支持 | 不展示 |
+
+设计约束：
+- `RESERVED` 变量不展示，避免用户误用
+- `DEPRECATED` 变量仍展示，因为旧模板可能仍在使用，需要给用户迁移提示
+- `UNAVAILABLE` 变量不展示；如果用户旧模板中仍包含该变量，渲染器按现有规则处理未知 / 未填充值，不在帮助面板鼓励继续使用
+- 变量真正上线时，将状态从 `RESERVED` 改为 `AVAILABLE`
+- 变量计划下线时，先从 `AVAILABLE` 改为 `DEPRECATED`，后续版本再改为 `UNAVAILABLE`
+
+### 前端变量帮助面板要求
+
+帮助面板展示规则：
+
+- 只展示 `AVAILABLE` 和 `DEPRECATED`
+- 不展示 `RESERVED` 和 `UNAVAILABLE`
+- `DEPRECATED` 变量显示醒目的“即将废弃”标签
+- 变量卡片保留：占位符、说明、示例、适用媒体类型、来源
+- 变量占位符支持点击复制，复制成功后给轻提示
+
+说明：
+- 当前后端说明和示例仍是中文，前端可先原样展示
+- 后续如要支持多语言帮助内容，再设计 `locale` 入参或多语言字段
+
+### 自定义模板预览要求
+
+在电影模板和剧集模板的自定义输入模式下，增加“预览”能力。
+
+交互要求：
+
+- 自定义输入框旁增加“预览”按钮
+- 点击后根据当前输入模板生成路径样例
+- 预览结果展示在输入框下方，使用等宽字体
+- 电影模板和剧集模板分别使用对应媒体类型的样例变量
+- 若模板为空，提示用户先输入模板
+- 若模板包含当前帮助面板未展示的变量：
+  - 如果变量未知或不可用，预览中可保留原占位符
+  - 前端给轻提示：`部分变量当前不可用，预览中将原样保留`
+
+预览样例建议：
+
+电影：
+
+```text
+The Dark Knight (2008)/The Dark Knight (2008) - 1080p.mkv
+```
+
+剧集：
+
+```text
+Breaking Bad (2008)/S03/Breaking Bad (2008) - S03E07 - 1080p.mkv
+```
+
+### 预览实现建议
+
+本次优先定位为前端体验优化，可先在前端基于变量帮助接口返回的 `example` 字段进行样例替换：
+
+- 将 `{title}` 替换为对应示例
+- 将 `{season:02d}`、`{episode:02d}` 等格式化变量替换为接口中的示例
+- `{ext}` 示例必须包含点号，例如 `.mkv`
+- 未识别或未展示变量保持原样
+
+后续如要求预览与后端渲染器完全一致，可再新增后端预览接口，例如 `POST /api/template-variables/preview`。
+
+### API 契约变更要求
+
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`：
+
+- `TemplateVariableItem.status` 从现有状态扩展为：
+  - `AVAILABLE`
+  - `RESERVED`
+  - `DEPRECATED`
+  - `UNAVAILABLE`
+- 说明前端帮助面板只展示 `AVAILABLE` 和 `DEPRECATED`
+- 如本次不新增预览接口，则 API 只需更新状态枚举说明
+
+### 验收标准
+
+- 自定义电影模板输入区域可以点击预览并展示路径样例
+- 自定义剧集模板输入区域可以点击预览并展示路径样例
+- 预览使用变量接口返回的示例值，不再硬编码所有变量说明
+- `RESERVED` 变量不在前端帮助面板展示
+- `UNAVAILABLE` 变量不在前端帮助面板展示
+- `DEPRECATED` 变量在帮助面板展示，并带废弃提示
+- 点击变量占位符可以复制
+- API 契约中记录完整变量状态枚举
+- 现有模板保存逻辑不受影响
+
+---
+
+## ADR-016 源文件缺失检测与待处理任务自动失败（v1）（2026-05-02）✅
+
+### 背景
+当前任务进入 `AWAITING_CONFIRMATION` 后，如果用户手动删除了源文件，任务记录仍会残留在待确认队列中。用户继续确认时，系统会在最终文件操作阶段发现源文件不存在，并把任务标记为 `FAILED`。
+
+这个行为虽然不会造成数据损坏，但用户反馈较晚，且 Queue 页面可能堆积已经无法继续处理的无效任务。为了不拖慢 Queue 页面加载，应将源文件缺失检测放到后台发现层和确认接口中处理，而不是在 `GET /api/queue` 同步逐条检查所有文件。
+
+### 结论
+采用**后台删除事件监听 + 周期巡检兜底 + 确认前最终校验**的策略：
+
+1. 文件发现层监听源文件删除事件
+2. 周期扫描时同步巡检待处理任务的源文件是否仍存在
+3. 单条确认 / 批量确认前再次校验源文件存在
+4. 源文件不存在时，将任务标记为 `FAILED`
+5. 失败原因统一记录为：`源文件不存在，无法继续处理`
+
+### 适用任务范围
+
+自动失败只应用于尚未完成、且仍依赖源文件继续处理的任务。
+
+v1 处理范围：
+
+| 状态 | 是否自动失败 | 说明 |
+|---|---|---|
+| `PENDING` | 是 | 尚未处理，源文件缺失后无法继续 |
+| `AWAITING_CONFIRMATION` | 是 | 待用户确认，但源文件缺失后无法继续 |
+| `PROCESSING` | 暂不直接处理 | 可能正处于 MOVE 等文件操作过程中，避免误判 |
+| `DONE` | 否 | 已完成，不再依赖源文件 |
+| `FAILED` | 否 | 已失败，不重复处理 |
+| `SKIPPED` | 否 | 已跳过，不重复处理 |
+
+`PROCESSING` 后续可扩展为“长时间卡住且源文件不存在才失败”，例如超过 10 分钟，但 v1 先不做，避免误伤正在移动中的任务。
+
+### 删除事件处理
+
+文件发现层应注册删除事件，例如 WatchService 的 `ENTRY_DELETE`。
+
+当发现源目录下文件被删除时：
+
+1. 规范化删除路径
+2. 根据 `sourcePath` 查询对应任务
+3. 如果任务状态为 `PENDING` 或 `AWAITING_CONFIRMATION`
+4. 将任务更新为：
+   - `status = FAILED`
+   - `errorMessage = 源文件不存在，无法继续处理`
+5. 推送任务失败 WebSocket 事件
+
+约束：
+- 不处理 `DONE` / `FAILED` / `SKIPPED`
+- v1 不直接处理 `PROCESSING`
+- 如果路径没有对应任务，忽略即可
+
+### 周期扫描巡检
+
+当 WatchRule 使用 `PERIODIC_SCAN` 或 `HYBRID`，周期扫描除了发现新增文件，也应巡检该规则下的待处理任务。
+
+巡检范围：
+- `ruleId = 当前 WatchRule.id`
+- `status IN (PENDING, AWAITING_CONFIRMATION)`
+
+巡检行为：
+- 对每个任务检查 `sourcePath` 是否存在
+- 不存在则标记为 `FAILED`
+- 失败原因统一为：`源文件不存在，无法继续处理`
+
+性能约束：
+- 不全表扫描历史任务
+- 不检查 `DONE` / `FAILED` / `SKIPPED`
+- 不阻塞 WatchService 事件线程
+- 可与周期扫描共用后台线程 / 调度逻辑
+
+### 确认前最终校验
+
+删除事件和周期巡检都不是强一致，因此确认接口必须做最终校验。
+
+单条确认：
+- `POST /api/queue/{id}/confirm` 在调用 TMDB 详情和继续 pipeline 前，先检查任务源文件是否存在
+- 如果不存在，直接标记任务 `FAILED`
+- 返回明确失败信息
+- 不调用 TMDB 详情
+- 不继续 pipeline
+
+批量确认：
+- `POST /api/queue/batch-confirm` 对每条任务分别检查源文件
+- 源文件不存在的任务返回该条失败结果
+- 其他任务继续批量确认
+- 不因单条源文件缺失回滚整个批次
+
+### 前端要求
+
+Queue 页面不需要在 `GET /api/queue` 阶段阻塞检查所有源文件。
+
+前端只需处理后端返回的状态变化：
+- 如果待确认任务因后台巡检变为 `FAILED`，刷新后从 Queue 中移除
+- 单条确认时源文件缺失，展示后端失败信息
+- 批量确认时源文件缺失，展示失败数量和对应原因
+
+Dashboard / 任务列表的“详情”列展示 `errorMessage`，用户可看到：`源文件不存在，无法继续处理`。
+
+### API 契约变更要求
+
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`：
+
+- 说明确认接口在源文件不存在时会将任务标记为 `FAILED`
+- 说明批量确认接口会对源文件缺失的条目返回失败结果
+- 如新增错误码或固定错误 key，需要记录具体值
+
+### 验收标准
+
+- 删除 `PENDING` 任务的源文件后，后台将任务标记为 `FAILED`
+- 删除 `AWAITING_CONFIRMATION` 任务的源文件后，后台将任务标记为 `FAILED`
+- 失败原因记录为 `源文件不存在，无法继续处理`
+- 删除事件未触发时，周期扫描巡检也能将源文件缺失任务标记为 `FAILED`
+- `DONE` / `FAILED` / `SKIPPED` 任务不受源文件删除影响
+- v1 不因源文件暂时不存在而直接失败 `PROCESSING` 任务
+- 单条确认源文件已不存在时，不调用 TMDB 详情，不继续 pipeline，任务变为 `FAILED`
+- 批量确认时，源文件缺失的条目失败，其他条目继续处理
+- Queue 列表加载不因源文件存在性检查明显变慢
+
+---
+
+## ADR-017 命名模板可选片段语法（v1）（2026-05-02）✅
+
+### 背景
+当前模板渲染器在变量值为 `null` 时会保留占位符原样，例如 `{resolution}` 未解析到时，最终路径可能变成：
+
+```text
+影片名 (2026) - {resolution}.mkv
+```
+
+这种设计有利于调试缺失变量，但在用户模板中，部分变量往往和固定文本一起构成“可选片段”，例如 ` - {resolution}`。当分辨率缺失时，用户期望整个片段被移除，而不是只保留 `{resolution}`。
+
+### 结论
+模板渲染器新增可选片段语法：
+
+```text
+[[ ... ]]
+```
+
+`[[ ... ]]` 内部表示一个可选片段：
+
+- 如果片段内所有变量都能成功填充，则渲染整个片段
+- 如果片段内任意变量缺失，则移除整个片段
+- 可选片段之外的变量仍保持当前行为：缺失时保留占位符原样
+
+示例：
+
+```text
+{title} ({year})[[ - {resolution}]]{ext}
+```
+
+当 `{resolution}` 有值：
+
+```text
+影片名 (2026) - 2160p.mkv
+```
+
+当 `{resolution}` 缺失：
+
+```text
+影片名 (2026).mkv
+```
+
+### 设计约束
+
+- 本 ADR 只新增渲染能力，不强制修改现有系统默认模板或前端预设模板
+- 现有模板语法保持兼容
+- 可选片段只处理一层 `[[ ... ]]`，v1 不支持嵌套可选片段
+- 可选片段内可以包含多个变量，例如 `[[ - {resolution} - {codec}]]`
+- 如果多个变量中任意一个缺失，整个片段移除
+- 可选片段内支持现有格式化变量，例如 `{season:02d}`、`{episode:02d}`
+- 可选片段外的缺失变量仍保留原样，便于用户发现模板问题
+
+### 实现范围
+
+后端：
+
+- `TemplateRenderer.render()` 支持解析并渲染 `[[ ... ]]` 可选片段
+- 可选片段内部复用现有变量替换和格式化逻辑
+- 增加单元测试覆盖：
+  - 片段变量完整时保留片段
+  - 片段变量缺失时移除片段
+  - 多变量片段任一变量缺失时移除片段
+  - 可选片段外缺失变量仍保留占位符
+  - 格式化变量在可选片段中正常工作
+
+前端：
+
+- 自定义模板预览逻辑同步支持 `[[ ... ]]`
+- 模板变量帮助面板或说明文案中补充可选片段用法
+- 不要求本次修改现有系统默认模板 / 预设模板
+
+### API 契约变更要求
+
+本功能不新增接口字段。
+
+如果 `api-contracts.mdc` 中有模板变量帮助说明，应补充 `[[ ... ]]` 可选片段语法说明；若没有相关章节，可不改 API 契约。
+
+### 验收标准
+
+- 模板 `{title} ({year})[[ - {resolution}]]{ext}` 在有分辨率时渲染为 `影片名 (2026) - 2160p.mkv`
+- 同一模板在无分辨率时渲染为 `影片名 (2026).mkv`
+- 可选片段内多个变量任意缺失时，整个片段被移除
+- 可选片段外变量缺失时仍保留占位符原样
+- 可选片段内格式化变量正常工作
+- 前端自定义模板预览与后端渲染行为保持一致
+- 现有未使用 `[[ ... ]]` 的模板渲染结果不变
+
+---
+
+## ADR-018 中文 / 双语标题多 Query 搜索、TMDB 缓存与置信度评分优化（v1）（2026-05-03）✅
+
+### 背景
+当前 TMDB 匹配流程主要依赖 guessit 返回的单一 `ParseResult.title` 作为查询词，再用“标题相似度 80% + 年份匹配 20%”计算置信度。
+
+这在常规英文文件名下可用，但对中文 / 中英双语文件名不够稳定。例如：
+
+```text
+飞驰人生3.Pegasus.3.2026.2160p.WEB-DL.H265.HDR.DDP5.1.2Audios-HHWEB.mkv
+长乐曲.Melody.Of.Golden.Age.S01E21.2024.1080p.WEB-DL.H265.AAC-HHWEB.mp4
+```
+
+这类文件名通常包含：
+
+- 中文标题
+- 英文标题
+- 年份
+- 分辨率 / 来源 / 编码 / 音频 / 发布组等技术参数
+
+如果简单按 `.` 分词逐个搜索，会产生大量低质量 query；如果只使用 guessit title，又可能把中文标题、英文标题和技术信息混在一起，导致 TMDB 搜索和置信度都偏低。
+
+### 结论
+采用**标题区提取 + 少量高质量 Query + TMDB 缓存 + 多维评分**的策略：
+
+1. 不修改 parser sidecar 职责，继续让 parser 只封装 guessit
+2. 在 Java 后端新增标题搜索计划构建能力
+3. 从原始文件名中提取标题区，再生成少量高质量搜索 query
+4. TMDB 搜索支持多 query，合并去重后统一排序
+5. 引入 TMDB 搜索 / 详情缓存和 in-flight 去重，避免剧集批量导入时大量重复请求
+6. 置信度从单一字符串相似度升级为多维加权评分，并输出 debug 可解释日志
+
+### 标题搜索计划
+新增概念：`TitleSearchPlan`。
+
+建议结构：
+
+```typescript
+interface TitleSearchPlan {
+  originalFilename: string
+  guessitTitle: string | null
+  titleRegion: string | null
+  queries: TitleSearchQuery[]
+}
+
+interface TitleSearchQuery {
+  query: string
+  type: 'LOCALIZED' | 'ORIGINAL' | 'COMBINED' | 'GUESSIT'
+  weight: number
+}
+```
+
+说明：
+- `LOCALIZED`：本地化标题 query，中文标题优先归入此类
+- `ORIGINAL`：原语言 / 英文标题 query
+- `COMBINED`：中英组合 query
+- `GUESSIT`：guessit 原始 title 兜底 query
+
+### 标题区提取规则
+不要对文件名按 `.` 拆词后逐个搜索；应先识别“标题区”。
+
+流程：
+
+1. 去掉扩展名
+2. 按 `.`, 空格, `_`, `-` 等分隔符切分 token
+3. 从左到右扫描 token
+4. 遇到非标题 token 时停止，左侧即标题区
+
+非标题 token 包括但不限于：
+
+- 年份：`2024`、`2026`
+- 剧集标记：`S01E21`、`S01.E21`、`E21`、`1x21`
+- 分辨率：`720p`、`1080p`、`2160p`、`4K`
+- 来源：`WEB-DL`、`WEBRip`、`BluRay`、`HDTV`
+- 编码：`H264`、`H.264`、`H265`、`H.265`、`HEVC`、`AVC`
+- HDR：`HDR`、`HDR10`、`DV`、`DoVi`
+- 音频：`AAC`、`DDP5.1`、`DTS`、`Atmos`
+- 发布组：常见 `-GROUP` 结尾可作为标题区之后的信息
+
+示例：
+
+```text
+长乐曲.Melody.Of.Golden.Age.S01E21.2024.1080p.WEB-DL.H265.AAC-HHWEB.mp4
+```
+
+标题区：
+
+```text
+长乐曲.Melody.Of.Golden.Age
+```
+
+### 中英文标题段提取
+在标题区内，不逐个 token 搜索，而是按字符类型合并标题段：
+
+- 连续中文 / CJK token 合并为中文标题段
+- 连续英文 token 合并为英文标题段
+- 数字如果紧跟中文或英文标题，保留为续集编号
+- 英文小词如 `Of`、`The`、`And` 不丢弃，应作为英文标题的一部分
+
+示例 1：
+
+```text
+长乐曲.Melody.Of.Golden.Age
+```
+
+生成：
+
+```text
+长乐曲
+Melody Of Golden Age
+长乐曲 Melody Of Golden Age
+```
+
+示例 2：
+
+```text
+飞驰人生3.Pegasus.3
+```
+
+生成：
+
+```text
+飞驰人生3
+Pegasus 3
+飞驰人生3 Pegasus 3
+```
+
+### Query 数量控制
+为避免剧集批量导入时放大请求量，必须限制 query 数量。
+
+v1 建议：
+
+- 每个任务最多生成 3 个主要 query
+- 最多追加 1 个 guessit title 兜底 query
+- 完全重复或规范化后重复的 query 必须去重
+- 空 query 不参与搜索
+
+优先级：
+
+1. 中文 / 本地化标题 query
+2. 英文 / 原语言标题 query
+3. 中英组合 query
+4. guessit title 兜底 query
+
+### TMDB 多 Query 搜索
+`TmdbMetadataMatcher.search()` 从单 query 搜索升级为多 query 搜索：
+
+1. 构建 `TitleSearchPlan`
+2. 对每个 query 调用 TMDB search
+3. 按 `mediaType + tmdbId` 合并去重
+4. 同一候选被多个 query 命中时，保留最佳评分和最佳命中 query
+5. 最终按新的 confidence 降序返回
+
+要求：
+- 不改变 `MetadataMatcher` 对 pipeline 的主调用契约
+- 可在 `TmdbMetadataMatcher` 内部完成多 query 逻辑
+- 如需新增内部 DTO，不暴露给前端也可以
+
+### TMDB 缓存
+当前系统没有真正的跨任务 TMDB 查询缓存，`task_candidate` 只是任务候选快照，不是共享缓存。多 query 策略必须配套缓存，避免同一部剧几百集时大量重复请求。
+
+#### 搜索缓存
+
+缓存 key：
+
+```text
+endpoint + query + year + language
+```
+
+示例：
+
+```text
+movie|飞驰人生3|2026|zh-CN
+tv|长乐曲|2024|zh-CN
+tv|Melody Of Golden Age|2024|zh-CN
+```
+
+建议：
+- 进程内缓存即可，优先考虑 Caffeine 或等价实现
+- 搜索结果 TTL：6 小时或 24 小时
+- 最大条目数：可配置，默认 1000 或 5000
+- 不缓存异常
+- 空结果可短 TTL 缓存，例如 10 分钟
+
+#### 详情缓存
+
+缓存 key：
+
+```text
+mediaType + tmdbId + language
+```
+
+示例：
+
+```text
+TV_SHOW|12345|zh-CN
+MOVIE|155|zh-CN
+```
+
+建议：
+- 详情缓存 TTL 长于搜索缓存，例如 24 小时或 7 天
+- 用于人工确认、批量确认和手动 TMDB ID 查询
+
+#### In-flight 去重
+仅有缓存仍不足以解决并发问题。
+
+当多个任务同时发起相同 TMDB 请求时，应做到：
+
+- 第一个请求真实访问 TMDB
+- 后续相同 key 的请求等待第一个结果
+- 第一个结果返回后，后续请求复用结果
+
+这样同一部剧多集并发入库时，请求量接近“唯一 query 数量”，而不是“集数 × query 数”。
+
+### 新置信度评分机制
+当前置信度算法过于简单，容易在中英混排标题下偏低。v1 新评分采用多维加权：
+
+```text
+confidence =
+  titleScore * 0.60
++ yearScore * 0.20
++ mediaTypeScore * 0.10
++ structureBonus * 0.10
+```
+
+#### titleScore
+
+`titleScore` 取所有 query 对候选标题的最佳匹配：
+
+```text
+max(queryScore(query, candidate.title, candidate.originalTitle))
+```
+
+queryScore 应考虑 query 类型权重：
+
+- `LOCALIZED`：权重最高
+- `ORIGINAL`：次高
+- `COMBINED`：中等
+- `GUESSIT`：兜底
+
+对于中文语言环境：
+- 中文 query 命中 TMDB 本地化标题，应给较高分
+- 英文 query 命中 TMDB originalTitle，也应给较高分
+
+#### yearScore
+
+- 年份完全一致：`1.0`
+- 文件名无年份：中性，例如 `0.5`
+- 年份不一致：`0.0`
+
+剧集场景使用 `first_air_date_year` 对比。
+
+#### mediaTypeScore
+
+- 规则或解析结果明确为 `MOVIE`，候选也是电影：`1.0`
+- 规则或解析结果明确为 `TV_SHOW`，候选也是剧集：`1.0`
+- 类型不明确：中性
+- 类型明确不匹配：候选应不参与或大幅降分
+
+#### structureBonus
+
+结构加分用于双语标题：
+
+- 中文段命中本地化标题，英文段命中 originalTitle，且指向同一 TMDB 候选：加分
+- 本地化标题和原始标题分别被不同 query 命中同一候选：加分
+
+### Debug 可解释性
+Debug 模式下必须输出足够信息，便于后续调权重：
+
+- 原始文件名
+- guessit title
+- titleRegion
+- 生成的 search queries
+- 每个 TMDB 请求是否命中缓存
+- top candidates
+- bestQuery
+- titleScore / yearScore / mediaTypeScore / structureBonus
+- final confidence
+
+### 实现修正要求（2026-05-03 验收补充）
+
+ADR-018 首轮开发后，主体方向通过，但仍需补齐以下验收项后再关闭“中文 / 双语电影文件名识别优化”遗留事项：
+
+1. **Debug 日志补齐可解释字段**
+   - `media-marshal.debug=true` 时，TMDB 匹配日志必须包含：
+     - 原始文件名 `originalFilename`
+     - guessit 标题 `guessitTitle`
+     - 标题区 `titleRegion`
+     - 生成的 query 列表及 query 类型
+     - 每个 TMDB 搜索请求的 cache hit / miss 状态
+     - top candidates 的核心信息
+     - bestQuery、titleScore、yearScore、mediaTypeScore、structureBonus、final confidence
+   - 目的：后续调 query 生成和置信度权重时，可以从日志直接解释“为什么这个候选排第一”。
+
+2. **测试覆盖补齐**
+   - 保留已覆盖的中文 / 双语标题样例测试
+   - 补充 `方圆八百米.Eight.Hundred.S01E02.2026.2160p.WEB-DL.H265.AAC-HHWEB.mp4`，应生成 `方圆八百米`、`Eight Hundred`
+   - 不再把 `Shameless.U.S.S07E09...` 作为 ADR-018 必过验收样例，该文件名属于特殊缩写场景，后续如有必要单独讨论
+
+3. **structureBonus 语义对齐**
+   - `structureBonus` 应尽量体现 ADR 原意：双语标题的本地化标题段、原始标题段分别命中同一 TMDB 候选时加分
+   - 可以保留轻量实现，不要求复杂 NLP，但不应退化成只按“是否剧集 / 是否非 guessit query / 是否高相似度”泛化加分
+   - 如果实现上选择近似算法，需要在代码注释或实现日志中说明近似边界，便于后续调权
+
+### 不做的事
+
+v1 不做：
+
+- 不改 parser sidecar 输出结构
+- 不引入复杂 NLP / 分词库
+- 不做跨重启持久化 TMDB 缓存
+- 不对每个 token 单独搜索
+- 不改变 Queue 人工确认主流程
+
+### API 契约变更要求
+
+如果本次不新增前端可见字段，可不修改现有 API 响应结构。
+
+如新增 `MatchResult` 调试字段或可见字段，必须同步更新 `api-contracts.mdc`。
+
+### 验收标准
+
+- `飞驰人生3.Pegasus.3.2026.2160p.WEB-DL.H265.HDR.DDP5.1.2Audios-HHWEB.mkv` 能生成 `飞驰人生3`、`Pegasus 3` 等高质量 query
+- `长乐曲.Melody.Of.Golden.Age.S01E21.2024.1080p.WEB-DL.H265.AAC-HHWEB.mp4` 能生成 `长乐曲`、`Melody Of Golden Age` 等高质量 query
+- `[钢铁森林].Sunsets.Secrets.Regrets.S01E07.2026.2160p.IQ.WEB-DL.H265.DDP.5.1.2Audios-CMCTV.mkv` 能生成 `钢铁森林`、`Sunsets Secrets Regrets` 等高质量 query
+- `[逍遥].The.Unclouded.Soul.2025.S01E21.1080p.WeTV.WEB-DL.H264.AAC-UBWEB.mkv` 能生成 `逍遥`、`The Unclouded Soul` 等高质量 query
+- `方圆八百米.Eight.Hundred.S01E02.2026.2160p.WEB-DL.H265.AAC-HHWEB.mp4` 能生成 `方圆八百米`、`Eight Hundred` 等高质量 query
+- `Your.Friends.and.Neighbors.S01E01.This.Is.What.Happens.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX.mkv` 能生成 `Your Friends and Neighbors`，不把分集标题 `This Is What Happens` 当作剧名主 query
+- 不会对 `Melody`、`Of`、`Golden`、`Age` 等单个英文 token 分别发起 TMDB 请求
+- 每个任务 TMDB 搜索 query 数量受控
+- 同一部剧多集场景下，相同 query 能命中缓存，显著减少重复 TMDB 请求
+- 并发相同 TMDB 请求能 in-flight 去重
+- 新评分下中文 / 双语标题正确候选置信度明显提升
+- 纯英文常规文件名识别不回退
+- Debug 日志能解释 query 生成、缓存命中和最终评分原因
+
+---
+
+## ADR-020 媒体资产识别与蓝光原盘目录支持（v0.2.x）（2026-05-06）✅
+
+### 背景
+当前文件发现和任务处理模型隐含假设是“一个视频文件 = 一个处理任务”。这对 `.mkv`、`.mp4`、`.iso` 等单文件媒体可用，但对蓝光原盘目录不适用。
+
+典型蓝光原盘结构：
+
+```text
+The Matrix (1999)/
+  BDMV/
+    index.bdmv
+    MovieObject.bdmv
+    PLAYLIST/
+    CLIPINF/
+    STREAM/
+      00001.m2ts
+      00002.m2ts
+  CERTIFICATE/
+```
+
+在现有规则下，`BDMV/STREAM/*.m2ts` 会被当成多个普通视频文件逐一扫描并创建任务，导致：
+
+- 一个蓝光原盘被拆成多个任务
+- `00001.m2ts` 这类内部文件名无法提供有效标题，TMDB 匹配质量很差
+- `BDMV` 内部结构文件可能生成大量 `SKIPPED` 噪音
+- Queue / Dashboard 无法以“一个蓝光原盘 = 一个任务”的方式展示
+- 文件操作阶段缺少“目录型媒体资产”的整体操作语义
+
+因此需要把系统从“文件任务”升级为“媒体资产任务”。
+
+### 结论
+
+引入**媒体资产 Media Asset** 概念：
+
+> `MediaTask` 表示一个媒体资产处理任务，而不是一个普通视频文件处理任务。
+
+普通视频文件和蓝光原盘目录是并列的媒体资产类型：
+
+| 资产类型 | 示例 | 任务粒度 |
+|---|---|---|
+| `VIDEO_FILE` | `Movie.2026.mkv` | 单个文件 |
+| `ISO_IMAGE` | `Movie.2026.iso` | 单个镜像文件 |
+| `BLURAY_DIRECTORY` | `Movie (2026)/BDMV/...` | 整个蓝光根目录 |
+
+文件发现流程调整为：
+
+```text
+路径发现
+  → 媒体资产识别
+  → 以资产根路径创建 / 查重任务
+  → 元数据匹配 / 人工确认
+  → 按资产类型执行整理
+```
+
+蓝光原盘目录识别后：
+
+- 以蓝光外层根目录创建一个任务
+- 内部 `BDMV/**`、`CERTIFICATE/**` 不再单独生成任务
+- 不改变内部目录结构和文件名
+- 文件操作以整个蓝光根目录为单位执行
+- 默认按电影资产处理，v1 暂不支持剧集蓝光原盘
+
+### 媒体资产识别模块
+
+新增独立媒体资产识别模块，建议包路径：
+
+```text
+backend/src/main/java/com/mediamarshal/service/discovery/asset/
+```
+
+职责边界：
+
+- 输入：发现到的路径、对应 WatchRule、sourceDir 上下文
+- 输出：是否识别为媒体资产；如果是，返回资产根路径和资产类型
+- 不做 TMDB 匹配
+- 不做文件操作
+- 不创建任务
+
+建议核心接口：
+
+```java
+public interface MediaAssetDetector {
+    Optional<MediaAsset> detect(Path path, WatchRule rule);
+}
+```
+
+建议模型：
+
+```java
+public record MediaAsset(
+    Path rootPath,
+    MediaAssetType type,
+    String displayName,
+    boolean shouldPruneChildren
+) {}
+```
+
+建议枚举：
+
+```java
+public enum MediaAssetType {
+    VIDEO_FILE,
+    ISO_IMAGE,
+    BLURAY_DIRECTORY
+}
+```
+
+建议 detector 策略：
+
+```text
+BluRayDirectoryAssetDetector
+IsoImageAssetDetector
+VideoFileAssetDetector
+```
+
+聚合服务：
+
+```text
+MediaAssetDetectionService
+```
+
+按优先级调用 detector。蓝光目录识别必须优先于普通视频文件识别，避免内部 `.m2ts` 被当成普通视频文件。
+
+推荐识别优先级：
+
+1. `BluRayDirectoryAssetDetector`
+2. `IsoImageAssetDetector`
+3. `VideoFileAssetDetector`
+
+后续可扩展：
+
+- `DvdDirectoryAssetDetector`
+- `UhdBluRayDirectoryAssetDetector`
+- 其他目录型媒体资产 detector
+
+### 蓝光原盘识别规则
+
+一个目录 `D` 是蓝光原盘根目录，当且仅当：
+
+1. `D/BDMV` 是目录
+2. 满足以下任一强特征：
+   - `D/BDMV/index.bdmv` 存在
+   - `D/BDMV/MovieObject.bdmv` 存在
+   - `D/BDMV/STREAM` 是目录，且至少有一个 `.m2ts` 文件
+3. `D` 不是 WatchRule 的 `sourceDir` 本身
+4. `D` 的目录名不是 `BDMV`
+5. 路径和文件名比较应大小写不敏感，兼容不同文件系统
+
+辅助特征可以增强判断可信度，但不能单独作为识别条件：
+
+- `CERTIFICATE/`
+- `BDMV/PLAYLIST/`
+- `BDMV/CLIPINF/`
+- `BDMV/AUXDATA/`
+- `BDMV/BACKUP/`
+
+#### 向上归一化
+
+如果发现的是蓝光内部路径，例如：
+
+```text
+/downloads/The Matrix (1999)/BDMV/STREAM/00001.m2ts
+```
+
+识别模块必须向上查找最近的蓝光根目录，并返回：
+
+```text
+rootPath = /downloads/The Matrix (1999)
+type = BLURAY_DIRECTORY
+shouldPruneChildren = true
+displayName = The Matrix (1999)
+```
+
+这样实时监听、周期扫描和手动扫描即使从内部文件触发，也会归一化到同一个蓝光资产任务。
+
+#### 裸 BDMV 目录
+
+v1 暂不支持裸 `BDMV` 直接位于 WatchRule `sourceDir` 下的结构：
+
+```text
+sourceDir/
+  BDMV/
+  CERTIFICATE/
+```
+
+原因：
+
+- 缺少可用影片标题来源
+- 容易把标题识别为 `BDMV`
+- 误判风险高
+
+建议用户把原盘放入影片名外层目录：
+
+```text
+sourceDir/
+  The Matrix (1999)/
+    BDMV/
+    CERTIFICATE/
+```
+
+如果开发实现中检测到裸 `BDMV`，可选择静默跳过内部结构，或创建失败任务提示：`蓝光原盘缺少影片外层目录，请放入片名目录中`。v1 推荐先跳过并记录 warn 日志，避免污染 Queue。
+
+### 扫描剪枝规则
+
+文件发现层必须先做媒体资产识别，再做普通视频扩展名判断。
+
+推荐顺序：
+
+1. 路径规范化
+2. 校验路径位于 WatchRule `sourceDir` 下
+3. 应用忽略规则
+4. 调用 `MediaAssetDetectionService.detect(path, rule)`
+5. 如果识别为媒体资产：
+   - 以 `asset.rootPath` 做数据库查重
+   - 创建一个 `MediaTask`
+   - 如果 `asset.shouldPruneChildren=true`，停止递归扫描该资产子树
+6. 如果未识别为媒体资产：
+   - 目录继续扫描
+   - 普通杂项文件按现有规则生成 `SKIPPED`
+
+蓝光目录识别后：
+
+- 不为 `BDMV/STREAM/*.m2ts` 创建视频任务
+- 不为 `BDMV/index.bdmv`、`.mpls`、`.clpi` 等内部文件创建 `SKIPPED`
+- 不把内部文件作为附属文件处理
+- 同一个蓝光目录内部多个事件必须归一化为同一个 `asset.rootPath`，避免重复任务
+
+### 任务数据模型
+
+`media_task` 新增字段：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `asset_type` | VARCHAR(30) / Enum | `VIDEO_FILE` | 源媒体资产类型 |
+
+枚举值：
+
+```text
+VIDEO_FILE
+ISO_IMAGE
+BLURAY_DIRECTORY
+```
+
+兼容要求：
+
+- 历史任务没有 `asset_type` 时视为 `VIDEO_FILE`
+- `sourcePath` 语义升级为“源媒体资产路径”，不再一定是文件路径
+- `targetPath` 对目录型资产表示目标根目录路径
+
+API 返回的 `MediaTask` DTO / 实体响应需要新增：
+
+```typescript
+assetType: 'VIDEO_FILE' | 'ISO_IMAGE' | 'BLURAY_DIRECTORY'
+```
+
+前端展示建议：
+
+- Queue 卡片展示资产类型标签
+- Dashboard / 最近任务展示资产类型标签
+- 文案：
+  - `VIDEO_FILE`：普通视频
+  - `ISO_IMAGE`：ISO 镜像
+  - `BLURAY_DIRECTORY`：蓝光原盘
+
+### 元数据识别
+
+蓝光原盘目录默认作为电影处理：
+
+- `BLURAY_DIRECTORY` 在 `AUTO` 规则下按 `MOVIE` 处理
+- `BLURAY_DIRECTORY` 在 `MOVIE` 规则下正常处理
+- `BLURAY_DIRECTORY` 在 `TV_SHOW` 规则下 v1 暂不支持，可标记失败或跳过并提示：`暂不支持剧集蓝光原盘`
+
+guessit / TMDB 搜索输入使用 `MediaAsset.displayName`，即蓝光外层根目录名，不使用内部 `.m2ts` 文件名。
+
+示例：
+
+```text
+源路径：/downloads/The.Matrix.1999.BluRay/
+displayName：The.Matrix.1999.BluRay
+```
+
+后续按 ADR-018 标题搜索计划生成 query。
+
+### 蓝光目标路径计算
+
+蓝光原盘使用当前 WatchRule 的电影路径模板计算目标位置。
+
+规则：
+
+1. 按电影模板渲染出普通电影文件目标路径
+2. 对渲染结果取父目录，作为蓝光目标根目录
+3. 将整个蓝光原盘目录操作到该目标根目录
+4. 不改变 `BDMV/`、`CERTIFICATE/` 及其内部结构
+
+示例模板：
+
+```text
+电影/{year}/{title} ({year})/{title} ({year})[[ - {resolution}]]{ext}
+```
+
+普通电影文件目标：
+
+```text
+电影/1999/The Matrix (1999)/The Matrix (1999) - 1080p.mkv
+```
+
+蓝光原盘目标根目录：
+
+```text
+电影/1999/The Matrix (1999)/
+```
+
+最终结构：
+
+```text
+电影/1999/The Matrix (1999)/
+  BDMV/
+  CERTIFICATE/
+```
+
+#### 模板 fallback
+
+如果电影模板没有目录层级，例如：
+
+```text
+{title} ({year}){ext}
+```
+
+取父目录会得到空路径或目标根目录，此时蓝光目录 fallback 到：
+
+```text
+{title} ({year})
+```
+
+不要直接输出到目标根目录，也不要因为模板缺少父目录而失败。
+
+#### `{ext}` 变量
+
+蓝光目录没有文件扩展名。
+
+处理约定：
+
+- `BLURAY_DIRECTORY` 渲染模板时 `{ext}` 为空字符串
+- 最终取渲染路径父目录作为目标根目录
+- 如果无法取得父目录，使用 fallback
+
+### 文件操作语义
+
+蓝光原盘作为整体目录型资产执行当前 WatchRule 的文件操作方式。
+
+| 操作 | 蓝光目录行为 |
+|---|---|
+| `MOVE` | 移动整个蓝光根目录到目标根目录，并只改变根目录位置 / 名称 |
+| `COPY` | 递归复制整个蓝光根目录到目标根目录 |
+| `HARD_LINK` | 创建目标目录结构，对目录内每个普通文件创建硬链接，保留相对路径 |
+| `SYMBOLIC_LINK` | 在目标根目录创建目录级符号链接，指向源蓝光根目录 |
+
+共同约束：
+
+- 不修改 `BDMV/`、`CERTIFICATE/` 内部结构
+- 不重命名内部 `.m2ts`、`.mpls`、`.clpi` 文件
+- 不抽取最大 `.m2ts`
+- 不把内部文件作为附属文件处理
+- 目标路径已存在时遵守 ADR-010：不覆盖、不合并、不自动改名，任务失败
+
+#### HARD_LINK 目录语义
+
+蓝光目录不能硬链接目录本身。`HARD_LINK` 的语义是递归硬链接：
+
+1. 创建目标根目录
+2. 递归创建子目录
+3. 对每个普通文件创建硬链接
+4. 保留相对路径和文件名
+
+v1 遇到非普通文件节点（例如内部符号链接、特殊文件）时建议直接失败，并记录明确错误，避免生成不完整原盘。
+
+#### SYMBOLIC_LINK 目录语义
+
+v1 采用目录级符号链接：
+
+```text
+目标根目录 -> 源蓝光根目录
+```
+
+不递归创建内部文件符号链接。
+
+说明：
+
+- 创建速度快
+- 保留完整结构
+- 源目录移动或删除后，目标链接会失效
+
+### 附属文件与 NFO
+
+蓝光内部结构属于主媒体资产，不属于附属文件。
+
+v1 核心目标是“整盘目录整体搬运”，附属文件处理先保持保守：
+
+- `BDMV/**`、`CERTIFICATE/**` 永远不进入附属文件逻辑
+- 蓝光根目录旁边的同名 NFO、poster、folder 等可作为后续增强
+- 自动生成 NFO 可按现有规则在目标根目录生成，但不应写入 `BDMV/` 内部
+
+如果开发实现复杂度较高，v1 可以先不支持蓝光旁边附属文件跟随，只保证蓝光目录本体正确整理。
+
+### 空目录清理
+
+`cleanup_empty_dirs` 仅对 `MOVE` 生效。
+
+蓝光目录 MOVE 成功后：
+
+1. 从原蓝光根目录的父目录开始
+2. 向上删除空目录
+3. 遇到非空目录停止
+4. 遇到 WatchRule `sourceDir` 停止，绝不删除源根目录
+
+`COPY`、`HARD_LINK`、`SYMBOLIC_LINK` 不清理源目录。
+
+### 源文件缺失检测
+
+ADR-016 的源文件缺失检测需要按资产根路径判断：
+
+- `VIDEO_FILE`：源文件不存在则失败
+- `ISO_IMAGE`：源文件不存在则失败
+- `BLURAY_DIRECTORY`：蓝光根目录不存在则失败
+
+v1 不要求逐个校验蓝光内部文件完整性。只要根目录存在，认为源资产仍存在。后续如需要可增加原盘结构完整性校验。
+
+### Queue / Dashboard 展示
+
+Queue 和 Dashboard 都以一个 `MediaTask` 展示一个媒体资产。
+
+蓝光任务示例：
+
+```text
+源路径：/downloads/The Matrix (1999)
+资产类型：蓝光原盘
+状态：AWAITING_CONFIRMATION
+解析标题：The Matrix
+```
+
+不展示内部文件任务：
+
+```text
+BDMV/STREAM/00001.m2ts
+BDMV/PLAYLIST/00000.mpls
+BDMV/index.bdmv
+```
+
+人工确认语义：
+
+- 用户确认的是“这个蓝光资产对应哪个 TMDB 条目”
+- 确认后整理整个蓝光目录
+
+### API 契约变更要求
+
+开发实现该 ADR 时必须同步更新 `api-contracts.mdc`：
+
+- `MediaTask` 新增 `assetType`
+- `MediaTask.sourcePath` 说明调整为“源媒体资产路径”
+- `MediaTask.targetPath` 说明补充：目录型资产时表示目标根目录
+- 如新增资产类型枚举或错误信息，需要记录
+
+### 实现建议
+
+建议分阶段落地，避免一次性推翻 pipeline：
+
+1. 新增 `MediaAssetType`、`MediaAsset`、`MediaAssetDetector`、`MediaAssetDetectionService`
+2. 将现有视频扩展名判断迁移到 `VideoFileAssetDetector`
+3. 新增 `IsoImageAssetDetector`
+4. 新增 `BluRayDirectoryAssetDetector`
+5. `MediaTask` 增加 `assetType`
+6. 文件发现层以资产根路径做查重和创建任务
+7. 整理阶段增加资产类型分发：
+   - `VIDEO_FILE` / `ISO_IMAGE` 使用现有普通文件整理逻辑
+   - `BLURAY_DIRECTORY` 使用目录型整理逻辑
+8. 普通视频行为必须保持不变
+
+建议新增整理策略抽象：
+
+```text
+AssetOrganizerStrategy
+  - VideoFileAssetOrganizer
+  - IsoImageAssetOrganizer
+  - BluRayDirectoryAssetOrganizer
+```
+
+`AssetOrganizerStrategy` 负责根据资产类型决定目标路径和整理语义；底层 `FileOperationStrategy` 继续负责执行 `MOVE` / `COPY` / `HARD_LINK` / `SYMBOLIC_LINK`。
+
+### 验收标准
+
+#### 蓝光识别与剪枝
+
+- 标准结构 `Movie/BDMV/index.bdmv` 被识别为 `BLURAY_DIRECTORY`
+- 标准结构 `Movie/BDMV/MovieObject.bdmv` 被识别为 `BLURAY_DIRECTORY`
+- 标准结构 `Movie/BDMV/STREAM/00001.m2ts` 被识别为 `BLURAY_DIRECTORY`
+- 从 `Movie/BDMV/STREAM/00001.m2ts` 触发事件时，任务根路径归一化为 `Movie`
+- 一个蓝光目录只创建一个任务
+- 不为 `BDMV/STREAM/*.m2ts` 创建普通视频任务
+- 不为 `BDMV/**` 内部结构文件创建 `SKIPPED` 任务
+- 裸 `sourceDir/BDMV` v1 不作为正常蓝光任务处理
+
+#### 任务与展示
+
+- `media_task.asset_type` 正确保存为 `BLURAY_DIRECTORY`
+- Queue 页面一个蓝光目录只展示一个待确认任务
+- Dashboard / 最近任务一个蓝光目录只展示一个任务
+- 前端能展示“蓝光原盘”资产类型标签
+- 历史任务没有 `assetType` 时按 `VIDEO_FILE` 兼容
+
+#### 元数据匹配
+
+- 蓝光目录使用外层根目录名作为 guessit / TMDB 搜索输入
+- `AUTO` 规则下蓝光目录默认按 `MOVIE` 处理
+- `MOVIE` 规则下蓝光目录正常处理
+- `TV_SHOW` 规则下蓝光目录 v1 不支持，并给出明确失败或跳过原因
+
+#### 目标路径与文件操作
+
+- 蓝光目录使用电影路径模板渲染后取父目录作为目标根目录
+- 当电影模板没有父目录时，fallback 到 `{title} ({year})`
+- `{ext}` 对蓝光目录为空，不影响目标目录计算
+- `MOVE` 移动整个蓝光根目录，内部结构不变
+- `COPY` 递归复制整个蓝光根目录，内部结构不变
+- `HARD_LINK` 递归为内部普通文件创建硬链接，目录结构不变
+- `SYMBOLIC_LINK` 创建目录级符号链接
+- 目标目录已存在时任务失败，不覆盖、不合并、不自动改名
+- 蓝光内部文件不进入附属文件处理逻辑
+
+#### 回归
+
+- 普通 `.mkv` / `.mp4` 视频文件处理行为不变
+- ISO 文件仍作为单文件媒体资产处理
+- 忽略规则、周期扫描、实时监听、手动扫描都复用同一套媒体资产识别逻辑
+- 同一蓝光目录重复扫描不会重复创建非 `FAILED` 任务
+
+---
+
+## ADR-021 Queue 识别信息编辑与重新匹配（v1）（2026-05-08）✅
+
+### 背景
+
+待确认队列中的任务已经保存了媒体类型、解析标题、年份、季号、集号等信息。这些信息来自文件名解析和系统推断，会直接影响 TMDB 匹配、候选推荐、人工确认后的路径模板选择与最终整理结果。
+
+当前缺陷是：当任务已经进入 `AWAITING_CONFIRMATION` 后，用户只能选择或手动搜索 TMDB 候选，不能修正任务自身的识别信息。例如某个剧集文件被错误识别为电影，用户即使通过手动搜索找到正确剧集，也无法修正季 / 集信息，后续整理路径仍可能错误。
+
+因此 Queue 需要补齐“确认前修正识别信息”的能力，让用户先修正系统用于匹配和整理的任务元信息，再重新获取候选或手动搜索候选。
+
+### 决策
+
+Queue 页面新增**单任务识别信息编辑与重新匹配**能力。
+
+该能力不引入新的“人工修改后确认”任务类型。用户直接选择候选确认，或先修改识别信息再确认，对系统来说都属于人工确认任务，最终仍使用现有 `MANUAL_SINGLE` / `MANUAL_BATCH` 语义。
+
+### 数据语义
+
+v1 直接更新 `MediaTask` 现有字段，不新增 override 字段。
+
+被用户编辑后的字段语义调整为“当前有效识别信息”，不再严格等同于 parser / guessit 的原始解析结果：
+
+- `mediaType`
+- `parsedTitle`
+- `parsedYear`
+- `parsedSeason`
+- `parsedEpisode`
+
+后续如需要排查原始解析过程，可单独设计 parser 原始快照或解析历史；v1 不做。
+
+### 页面展示
+
+Queue 待确认任务应展示所有影响 TMDB 匹配和后续整理的当前识别信息：
+
+- 源路径 / 文件名：只读，用于用户对照
+- 资产类型：只读，例如普通视频、ISO、蓝光原盘
+- 媒体类型：可编辑，电影 / 剧集
+- 解析标题：可编辑
+- 解析年份：可编辑，可为空
+- 季号：剧集时可编辑且必填
+- 集号：剧集时可编辑且必填
+- 分辨率：展示但 v1 不编辑
+- 当前候选 / 置信度：只读展示
+
+交互上，任务卡片默认可以保持摘要展示，例如“剧集 · 标题 · 年份 · SxxExx”。用户点击“编辑识别信息”后展开表单或进入抽屉编辑，避免 Queue 主界面被表单淹没。
+
+### 编辑规则
+
+- `parsedTitle` 必填。
+- `mediaType=MOVIE` 时，不要求季 / 集；保存时可以清空或忽略 `parsedSeason`、`parsedEpisode`。
+- `mediaType=TV_SHOW` 时，`parsedSeason` 与 `parsedEpisode` 必填。
+- `parsedYear` 可为空。
+- v1 不支持批量编辑识别信息。
+
+### 保存与重新匹配
+
+页面表单提供两个保存动作：
+
+1. **仅保存**
+   - 保存用户修改后的当前有效识别信息。
+   - 不触发 TMDB 重新匹配。
+   - 不清空、不刷新现有候选。
+
+2. **保存并重新匹配**
+   - 先保存用户修改后的当前有效识别信息。
+   - 再基于新的 `mediaType`、`parsedTitle`、`parsedYear`、`parsedSeason`、`parsedEpisode` 重新请求 TMDB 匹配。
+   - 重新匹配结果替换该任务旧候选，避免旧候选和新识别信息混杂。
+   - 任务仍保持 `AWAITING_CONFIRMATION`，必须由用户人工确认，不因高置信度候选自动确认。
+
+全局手动搜索能力继续沿用 ADR-019。用户修正识别信息后，手动搜索面板应以新的媒体类型和标题作为更合理的默认搜索上下文；手动搜索候选被应用到任务后，仍按现有人工确认流程处理。
+
+### 后端接口边界
+
+后端新增两个接口能力：
+
+- 保存识别信息：仅更新待确认任务的当前有效识别信息
+- 保存并重新匹配：更新识别信息后重新生成该任务候选
+
+两个接口都只允许作用于 `AWAITING_CONFIRMATION` 任务。
+
+以下状态禁止修改识别信息：
+
+- `PENDING`
+- `PROCESSING`
+- `DONE`
+- `FAILED`
+- `SKIPPED`
+
+禁止修改 `PROCESSING` 任务是为了避免文件操作期间路径计算和任务元信息发生不一致。
+
+开发实现该 ADR 时必须同步更新 `api-contracts.mdc`，记录新增接口、请求体、响应体、状态限制和错误语义。
+
+### 与现有能力的关系
+
+该 ADR 不替代 ADR-019 的 Queue 全局手动搜索能力。
+
+- ADR-019 解决“用户知道正确 TMDB 条目，如何搜索并应用到任务”。
+- ADR-021 解决“任务用于 TMDB 匹配和整理的识别信息错误，用户如何先修正任务信息”。
+
+两者应组合使用：先修正识别信息，再重新匹配或手动搜索候选，最后人工确认。
+
+### 验收标准
+
+#### 展示与编辑
+
+- 待确认任务能展示源路径、资产类型、媒体类型、解析标题、年份、季号、集号、分辨率和候选信息。
+- 用户可以在单个待确认任务上编辑媒体类型、解析标题、年份、季号、集号。
+- 分辨率 v1 展示但不可编辑。
+- 从电影切换为剧集后，季号和集号必须填写。
+- 从剧集切换为电影后，季号和集号不再作为必填项。
+- v1 不提供批量编辑识别信息入口。
+
+#### 保存
+
+- 点击“仅保存”后，任务当前有效识别信息被更新。
+- “仅保存”不触发 TMDB 重新匹配。
+- “仅保存”不清空、不替换现有候选。
+- 非 `AWAITING_CONFIRMATION` 任务不能保存识别信息。
+
+#### 保存并重新匹配
+
+- 点击“保存并重新匹配”后，先保存新的识别信息，再基于新信息请求 TMDB 匹配。
+- 重新匹配产生的新候选替换旧候选。
+- 重新匹配后任务仍停留在待确认队列。
+- 重新匹配不会因高置信度候选自动确认。
+- 剧集任务缺少季号或集号时，不能执行“保存并重新匹配”。
+
+#### 确认与整理
+
+- 修改识别信息后再确认候选，任务仍按人工确认处理。
+- 电影 / 剧集模板选择使用修改后的 `mediaType`。
+- 剧集路径模板使用修改后的 `parsedSeason`、`parsedEpisode`。
+- 手动搜索候选应用到任务时，继续复用 ADR-019 的候选关联与确认语义。
+
+---
+
+## ADR-022 首个正式发行补齐清单与优先级（2026-06-02）🟡
+
+> 2026-09-05 核对：文档站框架与部分资料已落地，本轮补充部署 / FAQ；实际发布渠道、升级 / 备份恢复与完整发行验收尚未闭环。下文保留原始发行决策，当前优先级与验收跟踪见 REQ-01/02/03/09。
+
+### 背景
+
+截至 `v0.2.8`，Media Marshal 的核心功能已经基本成型：普通电影 / 剧集整理、TMDB 匹配、待确认队列、批量确认、识别信息修正、路径模板、文件发现模式、失败聚合、电影蓝光原盘目录等能力已经进入可用状态。
+
+首个正式发行版本的主要风险不再是“核心流程是否存在”，而是外部用户能否顺利理解、部署、排错，以及产品边界是否被清楚表达。因此需要将发行前补齐项按优先级固化，作为后续开发、文档和官网任务的共同依据。
+
+### 发行定位
+
+首个正式发行版本应定位为：
+
+- 面向 Emby / Jellyfin / Plex 用户的自托管媒体文件整理工具
+- 优先覆盖普通电影、普通剧集、常见字幕 / NFO / 封面附属文件、电影蓝光原盘目录
+- 强调人工确认保护，避免低置信度识别自动污染媒体库
+- 推荐部署在本机或可信内网，不建议直接暴露公网
+
+首版不应宣传为“全媒体形态全覆盖”。ISO 整理、剧集蓝光原盘、Webhook 文件发现等仍属于后续增强。
+
+### P0：正式发行前必须补齐
+
+#### 部署文档
+
+补齐 `docs/deployment.md`，至少覆盖：
+
+- Docker Compose 生产部署流程
+- `.env.example` 参数说明
+- 目录挂载说明：宿主机路径与容器内路径的关系
+- `/media`、`/data`、下载目录、媒体库目录的推荐挂载方式
+- TMDB API Key 获取与 Web UI 配置方式
+- 首次启动流程
+- 升级前备份 SQLite 数据库的方式
+- 镜像 tag 切换、升级、回滚建议
+- NAS / 群晖 / 网络挂载场景注意事项
+- 常见权限问题和排查方向
+
+#### FAQ
+
+补齐 `docs/faq.md`，至少覆盖：
+
+- 为什么任务进入待确认队列
+- 为什么识别成电影而不是剧集，以及如何修正
+- 为什么 TMDB 搜不到或搜错
+- 为什么 Docker 中看不到宿主机目录
+- 为什么文件无法移动 / 复制 / 硬链接 / 符号链接
+- 为什么 NAS 实时监听可能漏事件，为什么推荐混合模式
+- 为什么没有用户认证，如何安全部署
+- 当前是否支持 ISO、剧集蓝光原盘、Webhook
+- 目标路径冲突时为什么不覆盖
+- 源文件删除后任务如何处理
+
+#### 官网 / 文档站
+
+首发前需要提供官网或文档站入口。推荐使用 VitePress 实现纯前端静态站：
+
+- 首页：产品定位、核心工作流、适用人群、支持 / 不支持能力
+- 用户手册：从现有 `docs/user-guide.md` 迁移或链接
+- 部署指南：来自补齐后的 `docs/deployment.md`
+- FAQ：来自补齐后的 `docs/faq.md`
+- ReleaseNote：展示当前正式发行版本与近期关键变更
+
+官网文案必须明确产品边界，不暗示内容下载、PT 集成或播放器能力。
+
+#### 安全部署边界
+
+README、官网、部署文档必须明确：
+
+- 首版不提供用户认证
+- 建议仅部署在本机、家庭局域网或可信内网
+- 不建议将 Web UI 和后端 API 直接暴露公网
+- 如必须公网访问，应由用户自行配置反向代理认证、VPN、访问控制或其它外部安全措施
+
+#### 支持 / 不支持能力表
+
+README、官网、FAQ 至少需要明确当前支持状态：
+
+- 普通电影视频文件：支持
+- 普通剧集视频文件：支持
+- 多集文件识别与范围展示：支持
+- 同名字幕、NFO、封面、MD5 等附属文件：部分支持
+- 电影蓝光原盘目录：支持
+- ISO 镜像整理：当前不完整支持 / 默认跳过
+- 剧集蓝光原盘：当前不支持
+- Webhook 文件发现：后续版本
+- 用户认证：首版不支持
+
+### P1：正式发行前强烈建议补齐
+
+#### 发行验收清单
+
+正式发行前需要执行一轮端到端验收，至少覆盖：
+
+- 普通电影自动识别、自动整理
+- 普通剧集自动识别、自动整理
+- 多集文件解析、展示与路径渲染
+- 低置信度进入 Queue
+- Queue 手动搜索、批量确认、批量跳过
+- Queue 识别信息编辑、仅保存、保存并重新匹配
+- 目标路径冲突失败，不覆盖、不合并、不自动改名
+- 源文件缺失失败保护
+- 失败任务重复聚合与失败次数展示
+- 附属文件跟随处理，包括字幕、NFO、封面、MD5
+- 电影蓝光原盘目录识别与整理
+- 混合发现模式、手动扫描、忽略规则
+- 系统重置后回到初始化流程
+
+验收结果应由开发 Agent 记录到 `implementation-log.mdc`。
+
+#### 近期实现日志补齐
+
+`implementation-log.mdc` 需要补齐 `v0.2.6`、`v0.2.7`、`v0.2.8` 的关键交接记录，尤其是：
+
+- 连续多集解析与模板参数能力
+- 多季剧集年份匹配优化
+- 父目录上下文辅助识别
+- 英文别名与中文 TMDB 条目互证
+- 相关测试覆盖与遗留风险
+
+该项用于后续验收、回归和问题定位，不要求写入 ADR。
+
+#### 发布渠道与版本策略
+
+正式发行前需要明确：
+
+- Git tag 命名规则
+- Docker 镜像仓库与镜像 tag 策略
+- `latest` 是否指向最新正式版
+- alpha / beta / stable compose 文件的差异
+- 升级文档中如何从旧版本切换到正式版
+
+#### Webhook 预留字段的用户可见状态
+
+当前 `webhookEnabled` 属于后续预留能力。正式发行前需要确保前端不会让用户误以为 Webhook 已真实可用：
+
+- 如果页面展示 Webhook 开关，应明确标注“后续版本”或禁用
+- 如产品上暂不准备说明该能力，建议隐藏入口
+- 后端继续保持不开放 `POST /api/discovery/notify`
+
+### P2：后续版本增强
+
+#### Webhook 文件发现
+
+继续作为后续版本待讨论能力：
+
+- 新增外部通知接口
+- 明确按规则扫描文件或目录的请求语义
+- 设计 token 配置来源和鉴权策略
+- 前端开关与后端真实可用状态保持一致
+
+#### 错误码体系增强
+
+在现有 `TARGET_CONFLICT`、`SOURCE_MISSING`、`PIPELINE_FAILED` 基础上继续细分：
+
+- TMDB 不可用 / API Key 无效
+- Parser 不可用
+- 目标目录不可写
+- 权限不足
+- 硬链接跨文件系统失败
+- 符号链接权限失败
+- 模板渲染失败
+- NFO 生成失败
+
+#### 媒体资产类型增强
+
+后续可继续补齐：
+
+- ISO 镜像整理
+- 剧集蓝光原盘识别与整理
+- 蓝光根目录旁同名 NFO / poster / folder 等附属文件跟随
+- 蓝光原盘结构完整性校验
+
+#### 附属文件规则增强
+
+在 `.md5` 已支持的基础上，评估是否加入：
+
+- `.sfv`
+- `.sha1`
+- `.sha256`
+- `.sha512`
+
+新增前需要确认这些文件按“同主视频 basename 跟随”处理是否符合用户预期。
+
+#### 可观测性与运维体验
+
+后续可规划：
+
+- 扫描任务进度展示
+- 后台任务状态页面
+- TMDB / Parser 连通性测试
+- 缓存命中率或调试信息展示
+- 附属文件处理失败在任务详情中展示
+
+### 文档维护要求
+
+- P0 / P1 中涉及接口或实际实现变化的内容，由对应开发 Agent 同步更新 `api-contracts.mdc` 或 `implementation-log.mdc`。
+- PM 仅在方案边界变化、优先级变化或新增架构决策时更新本 ADR。
+- 官网、README、用户手册、部署指南、FAQ 的实际文案不写入 ADR，只按本 ADR 的边界维护。
+
+---
+
+## ADR-023 路径模板变量正式启用与安全渲染补齐（2026-06-09）✅
+
+### 背景
+
+ADR-001 已确定路径模板采用 `TemplateVariables` 变量袋与纯函数渲染器；ADR-015 / ADR-017 已补齐变量帮助、变量生命周期状态、自定义模板预览和可选片段语法。
+
+随着首个试用版本准备发布，路径模板不应只停留在“能用默认模板”的状态，还需要让已预留且数据来源明确的变量正式可用。同时，路径模板是用户可编辑输入，渲染结果会直接参与文件移动、复制、硬链接或符号链接操作，必须补齐路径安全边界，避免模板或元数据导致目标路径逃逸、非法文件名或跨平台不可用路径。
+
+### 目标
+
+本轮补齐路径模板能力时，优先完成三类事情：
+
+- 正式启用已具备稳定数据来源的预留变量
+- 让前端预览与后端真实渲染逻辑对齐
+- 为最终目标路径增加安全校验和路径段清洗
+
+### 变量启用范围
+
+本轮正式启用以下变量，并将变量目录中的状态从 `RESERVED` 调整为 `AVAILABLE`：
+
+| 变量 | 来源 | 持久化要求 | 说明 |
+|---|---|---|---|
+| `{codec}` | guessit `video_codec` | `media_task.parsed_codec` | 用于在文件名中保留编码信息，例如 `H.264`、`H.265` |
+| `{release_group}` | guessit `release_group` | `media_task.parsed_release_group` | 用于保留发布组信息，例如 `YIFY`、`NTb` |
+| `{original_title}` | TMDB `original_title` / `original_name` | `media_task.confirmed_original_title` | 用于双语命名或保留 TMDB 原语言标题 |
+
+本轮继续保持以下变量为 `RESERVED`：
+
+- `{episode_title}`
+- `{genre_1}`
+- `{genre_2}`
+- `{genre_3}`
+- `{genre_4}`
+- `{country}`
+
+原因是这些变量依赖更完整的 TMDB 详情建模、分集详情查询或分类 / 国家字段选择规则，当前不应为了模板展示临时拼接不稳定数据。
+
+### 数据模型边界
+
+`MediaTask` 需要补齐用于渲染的字段：
+
+- `parsedCodec`
+- `parsedReleaseGroup`
+- `confirmedOriginalTitle`
+
+字段来源保持清晰：
+
+- `parsedCodec` 和 `parsedReleaseGroup` 来自 Parser / guessit 解析结果，在任务创建或重新解析时写入。
+- `confirmedOriginalTitle` 来自用户最终确认的 TMDB 候选详情，在确认候选时写入。
+- 如果任务尚未确认 TMDB 候选，`confirmedOriginalTitle` 可以为空；包含该变量的可选片段应按 ADR-017 规则移除。
+
+Queue 识别信息编辑功能本轮不要求支持编辑 `codec`、`release_group`、`original_title`。这些字段主要服务路径渲染与调试展示，继续由解析结果或 TMDB 确认结果驱动。
+
+### 安全渲染决策
+
+路径模板渲染结果必须被视为 `WatchRule.targetDir` 下的相对路径。
+
+后端在执行文件操作前必须校验：
+
+- 渲染结果不能是绝对路径。
+- 渲染结果不能是 Windows 盘符路径，例如 `D:\Movies\...`。
+- 渲染结果不能是 UNC 路径，例如 `\\server\share\...`。
+- 渲染结果中不能包含会逃逸目录的 `..` 路径段。
+- 使用 `targetDir.resolve(renderedPath).normalize()` 得到最终目标后，最终路径必须仍位于 `targetDir` 内。
+
+如果模板渲染结果不安全，任务不得继续执行文件操作，应转为失败状态并展示可理解的失败原因。是否新增专门错误码由开发 Agent 根据现有错误码体系判断；如新增错误码，需要同步更新 `api-contracts.mdc` 和 `implementation-log.mdc`。
+
+### 路径段清洗
+
+变量值进入模板前，应按“路径段”进行清洗，而不是对完整模板字符串整体清洗。
+
+清洗规则：
+
+- 清洗来自 TMDB、guessit、文件名解析等外部输入的变量值。
+- 用户模板中的 `/` 或系统路径分隔符继续作为目录层级表达，不应被清洗掉。
+- 变量值中的 `/`、`\`、`:`、`*`、`?`、`"`、`<`、`>`、`|` 和控制字符应替换为安全字符或移除。
+- 清洗后不能生成空路径段；如变量值清洗后为空，应视为变量缺失或使用统一安全占位，具体规则由开发实现时保持一致。
+- `{ext}` 必须来自源文件扩展名，不允许用户输入覆盖为任意路径；点号不应被破坏性清洗。
+
+该规则的目标是保护用户模板结构，同时避免标题、原始标题、发布组等元数据把单个文件名片段拆成多层目录或生成系统不接受的文件名。
+
+### 后端预览与校验
+
+ADR-015 允许前端先做本地样例预览，但正式发行前应补齐后端真实预览 / 校验接口，让页面看到的结果尽量接近实际整理结果。
+
+新增后端接口建议：
+
+```text
+POST /api/template-variables/preview
+```
+
+接口语义：
+
+- 使用后端 `TemplateRenderer` 和同一套变量清洗规则生成预览结果。
+- 支持电影 / 剧集两类媒体样例上下文。
+- 默认使用后端变量目录中的示例值，也允许前端传入调试用上下文。
+- 返回渲染结果、已使用变量、未知变量、预留变量、告警和错误。
+- 对不安全路径、未知变量、当前版本未启用变量给出明确提示。
+
+字段命名和响应结构由后端 Agent 在实现时落入 `api-contracts.mdc`，但必须覆盖以下语义：
+
+- `output`：渲染后的示例路径
+- `warnings`：不阻止保存但需要提示用户的问题
+- `errors`：阻止保存或阻止执行的问题
+- `usedVariables`：模板实际使用的变量
+- `unknownVariables`：后端无法识别的变量
+- `reservedVariables`：已登记但当前版本未启用的变量
+- `unsafePath`：模板是否产生不安全路径
+
+### 前端交互要求
+
+路径设置页应继续遵守 ADR-015 的变量生命周期展示规则：
+
+- 变量帮助面板只展示 `AVAILABLE` 和 `DEPRECATED`。
+- 本轮启用的 `{codec}`、`{release_group}`、`{original_title}` 应出现在变量帮助面板。
+- `{episode_title}`、`{genre_1..4}`、`{country}` 不展示在帮助面板中。
+- 自定义模板保存前应调用后端预览 / 校验接口。
+- 对未知变量、预留变量、媒体类型不适用变量和不安全路径给出明确提示。
+- 前端本地预览可以作为输入过程中的即时辅助，但正式校验以后端结果为准。
+- 已经接入后端变量接口的页面应清理旧的硬编码 TODO，避免误导后续开发。
+
+系统默认模板和现有预设模板不要求强制加入 `{codec}` 或 `{release_group}`。如果需要新增“高级命名”预设，可以作为前端体验增强，不影响本 ADR 的核心验收。
+
+### 非目标
+
+本 ADR 不解决以下问题：
+
+- 不启用 `{episode_title}`、`{genre_1..4}`、`{country}`。
+- 不设计用户自定义变量系统。
+- 不引入多版本媒体冲突处理策略。
+- 不改变 ADR-010 的目标路径冲突策略：不覆盖、不合并、不自动改名。
+- 不改变 ADR-017 的可选片段语法和缺失变量处理规则。
+
+### 验收标准
+
+- `{codec}` 能从 Parser / guessit 解析结果保存到任务，并参与路径渲染。
+- `{release_group}` 能从 Parser / guessit 解析结果保存到任务，并参与路径渲染。
+- `{original_title}` 能从确认后的 TMDB 候选保存到任务，并参与路径渲染。
+- 新启用变量在 `GET /api/template-variables` 中状态为 `AVAILABLE`，并能在前端帮助面板展示。
+- `{episode_title}`、`{genre_1..4}`、`{country}` 仍为 `RESERVED`，前端不展示。
+- 包含 `[[ - {codec}]]`、`[[ - {release_group}]]`、`[[ - {original_title}]]` 的模板在变量缺失时按 ADR-017 移除可选片段。
+- 模板渲染结果为绝对路径、盘符路径、UNC 路径或包含 `..` 逃逸时，任务失败且不会执行文件操作。
+- 标题、原始标题、发布组等变量中的非法路径字符会被清洗，不会破坏模板目录结构。
+- 后端预览 / 校验接口与实际渲染器使用同一套核心逻辑。
+- 前端保存自定义模板前能展示后端返回的错误或告警。
+- 连续多集范围、季集格式化、现有默认模板和现有预设模板不回归。
+
+### 文档维护要求
+
+- 后端 Agent 实现接口或字段变更后，必须同步更新 `api-contracts.mdc`。
+- 开发 Agent 需要在 `implementation-log.mdc` 记录实际落地字段、接口、测试覆盖和任何偏离本 ADR 的地方。
+- 本 ADR 只记录架构决策与边界，不记录具体代码实现过程。
+
+---
+
+## ADR-024 TMDB HTTP 代理配置与运行时优先级（2026-06-09）✅
+
+### 背景
+
+部分用户所在网络无法直接访问 TMDB API，导致影片搜索、自动匹配、人工确认详情查询等核心流程不可用。当前系统只支持配置 TMDB API Key、语言、base-url、超时和缓存参数，尚未提供代理配置能力。
+
+现有 `SettingsService` 的通用配置优先级是：环境变量 > `application.yml` > 数据库；`tmdb.api-key` 是例外，只允许通过 Web UI 写入数据库，避免环境变量覆盖页面配置。代理配置也有类似运行时诉求：如果用户启动服务时通过环境变量配置了代理，但发现代理地址不可用，应能在页面上修改并立即生效，而不需要重启容器或服务。
+
+### 目标
+
+第一版代理能力只解决一个问题：
+
+> 让后端访问 TMDB API 时可以通过用户配置的 HTTP 代理出站，并且支持在 Web UI 中运行时修改。
+
+本轮目标包括：
+
+- 支持 HTTP 代理地址配置。
+- 初始化页面同步展示代理设置，非必填。
+- 如果环境变量或 `application.yml` 已配置代理地址，初始化页面自动带入。
+- 系统设置页支持后续修改代理配置。
+- 页面保存的数据库配置优先级高于环境变量和 `application.yml`，修改后无需重启即可生效。
+
+### 作用范围
+
+代理仅作用于后端访问 TMDB 元数据 API 的请求：
+
+- 自动匹配中的 TMDB 搜索
+- Queue 手动搜索
+- TMDB ID 详情查询
+- 人工确认过程中需要访问 TMDB 的请求
+- 后续如有 TMDB 连通性测试，也应使用同一套代理配置
+
+第一版不代理以下内容：
+
+- 前端直接加载的海报图片 URL
+- `image.tmdb.org` 海报资源下载或转发
+- Parser 服务请求
+- 邮件通知请求
+- WebSocket
+- 文件发现、文件操作或 NFO 本地生成
+- JVM 全局网络请求
+
+### 配置项
+
+新增以下配置项：
+
+| Key | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `tmdb.proxy.enabled` | Boolean | 未配置 | 是否由用户显式启用 / 禁用 TMDB 代理 |
+| `tmdb.proxy.http-url` | String | 空 | HTTP 代理地址，例如 `http://192.168.1.2:7890` |
+
+对应环境变量：
+
+| Key | 环境变量 |
+|---|---|
+| `tmdb.proxy.enabled` | `MEDIA_MARSHAL_TMDB_PROXY_ENABLED` |
+| `tmdb.proxy.http-url` | `MEDIA_MARSHAL_TMDB_PROXY_HTTP_URL` |
+
+配置规则：
+
+- 代理 URL 第一版只接受 `http://host:port` 形式。
+- 不支持 `https://` 代理。
+- 不支持 `socks4://` / `socks5://` 代理。
+- 不提供单独的代理用户名 / 密码字段。
+- 第一版不承诺支持带认证信息的代理 URL；如后续需要代理认证，应单独讨论。
+- `tmdb.proxy.enabled=true` 时，`tmdb.proxy.http-url` 必须存在且格式合法。
+- `tmdb.proxy.enabled=false` 时，即使环境变量或 `application.yml` 中存在代理地址，也强制直连。
+- `tmdb.proxy.enabled` 未配置但 `tmdb.proxy.http-url` 存在时，视为启用代理，便于只配置一个代理地址即可生效。
+
+### 优先级决策
+
+代理配置采用“页面接管优先”的特殊优先级，不沿用普通配置的全局规则。
+
+有效代理配置按以下顺序解析：
+
+1. 数据库中的 `tmdb.proxy.enabled` / `tmdb.proxy.http-url`
+2. 环境变量 `MEDIA_MARSHAL_TMDB_PROXY_ENABLED` / `MEDIA_MARSHAL_TMDB_PROXY_HTTP_URL`
+3. `application.yml` 中的 `media-marshal.tmdb.proxy.*`
+4. 默认直连
+
+只要数据库中存在 `tmdb.proxy.enabled` 记录，即表示用户已经通过页面接管代理配置：
+
+- `true`：使用数据库中的代理地址。
+- `false`：强制直连，并覆盖环境变量 / `application.yml`。
+
+该规则用于解决运行时修复场景：如果容器启动时环境变量中的代理地址错误，用户可以在页面中修改或禁用代理，保存到数据库后立即覆盖环境变量配置。
+
+注意：本 ADR 不改变其它普通配置项的通用优先级。`tmdb.api-key` 继续保持只从 Web UI / 数据库读取的既有规则。
+
+### 初始化页与系统设置页
+
+初始化页面需要新增代理设置区域：
+
+- HTTP 代理开关，默认根据后端有效配置回显。
+- HTTP 代理地址输入框，非必填。
+- 如果环境变量或 `application.yml` 中已配置代理地址，页面自动带入该地址。
+- 用户可以在初始化时修改代理地址。
+- 用户可以关闭代理；关闭后保存 `tmdb.proxy.enabled=false`，用于覆盖错误的环境变量 / 配置文件代理。
+
+系统设置页需要提供同样的代理配置能力：
+
+- 展示当前有效代理状态。
+- 支持保存启用 / 禁用状态。
+- 支持修改代理地址。
+- 保存后新的 TMDB 请求使用新配置，不要求重启服务。
+
+前端文案需要明确：该代理仅用于后端访问 TMDB 元数据 API，不保证海报图片加载也通过代理。
+
+### 后端有效配置回显
+
+当前 `/api/settings` 主要返回数据库中的配置项，不足以支持“配置文件中填了代理地址，初始化页自动带入”的需求。
+
+后端需要补齐有效配置回显能力。实现形式由后端 Agent 落地到 `api-contracts.mdc`，但必须满足以下语义：
+
+- 前端可以读取 `tmdb.proxy.enabled` 和 `tmdb.proxy.http-url` 的当前有效值。
+- 返回值能够区分配置来源，至少支持：数据库、环境变量、`application.yml`、默认值。
+- 不返回 `tmdb.api-key` 的明文有效值。
+- 如果代理 URL 被视为敏感字段或未来支持认证信息，应对返回值做脱敏。
+
+推荐接口形态：
+
+```text
+GET /api/settings/effective?keys=tmdb.proxy.enabled,tmdb.proxy.http-url
+```
+
+响应字段建议包含：
+
+- `key`
+- `value`
+- `source`
+- `overriddenByDatabase`
+
+如果开发 Agent 选择在现有 `/api/settings` 中扩展有效配置字段，也必须保持现有前端兼容，并在 `api-contracts.mdc` 写清楚。
+
+### 运行时生效方式
+
+TMDB 代理不能通过 JVM 全局代理属性实现，例如不应使用 `System.setProperty("http.proxyHost", ...)` 作为主要方案。原因是全局代理会影响 Parser、邮件、未来其它外部请求，难以控制作用范围。
+
+后端应在 TMDB 请求层使用作用域明确的代理配置：
+
+- 每次构建 TMDB 请求时读取当前有效代理配置；或
+- 使用可刷新 / 可重建的 TMDB HTTP Client，并在配置保存后失效旧 Client。
+
+无论采用哪种实现，验收标准是：
+
+- 页面保存代理设置后，新发起的 TMDB 请求使用新代理配置。
+- 禁用代理后，新发起的 TMDB 请求直连。
+- 不要求清空已有成功的 TMDB 搜索 / 详情缓存。
+- 连通性测试如果实现，必须绕过缓存并真实访问 TMDB。
+
+### 错误处理
+
+代理配置错误时，应给用户可理解的失败原因：
+
+- 代理 URL 格式不合法：保存时阻止，提示用户修正。
+- 代理启用但地址为空：保存时阻止。
+- 代理无法连接：TMDB 请求失败，错误信息应能体现代理连接失败或 TMDB 不可达。
+- 代理返回认证失败：第一版不支持认证代理，应提示当前代理可能需要认证。
+
+不应把代理错误伪装成普通“未找到影片”或低置信度匹配结果。
+
+### 非目标
+
+本 ADR 不解决以下问题：
+
+- 不支持 SOCKS 代理。
+- 不支持 HTTPS 代理。
+- 不支持代理认证配置。
+- 不做海报代理、海报缓存或图片转发。
+- 不做按用户、按 WatchRule、按数据源的多代理配置。
+- 不改变 Docker、宿主机或浏览器自己的代理配置。
+- 不把代理配置推广为全系统网络出站代理。
+
+### 验收标准
+
+- `.env.example` 和部署文档中出现 `MEDIA_MARSHAL_TMDB_PROXY_ENABLED` / `MEDIA_MARSHAL_TMDB_PROXY_HTTP_URL` 的说明。
+- `application.yml` 支持 `media-marshal.tmdb.proxy.enabled` 与 `media-marshal.tmdb.proxy.http-url`。
+- 初始化页面展示 HTTP 代理配置，且非必填。
+- 当环境变量或 `application.yml` 已配置代理地址时，初始化页面能自动带入。
+- 系统设置页可以保存、修改、禁用代理配置。
+- 数据库中保存的代理配置优先于环境变量和 `application.yml`。
+- 数据库中保存 `tmdb.proxy.enabled=false` 时，即使环境变量存在代理地址，TMDB 请求也直连。
+- 修改代理配置后，不重启服务即可影响新的 TMDB 请求。
+- TMDB 搜索、手动搜索、TMDB ID 详情查询和人工确认详情请求都使用同一套代理配置。
+- 海报图片不走代理，且页面文案不暗示海报代理已经支持。
+- 代理 URL 不合法时保存失败，并提示用户修正。
+- 代理不可达时，任务或搜索请求展示可排查的错误原因。
+
+### 文档维护要求
+
+- 后端 Agent 实现接口、配置项或错误码变更后，必须同步更新 `api-contracts.mdc`。
+- 开发 Agent 需要在 `implementation-log.mdc` 记录实际生效的配置优先级、接口、测试覆盖和遗留项。
+- README / 部署文档如介绍代理能力，应明确第一版仅支持 TMDB API HTTP 代理，不支持海报代理。
+- 本 ADR 只记录架构决策与边界，不记录具体代码实现过程。
+
+---
+
+## ADR-025 剩余 TMDB 模板变量补齐（2026-06-11）✅
+
+### 背景
+
+ADR-023 已正式启用 `{codec}`、`{release_group}`、`{original_title}`，并补齐后端模板预览、路径段清洗和安全渲染。当前变量系统中仍保持 `RESERVED` 的主要变量为：
+
+- `{episode_title}`
+- `{genre_1}`
+- `{genre_2}`
+- `{genre_3}`
+- `{genre_4}`
+- `{country}`
+
+这些变量都依赖 TMDB 详情数据，不适合只在 `RenameService` 中临时拼接。为了让路径模板进入可预期、可测试、可长期维护的状态，需要补齐从 TMDB 详情获取、候选快照、任务确认、变量袋填充到前端变量目录展示的完整链路。
+
+### 目标
+
+本轮目标是补齐 ADR-001 标准变量袋中剩余的 TMDB 类变量，让路径模板变量进入“首轮完整可用”状态：
+
+- `{genre_1}` ~ `{genre_4}`：可用于按 TMDB 分类建立目录。
+- `{country}`：可用于按出品国 / 原产国建立目录。
+- `{episode_title}`：可用于单集剧集命名。
+
+### 变量启用范围
+
+本轮正式启用以下变量，并将变量目录中的状态从 `RESERVED` 调整为 `AVAILABLE`：
+
+| 变量 | 适用媒体 | 来源 | 说明 |
+|---|---|---|---|
+| `{genre_1}` | MOVIE / TV_SHOW | TMDB detail `genres[0].name` | 第 1 个分类标签 |
+| `{genre_2}` | MOVIE / TV_SHOW | TMDB detail `genres[1].name` | 第 2 个分类标签 |
+| `{genre_3}` | MOVIE / TV_SHOW | TMDB detail `genres[2].name` | 第 3 个分类标签 |
+| `{genre_4}` | MOVIE / TV_SHOW | TMDB detail `genres[3].name` | 第 4 个分类标签 |
+| `{country}` | MOVIE / TV_SHOW | TMDB 原产国 / 出品国字段 | ISO 3166-1 alpha-2 代码，例如 `US`、`JP`、`CN` |
+| `{episode_title}` | TV_SHOW | TMDB episode detail `name` | 仅单集剧集填充，多集范围不填充 |
+
+### TMDB 数据来源
+
+#### 分类标签
+
+电影和剧集都从 TMDB 详情接口的 `genres` 数组读取分类名称：
+
+- 电影：`GET /movie/{id}`
+- 剧集：`GET /tv/{id}`
+
+分类名称跟随当前 `tmdb.language` 配置。TMDB 返回多少个分类就填充多少个变量，最多填充 4 个：
+
+- 第 1 个分类 → `{genre_1}`
+- 第 2 个分类 → `{genre_2}`
+- 第 3 个分类 → `{genre_3}`
+- 第 4 个分类 → `{genre_4}`
+
+少于 4 个时，剩余变量保持为空；用户应使用 ADR-017 的可选片段避免空值破坏命名。
+
+#### 出品国 / 原产国
+
+`{country}` 使用 ISO 3166-1 alpha-2 国家 / 地区代码，不使用本地化国家名称。原因是代码更短、更稳定，也更适合目录分组。
+
+读取规则：
+
+- 优先使用 TMDB detail 的 `origin_country[0]`。
+- 如果 `origin_country` 不存在或为空，则使用 `production_countries[0].iso_3166_1`。
+- 如果仍然没有值，则 `{country}` 为空。
+
+多国家 / 地区场景下，第一版只填充第一个值。后续如用户需要多国家模板，可单独讨论 `{country_1}`、`{country_2}` 或 `{countries}`。
+
+#### 分集标题
+
+`{episode_title}` 只在以下条件全部满足时填充：
+
+- 媒体类型为 `TV_SHOW`
+- `parsedSeason` 存在
+- `parsedEpisode` 存在
+- `parsedEpisodeEnd` 不存在，即不是连续多集范围
+
+数据来源：
+
+```text
+GET /tv/{id}/season/{season_number}/episode/{episode_number}
+```
+
+读取该接口返回的 `name` 字段作为分集标题。
+
+连续多集文件例如 `E16-E17`、`E21-E28` 不填充 `{episode_title}`。原因是单个文件对应多个分集标题，直接拼接会产生过长且不稳定的文件名。后续如需要多集标题，应单独设计新变量，例如 `{episode_titles}` 或带参数的多集标题格式，而不是改变 `{episode_title}` 的单值语义。
+
+### 数据模型边界
+
+`MediaTask` 需要补齐确认后的模板字段：
+
+- `confirmedGenre1`
+- `confirmedGenre2`
+- `confirmedGenre3`
+- `confirmedGenre4`
+- `confirmedCountry`
+- `confirmedEpisodeTitle`
+
+`TaskCandidate` 需要同步补齐可选快照字段，用于保存最终选中候选的详情数据：
+
+- `genre1`
+- `genre2`
+- `genre3`
+- `genre4`
+- `country`
+- `episodeTitle`
+
+`MatchResult` 作为元数据 matcher 的统一 DTO，需要能表达：
+
+- 分类列表，建议为 `genres: string[]`
+- 出品国 / 原产国，建议为 `country: string | null`
+- 分集标题，建议为 `episodeTitle: string | null`
+
+开发 Agent 可以根据现有代码风格选择 DTO 字段形态，但必须保证 API 契约中清楚说明字段来源、是否可为空，以及哪些字段只在详情 / 选中候选场景下出现。
+
+### 详情补全策略
+
+不应为了展示候选列表而对每个候选逐条请求 TMDB 详情。这样会显著增加 TMDB 请求量，特别是在批量剧集和低置信度队列中。
+
+本轮采用“最终选中候选详情补全”策略：
+
+1. TMDB 搜索阶段继续保存候选快照，但不要求每个候选都具备分类、国家、分集标题。
+2. 当系统准备自动确认高置信度候选，或用户人工确认候选时，后端对最终选中的 TMDB 条目执行详情补全。
+3. 详情补全结果写入 `MediaTask`，并同步更新被选中的 `TaskCandidate` 快照。
+4. 路径模板渲染从 `MediaTask` 的确认字段构建 `TemplateVariables`。
+
+该策略与现有 TMDB 详情缓存 / in-flight 去重配合使用。同一部剧多集批量确认时，剧集详情应命中缓存；分集详情可以按 `tmdbId + season + episode + language` 缓存，避免重复请求。
+
+### 确认流程要求
+
+无论候选来自哪种路径，最终确认语义必须一致：
+
+- 自动高置信度确认
+- 单条人工确认
+- 批量确认
+- 全局手动搜索候选应用
+- 纯 TMDB ID 手动查询并确认
+
+以上路径都必须在继续文件整理前完成必要的详情补全，并写入相同的 `MediaTask` 确认字段。
+
+如果详情补全失败：
+
+- TMDB 条目详情失败时，确认流程应失败并给出可理解的错误；不应继续生成缺少分类 / 国家等关键变量的目标路径。
+- 分集详情失败时，如果模板未使用 `{episode_title}`，可继续整理；如果当前模板使用 `{episode_title}`，应让任务失败并提示分集详情不可用。
+- 如果 TMDB 返回空分类、空国家或空分集标题，不视为接口失败；对应变量为空，由可选片段规则处理。
+
+开发 Agent 可通过模板变量分析判断当前模板是否使用 `{episode_title}`。如果实现复杂，可以先采取更保守策略：分集详情请求失败时让使用 TV 模板且符合单集条件的任务失败。
+
+### 模板渲染规则
+
+`RenameService.buildVariables()` 应从 `MediaTask` 填充：
+
+- `genre1` ~ `genre4`
+- `country`
+- `episodeTitle`
+
+变量值继续遵守 ADR-023 的路径段清洗和路径安全规则。
+
+缺失变量处理继续遵守 ADR-017：
+
+- 可选片段内变量缺失时，整个片段移除。
+- 可选片段外变量缺失时，保留占位符，便于用户发现模板问题。
+
+推荐用户在可能缺失的变量上使用可选片段：
+
+```text
+{title} ({year})[[/{country}]][[/{genre_1}]]/{title} ({year}){ext}
+```
+
+```text
+{title} ({year})/S{season:02d}/{title} - S{season:02d}E{episode:02d}[[ - {episode_title}]]{ext}
+```
+
+### 前端交互要求
+
+路径设置页变量帮助面板应展示本轮启用变量：
+
+- `{episode_title}`
+- `{genre_1}`
+- `{genre_2}`
+- `{genre_3}`
+- `{genre_4}`
+- `{country}`
+
+展示要求：
+
+- `{episode_title}` 只在剧集模板上下文展示。
+- `{genre_1..4}` 和 `{country}` 在电影 / 剧集模板上下文都可展示。
+- 帮助说明应提示这些变量来自 TMDB 详情，可能因条目数据缺失而为空。
+- 自定义模板预览继续调用后端 `POST /api/template-variables/preview`。
+- 预览样例应包含分类、国家和分集标题，帮助用户理解变量效果。
+- 前端页面中与路径模板相关的说明、引导文案、占位提示、示例模板和变量使用建议必须同步更新，不能继续把 `{episode_title}`、`{genre_1..4}`、`{country}` 描述为预留或不可用。
+- 页面说明应引导用户对可能缺失的 TMDB 变量使用 ADR-017 可选片段，例如 `[[ - {episode_title}]]`、`[[/{country}]]`、`[[/{genre_1}]]`。
+- 中英文界面文案需要同步维护，避免中文页面已更新、英文页面仍使用旧变量状态或旧示例。
+
+Queue 识别信息编辑页面本轮不需要支持手动编辑这些字段。它们属于“确认后的 TMDB 详情字段”，不是文件名解析字段。
+
+### 性能与缓存
+
+本轮允许在最终确认时增加 TMDB detail 请求，但必须控制请求量：
+
+- 不对候选列表中的所有候选预取详情。
+- 同一 `tmdbId + mediaType + language` 的电影 / 剧集详情复用现有详情缓存。
+- 分集详情新增缓存 key：`tv|{tmdbId}|season|{season}|episode|{episode}|{language}`。
+- 批量确认同一剧集多集时，剧集详情应只请求一次或命中缓存；分集详情按实际集数请求。
+- Debug 日志中应能看出详情补全是否命中缓存，便于排查 TMDB 请求量。
+
+### 非目标
+
+本 ADR 不解决以下问题：
+
+- 不新增 `{country_1}`、`{country_2}`、`{countries}`。
+- 不新增 `{genres}` 聚合变量。
+- 不支持多集范围的 `{episode_title}` 拼接。
+- 不支持用户手动编辑分类、国家、分集标题。
+- 不扩展演员、导演、制片公司、评分、片长等更多模板变量。
+- 不改变 ADR-010 的目标路径冲突策略。
+
+### 验收标准
+
+- `GET /api/template-variables` 中 `{episode_title}`、`{genre_1..4}`、`{country}` 状态为 `AVAILABLE`。
+- 前端变量帮助面板按媒体类型正确展示新启用变量。
+- 路径设置页的变量说明、使用引导、预览示例和中英文文案均已同步更新，不再出现“预留 / 不可用”的旧描述。
+- 页面说明能提示用户对分类、国家、分集标题等可能缺失的变量使用可选片段。
+- 电影确认后，`{genre_1..4}` 和 `{country}` 能从 TMDB 详情保存到任务并参与路径渲染。
+- 剧集确认后，`{genre_1..4}` 和 `{country}` 能从 TMDB 详情保存到任务并参与路径渲染。
+- 单集剧集确认后，`{episode_title}` 能从 TMDB 分集详情保存到任务并参与路径渲染。
+- 多集范围任务不填充 `{episode_title}`，包含该变量的可选片段会被移除。
+- 自动高置信度确认、单条人工确认、批量确认、全局手动搜索应用、TMDB ID 手动确认都走同一套详情补全逻辑。
+- 不会为了展示候选列表而对每个候选请求详情。
+- 详情补全使用 TMDB 缓存 / in-flight 去重，批量剧集确认不会产生明显重复请求。
+- 变量值继续经过 ADR-023 的路径段清洗和安全路径校验。
+- 如当前模板使用 `{episode_title}` 且分集详情请求失败，任务不会静默生成错误路径。
+
+### 文档维护要求
+
+- 后端 Agent 实现字段、接口或 DTO 变更后，必须同步更新 `api-contracts.mdc`。
+- 开发 Agent 需要在 `implementation-log.mdc` 记录实际字段名、TMDB 请求策略、缓存 key、测试覆盖和任何偏离本 ADR 的地方。
+- README / 用户文档如介绍路径模板变量，应说明分类、国家和分集标题来自 TMDB，可能因 TMDB 条目缺失而为空。
+- 前端开发同步更新页面内说明指导、变量帮助面板、示例模板、预览说明和 i18n 文案；这些属于本 ADR 的验收范围，不应作为“后续文案优化”延期。
+- 本 ADR 只记录架构决策与边界，不记录具体代码实现过程。
+
+---
+
+## ADR-026 监控路径导入导出（2026-06-13）✅
+
+### 背景
+
+Media Marshal v0.2.9 已经把监控路径、媒体类型、路径模板、文件操作方式、忽略规则、发现模式等核心整理策略收敛到 `WatchRule`。用户在升级版本、重建容器、迁移服务器或更换数据库前，需要一种低风险方式备份和恢复监控路径配置。
+
+第一版导入导出只解决“监控路径规则迁移”问题，不做完整系统备份。系统配置、任务、候选、缓存、TMDB Key、代理等数据仍由各自模块管理，不能被本功能隐式导入或导出。
+
+### 目标
+
+- 支持将当前全部监控路径规则导出为 JSON 文件。
+- 支持从 JSON 文件导入监控路径规则。
+- 导入默认采用追加模式，不删除、不覆盖、不修改现有规则。
+- 导入过程必须可预览、可解释，避免用户误以为导入会恢复完整系统状态。
+- 导入后默认全部禁用，除非用户显式开启“保持导出时的启用状态”。
+- 确保导入不影响现有任务、候选、缓存或系统配置。
+
+### 导出文件边界
+
+导出文件定义为“监控路径配置包”，建议结构如下：
+
+```json
+{
+  "kind": "media-marshal.watch-rules",
+  "schemaVersion": 1,
+  "appVersion": "v0.2.9",
+  "exportedAt": "2026-06-13T12:00:00+08:00",
+  "rules": []
+}
+```
+
+`kind` 必须固定为 `media-marshal.watch-rules`，用于防止用户误导入其它 JSON 文件。
+
+`schemaVersion` 第一版为 `1`。后端必须拒绝高于当前支持版本的导入文件，并提示用户升级 Media Marshal 或使用兼容版本导出。
+
+`appVersion` 和 `exportedAt` 仅用于展示和排查，不参与导入逻辑。
+
+### 导出字段
+
+每条规则导出字段以当前 `RuleRequest` 为基础，包含：
+
+- `name`
+- `sourceDir`
+- `targetDir`
+- `mediaType`
+- `moviePathTemplate`
+- `tvPathTemplate`
+- `operation`
+- `enabled`
+- `moveAssociatedFiles`
+- `cleanupEmptyDirs`
+- `generateNfo`
+- `ignoredFilePatterns`
+- `discoveryMode`
+- `scanIntervalMinutes`
+- `webhookEnabled`
+
+导出文件不得包含以下字段：
+
+- `id`
+- `userId`
+- `createdAt`
+- `updatedAt`
+- 任务、候选、缓存、日志等运行数据
+- TMDB API Key、代理、置信度、邮件等系统配置
+- 全局默认路径模板
+
+如果 `moviePathTemplate` 或 `tvPathTemplate` 为 `null`，导出后仍保持 `null`。导入到新实例后，其语义仍然是“使用目标实例当前的全局默认模板”，不会把源实例的全局默认模板一起迁移。
+
+### 导入模式
+
+第一版只支持追加导入，不支持覆盖导入或替换导入。
+
+追加导入必须满足：
+
+- 不删除现有 `WatchRule`。
+- 不覆盖现有 `WatchRule`。
+- 不复用导出文件中的旧 `id`。
+- 不修改任何 `MediaTask.ruleId`。
+- 不修改任务、候选、缓存或系统配置。
+- 完全重复的规则跳过。
+- 冲突规则拒绝导入。
+- 导入成功后只对新增规则创建新的数据库记录。
+
+导入后的启用状态规则：
+
+- 默认导入为 `enabled=false`，即使导出文件中规则原本为启用。
+- 前端可以提供“保持导出时的启用状态”开关，默认关闭。
+- 只有用户主动开启该开关时，新增规则才按导出文件中的 `enabled` 写入。
+- 该开关只影响新增规则，不得修改已存在规则的启用状态。
+- 如果保持启用状态会导致路径预检失败，则该规则不能作为启用规则导入。
+
+### 完全重复规则
+
+“完全重复”指的是监控规则的整理行为完全等价，而不是任务重复。
+
+后端应基于规则行为字段生成重复判断指纹。建议参与判断的字段：
+
+- `sourceDir`
+- `targetDir`
+- `mediaType`
+- `moviePathTemplate`
+- `tvPathTemplate`
+- `operation`
+- `moveAssociatedFiles`
+- `cleanupEmptyDirs`
+- `generateNfo`
+- `ignoredFilePatterns`
+- `discoveryMode`
+- `scanIntervalMinutes`
+- `webhookEnabled`
+
+不参与重复判断的字段：
+
+- `id`
+- `userId`
+- `createdAt`
+- `updatedAt`
+- `name`
+- `enabled`
+
+原因：
+
+- `name` 是用户显示名，不应决定整理行为是否重复。
+- `enabled` 是当前实例运行状态，导入不应因为导出文件的启用状态而修改已有规则。
+
+当导入规则与现有规则完全重复时：
+
+- 不创建新规则。
+- 不更新现有规则。
+- 不改变现有规则 `enabled` 状态。
+- 预览结果显示为“将跳过：已有相同规则”。
+
+重复判断中的路径比较应使用轻量字符串规范化，避免因为结尾分隔符差异误判：
+
+- 去除前后空格。
+- 将反斜杠统一为 `/`。
+- 移除非根路径末尾的 `/`。
+- 不访问文件系统、不解析符号链接、不根据宿主机路径做真实路径转换。
+
+`ignoredFilePatterns` 比较时应保持顺序语义，只去除空白行和行尾换行差异，不应重新排序。
+
+### 冲突规则
+
+“冲突拒绝”指的是导入文件中的某些规则可能与现有规则或导入文件内部规则产生不明确行为，第一版不自动合并、不覆盖，直接阻止这些规则导入。
+
+阻断型冲突：
+
+- 导入规则的 `sourceDir` 与现有规则相同，但行为字段不同。
+- 导入文件内部存在多个 `sourceDir` 相同但行为字段不同的规则。
+- 导入规则包含当前版本不支持的枚举值，例如未知 `mediaType`、`operation`、`discoveryMode`。
+- 导入文件 `schemaVersion` 高于当前支持版本。
+- `kind` 不是 `media-marshal.watch-rules`。
+- 必填字段缺失或类型不正确。
+- 用户开启“保持导出时的启用状态”时，将被启用的规则路径预检失败。
+
+提示型风险：
+
+- `name` 与现有规则重复，但路径和行为不同。
+- `targetDir` 与现有规则相同。
+- `sourceDir` 与现有规则存在父子目录包含关系。
+- 默认禁用导入时，`sourceDir` 或 `targetDir` 当前不可用。
+
+提示型风险不默认阻断导入，但必须在预览页展示清楚。若开发 Agent 认为父子目录包含关系在当前发现服务中会导致明显重复扫描，可以将“启用状态下的父子目录包含关系”升级为阻断型冲突，并在 `implementation-log.mdc` 中说明原因。
+
+### 导入预览
+
+导入必须先预览再确认，不允许上传文件后直接落库。
+
+预览结果需要返回：
+
+- 文件级信息：`kind`、`schemaVersion`、`appVersion`、`exportedAt`、规则数量。
+- 汇总信息：可导入数量、跳过数量、冲突数量、无效数量、警告数量。
+- 每条规则的预览状态、说明和风险信息。
+
+建议预览状态：
+
+- `READY`：可导入。
+- `SKIPPED_DUPLICATE`：已有相同规则，将跳过。
+- `CONFLICT`：存在阻断型冲突，不可导入。
+- `INVALID`：格式或字段非法，不可导入。
+- `WARNING`：可导入，但存在需要用户确认的风险。
+
+当存在 `CONFLICT` 或 `INVALID` 时，前端确认导入按钮必须禁用。第一版不做“只导入可用项”的复杂选择，避免用户误以为冲突规则已经被部分修复。
+
+### 后端接口建议
+
+新增接口：
+
+| 方法 | 路径 | 说明 | 请求体 | 响应 `data` |
+|---|---|---|---|---|
+| GET | `/api/watch-rules/export` | 导出监控规则 JSON 文件 | — | 文件下载或 JSON |
+| POST | `/api/watch-rules/import/preview` | 解析并预览导入文件，不落库 | `WatchRuleImportPackage` | `WatchRuleImportPreview` |
+| POST | `/api/watch-rules/import` | 按预览结果执行导入 | `WatchRuleImportRequest` | `WatchRuleImportResult` |
+
+`WatchRuleImportRequest` 至少应包含：
+
+- 导入包内容。
+- `preserveEnabledState: boolean`，默认 `false`。
+
+后端不得信任前端预览结果。真正导入时必须重新执行结构校验、重复判断、冲突判断和必要的路径预检。
+
+导入应在事务中执行：
+
+- 可导入规则全部创建成功后提交。
+- 任意创建失败则回滚本次导入。
+- 导入完成后只调用一次 `FileDiscoveryService.reload()`。
+- 如果本次没有创建任何新规则，只跳过重复规则，则不需要 reload。
+
+### 路径与权限校验
+
+导入时应复用现有 WatchRule 保存前校验能力，保持与手动新建规则一致。
+
+默认禁用导入时：
+
+- 结构合法、字段合法即可导入。
+- 路径不可用或权限不足可以作为 warning 展示。
+- 用户后续启用规则前仍需通过现有保存 / 启用流程校验。
+
+保持启用状态时：
+
+- 所有将以 `enabled=true` 导入的规则必须通过路径和文件操作预检。
+- 预检失败的规则应标记为 `CONFLICT` 或 `INVALID`，不得以启用状态导入。
+
+### 前端交互要求
+
+导入导出入口放在“路径设置”页面，不新增独立系统设置页。
+
+规则列表工具区新增：
+
+- “导出”按钮：下载当前监控规则 JSON。
+- “导入”按钮：打开导入弹窗。
+
+导入弹窗建议分三步：
+
+1. 上传文件。
+2. 预览和选择导入选项。
+3. 确认导入。
+
+上传区必须提示：
+
+```text
+此功能只导入监控路径规则，不会导入 TMDB Key、代理、系统配置、任务记录或缓存。
+导入默认追加新规则，不会修改现有任务。
+导入后的规则默认禁用，确认路径和权限后再手动启用。
+```
+
+预览区展示导入包信息：
+
+- 文件类型
+- 格式版本
+- 导出版本
+- 导出时间
+- 规则数量
+
+导入选项：
+
+- 默认选项：导入后全部禁用。
+- 可选开关：保持导出时的启用状态。
+
+“保持导出时的启用状态”开关默认关闭。开启时必须展示更强提示：
+
+```text
+保持启用状态后，已启用的规则会在导入后参与文件发现。请确认新服务器的挂载路径、权限和目标目录已经准备好。
+```
+
+预览表格建议展示：
+
+- 状态
+- 名称
+- 源目录
+- 目标目录
+- 媒体类型
+- 操作方式
+- 发现模式
+- 说明 / 风险
+
+确认按钮旁边应展示汇总文案，例如：
+
+```text
+将创建 3 条规则，跳过 1 条重复规则，0 条冲突。
+导入后新规则将保持禁用。
+```
+
+导入成功提示应明确说明是否禁用：
+
+```text
+已导入 3 条监控规则。规则当前为禁用状态，请检查路径、权限和模板后手动启用。
+```
+
+前端中英文文案必须同步维护，不能只更新中文提示。
+
+### 非目标
+
+本 ADR 不解决以下问题：
+
+- 不导入 / 导出 TMDB API Key。
+- 不导入 / 导出 TMDB 代理、置信度、邮件、调试开关等系统配置。
+- 不导入 / 导出任务、候选、缓存、日志。
+- 不导入 / 导出全局默认路径模板。
+- 不支持覆盖导入、替换导入或删除现有规则。
+- 不支持导入时逐条编辑规则。
+- 不支持导入时批量替换路径前缀。
+- 不支持跨版本复杂迁移脚本。
+- 不保证宿主机路径、Docker volume 挂载或 NAS 权限已正确配置。
+
+### 验收标准
+
+- 导出的 JSON 包含 `kind`、`schemaVersion`、`appVersion`、`exportedAt` 和 `rules`。
+- 导出的规则不包含 `id`、`userId`、`createdAt`、`updatedAt`。
+- 导出的 JSON 不包含系统配置、任务、候选、缓存、日志或密钥。
+- 空实例导入导出文件后，可以创建等价 WatchRule。
+- 默认导入后新增规则均为 `enabled=false`。
+- 用户开启“保持导出时的启用状态”后，新增规则按导出文件中的 `enabled` 写入。
+- 完全重复规则会跳过，不创建、不更新、不改变现有启用状态。
+- 同 `sourceDir` 但行为字段不同的规则会被标记为冲突，不能导入。
+- 导入文件内部同 `sourceDir` 不同行为的规则会被标记为冲突。
+- `kind` 错误、`schemaVersion` 过高、必填字段缺失、枚举值不支持时导入失败并给出可理解提示。
+- 导入必须先预览；存在 `CONFLICT` 或 `INVALID` 时不能确认导入。
+- 默认禁用导入时，路径不可用作为 warning 展示，不阻止创建禁用规则。
+- 保持启用状态时，将启用规则必须通过路径预检；失败时不能启用导入。
+- 导入成功后路径设置列表刷新。
+- 导入成功且创建了新规则时，后端只触发一次发现服务 reload。
+- 导入过程不修改任何现有 `MediaTask.ruleId`。
+- 前端导入弹窗清楚提示“只导入监控路径规则，不导入系统配置和任务数据”。
+- 前端导入弹窗清楚提示“默认导入为禁用，除非开启保持原状态”。
+- 中英文界面文案均已同步。
+
+### 文档维护要求
+
+- 后端 Agent 实现接口或 DTO 后，必须同步更新 `api-contracts.mdc`。
+- 开发 Agent 需要在 `implementation-log.mdc` 记录实际接口路径、DTO 字段、重复 / 冲突判断规则、事务策略、测试覆盖和任何偏离本 ADR 的地方。
+- README / 用户文档如介绍备份迁移，应明确第一版只支持监控路径规则，不支持完整系统备份。
+- Release Notes 需要说明该能力适用于版本升级前备份和服务器迁移前后恢复监控路径。
+- 本 ADR 只记录架构决策与边界，不记录具体代码实现过程。
+
+---
+
+## ADR-027 Sample 视频识别与扫描剪枝（2026-06-25）✅
+
+### 背景
+
+部分电影发布目录同时包含正片和用于预览的 Sample 视频，例如：
+
+```text
+/media/Download/2026/06/Angels.Wear.White.2017.1080p.BluRay.x264-WiKi/
+├── Angels.Wear.White.2017.1080p.BluRay.x264-WiKi.mkv
+└── Sample/
+    └── Angels.Wear.White.2017.1080p.BluRay.x264-WiKi.Sample.mkv
+```
+
+当前系统会把两个视频都作为普通媒体资产送入 guessit、TMDB 匹配和整理流程。由于两者会匹配到同一影片，并使用相同路径模板生成相同目标路径，最终触发 `TARGET_CONFLICT`。
+
+ADR-010 的目标路径冲突保护行为是正确的，不能为了兼容 Sample 视频而覆盖目标文件。缺陷位于文件发现层：高置信度 Sample 视频不应进入主媒体处理流水线。
+
+ADR-011 已支持 `sample/` 形式的目录忽略规则，但当前系统默认忽略规则并未真正包含 Sample 目录，因此用户在未自定义忽略规则时仍会遇到该问题。
+
+### 目标
+
+- 默认忽略常见 Sample 目录，并在扫描阶段剪枝整个子树。
+- 识别未放在 Sample 目录中的高置信度 Sample 视频。
+- Sample 视频不进入 guessit、TMDB、候选、路径渲染和文件操作流程。
+- Sample 视频静默忽略，不创建 `SKIPPED` 或 `FAILED` 任务。
+- 保留 ADR-010 目标路径冲突保护，不允许 Sample 覆盖正片。
+- 不误伤标题中正常包含 `Sample` 单词的媒体。
+- 不暗中覆盖用户已经保存的自定义忽略规则。
+
+### 第一层：默认 Sample 目录剪枝
+
+系统默认忽略规则增加：
+
+```text
+sample/
+samples/
+```
+
+匹配遵循 ADR-011 现有目录规则语义：
+
+- 大小写不敏感，可匹配 `Sample/`、`sample/`、`SAMPLE/`、`Samples/` 等形式。
+- 匹配任意层级下的同名目录。
+- 实时监听发现该目录时不递归注册。
+- 周期扫描和手动全量扫描遇到该目录时跳过整个子树。
+- 目录内所有文件均不进入媒体资产识别。
+- 不为目录或目录内文件创建 `SKIPPED` 任务。
+
+后端 `DEFAULT_IGNORED_PATTERNS` 与前端默认忽略规则展示必须同步增加这两个规则，避免前后端对“系统默认”的理解不一致。
+
+### 第二层：同目录 Sample 后缀视频识别
+
+部分发布目录不创建 Sample 子目录，而是将样片与正片放在同一目录：
+
+```text
+Movie.Name.2026.1080p-WiKi.mkv
+Movie.Name.2026.1080p-WiKi.Sample.mkv
+```
+
+对这种场景采用高置信度、低误伤的关联识别，不使用简单的 `*sample*` 全局匹配。
+
+候选文件需要同时满足：
+
+1. 是当前系统支持的视频扩展名。
+2. 文件 basename 以以下独立后缀之一结尾，大小写不敏感：
+   - `.sample`
+   - `-sample`
+   - `_sample`
+3. 去除 Sample 后缀后，同目录存在 basename 完全相同的另一个视频文件。
+
+示例：
+
+```text
+Movie.Name.2026.Sample.mkv
+```
+
+去除 `.Sample` 后得到：
+
+```text
+Movie.Name.2026
+```
+
+只有同目录存在 `Movie.Name.2026.mkv`、`Movie.Name.2026.mp4` 等受支持视频时，前者才被认定为 Sample。
+
+对应正片可以使用不同的视频扩展名，但 basename 比较必须大小写不敏感且完全相等，不能只使用前缀包含关系。
+
+### 防误伤规则
+
+以下场景不能仅因为文件名包含 `sample` 就自动忽略：
+
+- 标题正文中包含 `Sample`，但不位于 basename 末尾。
+- basename 以 `.sample`、`-sample`、`_sample` 结尾，但同目录没有对应正片。
+- 文件名只与另一视频部分相似，去除 Sample 后缀后 basename 不能完全对应。
+- 非视频文件。
+
+例如以下单独存在的文件仍按普通视频处理：
+
+```text
+A.Sample.Movie.2024.mkv
+The.Sample.2025.mkv
+```
+
+即使以下文件 basename 以 `.Sample` 结尾，如果没有同目录正片，也不得静默忽略：
+
+```text
+The.Movie.Sample.mkv
+```
+
+不使用文件大小、时长、分辨率或码率作为第一版核心判断条件。扫描阶段通常没有可靠时长信息，而单纯依赖文件大小也容易误伤短片、纪录片或特殊内容。
+
+### 与 WatchRule 自定义忽略规则的关系
+
+ADR-011 的既有语义保持不变：
+
+- `ignoredFilePatterns = null`：使用系统默认规则，自动获得 `sample/`、`samples/` 目录剪枝和本 ADR 的同目录 Sample 后缀识别。
+- `ignoredFilePatterns = []`：用户明确关闭忽略规则，不强制应用 Sample 忽略。
+- `ignoredFilePatterns = [...]`：使用用户自己的完整规则列表，不暗中追加新的默认规则，也不自动开启同目录 Sample 后缀识别。
+
+这样可以避免版本升级后静默改变用户明确配置的自定义规则。
+
+路径设置页在用户使用自定义规则或空规则时，应展示非阻断提示：
+
+```text
+当前规则未使用系统默认忽略项。建议按需添加 sample/ 和 samples/，避免样片进入整理流程。
+```
+
+可以提供“合并新增 Sample 忽略规则”的便捷操作，但不得覆盖、排序或删除用户已有规则，也不得直接把整个自定义列表恢复为系统默认。
+
+第一版不为自定义规则新增特殊的“Sample 文件语义”语法。需要同目录 Sample 后缀自动识别的用户，可以恢复系统默认规则；未来如需让该能力独立开关，再单独设计 WatchRule 配置。
+
+### 发现流程顺序
+
+Sample 判断必须发生在 guessit 和 pipeline 之前：
+
+```text
+发现路径
+→ 应用 WatchRule 忽略规则
+→ 应用默认 Sample 后缀关联识别
+→ 媒体资产识别
+→ 数据库查重
+→ guessit / TMDB / 整理流程
+```
+
+其中：
+
+- Sample 目录优先通过 ADR-011 目录规则完成剪枝。
+- 同目录 Sample 后缀识别只在规则使用系统默认忽略行为时生效。
+- 命中 Sample 后静默返回，不创建任务，不计入失败。
+- 扫描汇总中可以计入普通 `skipped`，但不应计入 `duplicates` 或 `failed`。
+- Debug 日志应记录被识别为 Sample 的路径和对应正片路径，便于排查误判；普通日志无需逐文件输出。
+
+实时监听、周期扫描、手动全量扫描必须复用同一套 Sample 判断逻辑，不能只修复其中一种发现入口。
+
+### 已有任务处理
+
+本修复只影响后续发现，不回溯修改已有任务：
+
+- 不自动删除已有 Sample 任务。
+- 不自动删除已有 `TARGET_CONFLICT` 失败任务。
+- 不自动移动、覆盖或删除目标目录中的文件。
+- 不自动重新扫描正片。
+
+用户需要根据目标目录中的实际文件自行确认：
+
+- 如果目标文件是正片，可删除 Sample 对应的失败任务记录。
+- 如果 Sample 已先被整理为目标文件，应先人工移除错误目标文件，再删除相关任务记录并重新扫描正片。
+
+前端无需为历史 Sample 任务新增自动修复按钮。未来如果任务管理页支持重新扫描或重试，再统一设计。
+
+### 前端要求
+
+路径设置页需要同步：
+
+- 系统默认忽略规则展示增加 `sample/`、`samples/`。
+- 中英文说明明确 Sample 目录会被静默忽略。
+- 使用自定义规则或空规则时显示 Sample 风险提示。
+- 如提供合并操作，操作结果必须可见，并随当前 WatchRule 表单正常保存。
+- WatchRule 导入导出继续按实际 `ignoredFilePatterns` 值工作，不把新默认规则展开写入原本为 `null` 的规则。
+
+已存在且 `ignoredFilePatterns=null` 的 WatchRule 无需数据库迁移，升级后自动使用更新后的系统默认规则。
+
+### 非目标
+
+本 ADR 不解决以下问题：
+
+- 不修改 ADR-010 的目标文件冲突策略。
+- 不默认忽略 `trailer/`、`trailers/`、`extras/`、`featurettes/`、`behind the scenes/` 等额外内容目录。
+- 不支持把 Sample 作为附属文件跟随正片移动。
+- 不保存 Sample 的任务记录、TMDB 信息或媒体资产信息。
+- 不通过媒体时长、码率、分辨率或文件大小识别 Sample。
+- 不自动修复历史目标冲突。
+- 不新增数据库字段或 REST API。
+- 不把系统默认规则强制合并到用户自定义规则中。
+
+### 验收标准
+
+- 使用系统默认忽略规则时，任意层级的 `Sample/` 和 `Samples/` 目录都会被大小写不敏感地剪枝。
+- Sample 目录中的视频不会进入 guessit、TMDB 或文件整理流程。
+- Sample 目录及其子文件不会创建 `SKIPPED`、`FAILED` 或待确认任务。
+- 同目录存在正片时，`.sample`、`-sample`、`_sample` 后缀视频会被静默忽略。
+- 同目录正片与 Sample 使用不同视频扩展名时仍可正确关联。
+- 没有对应正片的 `.sample` 后缀视频不会被自动忽略。
+- 标题正文包含 `Sample` 但不符合后缀和同目录正片条件时不会被误伤。
+- `ignoredFilePatterns=null` 的现有规则升级后自动获得新默认行为。
+- `ignoredFilePatterns=[]` 的规则不会被强制应用 Sample 忽略。
+- 使用自定义忽略规则的现有 WatchRule 内容不会被升级过程修改。
+- 前后端默认忽略规则列表保持一致。
+- 实时监听、周期扫描和手动全量扫描行为一致。
+- 正片正常整理，不再因同发布目录中的 Sample 视频产生目标路径冲突。
+- 目标路径已经存在时，ADR-010 的拒绝覆盖行为仍然有效。
+- 后端单元测试至少覆盖目录剪枝、大小写、同目录后缀识别、不同扩展名、无正片不忽略和标题误伤保护。
+- 前端中英文提示和默认规则展示同步更新。
+
+### 文档维护要求
+
+- 开发 Agent 需要在 `implementation-log.mdc` 记录实际 Sample 判断位置、规则生效边界、测试覆盖和任何偏离本 ADR 的地方。
+- 如实际实现改变接口、WatchRule 字段或忽略规则语义，后端 Agent 必须同步更新 `api-contracts.mdc`。
+- Release Notes 应说明系统默认忽略 Sample 目录，并避免样片与正片产生目标路径冲突。
+- 用户文档如介绍忽略规则，应补充 Sample 目录默认剪枝，以及自定义规则不会自动继承新增默认项。
+- 本 ADR 只记录架构决策与边界，不记录具体代码实现过程。
+
+---
+
+## ADR-028 已完成任务匹配纠错、目标资产重命名与修正历史链路（2026-06-27）✅
+
+### 背景
+
+当前系统已经支持低置信度任务进入 Queue，并通过 ADR-021 在确认前编辑识别信息、重新匹配候选。但实际使用中仍存在另一类错误：文件名本身不准确，系统自动匹配结果置信度超过阈值并直接完成整理，任务不会进入 Queue，用户也就无法在确认前介入。
+
+例如用户下载的实际影片是《一出好戏》，但文件名为：
+
+```text
+The.Island.2018.4K.WEB-DL.H264.DDP5.1-TJUPT.mkv
+```
+
+系统可能高置信度匹配到英文影片 `The Island (2018)`，并按错误 TMDB 条目完成重命名：
+
+```text
+The Island (2018) - 2160p.mkv
+```
+
+此时错误已经发生在目标媒体库中。修复目标不是重新扫描源文件，也不是把任务塞回 Queue，而是在 Dashboard / 任务历史中提供一个明确的**已完成任务纠错入口**，允许用户修正识别信息、选择正确 TMDB 条目、预览目标路径变化，并移动 / 重命名当前目标资产。
+
+### 决策
+
+Dashboard 最近任务表格的操作栏新增**修正**入口。
+
+该入口只面向已经完成整理、且当前目标资产仍存在的任务。用户点击后打开弹窗或抽屉，完成以下流程：
+
+1. 查看原任务的源路径、当前目标路径、资产类型、媒体类型、解析标题、年份、季 / 集、置信度、TMDB ID 和确认来源。
+2. 编辑当前有效识别信息。
+3. 根据新识别信息重新匹配 TMDB 候选，或使用手动搜索选择 TMDB 条目。
+4. 在应用前预览本次修正会影响的主资产、附属文件、NFO、旧空目录清理和目标路径。
+5. 只有预览无阻断项时，用户才能确认应用修正。
+6. 应用成功后，原任务变为“已修正”，系统新增一条新的 `DONE` 任务记录表示当前有效资产。
+
+本功能的核心对象是**目标资产**，不是源文件：
+
+- 不检查 `sourcePath` 是否仍存在。
+- 不重新从 `sourcePath` 执行 MOVE / COPY / HARD_LINK / SYMBOLIC_LINK。
+- 不重新触发文件发现或原始 pipeline。
+- 文件操作源始终是当前任务的 `targetPath`。
+- 路径渲染继续使用任务所属 WatchRule 的 `targetDir` 和对应媒体类型路径模板。
+
+### 适用范围
+
+第一版支持：
+
+- `status=DONE`
+- `assetType=VIDEO_FILE`
+- `assetType=BLURAY_DIRECTORY`
+
+第一版不支持：
+
+- `PENDING`
+- `PROCESSING`
+- `AWAITING_CONFIRMATION`
+- `FAILED`
+- `SKIPPED`
+- `CORRECTED`
+- `assetType=ISO_IMAGE`
+
+ISO 镜像整理本身仍属于后续规划。等系统正式支持 ISO 文件整理后，再同步补齐 ISO 纠错能力；本 ADR 不提前定义 ISO 修正规则。
+
+### 任务状态与历史链路
+
+新增任务状态：
+
+```typescript
+type TaskStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'AWAITING_CONFIRMATION'
+  | 'DONE'
+  | 'FAILED'
+  | 'SKIPPED'
+  | 'CORRECTED'
+```
+
+`CORRECTED` 的前端展示文案为：`已修正`。
+
+`CORRECTED` 表示该任务曾经完成整理，但后来被用户手动纠正。它是历史终态，不代表当前有效媒体资产。
+
+新增确认来源：
+
+```typescript
+type ConfirmationSource =
+  | 'AUTO_MATCH'
+  | 'MANUAL_SINGLE'
+  | 'MANUAL_BATCH'
+  | 'MANUAL_CORRECTION'
+```
+
+`MANUAL_CORRECTION` 表示该任务由已完成任务纠错流程创建，是当前有效的修正后记录。
+
+`media_task` 增加修正链路字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `corrected_from_task_id` | BIGINT / Long | 新任务指向被修正的旧任务 |
+| `corrected_to_task_id` | BIGINT / Long | 旧任务指向修正后的新任务 |
+| `corrected_at` | DATETIME / String | 旧任务被修正的时间 |
+
+应用修正成功后的记录关系：
+
+| 记录 | 状态 | 语义 |
+|---|---|---|
+| 旧任务 | `CORRECTED` | 保留错误自动识别或旧确认结果，作为历史记录 |
+| 新任务 | `DONE` | 表示当前有效目标资产，`confirmationSource=MANUAL_CORRECTION` |
+
+旧任务保留原有 `targetPath`，用于展示修正前路径。该路径在文件操作后通常已经不存在，不应再被视为当前有效文件位置。
+
+新任务保留旧任务的 `sourcePath` 作为历史来源信息，并写入新的 `targetPath`。由于纠错流程不依赖源文件，`sourcePath` 仅用于追溯，不参与文件操作。
+
+### 去重与当前有效任务语义
+
+`CORRECTED` 任务不参与当前有效资产去重。
+
+当前数据库查重逻辑不能继续只用“非 `FAILED` 即有效”的判断。开发时需要将查重语义调整为：
+
+```text
+同一路径存在 PENDING / PROCESSING / AWAITING_CONFIRMATION / DONE / SKIPPED 任务时，视为已有有效记录；
+同一路径只存在 FAILED / CORRECTED 任务时，不阻止后续发现或重新扫描。
+```
+
+这样可以避免旧的已修正历史记录长期阻止用户重新扫描，也能让新创建的 `DONE` 修正记录继续承担当前有效资产的去重职责。
+
+Dashboard 可以展示 `CORRECTED` 历史记录，并提供跳转到修正后任务的入口；但完成数量、当前媒体资产视图和未来媒体库索引应以新 `DONE` 记录为准，不把 `CORRECTED` 当作当前有效资产。
+
+### 页面交互
+
+Dashboard 最近任务表格操作栏新增 `修正` 按钮。
+
+展示规则：
+
+- 仅 `DONE` 任务展示或启用 `修正`。
+- `ISO_IMAGE` 第一版不展示或禁用，并提示 `ISO 镜像修正将在 ISO 整理能力启用后支持`。
+- `CORRECTED` 任务展示 `查看修正后记录`，不允许再次修正旧历史记录。
+- 非 `DONE` 状态不提供修正入口。
+
+修正弹窗 / 抽屉至少展示：
+
+- 源路径：只读，标注为历史来源，不参与本次修正。
+- 当前目标路径：只读，本次文件操作的实际源路径。
+- 资产类型：只读。
+- 当前媒体类型、解析标题、年份、季号、集号、分辨率、编码、发布组。
+- 当前 TMDB ID、匹配标题、原始标题、匹配年份、置信度、确认来源。
+- 可编辑识别信息：媒体类型、解析标题、年份、季号、集号、集结束号。
+- 候选区：重新匹配结果和手动搜索结果。
+- 预览区：主资产路径变化、附属文件计划、NFO 计划、旧空目录清理计划、阻断项和提示项。
+
+页面必须先完成预览，再允许应用修正。用户修改识别信息、候选、是否重新生成 NFO 后，旧预览结果应失效，需要重新预览。
+
+确认应用前必须有二次确认，文案应强调：
+
+```text
+本操作会移动 / 重命名目标媒体库中的文件或目录，并创建修正历史记录。源文件不会被读取或修改。
+```
+
+### 识别信息编辑与候选选择
+
+识别信息编辑规则沿用 ADR-021：
+
+- `parsedTitle` 必填。
+- `mediaType=MOVIE` 时清空季 / 集字段。
+- `mediaType=TV_SHOW` 时季号和集号必填。
+- `parsedYear` 可为空。
+- 多集范围可使用 `parsedEpisodeEnd`，但必须大于起始集号。
+
+`BLURAY_DIRECTORY` 第一版只支持电影蓝光原盘修正：
+
+- `mediaType=MOVIE`：允许。
+- `mediaType=TV_SHOW`：阻断，并提示 `第一版暂不支持剧集蓝光原盘修正`。
+
+用户可以通过两种方式选择正确 TMDB 条目：
+
+1. **重新匹配**
+   - 基于编辑后的识别信息请求 TMDB 匹配。
+   - 返回候选列表供用户选择。
+   - 不修改任务、不写入候选表、不执行文件操作。
+
+2. **手动搜索**
+   - 复用 ADR-019 的全局 metadata 搜索能力。
+   - 支持关键词或 TMDB ID。
+   - 搜索结果作为临时候选，只有应用修正成功后才写入新任务候选快照。
+
+### API 边界建议
+
+后端新增独立任务纠错接口，不复用 Queue 接口。
+
+推荐接口：
+
+```http
+POST /api/tasks/{id}/correction/rematch
+POST /api/tasks/{id}/correction/preview
+POST /api/tasks/{id}/correction/apply
+```
+
+其中：
+
+| 接口 | 作用 | 是否修改数据库 | 是否操作文件 |
+|---|---|---:|---:|
+| `rematch` | 按新识别信息获取 TMDB 候选 | 否 | 否 |
+| `preview` | 计算目标路径、附属文件、NFO 和阻断项 | 否 | 否 |
+| `apply` | 重新校验并应用修正 | 是 | 是 |
+
+`apply` 不能信任前端传回的预览结果，必须重新计算计划并再次检查所有阻断项。
+
+开发实现该 ADR 时，后端 Agent 必须同步更新 `api-contracts.mdc`，记录请求体、响应体、错误语义和新增字段。
+
+### 预览模型
+
+预览结果至少应表达：
+
+| 字段 | 说明 |
+|---|---|
+| `currentTargetPath` | 当前任务目标路径，本次文件操作的源路径 |
+| `correctedTargetPath` | 修正后主资产目标路径 |
+| `sameTargetPath` | 修正前后主资产路径是否一致 |
+| `selectedMatch` | 用户选择的 TMDB 候选详情 |
+| `operations` | 计划执行的文件 / 目录操作 |
+| `blockers` | 阻断项；非空时不能应用 |
+| `warnings` | 非阻断提示 |
+| `canApply` | 是否允许应用 |
+
+文件操作计划可按以下类型表达：
+
+| 类型 | 说明 |
+|---|---|
+| `MOVE_MAIN_ASSET` | 移动 / 重命名普通视频文件或蓝光根目录 |
+| `MOVE_ASSOCIATED_FILE` | 移动 / 重命名普通视频附属文件 |
+| `GENERATE_NFO` | 用户显式选择重新生成 NFO |
+| `CLEAN_EMPTY_DIR` | 修正后清理旧目标空目录 |
+| `CREATE_CORRECTION_TASK` | 创建新的 `DONE` 修正任务记录 |
+| `MARK_ORIGINAL_CORRECTED` | 将旧任务标记为 `CORRECTED` |
+
+阻断项至少包括：
+
+- 任务不是 `DONE`。
+- 任务为 `ISO_IMAGE`。
+- 任务已经是 `CORRECTED`。
+- `targetPath` 为空。
+- 当前 `targetPath` 不存在。
+- 当前 `targetPath` 类型与 `assetType` 不匹配。
+- WatchRule 不存在。
+- 新目标路径不安全，包含绝对路径、盘符、UNC、`..` 逃逸等。
+- 新目标路径已存在，且不等于当前目标路径。
+- 任一计划移动的附属文件目标路径已存在。
+- `BLURAY_DIRECTORY` 被修正为 `TV_SHOW`。
+- TMDB 详情无法获取，或使用 `{episode_title}` 时分集详情不可用。
+
+提示项可以包括：
+
+- 源路径不存在，但本次修正不依赖源文件。
+- `.md5` 文件会随文件名移动 / 改名，但不会修改 md5 文件内容。
+- 通用封面未自动处理，因为旧目标目录内可能包含其它媒体资产。
+- 旧目标空目录清理失败不会回滚已完成修正，但会记录日志。
+
+### 普通视频目标资产修正规则
+
+`VIDEO_FILE` 的当前主资产为 `targetPath` 指向的普通文件。
+
+路径计算：
+
+- 使用修正后的媒体类型和 TMDB 详情。
+- 使用当前 WatchRule 的电影 / 剧集路径模板。
+- `{ext}` 从当前 `targetPath` 的扩展名取得，而不是从 `sourcePath` 取得。
+- 剧集模板使用修正后的 `parsedSeason`、`parsedEpisode`、`parsedEpisodeEnd`。
+- 路径安全检查继续遵守 ADR-024。
+
+附属文件跟随规则：
+
+- 在当前目标文件同目录查找附属文件。
+- 以当前目标文件 basename 为匹配基准。
+- 计划移动到新目标文件同目录，并使用新目标文件 basename 重命名。
+- 不递归查找子目录。
+
+同 basename 附属文件包括：
+
+- `.srt`
+- `.ass`
+- `.ssa`
+- `.sub`
+- `.idx`
+- `.nfo`
+- `.jpg`
+- `.jpeg`
+- `.png`
+- `.webp`
+- `.md5`
+
+`.md5` 文件第一版只移动 / 改名，不修改文件内容。不同发布组的 md5 文件格式不统一，自动改写内容可能导致校验信息失真。
+
+通用封面处理规则：
+
+- `poster.jpg`
+- `folder.jpg`
+- `cover.jpg`
+
+仅当旧目标目录内不存在其它主媒体文件或蓝光目录结构时，通用封面才自动跟随移动到新目标目录并保留原文件名。
+
+如果旧目标目录可能属于多个媒体资产，通用封面不自动处理，只在预览中提示，避免把共享封面错误移动。
+
+附属文件冲突策略：
+
+- 主资产目标冲突必须阻断。
+- 附属文件目标冲突也必须在预览阶段阻断。
+- 用户必须先手动处理冲突文件，才能继续应用修正。
+- 不覆盖、不跳过、不自动改名。
+
+### 蓝光原盘目标资产修正规则
+
+`BLURAY_DIRECTORY` 的当前主资产为 `targetPath` 指向的蓝光目标根目录。
+
+修正后目标根目录计算沿用 ADR-020：
+
+1. 按电影模板渲染出普通电影文件目标路径。
+2. 对渲染结果取父目录作为蓝光目标根目录。
+3. 如果模板没有目录层级，则 fallback 到 `{title} ({year})`。
+4. `{ext}` 为空字符串。
+
+应用修正时：
+
+- 移动 / 重命名整个当前蓝光目标根目录。
+- 不修改 `BDMV/`、`CERTIFICATE/` 内部结构。
+- 不重命名内部 `.m2ts`、`.mpls`、`.clpi` 文件。
+- 不抽取最大 `.m2ts`。
+- 不把内部文件作为附属文件处理。
+- 如果当前目标是目录符号链接，只移动 / 重命名目标库中的符号链接本身，不修改符号链接指向的源目录。
+
+蓝光目标根目录内部的 `movie.nfo`、海报等会随目录整体移动。第一版不处理蓝光根目录外部的旁挂附属文件，例如与蓝光根目录同级的同名 NFO、poster、folder 等；这部分仍保留在媒体资产类型增强规划中。
+
+### NFO 策略
+
+默认不覆盖或重新生成 NFO。
+
+普通视频：
+
+- 已存在且符合附属文件规则的同 basename `.nfo` 会作为附属文件参与预览和移动。
+- 如果 `.nfo` 的新目标路径已存在，预览阻断。
+- 如果用户未选择重新生成 NFO，系统不写入新的 NFO 内容。
+- 如果用户显式选择重新生成 NFO，则在主资产和附属文件移动成功后，按修正后的 TMDB 详情重新生成目标 NFO。该操作允许覆盖本次目标路径对应的 NFO，但必须在确认文案中明确提示。
+
+蓝光原盘：
+
+- 默认只随根目录整体移动内部已有 NFO。
+- 如果用户显式选择重新生成 NFO，则在修正后目标根目录生成或覆盖 `movie.nfo`。
+- 不向 `BDMV/` 内部写入 NFO。
+
+### 旧目标空目录清理
+
+修正成功后，默认自动清理旧目标路径留下的空目录。
+
+清理规则：
+
+1. 从旧目标资产父目录开始。
+2. 如果目录为空，则删除。
+3. 向上检查父目录。
+4. 遇到非空目录立即停止。
+5. 遇到 WatchRule 的 `targetDir` 立即停止，绝不能删除目标根目录。
+
+清理只针对目标媒体库目录，不针对源目录。
+
+清理失败不应回滚已完成修正，也不应把新任务标记为 `FAILED`；后端记录 warn 日志，并可在接口响应中返回非阻断提示。
+
+### 应用顺序与安全性
+
+应用修正必须遵守以下顺序：
+
+1. 加载旧任务并校验 `status=DONE`。
+2. 校验当前 `targetPath` 存在且类型正确。
+3. 获取用户选择的 TMDB 详情，补齐路径模板所需字段。
+4. 重新计算目标路径、附属文件计划、NFO 计划和空目录清理计划。
+5. 重新执行路径安全检查和冲突检查。
+6. 只有无阻断项时，才执行文件 / 目录移动。
+7. 文件操作全部成功后，创建新的 `DONE` 任务记录。
+8. 将旧任务标记为 `CORRECTED`，写入 `correctedToTaskId` 和 `correctedAt`。
+9. 新任务写入 `correctedFromTaskId`，并保存最终选中候选快照。
+10. 发布任务更新事件，前端刷新 Dashboard。
+
+如果文件操作失败：
+
+- 不得创建新的 `DONE` 修正任务。
+- 不得将旧任务标记为 `CORRECTED`。
+- 返回明确错误信息。
+- 开发实现可做尽力回滚；如果无法回滚，必须在错误信息和日志中说明已经执行到哪一步，方便用户人工处理。
+
+数据库状态更新必须在文件操作成功之后执行，避免出现“历史链路显示已修正，但文件仍在旧位置”的假成功。
+
+### 候选快照
+
+修正成功后，新任务必须保存最终选中的 TMDB 候选快照：
+
+- `tmdbId`
+- `mediaType`
+- `confirmedTitle`
+- `confirmedOriginalTitle`
+- `confirmedYear`
+- `confirmedGenre1` ~ `confirmedGenre4`
+- `confirmedCountry`
+- `confirmedEpisodeTitle`
+- `matchConfidence`
+
+`task_candidate` 中至少要为新任务保存最终选中候选，并标记 `selected=true`。
+
+如果实现选择保存本次重新匹配的完整候选列表，也必须保证最终只有一个候选 `selected=true`。旧任务的候选快照不得删除或覆盖，以便用户回看错误自动识别时系统当时推荐了什么。
+
+### 与现有 ADR 的关系
+
+- 与 ADR-019：手动搜索能力可复用 metadata 搜索接口，但纠错应用不走 Queue 批量确认接口。
+- 与 ADR-021：识别信息编辑规则保持一致，但适用状态从待确认任务扩展到已完成任务的纠错弹窗，并且不提供“仅保存识别信息”。
+- 与 ADR-020：蓝光原盘仍作为目录型资产处理，一个任务对应一个蓝光根目录。
+- 与 ADR-024：所有新目标路径都必须经过路径安全检查。
+- 与 ADR-010：任何目标冲突都不覆盖、不合并、不自动改名。
+
+### 非目标
+
+第一版不做以下能力：
+
+- 不支持 ISO 镜像任务修正。
+- ADR-028 第一版不支持批量修正；已完成剧集的同季 / 同剧集批量修正由 ADR-030 单独定义。
+- 不把已完成任务改回 Queue。
+- 不重新读取、移动、复制、硬链接或删除源文件。
+- 不自动刷新 Emby / Jellyfin / Plex 媒体库。
+- 不修改 `.md5` 文件内容。
+- 不处理蓝光根目录外部旁挂附属文件。
+- 不提供自动回滚按钮。
+- 不建立独立媒体资产索引。
+- 不删除旧的 `CORRECTED` 历史记录。
+
+### 验收标准
+
+#### 页面入口
+
+- Dashboard 最近任务的 `DONE` 任务展示 `修正` 操作。
+- 非 `DONE` 任务不能进入修正流程。
+- `ISO_IMAGE` 任务第一版不能修正，并有清晰提示。
+- `CORRECTED` 任务可查看修正后记录，但不能再次作为旧记录修正。
+
+#### 预览
+
+- 修正弹窗展示源路径，并明确源路径只是历史来源。
+- 修正弹窗展示当前目标路径，并以此作为文件操作源。
+- 用户可以编辑媒体类型、标题、年份、季号、集号、集结束号。
+- 用户可以基于新识别信息重新匹配候选。
+- 用户可以手动搜索 TMDB 候选。
+- 应用前必须预览主资产、附属文件、NFO、旧空目录清理和最终目标路径。
+- 目标路径冲突会阻断应用。
+- 附属文件目标冲突会阻断应用。
+- `targetPath` 不存在会阻断应用。
+- 源路径不存在不会阻断应用。
+
+#### 普通视频
+
+- 普通视频纠错时，移动 / 重命名当前 `targetPath` 对应的视频文件。
+- `{ext}` 使用当前目标文件扩展名。
+- 同 basename 字幕、封面、NFO、`.md5` 会按新 basename 预览并移动。
+- `.md5` 文件内容不会被修改。
+- 多媒体目录中的 `poster.jpg` / `folder.jpg` / `cover.jpg` 不会被错误移动。
+- 单媒体目录中的通用封面可安全跟随移动。
+
+#### 蓝光原盘
+
+- 蓝光原盘纠错时，移动 / 重命名当前 `targetPath` 对应的目标根目录。
+- 修正后目标根目录按 ADR-020 的电影模板父目录规则计算。
+- `BDMV/`、`CERTIFICATE/` 内部结构不被修改。
+- 蓝光目录符号链接场景只移动链接本身，不修改链接指向。
+- 剧集蓝光原盘修正被阻断并提示第一版不支持。
+
+#### NFO 与空目录
+
+- 默认不重新生成或覆盖 NFO。
+- 用户显式选择重新生成 NFO 时，确认文案说明可能覆盖目标 NFO。
+- 普通视频重新生成 NFO 写到新目标视频同名 `.nfo`。
+- 蓝光重新生成 NFO 写到新目标根目录 `movie.nfo`。
+- 修正成功后默认清理旧目标空目录，最多清理到 WatchRule 的 `targetDir` 下方。
+- 清理旧空目录失败不会导致修正任务失败。
+
+#### 历史链路
+
+- 应用成功后，旧任务状态变为 `CORRECTED`。
+- 应用成功后，系统创建新的 `DONE` 任务。
+- 旧任务 `correctedToTaskId` 指向新任务。
+- 新任务 `correctedFromTaskId` 指向旧任务。
+- 新任务 `confirmationSource=MANUAL_CORRECTION`。
+- 旧任务保留原来的错误 TMDB 信息、候选快照和旧目标路径。
+- 新任务保存修正后的 TMDB 信息、候选快照和新目标路径。
+- `CORRECTED` 任务不参与当前有效资产去重。
+- 删除新 `DONE` 修正任务后，旧 `CORRECTED` 历史记录不会阻止同源路径后续重新扫描。
+
+### 文档维护要求
+
+- 后端 Agent 实现接口、DTO、枚举、任务字段或错误语义后，必须同步更新 `api-contracts.mdc`。
+- 开发 Agent 需要在 `implementation-log.mdc` 记录实际文件操作顺序、预览字段、冲突判断、空目录清理、测试覆盖和任何偏离本 ADR 的地方。
+- 前端 Agent 需要同步中英文文案，尤其是源路径不参与修正、附属文件冲突阻断、NFO 覆盖提示和 ISO 暂不支持说明。
+- Release Notes 应说明用户可以修正已完成任务的错误匹配，并移动 / 重命名目标媒体库中的资产。
+- 用户文档需要补充“修正已整理文件”的使用说明和风险提示。
+- 本 ADR 只记录架构决策与边界，不记录具体代码实现过程。
+
+---
+
+## ADR-029 Queue 待确认任务公共识别信息批量编辑与顺序集号生成（2026-07-25）✅
+
+### 背景
+
+ADR-021 已经允许用户在 Queue 中编辑单个 `AWAITING_CONFIRMATION` 任务的媒体类型、解析标题、年份、季号和集号，并提供“仅保存”和“保存并重新匹配”两个动作。
+
+但实际使用中，经常会一次下载同一部剧的一整季或一个剧集包。如果这些文件没有按 guessit 能稳定理解的格式命名，系统可能出现以下结果：
+
+- 多个分集被错误识别为电影。
+- 多个任务都缺少正确的剧名、年份或季号。
+- 用户需要对几十个任务重复填写相同的公共信息。
+- 部分任务虽然能够识别出集号，但剧名或媒体类型错误。
+- 部分任务完全没有识别出集号，直接把媒体类型改成剧集又会触发“剧集必须填写集号”的校验。
+
+如果只把现有单任务接口在前端循环调用，不仅交互效率低，还会因为单任务请求包含完整季 / 集字段，产生把多个任务覆盖为同一个集号或意外清空集号的风险。
+
+因此 Queue 需要增加面向已选待确认任务的公共识别信息批量编辑能力，并为缺少集号的剧集包提供可预览、可重复计算的顺序集号生成方式。
+
+### 决策
+
+Queue 页面新增**已选任务批量编辑识别信息**能力。
+
+该能力只作用于用户明确选择的 `AWAITING_CONFIRMATION` 任务，不自动选择当前页全部任务，也不作用于未选择任务。
+
+批量编辑支持统一修改：
+
+- 媒体类型。
+- 解析标题。
+- 解析年份。
+- 季号。
+
+批量编辑不提供“把所有任务直接设置为同一个集号”的字段。
+
+剧集任务的集号具有两种来源：
+
+1. **保留原集号**
+   - 保留每条任务当前的 `parsedEpisode` 和 `parsedEpisodeEnd`。
+   - 所有任务保存后的有效媒体类型为剧集时，每条任务都必须已经具备集号。
+
+2. **按文件顺序生成**
+   - 后端根据稳定的源文件自然排序结果，从用户指定的起始集号开始依次生成。
+   - 自动生成会覆盖所有已选任务原有的 `parsedEpisode`。
+   - 自动生成后的每个任务表示单集，`parsedEpisodeEnd` 清空。
+   - 如果已选任务中存在有效的多集范围，则阻断整个批次，不允许静默清除多集语义。
+
+该设计将“剧集必须有集号”的校验调整为：
+
+```text
+保存后的有效媒体类型为剧集
+→ 每条任务必须拥有有效季号
+→ 每条任务必须能够从“原集号”或“顺序生成”中得到有效集号
+→ 两种来源都无法提供集号时才阻断
+```
+
+因此，电影任务批量修改为剧集时，即使原任务没有识别出集号，用户也可以开启顺序生成，完成批量修正，不会形成无法继续操作的死循环。
+
+### 适用范围
+
+第一版只支持：
+
+- `status=AWAITING_CONFIRMATION`。
+- 用户当前明确选择的任务。
+- 当前 Queue 页面已经支持的页内任务选择模型。
+- 对普通视频、电影蓝光等待确认任务批量修改电影公共信息。
+- 对普通视频任务批量修改为剧集并保留或顺序生成集号。
+
+第一版不支持：
+
+- `PENDING`。
+- `PROCESSING`。
+- `DONE`。
+- `FAILED`。
+- `SKIPPED`。
+- `CORRECTED`。
+- 跨分页保留选择或跨分页批量编辑。
+- 对未选择任务按目录或推荐分组自动批量编辑。
+- 把所有任务批量设置为同一个集号。
+- 只为缺少集号的任务填空、同时保留其它任务原编号。
+- 手动拖拽调整文件顺序。
+- 在一个批次内分配多个季号。
+- 对剧集蓝光原盘或 ISO 镜像生成剧集集号。
+- 自动确认或自动执行文件整理。
+
+当前 Queue 的选择状态仍沿用 ADR-019 的页内语义。未来如新增跨分页选择，需要单独设计服务端选择范围、筛选快照和并发变化语义，本 ADR 不提前扩展。
+
+### 数据语义
+
+批量编辑继续直接更新 `MediaTask` 的当前有效识别字段，不新增 override 字段：
+
+- `mediaType`
+- `parsedTitle`
+- `parsedYear`
+- `parsedSeason`
+- `parsedEpisode`
+- `parsedEpisodeEnd`
+
+其中公共字段采用**局部覆盖**语义：
+
+- 用户勾选“修改此字段”时，该字段才应用到全部已选任务。
+- 用户未勾选的字段保留每条任务原值。
+- `parsedYear` 被勾选且值为 `null` 时，表示明确清空年份。
+- `parsedTitle` 被勾选时必须为 trim 后的非空字符串。
+- `parsedSeason` 被勾选时应用到全部已选任务。
+- 请求必须能够区分“未修改字段”和“将字段清空”，不能只依赖普通 nullable DTO 猜测语义。
+
+集号不属于普通公共字段，由独立分配模式控制：
+
+```typescript
+type EpisodeAssignmentMode =
+  | 'PRESERVE'
+  | 'SEQUENTIAL'
+```
+
+`PRESERVE`：
+
+- 不修改 `parsedEpisode`。
+- 不修改 `parsedEpisodeEnd`。
+- 最终为剧集的每条任务都必须已有 `parsedEpisode`。
+
+`SEQUENTIAL`：
+
+- 按预览中的稳定排序结果分配 `episodeStart + index`。
+- 覆盖每条任务当前 `parsedEpisode`。
+- 清空每条任务 `parsedEpisodeEnd`。
+- 已选任务中只要存在有效 `parsedEpisodeEnd`，整个批次阻断。
+
+批量编辑不新增新的确认来源。后续通过现有批量确认完成的任务，仍使用：
+
+```text
+confirmationSource=MANUAL_BATCH
+```
+
+### 最终媒体类型规则
+
+每条任务的最终媒体类型按以下顺序计算：
+
+```text
+请求包含 MEDIA_TYPE 修改
+→ 使用请求中的 mediaType
+
+请求不包含 MEDIA_TYPE 修改
+→ 保留该任务原 mediaType
+```
+
+最终为 `MOVIE`：
+
+- 清空 `parsedSeason`。
+- 清空 `parsedEpisode`。
+- 清空 `parsedEpisodeEnd`。
+- 忽略集号分配模式。
+
+最终为 `TV_SHOW`：
+
+- 必须拥有有效季号。
+- `PRESERVE` 模式下必须拥有原集号。
+- `SEQUENTIAL` 模式下使用生成集号。
+- `assetType` 必须为当前支持剧集整理的普通视频资产。
+
+如果选中任务的最终媒体类型不一致：
+
+- 允许只批量修改标题或年份等公共字段。
+- 不允许启用顺序集号生成。
+- 用户必须先把所有选中任务统一为 `TV_SHOW`，或只选择最终为剧集的任务。
+
+电影批量切换为剧集时，页面应默认展示季号输入框，季号建议默认值为 `1`，但只有用户明确选择修改季号后才应用。
+
+### 顺序集号生成
+
+#### 页面开关
+
+当以下任一条件成立时，批量编辑页面展示“按文件顺序自动生成集号”开关：
+
+- 用户明确把媒体类型批量设置为 `TV_SHOW`。
+- 用户未修改媒体类型，但所有已选任务当前均为 `TV_SHOW`。
+
+开关默认关闭，避免意外覆盖已经正确的集号。
+
+电影批量改为剧集且任务缺少集号时，页面应明确提示：
+
+```text
+选中的任务缺少集号。请开启“按文件顺序自动生成集号”，或取消选择缺少集号的任务。
+```
+
+不能只显示无法继续的通用校验错误。
+
+开启后显示：
+
+- 起始集号。
+- 排序方向。
+- 自动编号覆盖提示。
+- 编号预览表。
+
+起始集号：
+
+- 默认值为 `1`。
+- 允许最小值为 `0`，兼容少量 `E00` 内容。
+- 必须为整数。
+
+排序方向：
+
+```typescript
+type EpisodeSortDirection =
+  | 'ASC'
+  | 'DESC'
+```
+
+- 默认 `ASC`。
+- 第一版只提供文件名自然升序和文件名自然降序。
+- 第一版不提供手动拖拽排序。
+
+#### 自然排序定义
+
+顺序生成不能使用 Queue 当前页面显示顺序，也不能使用任务创建时间。当前 Queue 按 `createdAt` 倒序展示，该顺序可能与实际集号相反或不稳定。
+
+后端按以下规则生成稳定顺序：
+
+1. 读取任务数据库中的 `sourcePath`，不信任前端传入文件名或排序后的任务列表。
+2. 取 `sourcePath` 的文件名，去除最后一个文件扩展名。
+3. 大小写不敏感比较。
+4. 连续数字片段按数值比较，而不是按普通字符串比较。
+5. 文件名自然排序相同时，使用规范化后的完整 `sourcePath` 自然排序。
+6. 完整路径仍相同时，使用任务 ID 升序作为最终稳定排序。
+7. `DESC` 使用与 `ASC` 相反的自然排序方向，但最终结果仍必须稳定。
+
+自然排序示例：
+
+```text
+Show.1.mkv
+Show.2.mkv
+Show.10.mkv
+```
+
+从起始集号 `1` 开始生成：
+
+```text
+Show.1.mkv  -> E01
+Show.2.mkv  -> E02
+Show.10.mkv -> E03
+```
+
+如果已选任务跨多个源目录或多个 WatchRule：
+
+- 不直接阻断。
+- 预览返回明确 warning。
+- 预览表展示完整源路径。
+- 跨目录时仍按上述完整路径稳定排序规则处理。
+
+### 批量编辑页面
+
+Queue 批量操作栏新增：
+
+```text
+批量编辑（N）
+```
+
+其中 `N` 为当前已选任务数。没有已选任务时按钮禁用。
+
+点击后打开批量编辑弹窗或抽屉，至少包含：
+
+- 已选任务数量。
+- 已选任务源路径摘要。
+- 是否跨目录。
+- 是否跨 WatchRule。
+- 公共字段修改开关及新值。
+- 媒体类型。
+- 解析标题。
+- 解析年份。
+- 季号。
+- 顺序集号生成开关。
+- 起始集号。
+- 排序方向。
+- 批量变更预览。
+
+公共字段不能默认全部启用。用户必须明确选择要覆盖的字段，避免空表单覆盖已有值。
+
+至少选择一个公共字段，或者启用顺序集号生成，才能执行批量操作。
+
+#### 预览表
+
+预览表至少展示：
+
+| 字段 | 说明 |
+|---|---|
+| `taskId` | 任务 ID |
+| `sourcePath` | 完整源路径 |
+| `currentMediaType` | 当前媒体类型 |
+| `effectiveMediaType` | 修改后媒体类型 |
+| `currentTitle` | 当前解析标题 |
+| `effectiveTitle` | 修改后解析标题 |
+| `currentYear` | 当前年份 |
+| `effectiveYear` | 修改后年份 |
+| `currentSeason` | 当前季号 |
+| `effectiveSeason` | 修改后季号 |
+| `currentEpisode` | 当前集号 |
+| `currentEpisodeEnd` | 当前多集结束号 |
+| `effectiveEpisode` | 修改后集号 |
+| `effectiveEpisodeEnd` | 修改后多集结束号 |
+| `sequenceIndex` | 顺序生成时的排序序号 |
+| `blockers` | 当前任务阻断项 |
+| `warnings` | 当前任务提示项 |
+
+预览顶部还应汇总：
+
+- 已选数量。
+- 可修改数量。
+- 顺序生成数量。
+- 阻断数量。
+- warning 数量。
+- 是否允许保存。
+
+用户修改字段选择、字段值、起始集号、排序方向或顺序生成开关后，旧预览失效并自动重新计算。
+
+### 保存动作
+
+批量编辑页面提供两个动作，与 ADR-021 单任务语义保持一致：
+
+1. **仅保存**
+2. **保存并重新匹配**
+
+两种动作都必须先完成有效预览。存在任意 blocker 时按钮禁用。
+
+#### 仅保存
+
+- 更新已选任务的当前有效识别信息。
+- 不调用 TMDB。
+- 不删除、不替换数据库中的现有候选快照。
+- 不自动确认。
+- 所有任务保持 `AWAITING_CONFIRMATION`。
+- 前端清除这些任务当前临时选中的候选状态，避免用户无意使用修改前的候选选择继续批量确认。
+- 页面提示现有候选可能基于修改前信息生成，用户可以重新匹配或使用全局手动搜索。
+
+批量保存采用全有或全无语义：
+
+- 后端在同一批次中重新加载全部任务。
+- 任一任务不存在、状态不是 `AWAITING_CONFIRMATION` 或重新校验失败时，整个批次不更新。
+- 全部任务通过校验后，再在一个数据库事务中更新。
+- 不允许出现同一剧集包部分任务已改、部分任务未改的状态。
+
+#### 保存并重新匹配
+
+保存并重新匹配分为两个阶段：
+
+1. **批量保存阶段**
+   - 与“仅保存”使用相同预览重算、状态校验和全有或全无更新。
+   - 所有公共字段和生成集号保存成功后，才进入重新匹配。
+
+2. **逐任务重新匹配阶段**
+   - 清除每条任务基于旧识别信息保存的候选。
+   - 将 `matchConfidence` 重置为 `null`。
+   - 基于该任务保存后的媒体类型、标题、年份、季号和集号重新请求 TMDB。
+   - 每条任务保存自己的新候选列表和首位置信度。
+   - 所有任务仍保持 `AWAITING_CONFIRMATION`。
+   - 即使候选置信度超过自动确认阈值，也不自动确认。
+
+重新匹配属于外部服务调用，不要求整个批次全有或全无：
+
+- 某一任务 TMDB 匹配失败，不回滚已经原子保存的公共识别信息和集号。
+- 失败任务保持待确认状态，并且不继续保留与新识别信息不一致的旧候选。
+- 返回逐任务成功、无候选或失败结果。
+- 用户可以重新执行匹配，或使用 ADR-019 的全局手动搜索一次找到正确剧集，再应用到已选任务。
+
+重新匹配成功后，前端不自动选择首位候选。用户仍需检查候选、应用候选并执行现有批量确认。
+
+### API 边界建议
+
+后端新增独立批量接口，不由前端循环调用单任务 ADR-021 接口：
+
+```http
+POST  /api/queue/recognition/batch/preview
+PATCH /api/queue/recognition/batch
+POST  /api/queue/recognition/batch/rematch
+```
+
+接口职责：
+
+| 接口 | 作用 | 修改数据库 | 调用 TMDB |
+|---|---|---:|---:|
+| `batch/preview` | 计算局部覆盖、最终媒体类型、自然排序、集号和阻断项 | 否 | 否 |
+| `PATCH batch` | 重新计算并原子保存批量识别信息 | 是 | 否 |
+| `batch/rematch` | 原子保存后逐任务重新匹配候选 | 是 | 是 |
+
+建议请求模型：
+
+```typescript
+type BatchRecognitionField =
+  | 'MEDIA_TYPE'
+  | 'PARSED_TITLE'
+  | 'PARSED_YEAR'
+  | 'PARSED_SEASON'
+
+interface QueueBatchRecognitionRequest {
+  taskIds: number[]
+  updateFields: BatchRecognitionField[]
+  mediaType?: 'MOVIE' | 'TV_SHOW'
+  parsedTitle?: string
+  parsedYear?: number | null
+  parsedSeason?: number | null
+  episodeAssignmentMode: 'PRESERVE' | 'SEQUENTIAL'
+  episodeStart?: number | null
+  episodeSortDirection?: 'ASC' | 'DESC'
+}
+```
+
+请求语义：
+
+- `taskIds` 必须非空，并按任务 ID 去重。
+- 后端只接受实际存在且仍为 `AWAITING_CONFIRMATION` 的任务。
+- `updateFields` 是字段覆盖掩码。
+- `updateFields` 包含 `PARSED_YEAR` 且 `parsedYear=null` 表示明确清空。
+- `episodeStart` 只在 `SEQUENTIAL` 时生效。
+- `episodeSortDirection` 只在 `SEQUENTIAL` 时生效，默认 `ASC`。
+- 前端不得传入每条任务生成后的集号作为可信结果。
+- 后端 preview、save、rematch 必须复用同一个批量计划构建器。
+
+建议预览响应：
+
+```typescript
+interface QueueBatchRecognitionPreview {
+  totalCount: number
+  editableCount: number
+  sequentialCount: number
+  blockerCount: number
+  warningCount: number
+  canApply: boolean
+  blockers: string[]
+  warnings: string[]
+  items: QueueBatchRecognitionPreviewItem[]
+}
+```
+
+建议保存响应：
+
+```typescript
+interface QueueBatchRecognitionSaveResponse {
+  updatedCount: number
+  tasks: MediaTask[]
+  preview: QueueBatchRecognitionPreview
+}
+```
+
+建议重新匹配响应：
+
+```typescript
+interface QueueBatchRecognitionRematchResponse {
+  updatedCount: number
+  matchedCount: number
+  emptyCount: number
+  failedCount: number
+  preview: QueueBatchRecognitionPreview
+  results: Array<{
+    taskId: number
+    success: boolean
+    candidateCount: number
+    message: string | null
+  }>
+}
+```
+
+实际 DTO 字段命名可以按后端规范调整，但必须保留以下能力：
+
+- 明确字段覆盖掩码。
+- 后端生成集号。
+- 后端返回逐任务预览。
+- 批量保存全有或全无。
+- 重新匹配逐任务返回结果。
+- 不信任前端排序和生成集号。
+
+后端 Agent 实现后必须同步更新 `api-contracts.mdc`，记录实际请求体、响应体、状态限制和错误语义。
+
+### 预览与应用一致性
+
+预览不修改数据库，也不修改候选。
+
+执行“仅保存”或“保存并重新匹配”时，后端必须重新：
+
+1. 加载所有任务。
+2. 校验任务状态。
+3. 计算字段局部覆盖。
+4. 计算最终媒体类型。
+5. 校验资产类型。
+6. 执行自然排序。
+7. 生成集号。
+8. 检查多集范围。
+9. 生成 blockers 和 warnings。
+
+后端不能直接接受前端返回的预览行或生成集号。
+
+如果预览后出现以下变化，应用时应阻断整个保存阶段：
+
+- 任务被确认、跳过或转为其它状态。
+- 任务被删除。
+- 任务数据变化后不再满足剧集季 / 集规则。
+- 已选任务集合发生变化。
+- 请求字段或顺序生成参数发生变化。
+
+### 阻断项与提示项
+
+至少包含以下阻断项：
+
+- 未选择任何任务。
+- 没有选择任何公共字段，也没有启用顺序生成。
+- 任务不存在。
+- 任务状态不是 `AWAITING_CONFIRMATION`。
+- 被修改的标题为空。
+- 媒体类型值不支持。
+- 最终为剧集但缺少有效季号。
+- `PRESERVE` 模式下最终为剧集但缺少集号。
+- `SEQUENTIAL` 模式下起始集号为空、不是整数或小于 `0`。
+- `SEQUENTIAL` 模式下选中任务的最终媒体类型不全部为剧集。
+- `SEQUENTIAL` 模式下存在 `parsedEpisodeEnd` 多集范围。
+- 最终为剧集但资产类型不是当前支持的普通视频。
+
+至少包含以下 warning：
+
+- 已选任务跨多个源目录。
+- 已选任务跨多个 WatchRule。
+- 顺序生成将覆盖部分或全部已有集号。
+- “仅保存”不会重新生成候选，现有候选可能基于旧识别信息。
+- 已选任务当前媒体类型、标题、年份或季号差异较大。
+
+### 与现有能力的关系
+
+- 与 ADR-012：继续复用 Queue 当前页任务选择和后续批量确认能力，不改变 `MANUAL_BATCH` 语义。
+- 与 ADR-019：批量编辑后仍可通过全局搜索一次选择正确剧集，并应用到已选任务。
+- 与 ADR-021：沿用当前有效识别字段、仅保存、保存并重新匹配、剧集季集校验和不自动确认语义；本 ADR 将单任务完整替换扩展为批量局部覆盖。
+- 与 ADR-016：源文件缺失仍由现有巡检和确认前校验处理；本 ADR 不绕过源文件存在性保护。
+- 与 ADR-020：剧集蓝光原盘仍不支持；不能通过批量修改媒体类型绕过资产类型限制。
+- 与 ADR-025：最终人工确认时仍按确认后的剧集、季号和集号获取 TMDB 详情及分集详情。
+
+### 非目标
+
+第一版不做：
+
+- 跨分页批量选择。
+- 按目录自动发现并选择整个剧集包。
+- 根据文件时长、媒体指纹或视频内容推断集号。
+- 从 TMDB 反向猜测文件对应的集号。
+- 只填补缺失集号而保留其它任务原编号。
+- 手动拖拽排序。
+- 单个批次跨多个季号。
+- 多集文件的自动连续范围分配。
+- 批量修改分辨率、编码、发布组或其它技术字段。
+- Parser 原始识别结果快照。
+- 已完成任务批量纠错。
+- 自动应用候选。
+- 自动确认。
+- 自动执行文件整理。
+
+### 验收标准
+
+#### 选择与入口
+
+- Queue 批量操作栏在存在已选任务时可进入“批量编辑（N）”。
+- 批量编辑只影响明确选择的任务。
+- 未选择任务时入口禁用。
+- 第一版不跨分页保留或编辑选择。
+- 非 `AWAITING_CONFIRMATION` 任务不能通过接口批量修改。
+
+#### 公共字段
+
+- 用户可以选择性批量修改媒体类型、解析标题、年份和季号。
+- 未选择修改的字段保持每条任务原值。
+- 年份支持明确清空。
+- 空标题不能保存。
+- 批量改为电影时清空季号、集号和集结束号。
+- 批量改为剧集时使用最终有效季号和集号校验。
+
+#### 保留集号
+
+- 顺序生成关闭时，每条任务原集号保持不变。
+- 原有 `parsedEpisodeEnd` 保持不变。
+- 任一最终剧集任务缺少集号时，整个批次阻断。
+- 页面明确列出缺少集号的任务，并引导开启顺序生成或取消选择。
+
+#### 顺序生成
+
+- 开关默认关闭。
+- 起始集号默认 `1`，允许输入 `0`。
+- 支持文件名自然升序和自然降序。
+- `2` 在自然升序中排在 `10` 前。
+- 页面显示完整的编号预览。
+- 自动生成覆盖所有已选任务原集号。
+- 自动生成后清空 `parsedEpisodeEnd`。
+- 已选任务中存在多集范围时阻断整个批次。
+- 预览和实际保存的任务顺序、季号、集号完全一致。
+- Queue 页面创建时间倒序不影响生成结果。
+- 跨目录或跨 WatchRule 时展示 warning 和完整路径。
+
+#### 仅保存
+
+- 保存前后端重新计算预览和校验。
+- 任一任务校验失败时整个批次不更新。
+- 全部通过时一次性保存所有任务。
+- 不调用 TMDB。
+- 不删除数据库候选快照。
+- 前端清除临时候选选择状态。
+- 所有任务继续保持 `AWAITING_CONFIRMATION`。
+
+#### 保存并重新匹配
+
+- 批量字段和集号先原子保存。
+- 旧候选被清除，避免与新识别信息混用。
+- 每条任务使用自己的最终季号和集号重新匹配。
+- 逐任务返回匹配成功、无候选或失败结果。
+- 单个任务 TMDB 失败不回滚已经保存的批量识别信息。
+- 失败任务保持待确认状态且不保留旧候选。
+- 重新匹配后不自动选择候选、不自动确认。
+- 用户仍可使用全局手动搜索、应用候选和批量确认完成流程。
+
+#### 测试要求
+
+- 后端测试覆盖字段掩码、年份清空和未修改字段保留。
+- 后端测试覆盖电影转剧集且原集号缺失时通过顺序生成成功保存。
+- 后端测试覆盖自然排序中的 `1`、`2`、`10`。
+- 后端测试覆盖升序、降序、相同文件名、跨目录和任务 ID 最终排序。
+- 后端测试覆盖起始集号 `0` 和 `1`。
+- 后端测试覆盖原集号覆盖与 `parsedEpisodeEnd` 阻断。
+- 后端测试覆盖混合最终媒体类型阻断顺序生成。
+- 后端测试覆盖批量保存全有或全无。
+- 后端测试覆盖重新匹配部分失败且识别信息不回滚。
+- 前端验证选中任务、字段开关、自动预览、阻断提示、覆盖警告和中英文文案。
+
+### 文档维护要求
+
+- 后端 Agent 实现后必须更新 `api-contracts.mdc`，记录实际批量预览、保存和重新匹配接口。
+- 开发 Agent 必须在 `implementation-log.mdc` 记录自然排序实现、事务边界、候选清理方式、逐任务匹配结果和测试覆盖。
+- 前端 Agent 必须同步中英文文案，包括集号覆盖、多集阻断、跨目录 warning 和旧候选提示。
+- Release Notes 应从用户角度说明剧集包可以批量修正公共识别信息，并按文件顺序生成集号。
+- 用户文档应增加剧集包批量修正示例，明确一个批次只处理一个季、自动编号会覆盖原集号。
+- 本 ADR 只记录产品与架构决策，不记录实际代码实现过程。
+
+---
+
+## ADR-030 已完成剧集同季 / 同剧集批量修正（2026-08-28）🟡
+
+> 2026-09-05 核对：范围、预览、持久化作业、幂等、串行执行、部分失败、失败重试与 Dashboard 交互已实现，见 2026-08-29 步骤 2～6 实现日志。当前“再次进入查看批次”依赖浏览器本地任务索引，后端仅支持按已知批次 ID 查询；服务端检索、缓存丢失和网络异常恢复见 REQ-05。核心能力可用，但本 ADR 的恢复体验尚未完整闭环。
+
+### 背景
+
+ADR-028 已经允许用户在 Dashboard 中修正单个 `DONE` 任务：编辑识别信息、重新匹配 TMDB、预览目标文件与附属文件变化，然后移动 / 重命名当前目标资产，并建立 `CORRECTED -> DONE` 修正历史链路。
+
+实际使用中，单条修正仍无法高效处理剧集误识别。典型场景是同名、不同年份的两个 TMDB 剧集条目，例如：
+
+```text
+万物生灵 (1978)
+万物生灵 (2020)
+```
+
+当系统把 2020 年版的一季或多季内容自动匹配为 1978 年版时，所有分集都可能已经按错误标题、年份和 TMDB ID 整理到目标媒体库。此时：
+
+- 任务已经是 `DONE`，不能使用 Queue 的批量编辑能力。
+- 每一集的正确 TMDB 剧集条目相同，但季号和集号各不相同。
+- 用户逐集打开修正弹窗、搜索同一个 TMDB 条目、预览并确认，操作高度重复。
+- Dashboard 当前页多选不能表达“同剧集”语义，也不能可靠覆盖跨分页任务。
+- 直接修改数据库会使任务快照、实际目标文件、候选记录、NFO 和修正历史链路不一致。
+
+因此需要在现有已完成任务修正流程中增加**仅当前集 / 同季 / 同剧集**三个作用范围，让用户只选择一次正确 TMDB 剧集条目，即可批量修正范围内的目标资产，同时保留每条任务原有的季号、集号和独立历史链路。
+
+### 目标
+
+本 ADR 的目标是：
+
+1. 用户从任意一条已完成剧集任务进入修正流程时，可以选择修正当前集、同季或同剧集。
+2. 同季 / 同剧集范围由后端根据当前有效任务数据计算，不依赖 Dashboard 当前页或前端已加载数据。
+3. 正确 TMDB 剧集候选只选择一次，公共剧集信息应用到全部已选任务。
+4. 每条任务已有的季号、集号、集结束号保持不变，不因批量操作被覆盖成相同集号。
+5. 应用前完整预览每条主资产、同 basename 附属文件、NFO、目标路径、阻断项和提示项。
+6. 在单任务冲突检查基础上增加批次内部路径冲突、重复目标和并发变化检查。
+7. 每条成功任务继续沿用 ADR-028 的 `CORRECTED -> DONE` 历史链路和候选快照语义。
+8. 批量执行具有持久化进度、部分失败结果和失败项重试能力，不依赖一个长时间前端请求保持连接。
+9. 整个流程只处理当前目标媒体库中的资产，不读取或重新执行源目录文件操作。
+
+### 核心决策
+
+Dashboard 的单条 `修正` 入口继续作为已完成任务纠错的唯一主入口，不新增依赖 Dashboard 表格多选的“批量修正”工具栏按钮。
+
+当锚点任务为符合条件的剧集任务时，修正弹窗顶部增加作用范围：
+
+```typescript
+type TaskCorrectionScope =
+  | 'SINGLE'
+  | 'SAME_SEASON'
+  | 'SAME_SERIES'
+```
+
+范围语义：
+
+| 范围 | 前端文案 | 语义 |
+|---|---|---|
+| `SINGLE` | 仅当前集 | 只修正用户点击的当前任务，继续使用 ADR-028 单条流程 |
+| `SAME_SEASON` | 同季 | 修正当前错误 TMDB 剧集、当前季、当前 WatchRule 下的全部有效 `DONE` 任务 |
+| `SAME_SERIES` | 同剧集 | 修正当前错误 TMDB 剧集、当前 WatchRule 下全部季的有效 `DONE` 任务 |
+
+范围默认值必须是 `SINGLE`。批量修正会修改多个目标文件，不能因为锚点任务是剧集就默认扩大作用范围。
+
+电影任务、电影蓝光原盘和其它不支持批量的资产继续显示现有单条修正界面，不展示同季 / 同剧集范围。
+
+### 适用范围
+
+同季 / 同剧集批量修正第一版只支持锚点任务满足：
+
+- `status=DONE`。
+- `mediaType=TV_SHOW`。
+- `assetType=VIDEO_FILE`。
+- `tmdbId` 非空。
+- `ruleId` 非空。
+- `targetPath` 非空。
+
+同季范围还要求锚点任务：
+
+- `parsedSeason` 非空。
+
+范围发现阶段只查询当前有效 `DONE` 剧集任务。`CORRECTED` 仅作为历史记录，不进入任何批量修正范围。
+
+范围内单条任务如果存在目标路径缺失、季集字段缺失、WatchRule 不存在或其它不满足执行条件的情况，必须在批量预览中显示为阻断项，不能从预览中静默消失。
+
+第一版不支持：
+
+- 电影批量修正。
+- `ISO_IMAGE` 批量修正。
+- `BLURAY_DIRECTORY` 剧集批量修正。
+- 非 `DONE` 状态批量修正。
+- 跨 WatchRule 批量修正。
+- 把多个不同 TMDB 剧集放入同一个批次。
+
+### 范围分组语义
+
+锚点任务是用户在 Dashboard 点击 `修正` 的当前任务。
+
+`SAME_SERIES` 的后端分组条件为：
+
+```text
+status = DONE
+mediaType = TV_SHOW
+tmdbId = anchor.tmdbId
+ruleId = anchor.ruleId
+```
+
+`SAME_SEASON` 在上述条件基础上增加：
+
+```text
+parsedSeason = anchor.parsedSeason
+```
+
+分组必须使用当前错误 `tmdbId`，不能只按 `confirmedTitle`、`parsedTitle` 或目标目录名称分组：
+
+- 标题可能同名、存在不同翻译或语言设置变化。
+- 目标路径可能使用用户自定义模板，不一定包含标准剧集根目录。
+- 当前错误 TMDB ID 是同一批误识别任务最稳定的共同身份。
+- `ruleId` 用于避免同一 TMDB 条目跨不同目标媒体库或路径策略被合并处理。
+
+后端必须查询数据库中的完整范围，不受以下因素影响：
+
+- Dashboard 当前页。
+- Dashboard 当前筛选条件。
+- 前端当前加载的任务数量。
+- 任务在创建时间倒序中的位置。
+
+范围结果按以下顺序稳定展示和执行：
+
+1. `parsedSeason` 自然升序，空值最后。
+2. `parsedEpisode` 自然升序，空值最后。
+3. `parsedEpisodeEnd` 自然升序，空值最后。
+4. 当前目标文件名自然升序。
+5. 任务 ID 升序作为最终稳定兜底。
+
+范围接口返回：
+
+- 单集任务数，固定为 `1`。
+- 同季任务数。
+- 同剧集任务数。
+- 当前季号。
+- 范围级提示，例如存在季集字段缺失或目标路径异常任务。
+
+### 前端入口与范围交互
+
+Dashboard 不新增独立页面。用户继续通过 `DONE` 任务操作栏的 `修正` 进入现有修正弹窗。
+
+剧集锚点任务的弹窗顶部新增“修正范围”区：
+
+- `仅当前集`：展示当前 `SxxExx` 和 `1 个任务`。
+- `同季`：展示当前季号和范围任务数，例如 `S03 · 6 个任务`。
+- `同剧集`：展示季号范围和总任务数，例如 `S01–S03 · 18 个任务`。
+
+展示规则：
+
+- 默认选中 `仅当前集`。
+- 同季任务数小于等于 1 时禁用同季范围并说明原因。
+- 同剧集任务数小于等于 1 时禁用同剧集范围并说明原因。
+- 锚点任务缺少季号时禁用同季范围，但仍可在同剧集预览中显示缺失季号阻断项。
+- 范围数量加载失败时降级为单条修正，不能猜测前端已有列表就是完整范围。
+- 切换范围后，候选可以保留，但旧预览必须失效并重新计算。
+
+不使用 Dashboard 主表多选作为批量修正范围，原因是：
+
+- 主表选择状态当前只属于当前页。
+- 用户可能误选不同剧集、不同季或不同 WatchRule。
+- 用户必须先搜索、分页并逐条勾选，不能解决重复操作问题。
+- 范围语义应由领域规则表达，而不是由页面物理位置表达。
+
+### 批量模式识别信息编辑
+
+`SAME_SEASON` 和 `SAME_SERIES` 模式下，修正表单按以下规则收敛：
+
+- `mediaType` 固定为 `TV_SHOW`，只读展示，不允许批量改为电影。
+- `parsedTitle` 是批次公共字段，必填，trim 后不能为空。
+- `parsedYear` 是批次公共字段，可以为空；填写时表示修正后的剧集识别年份。
+- 每条任务原有 `parsedSeason` 保持不变。
+- 每条任务原有 `parsedEpisode` 保持不变。
+- 每条任务原有 `parsedEpisodeEnd` 保持不变。
+- 第一版不提供批量修改季号、集号或顺序生成集号。
+
+批量应用成功后，新 `DONE` 修正任务的识别字段为：
+
+| 字段 | 新任务取值 |
+|---|---|
+| `mediaType` | 固定 `TV_SHOW` |
+| `parsedTitle` | 批次请求的公共修正标题 |
+| `parsedYear` | 批次请求的公共修正年份 |
+| `parsedSeason` | 对应旧任务原值 |
+| `parsedEpisode` | 对应旧任务原值 |
+| `parsedEpisodeEnd` | 对应旧任务原值 |
+| 分辨率、编码、发布组 | 对应旧任务原值 |
+
+该语义表示用户只修正“这是什么剧”，不改变“这是第几季第几集”。
+
+### TMDB 候选选择
+
+同季 / 同剧集模式下，用户只选择一次正确 TMDB 剧集条目，所选 `tmdbId` 应用于全部已选择任务。
+
+候选搜索可以复用 ADR-028 的重新匹配和 ADR-019 的全局手动搜索能力：
+
+- 支持按标题搜索。
+- 支持按 TMDB ID 搜索。
+- 重新匹配可以使用批次公共 `parsedTitle` 和 `parsedYear`。
+- 搜索和候选选择不修改数据库、不操作文件。
+
+候选卡片必须至少展示：
+
+- 本地化标题。
+- 原始标题。
+- 首播年份。
+- TMDB ID。
+- 媒体类型。
+- 海报（存在时）。
+- 置信度（存在时）。
+
+批量修正只能选择 `mediaType=TV_SHOW` 的候选。电影候选必须禁用或阻断。
+
+用户修改公共标题、公共年份、候选、NFO 选项、修正范围或排除任务后，旧预览必须失效。
+
+### 批量预览页面
+
+批量模式的预览区必须同时展示批次汇总和逐任务明细。
+
+汇总至少包括：
+
+| 字段 | 说明 |
+|---|---|
+| `totalCount` | 当前范围发现的任务总数 |
+| `selectedCount` | 排除任务后本次实际选择数 |
+| `applicableCount` | 无单项阻断、可执行的任务数 |
+| `blockerCount` | 批次级和任务级阻断数量 |
+| `warningCount` | 批次级和任务级提示数量 |
+| `canApply` | 当前选择是否允许创建批量修正作业 |
+| `groupFingerprint` | 当前范围与任务状态快照指纹，用于应用前并发变化检查 |
+
+逐任务明细至少包括：
+
+| 字段 | 说明 |
+|---|---|
+| `taskId` | 当前旧 `DONE` 任务 ID |
+| `season` / `episode` / `episodeEnd` | 当前任务季集语义 |
+| `currentTargetPath` | 当前目标媒体资产路径 |
+| `correctedTargetPath` | 修正后的目标路径 |
+| `sameTargetPath` | 修正前后主资产路径是否一致 |
+| `associatedFileCount` | 同 basename 附属文件计划数量 |
+| `operations` | 该任务计划执行的操作 |
+| `blockers` | 该任务阻断项 |
+| `warnings` | 该任务提示项 |
+| `selected` | 是否纳入本次应用 |
+
+预览表默认按稳定季集顺序展示，支持查看完整当前路径和目标路径。
+
+范围内任务默认全部选中。用户可以主动排除某些任务，但必须满足：
+
+- 排除动作是显式操作。
+- 前端显示排除数量。
+- 被排除任务不会执行、不会创建历史链路。
+- 不能由后端静默跳过阻断任务。
+- 如果选中任务仍有任一阻断项，`canApply=false`。
+- 全部任务都被排除时阻断应用。
+
+### 批次级路径与冲突检查
+
+批量预览除复用 ADR-028 的单任务检查外，必须增加批次级全局检查。
+
+至少检查：
+
+1. 两个选中任务是否生成相同 `correctedTargetPath`。
+2. 某任务的新目标是否等于另一个任务的当前主资产路径。
+3. 两个计划移动的附属文件是否生成相同目标路径。
+4. 主资产目标是否已被批次外现有文件或目录占用。
+5. 附属文件目标是否已被批次外现有文件占用。
+6. 同一旧任务是否重复出现在批次中。
+7. 同一当前目标路径是否被多个旧任务声明。
+8. 新目标是否逃逸 WatchRule `targetDir` 或违反 ADR-024 路径安全规则。
+9. `BLURAY_DIRECTORY`、`ISO_IMAGE` 或其它不支持资产是否混入范围。
+10. 预览期间任务是否已被其它修正作业占用。
+
+任何目标冲突继续遵守 ADR-010：
+
+- 不覆盖。
+- 不合并。
+- 不自动改名。
+- 不自动跳过。
+
+如果修正前后某条主资产路径完全相同，该任务仍允许创建新的 `DONE` 修正记录并保存正确 TMDB 快照，继续沿用 ADR-028 语义。
+
+### 附属文件与共享文件规则
+
+普通视频的同 basename 附属文件继续沿用 ADR-028：
+
+- `.srt`
+- `.ass`
+- `.ssa`
+- `.sub`
+- `.idx`
+- `.nfo`
+- `.jpg`
+- `.jpeg`
+- `.png`
+- `.webp`
+- `.md5`
+
+每条任务独立计算同 basename 附属文件计划，并参与批次级目标冲突检查。
+
+剧集目录中的共享文件第一版保持保守，不自动移动：
+
+- `poster.jpg`
+- `folder.jpg`
+- `cover.jpg`
+- `tvshow.nfo`
+- `fanart.*`
+- 季海报和其它不与具体视频同 basename 的共享图片
+
+原因是共享文件可能属于整个剧集目录，也可能由媒体服务器或用户维护；同季修正时旧目录还可能保留其它季，不能依据单条任务擅自移动。
+
+批量预览需要将共享文件提示合并为批次级 warning，避免每一集重复显示相同提示。
+
+共享文件未移动时，旧剧集目录可能保持非空；空目录清理遇到这些文件必须停止，不能删除非空目录。
+
+剧集共享文件整体迁移属于后续独立需求，不在本 ADR 第一版范围内。
+
+### NFO 策略
+
+默认不重新生成或覆盖 NFO，继续沿用 ADR-028。
+
+用户可以显式选择“按修正后的元数据重新生成每集 NFO”：
+
+- 选项默认关闭。
+- 只处理本次选中任务对应的单集 NFO。
+- 不生成或覆盖共享 `tvshow.nfo`。
+- 已有同 basename NFO 先按附属文件计划移动。
+- 主资产和附属文件移动成功后，再按正确 TMDB 剧集和分集详情生成目标 NFO。
+- 可能覆盖目标单集 NFO 时，预览和二次确认必须明确提示。
+- 多集范围任务没有单一分集标题时，沿用现有多集 NFO 限制。
+
+TMDB 请求优化要求：
+
+- 批次所选剧集详情只获取一次。
+- 分集详情按 `tmdbId + season + episode` 缓存和复用。
+- 只有路径模板使用 `{episode_title}` 或用户选择重新生成 NFO 时，分集详情不可用才构成阻断。
+- 未使用 `{episode_title}` 且不重新生成 NFO 时，分集详情失败可以 warning 后继续。
+
+### 空目录清理
+
+批量修正成功任务的旧目标空目录继续遵守 ADR-028，但清理时机调整为批次级：
+
+1. 所有选中任务完成或进入最终失败状态后再开始清理。
+2. 对成功任务涉及的旧父目录去重。
+3. 按目录深度从深到浅清理。
+4. 目录非空时立即停止向上清理该分支。
+5. 最多清理到 WatchRule `targetDir` 下方，绝不删除目标根目录。
+6. 不清理源目录。
+7. 清理失败只记录 warning，不回滚已经成功的任务。
+
+延后清理可以避免前一个任务完成时删除后续任务仍需要使用的旧目录结构，也能减少同一目录被重复检查。
+
+### 批量执行模型
+
+批量应用不能由前端循环调用现有单条 `/apply` 接口。后端必须建立一个批量修正作业并负责范围快照、执行顺序、结果汇总和失败重试。
+
+批量修正作业状态建议为：
+
+```typescript
+type TaskCorrectionBatchStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'PARTIAL_FAILED'
+  | 'FAILED'
+  | 'INTERRUPTED'
+```
+
+批次条目状态建议为：
+
+```typescript
+type TaskCorrectionBatchItemStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'EXCLUDED'
+```
+
+执行原则：
+
+1. `preview` 只读，不修改数据库、不操作文件。
+2. `apply` 重新解析范围、重新获取 TMDB 详情、重新计算全部计划和阻断项。
+3. `apply` 不信任前端传回的路径、操作计划或 `canApply`。
+4. 应用前比较 `groupFingerprint`；任务集合或关键状态变化时拒绝执行并要求重新预览。
+5. 无阻断项后创建持久化批量修正作业和批次条目。
+6. 后台执行器按稳定季集顺序串行处理条目。
+7. 同一时间只允许一个作业操作同一旧任务。
+8. 单条失败不回滚其它已经成功的独立任务。
+9. 作业完成后返回成功、失败和排除数量。
+10. `PARTIAL_FAILED` 和 `FAILED` 作业允许只重试失败条目。
+
+第一版不承诺整个批次“全有或全无”。文件系统与 SQLite 无法组成可靠的跨资源事务，强行整批回滚会增加已成功文件被再次移动失败的风险。
+
+本 ADR 采用：
+
+```text
+全批次预检
++ 单任务文件操作恢复单元
++ 单任务短数据库事务
++ 持久化进度
++ 失败项重试
+```
+
+### 单任务执行与事务边界
+
+批次中的每一条任务继续遵守 ADR-028 的文件与历史链路顺序，但实现需要避免在长数据库事务中等待 TMDB 或执行 NAS 文件操作。
+
+推荐顺序：
+
+1. 在数据库事务外读取任务和 WatchRule 快照。
+2. 在数据库事务外获取已缓存的剧集详情和必要分集详情。
+3. 在数据库事务外重新计算并校验该条最终文件操作计划。
+4. 将批次条目标记为 `RUNNING`。
+5. 执行主资产和同 basename 附属文件移动；记录已完成步骤。
+6. 必要时重新生成单集 NFO。
+7. 开启短数据库事务，创建新的 `DONE` 修正任务和候选快照，将旧任务改为 `CORRECTED`，写入双向修正链路。
+8. 数据库成功后将批次条目标记为 `SUCCEEDED`。
+9. 发布任务修正和批次进度事件。
+
+如果当前条目文件操作失败：
+
+- 尽力按逆序回滚当前条目已经执行的移动。
+- 不创建新的 `DONE` 任务。
+- 不把旧任务改为 `CORRECTED`。
+- 批次条目标记为 `FAILED` 并保存明确错误。
+- 其它独立条目继续执行。
+
+如果文件操作成功但数据库事务失败：
+
+- 尽力把当前条目文件移动回原路径。
+- 回滚失败时必须保存人工恢复所需的源路径、目标路径和已执行操作。
+- 作业结果不能显示该条成功。
+
+不得在一个覆盖整个批次的数据库事务中持有 SQLite 连接等待 TMDB 或文件系统。
+
+### 持久化作业数据
+
+建议新增：
+
+```text
+task_correction_batch
+task_correction_batch_item
+```
+
+`task_correction_batch` 至少记录：
+
+- 批次 ID。
+- 锚点任务 ID。
+- 修正范围。
+- 原 TMDB ID。
+- 目标 TMDB ID。
+- WatchRule ID。
+- 公共解析标题和年份。
+- 是否重新生成 NFO。
+- `groupFingerprint`。
+- 作业状态。
+- 总数、成功数、失败数、排除数。
+- 创建、开始、完成时间。
+- 批次级错误信息。
+
+`task_correction_batch_item` 至少记录：
+
+- 批次 ID。
+- 原任务 ID。
+- 新任务 ID（成功后）。
+- 季号、集号、集结束号快照。
+- 原目标路径。
+- 新目标路径。
+- 条目状态。
+- 执行顺序。
+- 重试次数。
+- 错误信息。
+- 创建、开始、完成时间。
+
+不新增新的 `ConfirmationSource`。成功创建的新任务继续使用：
+
+```text
+confirmationSource=MANUAL_CORRECTION
+```
+
+批次身份通过作业表和批次条目表关联，不改变 ADR-028 的任务双向修正链路。
+
+### API 边界建议
+
+保留 ADR-028 现有单条接口：
+
+```http
+POST /api/tasks/{id}/correction/rematch
+POST /api/tasks/{id}/correction/preview
+POST /api/tasks/{id}/correction/apply
+```
+
+新增批量接口建议：
+
+```http
+GET  /api/tasks/{id}/correction/scopes
+POST /api/tasks/{id}/correction/batch/preview
+POST /api/tasks/{id}/correction/batch/apply
+GET  /api/task-correction-batches/{batchId}
+POST /api/task-correction-batches/{batchId}/retry-failed
+```
+
+其中：
+
+| 接口 | 作用 | 是否修改数据库 | 是否操作文件 |
+|---|---|---:|---:|
+| `scopes` | 返回单集 / 同季 / 同剧集数量和范围提示 | 否 | 否 |
+| `batch/preview` | 重新解析范围并生成全批次计划 | 否 | 否 |
+| `batch/apply` | 重新校验并创建后台修正作业 | 是 | 否，由后台作业执行 |
+| 查询批次 | 返回批次状态、计数和逐条结果 | 否 | 否 |
+| `retry-failed` | 为失败条目创建重试执行 | 是 | 是，由后台作业执行 |
+
+批量预览 / 应用请求建议：
+
+```typescript
+interface TaskCorrectionBatchRequest {
+  scope: 'SAME_SEASON' | 'SAME_SERIES'
+  parsedTitle: string
+  parsedYear: number | null
+  tmdbId: number
+  regenerateNfo: boolean
+  excludedTaskIds: number[]
+  groupFingerprint?: string
+}
+```
+
+前端不提交完整 `taskIds` 作为权威范围。后端根据锚点任务和 `scope` 重新查询完整集合，`excludedTaskIds` 只表达用户明确排除项。
+
+后端必须校验所有 `excludedTaskIds` 确实属于当前解析范围；不属于范围的 ID 不能影响其它任务。
+
+`batch/apply` 成功响应只需返回批次 ID 和初始状态，不等待全部文件操作完成。
+
+### 并发、一致性与幂等
+
+批量修正需要以下保护：
+
+- 同一旧任务不能同时被两个修正作业占用。
+- 锚点任务在应用前已不再是 `DONE` 时拒绝创建作业。
+- 范围内选中任务集合、`updatedAt`、`targetPath`、状态或关键季集字段变化时，`groupFingerprint` 失效。
+- 应用阶段发现预览已过期时，返回“修正范围在预览后发生变化，请重新预览”。
+- 前端重复提交同一次应用请求时，不得创建两个重复作业。
+- 建议由前端生成 `idempotencyKey`，后端在批次表建立唯一约束或等价查重。
+- 成功条目不能通过“重试失败项”再次执行。
+- 失败条目重试前必须重新校验旧任务仍为 `DONE` 且当前目标路径与失败记录一致。
+- 服务重启时，持久化 `RUNNING` 作业转为 `INTERRUPTED`；用户查看结果后可以重试未成功条目，不自动猜测文件操作是否完成。
+
+第一版后台执行器使用单实例串行队列，避免多个批量修正同时竞争 SQLite 写锁和同一目标媒体库目录。未来如引入并发执行，必须先增加任务级锁、目标路径预留和可靠 fencing，不能只提高线程数。
+
+### 进度与结果交互
+
+用户确认应用后，弹窗进入批次进度状态，至少展示：
+
+- 当前状态。
+- 已处理数 / 总数。
+- 成功数。
+- 失败数。
+- 排除数。
+- 当前处理的季 / 集。
+- 失败条目的错误原因。
+
+进度可以通过批次状态查询接口轮询；如果新增 WebSocket 事件，应通过 `EventPublisher` 发布，不直接调用底层消息模板。
+
+前端关闭弹窗或浏览器断开不会取消后台作业。再次打开同一相关任务或任务管理入口时，应能够查看未完成或最近批次状态。
+
+批次完成后：
+
+- `SUCCEEDED`：显示成功数量并刷新 Dashboard。
+- `PARTIAL_FAILED`：显示成功和失败数量，提供“重试失败项”。
+- `FAILED`：显示批次级或全部条目错误，提供重新预览或重试入口。
+- `INTERRUPTED`：提示服务中断，要求核对逐条状态后重试未成功项。
+
+Dashboard 不应在每一条 WebSocket 更新后重复发起全量刷新；批量作业完成时统一刷新，或对进度事件进行防抖。
+
+### 阻断项与提示项
+
+批次级阻断项至少包括：
+
+- 锚点任务不是 `DONE` 剧集普通视频。
+- 锚点任务缺少 `tmdbId` 或 `ruleId`。
+- `SAME_SEASON` 锚点缺少季号。
+- 未选择 TMDB 候选。
+- 所选候选不是 `TV_SHOW`。
+- 公共解析标题为空。
+- 所有范围任务都被排除。
+- 选中任务存在重复目标路径。
+- 选中任务目标与其它当前任务源路径交叉冲突。
+- 批次内部附属文件目标冲突。
+- `groupFingerprint` 已失效。
+- 任务已被其它修正作业占用。
+
+任务级阻断项至少包括：
+
+- 任务不再是 `DONE`。
+- 任务不是 `VIDEO_FILE` 剧集。
+- 当前目标路径为空、不存在或不是普通文件。
+- WatchRule 不存在。
+- 缺少季号或集号。
+- 集结束号小于等于起始集号。
+- 新目标路径不安全。
+- 新主资产目标已存在且不是当前路径。
+- 任一同 basename 附属文件目标已存在。
+- 模板使用 `{episode_title}` 但分集详情无法获取。
+
+批次级提示项可以包括：
+
+- 范围跨多个季。
+- 范围内存在被用户排除的任务。
+- 检测到剧集共享封面或 `tvshow.nfo`，第一版不会自动移动。
+- 重新生成 NFO 可能覆盖目标单集 NFO。
+- 批量作业可能部分成功，失败项需要单独重试。
+
+任务级提示项继续包括：
+
+- 源路径不存在，但本次修正不依赖源文件。
+- `.md5` 文件会移动 / 改名但不修改内容。
+- 当前路径与修正后路径相同，但仍会创建新的修正记录。
+- 未使用 `{episode_title}` 时分集详情获取失败，分集标题保持空。
+
+### 历史链路与候选快照
+
+每个成功条目独立建立 ADR-028 历史链路：
+
+| 记录 | 状态 | 语义 |
+|---|---|---|
+| 原任务 | `CORRECTED` | 保留错误 TMDB、旧目标路径和旧候选快照 |
+| 新任务 | `DONE` | 保存正确 TMDB、修正后目标路径和最终候选快照 |
+
+每个新任务：
+
+- `correctedFromTaskId` 指向对应旧任务。
+- `confirmationSource=MANUAL_CORRECTION`。
+- 保存最终正确的 TMDB 剧集详情。
+- 按自身季号和集号保存分集标题（可用时）。
+- 在 `task_candidate` 中至少保存一个最终选中候选，`selected=true`。
+
+每个旧任务：
+
+- 状态变为 `CORRECTED`。
+- `correctedToTaskId` 指向对应新任务。
+- `correctedAt` 写入成功修正时间。
+- 原候选记录不删除、不覆盖。
+
+批次作业只用于把同一次用户操作关联起来，不替代逐任务修正历史链路。
+
+### 与现有 ADR 和路线图的关系
+
+- 与 ADR-028：本 ADR 扩展已完成任务纠错范围，单条文件操作、历史链路、候选快照、NFO 和冲突语义继续复用 ADR-028。
+- 与 ADR-029：可以复用批量预览、逐条结果和公共字段局部处理的实现经验，但 ADR-029 只修改 Queue 识别信息，不操作目标文件，接口和事务边界不能直接复用。
+- 与 ADR-010：所有目标冲突不覆盖、不合并、不自动改名。
+- 与 ADR-024：所有批量生成路径必须经过安全渲染和 `targetDir` 边界校验。
+- 与 ADR-025：确认正确剧集后仍需获取剧集详情和必要的分集详情，补齐路径模板和候选快照字段。
+- 与阶段 B 任务管理规划：批量修正作业、持久化进度、失败原因和重试属于任务生命周期可视化与可恢复性增强。
+- 与阶段 C 工程治理规划：新增作业表和状态需要正式数据库迁移、升级测试和端到端文件操作测试。
+
+### 非目标
+
+本 ADR 第一版不做：
+
+- 不支持电影批量修正。
+- 不支持 ISO 镜像批量修正。
+- 不支持剧集蓝光原盘批量修正。
+- 不支持跨 WatchRule 合并批次。
+- 不按相似标题自动猜测批量范围。
+- 不把已完成任务退回 Queue。
+- 不重新读取或操作源目录文件。
+- 不批量修改季号、集号或集结束号。
+- 不提供顺序集号生成；该能力只属于 Queue 的 ADR-029。
+- 不移动 `tvshow.nfo`、通用封面、fanart 或季海报等共享文件。
+- 不自动覆盖、合并或改名解决冲突。
+- 不承诺整批文件操作全有或全无。
+- 不提供整批自动回滚按钮。
+- 不自动刷新 Emby、Jellyfin 或 Plex 媒体库。
+- 不在本 ADR 中修改 TMDB 自动匹配置信度算法。
+- 不在本 ADR 中新增同名不同年份候选的自动歧义拦截；该问题需要单独匹配算法 ADR 和测试。
+- 不建立通用媒体资产索引；仍以当前有效 `DONE` 任务作为本功能范围来源。
+
+### 验收标准
+
+#### 页面入口与范围
+
+- 电影和电影蓝光 `DONE` 任务继续使用现有单条修正界面。
+- 剧集普通视频 `DONE` 任务显示仅当前集 / 同季 / 同剧集范围。
+- 默认范围为仅当前集。
+- 同季和同剧集数量来自后端完整数据库查询，不受 Dashboard 分页和筛选影响。
+- 同季范围缺少季号时禁用并说明原因。
+- 切换范围后旧预览失效。
+- Dashboard 主表多选不参与批量修正范围。
+
+#### 分组
+
+- 同剧集按 `DONE + TV_SHOW + tmdbId + ruleId` 查找。
+- 同季在同剧集条件上增加 `parsedSeason`。
+- 不按标题或目录名称猜测分组。
+- `CORRECTED` 历史记录不进入范围。
+- 已经修正为正确 TMDB ID 的新任务不会再次被旧错误 TMDB ID 范围选中。
+- 范围结果按季、集、文件名和任务 ID 稳定排序。
+
+#### 识别信息与候选
+
+- 批量模式媒体类型固定为剧集。
+- 公共标题应用到所有成功新任务。
+- 公共年份应用到所有成功新任务。
+- 每条任务原季号、集号和集结束号保持不变。
+- 用户只选择一次正确 TMDB 候选。
+- 候选明确展示年份和 TMDB ID。
+- 电影候选不能用于剧集批量修正。
+
+#### 预览
+
+- 预览显示总数、选择数、可执行数、阻断数和提示数。
+- 每条任务显示季集、当前目标路径、修正后目标路径、附属文件和状态。
+- 范围内异常任务可见，不静默丢弃。
+- 用户可以显式排除任务。
+- 选中任务存在阻断项时不能应用。
+- 全部任务被排除时不能应用。
+- 主资产和附属文件批次内部重复目标会阻断。
+- 批次外目标冲突会阻断。
+- 预览后任务集合或路径变化会使 `groupFingerprint` 失效。
+
+#### 文件与 NFO
+
+- 每条成功任务从当前 `targetPath` 移动 / 重命名主视频。
+- 不访问或修改 `sourcePath`。
+- 同 basename 字幕、NFO、图片和 `.md5` 按各自新 basename 移动。
+- `.md5` 内容不修改。
+- 共享 `poster`、`folder`、`cover`、`tvshow.nfo`、fanart 和季海报不自动移动，并在批次预览中提示。
+- 默认不重新生成 NFO。
+- 显式重新生成 NFO 时只生成选中任务的单集 NFO，并提示覆盖风险。
+- 批次完成后再按目录深度清理旧空目录。
+- 非空目录和 WatchRule `targetDir` 不会被删除。
+
+#### 执行、进度与恢复
+
+- 前端不循环调用单条修正接口。
+- 应用前后端重新计算完整计划，不信任前端预览路径。
+- 应用返回持久化批次 ID，不等待整个批次在 HTTP 请求中完成。
+- 后台按稳定季集顺序串行执行。
+- 页面展示作业进度、成功数、失败数和当前任务。
+- 浏览器关闭不会取消作业。
+- 单条失败不回滚其它已成功任务。
+- 部分失败作业状态为 `PARTIAL_FAILED`。
+- 用户可以只重试失败条目。
+- 成功条目不会被失败重试重复执行。
+- 服务中断后作业状态可识别为 `INTERRUPTED`，并保留逐条恢复信息。
+
+#### 历史链路
+
+- 每条成功旧任务变为 `CORRECTED`。
+- 每条成功修正创建独立新 `DONE` 任务。
+- 每对旧任务和新任务的双向修正 ID 正确。
+- 新任务 `confirmationSource=MANUAL_CORRECTION`。
+- 旧任务保留错误 TMDB 和旧候选快照。
+- 新任务保存正确 TMDB、分集详情和最终选中候选快照。
+- 被排除和失败任务保持原 `DONE` 状态，不产生伪历史链路。
+
+#### 测试要求
+
+- 后端测试覆盖同季和同剧集分组条件。
+- 后端测试覆盖跨分页完整范围语义。
+- 后端测试覆盖不同 WatchRule 不会合并。
+- 后端测试覆盖已修正新任务不进入旧 TMDB 范围。
+- 后端测试覆盖季、集、多集范围和自然文件名稳定排序。
+- 后端测试覆盖公共标题 / 年份更新以及季集字段保留。
+- 后端测试覆盖主资产批次内重复目标。
+- 后端测试覆盖主资产与其它任务当前路径交叉冲突。
+- 后端测试覆盖附属文件批次内和批次外冲突。
+- 后端测试覆盖预览后任务状态、路径和范围变化导致指纹失效。
+- 后端测试覆盖同一任务被两个作业占用时阻断。
+- 后端测试覆盖单条成功、单条失败和部分失败结果。
+- 后端测试覆盖失败项重试且成功项不重复执行。
+- 后端测试覆盖文件成功但数据库失败时的尽力回滚语义。
+- 后端测试覆盖共享文件不移动、旧目录保持非空。
+- 后端测试覆盖批次结束后的目录去重与深度清理。
+- 后端测试覆盖每条历史链路和候选快照。
+- 前端验证三种范围、数量加载、默认单集、候选展示、自动预览、排除、阻断、进度和失败重试。
+- 前端验证中文和英文文案。
+- 使用临时目录完成至少一组 1978 -> 2020 同名剧集多季端到端修正测试。
+
+### 文档维护要求
+
+- 后端 Agent 实现后必须更新 `api-contracts.mdc`，记录实际范围、预览、应用、批次查询和失败重试接口。
+- 开发 Agent 必须在 `implementation-log.mdc` 记录实际分组查询、范围指纹、批次表结构、事务边界、文件回滚、进度模型和测试覆盖。
+- 前端 Agent 必须同步中英文文案，包括修正范围、跨分页语义、共享文件提示、部分失败和重试失败项。
+- Release Notes 应从用户角度说明已整理剧集可以按同季或同剧集一次选择正确 TMDB 并批量修正。
+- 用户文档应增加同名不同年份剧集误识别的修正示例，并明确源文件不参与批量修正。
+- 路线图阶段 B 增加本 ADR 的任务生命周期、持久化进度和恢复能力。
+- 用户手册按实际交付更新：当前核心批量修正已实现，应说明可用范围、部分失败与重试，以及依赖当前浏览器本地索引找回最近作业的限制。
+- 本 ADR 只记录产品与架构决策，不记录实际代码实现过程。
+
+---
+
+## 待讨论事项
+
+> 本区记录“尚未实现 / 未来规划 / 仍需产品确认”的内容。
+> 已有 ADR 定稿的事项，开发 Agent 可按对应 ADR 实现；未定稿事项需要先与 PM / 用户讨论，确认后再新增 ADR。
+
+### 当前跟踪方式（2026-09-05）
+
+已落地的 ADR-027/028/029 不再保留待开发条目。ADR-030 核心链路已实现，残余恢复能力独立跟踪。当前需求、证据和验收统一见 [requirements-status.mdc](requirements-status.md)：
+
+| 跟踪项 | 状态与入口 |
+|---|---|
+| 首发资料、渠道与验收 | ADR-022 部分落地；REQ-01/02/09 |
+| 活跃作业与删除 / 重置 / 规则变更 | 新增待设计事项；REQ-03 |
+| Parser 歧义与确定性失败重试 | 新增待设计事项；REQ-04 |
+| 批量修正服务端检索与断线恢复 | ADR-030 残余；REQ-05 |
+| 任务管理、扫描作业、诊断 | 部分基础存在；REQ-06/07/08 |
+
+下方保留未来议题的讨论范围，不代表已经承诺版本。进入开发时先明确验收条件，再形成必要 ADR；不将当前状态复制回本区。
+
+### 方案待讨论 / 后续规划
+
+- **Webhook 文件发现能力**
+  - 待讨论：新增 Webhook 通知接口，允许外部工具通知 Media Marshal 扫描指定规则下的文件或目录。
+  - 待讨论：Webhook 请求语义是“扫描文件”“扫描目录”还是“按 WatchRule 重新扫描”。
+  - 待讨论：Webhook token 配置来源、鉴权策略、错误返回和限流策略。
+  - 待讨论：路径设置页的 Webhook 开关如何与后端真实可用状态保持一致。
+
+- **模板变量与 TMDB 详情模型增强**
+  - 待讨论：NFO 是否扩展演员、分类、制片国家、海报下载等更完整字段。
+  - 待讨论：是否保存 Parser 原始结果快照或识别历史，便于后续排查错误解析。
+  - 待讨论：是否继续扩展演员、导演、制片公司、评分、片长、聚合分类、多个国家等更多模板变量。
+
+- **媒体资产类型增强**
+  - 待讨论：ISO 镜像是否作为独立资产类型整理，是否默认跳过或允许用户启用。
+  - 待讨论：剧集蓝光原盘的季 / 集语义、目录命名、匹配和整理规则。
+  - 待讨论：裸 `BDMV` 位于 WatchRule 源目录下时是否识别为蓝光资产。
+  - 待讨论：蓝光根目录旁同名 NFO / poster / folder 等附属文件是否跟随整理。
+  - 待讨论：是否增加蓝光原盘结构完整性校验。
+
+- **附属文件规则增强**
+  - 待讨论：`.sfv`、`.sha1`、`.sha256`、`.sha512` 是否按同主视频 basename 跟随处理。
+  - 待讨论：附属文件处理失败是否在任务详情中展示独立状态，而不仅记录后端日志。
+
+- **错误码体系增强**
+  - 待讨论：是否细分 TMDB 不可用、API Key 无效、Parser 不可用、目标目录不可写、权限不足、硬链接跨文件系统失败、符号链接权限失败、模板渲染失败、NFO 生成失败等错误码。
+  - 待讨论：错误码是否需要面向前端提供修复建议或帮助链接。
+
+- **可观测性与运维体验**
+  - 待讨论：扫描任务进度展示、后台任务状态页面、WebSocket 进度事件。
+  - 待讨论：TMDB / Parser 连通性测试入口，是否放在初始化页和系统设置页。
+  - 待讨论：TMDB 缓存命中率、主动清理、调试信息展示，是否需要从 debug 日志升级为页面能力。
+  - 待讨论：SQLite 单实例是否继续满足后续规模；如需要多后端实例或高并发导入，再评估 PostgreSQL。
+
+- **Queue 与任务管理增强**
+  - 待讨论：Queue 跨分页批量选择 / 批量确认是否需要后端接口支撑。
+  - 待讨论：是否新增完整任务管理页，区别于 Dashboard 最近任务与 Queue 待确认任务。
+
+- **媒体库视图与媒体资产管理（长期规划）**
+  - 待讨论：是否新增“媒体库视图 / 媒体资产”页面，用于展示 Media Marshal 已整理成功的电影、剧集、蓝光目录等资源。
+  - 建议阶段一只做只读视图：展示标题、媒体类型、年份、TMDB ID、季集、目标路径、来源 WatchRule、整理时间、文件是否仍存在。
+  - 待讨论：是否基于 `MediaTask` 历史记录建立独立的媒体资产索引，避免把任务流水直接当成长期媒体库状态。
+  - 待讨论：是否支持重新扫描、重新匹配、重新按模板整理等低风险维护操作。
+  - 高风险操作暂缓：移动、删除、合并、清理孤儿文件等会直接影响媒体文件的能力，需要先设计权限控制、二次确认、审计日志、回收站 / 隔离区和硬链接 / 符号链接语义。
+  - 产品边界：该能力不应让 Media Marshal 变成 Emby / Jellyfin / Plex 的替代品，也不应在没有安全模型前变成通用 NAS 文件管理器。
+
+- **媒体服务器播放统计与清理建议（长期规划）**
+  - 待讨论：在媒体资产索引稳定后，是否接入 Emby / Jellyfin / Plex 等媒体服务器的播放数据，用于展示资源热度、使用频率和清理候选。
+  - 建议阶段一优先支持 Emby，读取或同步播放次数、最近播放时间、播放进度 / 播放时长、用户维度汇总等只读统计数据。
+  - 后续可评估 Jellyfin 支持；Plex 建议放在更后阶段，必要时可考虑接入 Tautulli 作为 Plex 播放统计来源。
+  - 待讨论：媒体服务器条目与 Media Marshal 媒体资产的映射策略，包括目标路径归一化、TMDB / IMDB / TVDB 等 provider id、媒体服务器 item id / rating key 的保存与匹配。
+  - 第一版只做分析与建议：热门资源、长期未播放、从未播放、大体积低使用资源、清理候选列表；不自动删除、不自动移动、不自动归档。
+  - 如未来进入受控清理阶段，必须先具备权限控制、二次确认、审计日志、回收站 / 隔离区、操作回滚说明和硬链接 / 符号链接语义说明。
+  - 播放数据属于用户行为数据，后续设计需要明确是否启用、最小化存储、可关闭策略和隐私边界。
+  - 产品边界：该能力用于辅助 Media Marshal 做媒体库洞察与整理决策，不替代 Emby / Jellyfin / Plex / Tautulli 的完整统计、播放控制或用户管理能力。
+
+- **匹配算法与解析增强**
+  - 待讨论：特殊缩写、别名、地区版本、重制版、多音字拼音等场景是否需要独立规则或例外词典。
+  - 待讨论：置信度评分权重是否开放调试、配置或可解释化展示。
+
+- **代理能力后续增强**
+  - 待讨论：是否支持 SOCKS 代理、HTTPS 代理、代理认证。
+  - 待讨论：是否支持海报代理 / 海报缓存 / 后端图片转发。
+  - 待讨论：是否需要按数据源或按功能配置不同代理。
+
+- **安全与多用户**
+  - 待讨论：是否在产品内置用户认证、访问控制、API token 或多用户权限。
+  - 待讨论：如果继续建议反向代理 / VPN 承担认证，README、官网和部署文档需要保持边界一致。
+
+- **前端体验与国际化**
+  - 待讨论：模板变量帮助内容是否支持随前端语言切换。
+  - 待讨论：前端构建体积是否需要 `manualChunks` 等拆包优化。
