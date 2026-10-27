@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { EventEmitter } from "node:events";
 import type { watch } from "node:fs";
 import type { AddressInfo } from "node:net";
-import { CloudError, type DriveCapabilities } from "@media-marshal/contracts";
+import { CloudError, type DriveCapabilities, type SyncFilter } from "@media-marshal/contracts";
 import type { CoreHostGateway } from "@media-marshal/contracts/internal/rpc";
 import type { ExecutionHandle, HostEvent, PrivateTransferPlan, TransferEngine, TransferEvent } from "@media-marshal/contracts/internal";
 import { CoreDatabase } from "../../../../../packages/media-core/src/infrastructure/database";
@@ -88,7 +88,7 @@ async function fixture(input = new Map([["电影.txt", Buffer.from("完整测试
   const catalog = new RemoteCatalog(db, host), account = catalog.accounts()[0]!, downloads = new CloudDownloads(db, host, catalog, roots, now); cleanup.push(() => downloads.close());
   const entries = (await catalog.list({ accountId: account.id, parentRef: account.rootRef! })).items;
   const subscriptions = new CloudSubscriptions(db, downloads, catalog, roots); cleanup.push(() => subscriptions.close());
-  const preview = async (ref = entries[0]!.ref, options: { forceRedownload?: boolean; layout?: "selection" | "drive"; filters?: { extensions?: string[]; names?: string[] } } = {}) => {
+  const preview = async (ref = entries[0]!.ref, options: { forceRedownload?: boolean; layout?: "selection" | "drive"; filters?: { extensions?: string[]; names?: string[]; rules?: SyncFilter[] } } = {}) => {
     const requestKey = randomUUID(), initial = downloads.previews.start({ accountId: account.id, remoteRef: ref, targetGrantId: grant.id, requestKey, ...options });
     expect(initial.state).toBe("BUILDING"); await expect.poll(() => downloads.previews.get(requestKey)?.state).toBe("READY"); return downloads.previews.get(requestKey)!;
   };
@@ -97,6 +97,17 @@ async function fixture(input = new Map([["电影.txt", Buffer.from("完整测试
   return { accounts, path, db, roots, grant, rootPath, provider, fileEngine, sidecar, host, downloads, catalog, account, entries, preview, confirm, state, input, server, listeners, subscriptions };
 }
 describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关联", () => {
+  it("有序过滤相对于选定目录，预览与真实 Rclone 精确清单一致，排除项不传输", async () => {
+    const f = await fixture(new Map([["目录/a.mp4", Buffer.from("选中视频")], ["目录/private/b.mp4", Buffer.from("排除视频")], ["目录/a.txt", Buffer.from("排除文本")], ["目录/中文 空格1.mkv", Buffer.from("中文视频")]]), true);
+    const rules: SyncFilter[] = [{ action: "exclude", pattern: "/private/**", caseSensitive: true }, { action: "include", pattern: "*.{mp4,mkv}", caseSensitive: true }, { action: "exclude", pattern: "**", caseSensitive: true }];
+    const p = await f.preview(f.entries.find((entry) => entry.name === "目录")!.ref, { layout: "drive", filters: { rules } });
+    expect(p.files).toBe(2);
+    expect(JSON.parse(f.downloads.previews.row(p.id)!.snapshot_json).items.map((item: { targetSegments: string[] }) => item.targetSegments.join("/")).sort()).toEqual(["目录/a.mp4", "目录/中文 空格1.mkv"]);
+    const job = await f.downloads.confirm({ previewId: p.id, requestKey: randomUUID() }); f.downloads.start();
+    await expect.poll(() => f.state(job.jobId).state, { timeout: 10000 }).toBe("COMPLETED");
+    expect((await readdir(join(f.rootPath, "completed/目录"))).sort()).toEqual(["a.mp4", "中文 空格1.mkv"]);
+    expect(await readFile(join(f.rootPath, "completed/目录/a.mp4"), "utf8")).toBe("选中视频");
+  });
   async function setup(input = new Map([["目录/电影.mp4", Buffer.from("真实测试文件")]])) {
     const f = await fixture(input);
     const connections = new MediaConnections(f.db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" })); cleanup.push(() => connections.close());

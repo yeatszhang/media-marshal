@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { CloudError, cloudFailure, cloudFiltersSchema, type CloudFailure, type DownloadPreview, type CloudInput, type RemoteEntry } from "@media-marshal/contracts";
+import { CloudError, cloudFailure, cloudFiltersSchema, compileSyncFilters, type SyncFilter, type CloudFailure, type DownloadPreview, type CloudInput, type RemoteEntry } from "@media-marshal/contracts";
 import { localFileEvidenceSchema, type BindingRef, type TransferItem } from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { RemoteCatalog } from "./catalog.js";
@@ -9,7 +9,7 @@ import { SyncReceipts } from "../sources/sync-receipts.js";
 
 export interface PreviewSnapshot {
   binding: BindingRef; name: string; complete: boolean; failure: CloudFailure | null;
-  rootType?: "file" | "directory"; variant?: string; filters?: { extensions: string[]; names?: string[] }; layout?: "selection" | "drive"; selectionPath?: string;
+  rootType?: "file" | "directory"; variant?: string; filters?: { extensions: string[]; names?: string[]; rules?: SyncFilter[] }; layout?: "selection" | "drive"; selectionPath?: string;
   items: (TransferItem & { versionKey: string; targetPathKey: string; reuseItemId?: string; existingItemId?: string; receiptId?: string; historyPending?: boolean; localRemoved?: boolean; issue?: CloudFailure })[];
   policy: { maxAttempts: number; retryBaseMs: number };
 }
@@ -54,6 +54,7 @@ export class DownloadPreviews {
     try {
       const selected = await this.catalog.stat(row.account_id, row.remote_root_ref); snapshot.name = selected.name; snapshot.rootType = selected.type;
       const prefix = snapshot.variant ? [`redownload-${row.id}`] : [], selection = snapshot.layout === "drive" ? this.catalog.relativePath(row.account_id, selected.ref) : [selected.name]; snapshot.selectionPath = selection.join("/");
+      const includes = compileSyncFilters(snapshot.filters?.rules ?? []);
       const queue: { entry: RemoteEntry; parts: string[] }[] = [{ entry: selected, parts: [...prefix, ...selection] }], seen = new Set<string>(); let bytes = 0, requiredBytes = 0, snapshotBytes = Buffer.byteLength(JSON.stringify(snapshot)) + 4096;
       while (queue.length) {
         if (this.closed || this.cancelled.has(row.id)) throw new CloudError("INTERRUPTED");
@@ -61,6 +62,8 @@ export class DownloadPreviews {
         if (seen.has(current.entry.ref) || seen.size >= 10000) throw new CloudError("UNSUPPORTED_CAPABILITY"); seen.add(current.entry.ref);
         if (current.parts.length) root.segments(current.parts);
         if (current.entry.type === "file") {
+          const filterPath = selected.type === "file" ? selected.name : current.parts.slice(prefix.length + selection.length).join("/");
+          if (!includes(filterPath)) continue;
           const extensions = snapshot.filters?.extensions ?? [];
           if (extensions.length && !extensions.includes(current.entry.name.split(".").at(-1)!.toLowerCase())) continue;
           if (snapshot.filters?.names?.length && !snapshot.filters.names.includes(current.entry.name)) continue;

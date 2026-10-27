@@ -19,7 +19,7 @@ export const sourceConfigurationSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("cloud"), name: z.string().trim().min(1).max(100),
     accountId: id, remoteRef: id, downloadRootId: id,
-    filters: cloudFiltersSchema.transform((value) => ({ extensions: [...new Set(value.extensions)].sort(), names: [...new Set(value.names)].sort() })),
+    filters: cloudFiltersSchema.transform((value) => ({ extensions: [...new Set(value.extensions)].sort(), names: [...new Set(value.names)].sort(), ...(value.rules ? { rules: value.rules } : {}) })),
     periodic: z.strictObject({ enabled: z.boolean().default(false), intervalSeconds: z.number().int().min(60).max(604800).default(900) }).default({ enabled: false, intervalSeconds: 900 }),
     organization: organization.nullable().default(null),
   }),

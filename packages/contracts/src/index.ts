@@ -15,6 +15,7 @@ export * from "./emby.js";
 import { sourceRuleActions } from "./source-rules.js";
 export * from "./source-rules.js";
 export * from "./sync-recognition.js";
+export * from "./sync-glob.js";
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_MESSAGE_BYTES = 64 * 1024;

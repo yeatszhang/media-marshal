@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { syncFilterSchema } from "../sync-recognition.js";
 import { directoryIssueSchema, directoryIssueMessage, type DirectoryIssue } from "../directory-issues.js";
 
 const id = z.uuid();
@@ -130,7 +131,7 @@ export const downloadJobSchema = z.strictObject({
   failure: cloudFailureSchema.nullable(), updatedAt: timestamp,
 });
 export type DownloadJob = z.infer<typeof downloadJobSchema>;
-export const cloudFiltersSchema = z.strictObject({ extensions: z.array(z.string().trim().toLowerCase().regex(/^[a-z0-9]{1,12}$/)).max(32).default([]), names: z.array(z.string().min(1).max(1024).refine((name) => !/[\0/]/.test(name) && name !== "." && name !== "..")).max(100).default([]) }).default({ extensions: [], names: [] });
+export const cloudFiltersSchema = z.strictObject({ extensions: z.array(z.string().trim().toLowerCase().regex(/^[a-z0-9]{1,12}$/)).max(32).default([]), names: z.array(z.string().min(1).max(1024).refine((name) => !/[\0/]/.test(name) && name !== "." && name !== "..")).max(100).default([]), rules: z.array(syncFilterSchema).max(200).optional() }).default({ extensions: [], names: [] });
 export const downloadPreviewSchema = z.strictObject({
   id, accountId: id, remoteRef: id, targetGrantId: id,
   files: count, bytes: count, complete: z.boolean(), weakComparison: z.boolean(),
