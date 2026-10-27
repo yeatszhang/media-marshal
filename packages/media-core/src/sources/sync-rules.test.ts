@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, lstat, statfs, realpath, rm, writeFile, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
 import { sourceConfigurationSchema, syncSourceConfigurationSchema, type SyncSourceRule } from "@media-marshal/contracts";
 import { legacyConfigurationFingerprint } from "../infrastructure/independent-sync-migration.js";
@@ -36,6 +38,25 @@ async function fixture() {
   return { directory, db, roots, directories, input, target, secondTarget, downloads, local, rules, content, now, version, save, preview, enable, advance };
 }
 describe("独立本地单向同步、成功历史和阶段控制", () => {
+  it.each(["planned", "copying", "verified", "published", "recorded"])("本地同步在 %s 真实 SIGKILL 后沿原操作恢复，不覆盖或重复成果", async (checkpoint) => {
+    const f = await fixture(), source = await f.enable(); await f.advance(); const preview = await f.preview(source, "execution");
+    const result = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true });
+    const before = f.db.connection.prepare("SELECT id,plan_json FROM local_sync_operation").get() as { id: string; plan_json: string }, config = join(f.directory, "crash.json"), databasePath = join(f.directory, "core.sqlite3");
+    await writeFile(config, JSON.stringify({ database: databasePath, checkpoint, input: f.input, target: f.target })); await f.rules.close(); await f.downloads.close(); await f.directories.close(); await f.roots.close(); f.db.close();
+    const child = spawn(process.execPath, [resolve("tools/desktop-files/local-sync-crash-child.mjs"), config], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "", errors = "", timeout: ReturnType<typeof setTimeout> | undefined;
+    const exited = new Promise<{ signal: string | null }>((done, fail) => { child.once("error", fail); child.once("exit", (_code, signal) => done({ signal })); }), reached = new Promise<void>((done) => child.stdout.on("data", (bytes) => { output += bytes.toString(); if (output.includes("CHECKPOINT:" + checkpoint + "\n")) done(); })); child.stderr.on("data", (bytes) => { errors = (errors + bytes.toString()).slice(-8192); });
+    try { await Promise.race([reached, exited.then(() => { throw new Error("同步检查点前退出：" + errors); }), new Promise((_, fail) => { timeout = setTimeout(() => fail(new Error("同步检查点超时：" + errors)), 15000); })]); expect(child.kill("SIGKILL")).toBe(true); expect((await exited).signal).toBe("SIGKILL"); }
+    finally { clearTimeout(timeout); if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); await exited; } }
+    const path = join(f.target.path, "completed/原片.mp4"), published = ["published", "recorded"].includes(checkpoint), inode = published ? (await lstat(path)).ino : null;
+    if (["verified", "published", "recorded"].includes(checkpoint)) await rename(f.input.path, f.input.path + "-离线");
+    const db = await CoreDatabase.open(databasePath, undefined, { exclusiveOwner: true }); cleanup.push(() => db.close()); const roots = new CloudRoots(db); cleanup.push(() => roots.close()); const directories = new ConfigurationDirectories(db, roots); cleanup.push(() => directories.close());
+    await directories.authorize(f.target, "managed"); if (!["verified", "published", "recorded"].includes(checkpoint)) await directories.authorize(f.input, "ordinary");
+    let clock = 0; const local = new LocalSync(db, directories, roots, () => Date.UTC(2026, 9, 28) + clock, () => clock); cleanup.push(() => local.close());
+    for (let index = 0; index < 15; index++) { clock += 10000; await local.tick(); }
+    expect(db.connection.prepare("SELECT id,plan_json,phase FROM local_sync_operation").get()).toEqual({ ...before, phase: "RECORDED" }); expect(db.connection.prepare("SELECT state FROM sync_job WHERE id=?").get(result.jobId!)).toEqual({ state: "DONE" });
+    expect(db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 }); expect(await readFile(path, "utf8")).toBe(f.content); if (inode) expect((await lstat(path)).ino).toBe(inode);
+  }, 25000);
   it("识别已独立接管但旧网盘同步尚未确认时，仍可幂等暂停旧同步而不撤销识别所有权", async () => {
     const f = await fixture(), id = randomUUID(), stamp = new Date(f.now()).toISOString(), configuration = sourceConfigurationSchema.parse({ type: "cloud", name: "尚未接管的同步", accountId: randomUUID(), remoteRef: randomUUID(), downloadRootId: f.target.id }), projected = syncSourceConfigurationSchema.parse({ type: "cloud", name: configuration.name, accountId: configuration.type === "cloud" ? configuration.accountId : "", remoteRef: configuration.type === "cloud" ? configuration.remoteRef : "", target: { kind: "directory", directoryId: f.target.id } });
     const db = f.db.connection; db.prepare("INSERT INTO source_rule(id,type,version,draft_revision,lifecycle_revision,draft_json,paused,created_at,updated_at) VALUES(?,'cloud',1,1,0,?,0,?,?)").run(id, JSON.stringify(configuration), stamp, stamp); db.prepare("INSERT INTO source_rule_version(source_id,version,configuration_json,created_at) VALUES(?,1,?,?)").run(id, JSON.stringify(configuration), stamp); db.prepare("INSERT INTO legacy_configuration_owner VALUES(?,0,1)").run(id);
