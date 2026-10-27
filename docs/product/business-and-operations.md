@@ -144,7 +144,7 @@ Mac 内测的招募草稿、访谈提纲、分母及时间口径见[内测验证
 
 ## 与当前实施计划的关系
 
-当前本机桌面端提案（仓库路径：`openspec/changes/add-local-desktop-emby-ingestion/proposal.md`）服务于第一阶段：降低安装门槛，完成本地目录接入、可靠整理和 Emby 收录核对。该提案不实现账户、支付、官方识别 API 或托管通知。
+当前本机桌面端提案（仓库路径：`openspec/changes/archive/2026-10-27-add-local-desktop-emby-ingestion/proposal.md`）服务于第一阶段：降低安装门槛，完成本地目录接入、可靠整理和 Emby 收录核对。该提案不实现账户、支付、官方识别 API 或托管通知。
 
 后续分别为官方 API 和会员服务建立独立变更，再确定接口、计费账本、数据处理、通知渠道与验收标准。当前整理文档不启动收款、招募、消息发送或发布操作。
 

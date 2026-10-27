@@ -4,7 +4,7 @@
 
 当前主变更聚焦 Mac，Windows、Linux 等客户端需要独立验证宿主能力、原生依赖和安装体验，不能将既有兼容代码等同于产品支持。将这些工作从本次范围迁出，后续单独排期。
 
-本变更由 [add-local-desktop-emby-ingestion](../add-local-desktop-emby-ingestion/proposal.md) 于 2026-10-25 拆出，状态为后续待实施；不属于主变更的验收或归档前置。本次只迁移规划，不实施功能。
+本变更由 [add-local-desktop-emby-ingestion](../archive/2026-10-27-add-local-desktop-emby-ingestion/proposal.md) 于 2026-10-25 拆出，状态为后续待实施；不属于主变更的验收或归档前置。本次只迁移规划，不实施功能。
 
 ## 变更内容
 

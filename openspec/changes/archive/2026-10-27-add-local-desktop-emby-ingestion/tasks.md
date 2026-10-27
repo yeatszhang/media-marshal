@@ -1,5 +1,7 @@
 # 实施任务
 
+> 2026-10-27 已按用户要求历史归档；97/119 项完成，22 项迁出且未标完成。后续执行以[归档与任务去向](ARCHIVE.md)为准，本文执行指令及进度段落保留为历史记录；本次未同步主规格。
+
 按复选框记录实际完成状态。目标为 npm workspaces monorepo 中采用 `@yeatz/app-framework` 的独立 Electron + React 客户端；一期所需 Java 业务迁入 TypeScript Utility Process，三进程分别使用 Application 与静态模块。旧 Web/Java/Docker 工程保留作参考，不作为桌面运行依赖或同步交付门槛。每项记录对应验证，未满足完整验收的项目保留未勾选。
 
 本文件是本次下载、整理与交付的实施清单；职责拆分的当前优先级见第 21 组，历史完成项不作为新交互已验收的证据。
@@ -8,9 +10,9 @@
 
 ### 本次范围与迁出映射（2026-10-25）
 
-- 非 macOS 平台后续适配与发行 → [add-non-macos-desktop-clients](../add-non-macos-desktop-clients/tasks.md)。原 1.4、4.1、8.1、8.2 中的后续平台工作及设计中的平台扩展约定由该变更承接，已完成 10.6、12.2、18.1 和历史三目标证据保留。
-- 新用户 Emby 自动安装、启动、首次账号与媒体库初始化 → [add-emby-server-setup](../add-emby-server-setup/tasks.md)。原方案只有后续说明，没有已完成的安装初始化任务；本次 6.x、7.2 继续仅接入已有 Emby。
-- 7.6 的语言设置、20.3 的英文文案补齐及界面多语言验收 → [add-desktop-localization](../add-desktop-localization/tasks.md)。7.1 已完成的国际化基础保留为历史事实，不代表后续完整语言支持完成。
+- 非 macOS 平台后续适配与发行 → [add-non-macos-desktop-clients](../../add-non-macos-desktop-clients/tasks.md)。原 1.4、4.1、8.1、8.2 中的后续平台工作及设计中的平台扩展约定由该变更承接，已完成 10.6、12.2、18.1 和历史三目标证据保留。
+- 新用户 Emby 自动安装、启动、首次账号与媒体库初始化 → [add-emby-server-setup](../../add-emby-server-setup/tasks.md)。原方案只有后续说明，没有已完成的安装初始化任务；本次 6.x、7.2 继续仅接入已有 Emby。
+- 7.6 的语言设置、20.3 的英文文案补齐及界面多语言验收 → [add-desktop-localization](../../add-desktop-localization/tasks.md)。7.1 已完成的国际化基础保留为历史事实，不代表后续完整语言支持完成。
 - 本次新界面仅验收中文；无需删除现有翻译资源或兼容实现。媒体识别的中英文名称、Unicode 文件名和中文首字母测试继续保留。所有原任务编号与复选框状态保持不变，混合任务仅收窄未完成部分，迁出不等于完成。后续三个变更不阻塞本次验收或归档。
 
 ### 仅支持夸克的范围收敛（2026-10-25）

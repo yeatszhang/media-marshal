@@ -4,7 +4,7 @@
 
 当前主变更只连接已有 Emby，尚未安装或初始化服务器的新用户无法直接完成入库。将自动安装、启动及首次设置独立规划，避免阻塞现有服务器用户的下载和整理闭环。
 
-本变更由 [add-local-desktop-emby-ingestion](../add-local-desktop-emby-ingestion/proposal.md) 于 2026-10-25 拆出，状态为后续待实施；不属于主变更的验收或归档前置。本次只迁移规划，不实施功能。
+本变更由 [add-local-desktop-emby-ingestion](../archive/2026-10-27-add-local-desktop-emby-ingestion/proposal.md) 于 2026-10-25 拆出，状态为后续待实施；不属于主变更的验收或归档前置。本次只迁移规划，不实施功能。
 
 ## 变更内容
 

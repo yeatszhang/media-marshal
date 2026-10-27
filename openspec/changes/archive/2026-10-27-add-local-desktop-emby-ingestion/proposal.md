@@ -1,5 +1,7 @@
 # 统一来源的桌面下载、整理与 Emby 入库提案
 
+> 2026-10-27 已按用户要求历史归档；97/119 项完成，22 项迁出且未标完成。后续执行以[归档与任务去向](ARCHIVE.md)为准，本文执行指令及进度段落保留为历史记录；本次未同步主规格。
+
 ## 为什么
 
 已有 Emby 的用户需要在一个 Mac 应用中完成网盘或本地目录接入、可靠下载、媒体整理和收录核对。账号、目录订阅与本地来源分散配置，会让用户反复填写同一链路，并混淆网盘目录、本地下载目录和媒体库目标；本变更将网盘账号、来源单向同步、识别映射拆成独立配置与执行模块，通过同步成果串联全过程。
@@ -44,7 +46,7 @@
 - 完成来源入口与迁移改造后，沿用原有下载、文件、识别和交付状态机；识别规则的输入重叠与目标匹配歧义须在预览／执行前解释并阻断，不允许新界面重复启动后台任务。
 - 正式发行继续验证原生 SQLite ABI、冻结解析器、网盘组件、架构筛选、许可与源码材料。安装包不带个人配置，卸载不删除数据或媒体；手动升级使用一致性备份，回退不能被解释为撤销文件操作。
 - 不实现远端写入、双向同步、镜像删除、下载加速、通用插件市场、NAS/Web 产品、旧库导入、音乐／ISO／蓝光或非 COPY 入库。未完成文件可能重新下载，不承诺跨进程字节级续传。
-- 桌面与整理核心免费；官方 API、托管通知、支付和商店发行独立规划，见[商业与付费策略](../../../docs/product/business-and-operations.md)。
+- 桌面与整理核心免费；官方 API、托管通知、支付和商店发行独立规划，见[商业与付费策略](../../../../docs/product/business-and-operations.md)。
 
 ## 后续独立变更（2026-10-25 范围收敛）
 
@@ -52,9 +54,9 @@
 
 | 后续变更 | 承接范围 |
 | --- | --- |
-| [add-non-macos-desktop-clients](../add-non-macos-desktop-clients/proposal.md) | Windows、Linux 等非 macOS 客户端的平台适配、资源、安装器与验证 |
-| [add-emby-server-setup](../add-emby-server-setup/proposal.md) | 为新用户自动安装、启动 Emby，初始化账号、媒体目录及媒体库 |
-| [add-desktop-localization](../add-desktop-localization/proposal.md) | 语言设置、中英文切换、翻译补齐与本地化验收 |
+| [add-non-macos-desktop-clients](../../add-non-macos-desktop-clients/proposal.md) | Windows、Linux 等非 macOS 客户端的平台适配、资源、安装器与验证 |
+| [add-emby-server-setup](../../add-emby-server-setup/proposal.md) | 为新用户自动安装、启动 Emby，初始化账号、媒体目录及媒体库 |
+| [add-desktop-localization](../../add-desktop-localization/proposal.md) | 语言设置、中英文切换、翻译补齐与本地化验收 |
 
 保留既有平台适配、国际化基础及历史完成证据，无需为缩减范围删除已实现代码。媒体名称的中英文解析、Unicode 路径、中文首字母及 TMDB 元数据处理仍属于媒体正确性，不随界面多语言迁出。Mac Intel 架构验证仍在本次范围。
 

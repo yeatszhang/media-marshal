@@ -99,7 +99,7 @@ Main 的等待期限或内部 `AbortSignal` 结束时，通过本次请求的原
 
 ## 运行与数据
 
-页面使用 `marshal://app` 协议。Main 校验顶层 frame、来源、动作和参数；目录保存还要求通过原生目录对话框取得授权。Core 再次核对真实路径、目录关系与权限。Main 与 Renderer 不打开 SQLite。Main/Core 通信使用私有 MessagePort，端口断开后 Core 安全退出；媒体业务不开放 HTTP/WS 服务。新增受管网盘组件的授权回环接口及凭据副本边界见仓库中的 `openspec/changes/add-local-desktop-emby-ingestion/design.md`，尚未验收的能力不视为当前可用功能。
+页面使用 `marshal://app` 协议。Main 校验顶层 frame、来源、动作和参数；目录保存还要求通过原生目录对话框取得授权。Core 再次核对真实路径、目录关系与权限。Main 与 Renderer 不打开 SQLite。Main/Core 通信使用私有 MessagePort，端口断开后 Core 安全退出；媒体业务不开放 HTTP/WS 服务。新增受管网盘组件的授权回环接口及凭据副本边界见仓库中的 `openspec/changes/archive/2026-10-27-add-local-desktop-emby-ingestion/design.md`，尚未验收的能力不视为当前可用功能。
 
 桌面数据位于 Electron 用户数据目录的 `desktop.sqlite3`，敏感凭据单独由 safeStorage 保护；查询不返回密钥。测试只使用临时数据目录。数据库使用 `user_version`、短事务和升级前 SQLite backup；未知或更高版本停止写入，旧 Java 无版本表不会被接管。
 

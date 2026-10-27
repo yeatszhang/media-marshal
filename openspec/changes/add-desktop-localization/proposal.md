@@ -4,7 +4,7 @@
 
 主变更需要先完成稳定的中文流程，完整中英文覆盖与语言切换会扩大界面验收面。将语言设置、翻译补齐及本地化验证独立安排，保留已实现的国际化基础。
 
-本变更由 [add-local-desktop-emby-ingestion](../add-local-desktop-emby-ingestion/proposal.md) 于 2026-10-25 拆出，状态为后续待实施；不属于主变更的验收或归档前置。本次只迁移规划，不实施功能。
+本变更由 [add-local-desktop-emby-ingestion](../archive/2026-10-27-add-local-desktop-emby-ingestion/proposal.md) 于 2026-10-25 拆出，状态为后续待实施；不属于主变更的验收或归档前置。本次只迁移规划，不实施功能。
 
 ## 变更内容
 
