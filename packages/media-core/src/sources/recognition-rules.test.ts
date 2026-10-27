@@ -121,9 +121,11 @@ it("自动策略须按规则版本核对首次样本；普通目录保持人工�
   await f.pipeline.scan(sourceId); await f.advance(sourceId); await f.pipeline.tick(); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_automatic").get()).toEqual({ n: 0 });
   const taskId = await f.task(sourceId, "测试电影.2026.mp4"), sample = await f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false });
   const input = { id: rule.id, expectedVersion: rule.version, samplePreviewId: sample.id, accepted: true as const, requestKey: randomUUID() }; rule = f.recognition.authorizeAutomatic(input); expect(f.recognition.authorizeAutomatic(input)).toEqual(rule); expect(rule.runtime!.automaticAuthorized).toBe(true);
+  expect(new CoreService(f.db).getRuntime().mode).toBe("automatic-enabled");
   for (let i = 0; i < 4; i++) await f.pipeline.tick(); const television = f.pipeline.list({ sourceId }).items.find((row) => row.relativePath.endsWith("测试剧集.S01E01.mp4"))!;
   expect(television.automation).toMatchObject({ state: "SUBMITTED", operationId: expect.any(String) }); expect(f.pipeline.task(television.taskId!).state).toBe("DONE"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 1 });
   const changed = await f.enable(f.save(rule, { name: "相同输入，重新确认策略版本" })); expect(changed.runtime!.automaticAuthorized).toBe(false); expect(() => f.recognition.authorizeAutomatic({ ...input, expectedVersion: changed.version, requestKey: randomUUID() })).toThrow(/预览.*不一致|变化/);
+  expect(new CoreService(f.db).getRuntime().mode).toBe("manual-only");
 });
 it("本地普通客户端即使明确授权自动策略，仍因缺乏可信完成规则转人工", async () => {
   const f = await fixture(), rule = await f.enable(f.save(undefined, { automatic: true, targets: [f.movieTarget, f.tvTarget] })), sourceId = rule.runtime!.sourceId!; await f.pipeline.scan(sourceId); await f.advance(sourceId); const taskId = await f.task(sourceId, "测试电影.2026.mp4"), sample = await f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false });
