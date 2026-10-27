@@ -18,6 +18,7 @@ import { ConfigurationDirectories } from "./configuration-directories.js";
 import { RecognitionRules } from "./recognition-rules.js";
 import { SyncRules } from "./sync-rules.js";
 import { LocalSync } from "./local-sync.js";
+import { SourceRoot } from "../files/source-root.js";
 
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -95,6 +96,25 @@ it("手动重试沿已受理计划恢复，不被规则的新输入或目标替�
   for (let i = 0; i < 14; i++) { await f.advance(undefined, 10); await f.pipeline.tick(); }
   expect(f.pipeline.task(taskId).state).toBe("DONE"); expect(await readFile(preview.targetPath, "utf8")).toBe(f.bytes);
   await expect(readFile(join(f.secondMovie.path, "测试电影/测试电影.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+it("活动 COPY 须先暂停到安全点；删除、恢复和重置保留原计划、版本及媒体文件", async () => {
+  const f = await fixture(); let rule = await f.enable(f.save(undefined, { targets: [f.movieTarget] })); const sourceId = rule.runtime!.sourceId!;
+  await f.pipeline.scan(sourceId); await f.advance(sourceId); const taskId = await f.task(sourceId, "测试电影.2026.mp4");
+  const preview = await f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false });
+  const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>(), original = SourceRoot.prototype.digest;
+  const spy = vi.spyOn(SourceRoot.prototype, "digest").mockImplementation(async function (this: SourceRoot, ...args) { if (args[3]) { entered.resolve(); await released.promise; } return original.apply(this, args); });
+  await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); const copying = f.pipeline.tick(); await entered.promise;
+  try {
+    await expect(f.recognition.control({ ...versions(rule), operation: "remove", requestKey: randomUUID() })).rejects.toThrow(/先暂停/);
+    const draft = f.save(rule, { name: "活动时编辑的草稿" }); await expect(f.enable(draft)).rejects.toThrow(/活动文件操作/); rule = draft;
+    rule = await f.recognition.control({ ...versions(rule), operation: "pause", requestKey: randomUUID() });
+    await expect(f.recognition.control({ ...versions(rule), operation: "remove", requestKey: randomUUID() })).rejects.toThrow(/活动文件操作/);
+  } finally { released.resolve(); await copying; spy.mockRestore(); }
+  const plan = f.db.connection.prepare("SELECT id,plan_json FROM ingestion_operation").get();
+  const command = { ...versions(rule), operation: "remove" as const, requestKey: randomUUID() }; rule = await f.recognition.control(command); expect(await f.recognition.control(command)).toEqual(rule);
+  rule = await f.recognition.control({ ...versions(rule), operation: "restore", requestKey: randomUUID() }); expect(rule.paused).toBe(true); expect(rule.deletedAt).toBeNull();
+  rule = await f.recognition.control({ ...versions(rule), operation: "reset", requestKey: randomUUID() }); expect(rule.draft.name).toBe("独立混合识别"); expect(rule.version).toBe(1);
+  expect(f.db.connection.prepare("SELECT id,plan_json FROM ingestion_operation").get()).toEqual(plan); expect(await readFile(join(f.input.path, "测试电影.2026.mp4"), "utf8")).toBe(f.bytes); await expect(readFile(preview.targetPath)).rejects.toMatchObject({ code: "ENOENT" });
 });
 it("自动策略须按规则版本核对首次样本；普通目录保持人工，正式成果可自动分库", async () => {
   const f = await fixture(); await f.synchronize(); let rule = await f.enable(f.save(undefined, { input: { kind: "default" }, automatic: true, targets: [f.movieTarget, f.tvTarget] })); const sourceId = rule.runtime!.sourceId!;
