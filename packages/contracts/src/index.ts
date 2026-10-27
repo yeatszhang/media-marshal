@@ -16,6 +16,8 @@ import { sourceRuleActions } from "./source-rules.js";
 export * from "./source-rules.js";
 export * from "./sync-recognition.js";
 export * from "./sync-glob.js";
+import { configurationActions, configurationDirectorySchema } from "./configuration-api.js";
+export * from "./configuration-api.js";
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_MESSAGE_BYTES = 64 * 1024;
@@ -167,6 +169,7 @@ export type DesktopRuntime = z.infer<typeof runtimeSchema>;
 
 const empty = z.strictObject({});
 export const coreActions = {
+  ...configurationActions,
   ...correctionActions,
   ...sourceRuleActions,
   ...ingestionActions,
@@ -239,6 +242,7 @@ export const credentialSchema = z.strictObject({
   value: z.string().trim().max(1024),
 });
 export const nativeActions = {
+  "desktop.configuration.choose-directory": z.strictObject({ kind: z.enum(["ordinary", "managed"]) }),
   "desktop.host-preferences.get": empty,
   "desktop.host-preferences.save": hostPreferencesDraftSchema,
   "desktop.about": empty,
@@ -267,6 +271,10 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
+  listConfigurationDirectories(): Promise<CoreOutput<"configuration.directories">>;
+  getDefaultDownloadDirectory(): Promise<CoreOutput<"configuration.default">>;
+  setDefaultDownloadDirectory(input: CoreInput<"configuration.set-default">): Promise<CoreOutput<"configuration.set-default">>;
+  chooseConfigurationDirectory(kind: "ordinary" | "managed"): Promise<z.infer<typeof configurationDirectorySchema> | null>;
   checkLocalSourceHealth(input: CoreInput<"source-rules.local-health">): Promise<CoreOutput<"source-rules.local-health">>;
   onBeforeReload(listener: () => Promise<void>): () => void;
   getHostPreferences(): Promise<HostPreferences>;

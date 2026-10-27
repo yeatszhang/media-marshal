@@ -26,6 +26,10 @@ async function invoke(action: string, payload: unknown): Promise<any> {
 }
 // 此对象仅暴露具体动作，不暴露 invoke、通道名或 Electron 对象。
 const api: DesktopApi = {
+  listConfigurationDirectories: () => invoke("configuration.directories", {}),
+  getDefaultDownloadDirectory: () => invoke("configuration.default", {}),
+  setDefaultDownloadDirectory: (input) => invoke("configuration.set-default", input),
+  chooseConfigurationDirectory: (kind) => invoke("desktop.configuration.choose-directory", { kind }),
   checkLocalSourceHealth: (input) => invoke("source-rules.local-health", input),
   onBeforeReload: rendererReloadBridge(ipcRenderer),
   getHostPreferences: () => invoke("desktop.host-preferences.get", {}),

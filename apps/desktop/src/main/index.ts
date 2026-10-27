@@ -285,6 +285,10 @@ async function bootstrap() {
       const recover = () => recovering ??= (async () => {
         if (exiting || supervisor.state !== "ready") return;
         await roots.restore();
+        for (const previous of await supervisor.requestPrivate("configuration.bootstrap", {})) {
+          try { const path = await roots.validateDirectory(previous.grant.path), grant = await (previous.kind === "ordinary" ? probeReadOnlyVolume(path, previous.grant.id) : probeManagedVolume(path, previous.grant.id)); await supervisor.requestPrivate("configuration.authorize", { kind: previous.kind, grant }); }
+          catch { /* 保留原目录身份和不可用状态，等待用户恢复原磁盘。 */ }
+        }
         for (const previous of await supervisor.requestPrivate("media.targets.bootstrap", {})) {
           try { const target = await probeManagedVolume(await roots.validateDirectory(previous.path), previous.id); await supervisor.requestPrivate("media.targets.authorize", target); }
           catch { /* 每个媒体目标独立恢复；单个目标缺盘不阻断同下载根的其他策略。 */ }
@@ -454,6 +458,22 @@ async function bootstrap() {
                 return { ok: true, result: canonical };
               }
               return { ok: true, result: null };
+            }
+            if (action === "desktop.configuration.choose-directory") {
+              const { kind } = nativeActions["desktop.configuration.choose-directory"].parse(parsed.data);
+              const selected = await dialog.showOpenDialog(window!, { title: kind === "managed" ? "选择本地下载目录" : "选择本机输入目录", properties: ["openDirectory", "createDirectory"] });
+              if (selected.canceled || !selected.filePaths[0]) return { ok: true, result: null };
+              const controller = ctx.get(downloadRootsToken), path = await controller.validateDirectory(selected.filePaths[0]);
+              const known = (await supervisor.request("configuration.directories", {})).find((row) => row.path === path);
+              const managed = (await supervisor.request("cloud.roots.list", {})).find((row) => row.path === path);
+              if (kind === "managed" || managed || known?.kind === "managed") {
+                const root = await controller.choose(path), grant = (await supervisor.requestPrivate("cloud.roots.bootstrap", {})).find((row) => row.id === root.id)!;
+                await supervisor.requestPrivate("configuration.authorize", { kind: "managed", grant });
+                return { ok: true, result: (await supervisor.request("configuration.directories", {})).find((row) => row.id === root.id)! };
+              }
+              const grant = await probeReadOnlyVolume(path, known?.id);
+              await supervisor.requestPrivate("configuration.authorize", { kind: "ordinary", grant });
+              return { ok: true, result: (await supervisor.request("configuration.directories", {})).find((row) => row.id === grant.id)! };
             }
             if (action === "desktop.credentials.save") {
               const { kind, value } = parsed.data as {

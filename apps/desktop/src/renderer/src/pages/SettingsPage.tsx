@@ -14,6 +14,7 @@ import { Button } from "../components/ui/button";
 import i18n from "../i18n";
 import { HostSettingsPanel } from "../components/HostSettingsPanel";
 import { LibrarySetup } from "./LibrarySetup";
+import { DownloadDirectorySettings } from "../components/DownloadDirectorySettings";
 import "./settings.css";
 
 export function SettingsPage() {
@@ -65,6 +66,7 @@ export function SettingsPage() {
         <p role="status">{t("loading")}</p>
       ) : (
         <div className="settings-sections">
+          <DownloadDirectorySettings />
           <form
             className="panel settings-card"
             aria-labelledby="settings-connection-title"

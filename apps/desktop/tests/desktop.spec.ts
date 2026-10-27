@@ -571,6 +571,30 @@ test("仅电影目标绑定已有非空媒体库，Core 重启复核结果自动
   } finally { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 
+test("默认下载目录经原生授权和固定 IPC 保存，取消、重载和更换保留旧成果", async () => {
+  const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), a = join(canonical, "下载 A 中文 空格 " + "长路径".repeat(10)), b = join(canonical, "下载 B"); await mkdir(a); await mkdir(b);
+  await window.getByRole("link", { name: "设置", exact: true }).click(); const panel = window.getByRole("region", { name: "默认本地下载目录", exact: true });
+  expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toEqual({ version: 0, directory: null });
+  await application.evaluate(({ dialog }) => { dialog.showOpenDialog = (async () => ({ canceled: true, filePaths: [] })) as typeof dialog.showOpenDialog; });
+  await panel.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await expect(panel.getByRole("button", { name: "保存默认目录", exact: true })).toBeDisabled();
+  expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toEqual({ version: 0, directory: null });
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, a);
+  await panel.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await expect(panel).toContainText("有未保存的目录选择");
+  expect((await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).version).toBe(0);
+  await panel.getByRole("button", { name: "保存默认目录", exact: true }).click(); await expect(panel).toContainText("默认目录已保存"); const first = await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory()); expect(first).toMatchObject({ version: 1, directory: { path: a } });
+  const retained = join(a, "completed/保留的同步成果.mp4"); await writeFile(retained, "更改默认目录不移动旧文件"); const before = await stat(retained);
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.getByRole("link", { name: "设置", exact: true }).click(); await expect(panel.getByRole("combobox", { name: "下载目录", exact: true })).toHaveValue(first.directory!.id);
+  expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toEqual(first);
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, b);
+  await panel.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await panel.getByRole("button", { name: "保存默认目录", exact: true }).click(); await expect(panel).toContainText("默认目录已保存"); expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toMatchObject({ version: 2, directory: { path: b } });
+  await window.evaluate(() => window.desktopApi.restartCore()); await expect.poll(() => window.evaluate(() => window.desktopApi.listConfigurationDirectories())).toMatchObject([{ id: first.directory!.id, available: true }, { path: b, available: true }]);
+  expect(await readFile(retained, "utf8")).toBe("更改默认目录不移动旧文件"); expect((await stat(retained)).ino).toBe(before.ino);
+  expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 }); expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await panel.getByRole("combobox", { name: "下载目录", exact: true }).selectOption(first.directory!.id);
+  expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await panel.screenshot({ path: "test-results/desktop/default-download-directory-minimum.png" });
+});
+
 test("Emby 显式路径转换经真实 IPC 保存，多库根发现与重载不猜测目标", async () => {
   test.setTimeout(60000);
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();

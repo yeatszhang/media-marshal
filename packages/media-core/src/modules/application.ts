@@ -34,6 +34,7 @@ import { MediaConnections, MediaConnectionsToken } from "../application/media-co
 import { IngestionPipeline } from "../ingestion/pipeline.js";
 import { EmbyDelivery } from "../ingestion/emby-delivery.js";
 import { SourceRules } from "../sources/rules.js";
+import { ConfigurationDirectories } from "../sources/configuration-directories.js";
 import { Corrections } from "../ingestion/corrections.js";
 import { loadNativeRename, type NativeRenameLaunch } from "../files/native-rename.js";
 
@@ -75,6 +76,9 @@ declare module "@yeatz/app-framework/command" {
     "media.source-rules.apply": (input: CoreInput<"source-rules.apply">) => CoreOutput<"source-rules.apply">;
     "media.media.libraries": () => CoreOutput<"media.libraries">;
     "media.emby.configuration": () => CoreOutput<"emby.configuration">;
+    "media.configuration.directories": () => Promise<CoreOutput<"configuration.directories">>;
+    "media.configuration.default": () => CoreOutput<"configuration.default">;
+    "media.configuration.set-default": (input: CoreInput<"configuration.set-default">) => CoreOutput<"configuration.set-default">;
     "media.emby.libraries": () => Promise<CoreOutput<"emby.libraries">>;
     "media.emby.discover": (input: CoreInput<"emby.discover">) => Promise<CoreOutput<"emby.discover">>;
     "media.emby.connect": (input: CoreInput<"emby.connect">) => Promise<CoreOutput<"emby.connect">>;
@@ -201,6 +205,8 @@ export function createMediaApplication(
       ingestion = new IngestionPipeline(ctx.get(DatabaseToken), () => parser, connections);
       ctx.disposables.add(() => ingestion.close());
       sourceRules = new SourceRules(ctx.get(DatabaseToken), downloads, subscriptions, ingestion);
+      configurationDirectories = new ConfigurationDirectories(ctx.get(DatabaseToken), roots);
+      ctx.disposables.add(() => configurationDirectories.close());
       ctx.disposables.add(() => sourceRules.close());
       outbox = new IngestionOutbox(ctx.get(DatabaseToken), roots, options.ingestion ?? ingestion);
       ctx.disposables.add(() => outbox.close());
@@ -246,6 +252,9 @@ export function createMediaApplication(
       add(registry.register("media.source-rules.apply", () => { throw new DesktopError("FORBIDDEN", "来源确认必须经过宿主目录授权"); }));
       add(registry.register("media.media.libraries", () => ingestion.libraries()));
       add(registry.register("media.emby.configuration", () => delivery.configuration()));
+      add(registry.register("media.configuration.directories", () => configurationDirectories.list()));
+      add(registry.register("media.configuration.default", () => configurationDirectories.defaults()));
+      add(registry.register("media.configuration.set-default", (_, input) => configurationDirectories.setDefault(input)));
       add(registry.register("media.emby.libraries", () => delivery.libraries()));
       add(registry.register("media.emby.discover", (_, input) => delivery.discover(input)));
       add(registry.register("media.emby.connect", (_, input) => delivery.connect(input)));
@@ -327,7 +336,7 @@ export function createMediaApplication(
     },
   };
   const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); } };
-  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections;
+  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories;
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],
   });
@@ -341,7 +350,7 @@ export function createMediaApplication(
     // 取消等待不等同于文件回滚或写入者已停止；后者仍由 Main／Host 回收证明。
     let cancelFailure: unknown;
     try { options.cancelHostRequests?.(); } catch (error) { cancelFailure = error; }
-    return quiescence = Promise.allSettled([sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
+    return quiescence = Promise.allSettled([configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
   }
   return {
     app,
@@ -355,6 +364,8 @@ export function createMediaApplication(
       return requests.run(request.requestId, async () => {
         const task = (async () => {
           if (request.action === "media.observations.reset") { ingestion.resetObservations(); return {}; }
+          if (request.action === "configuration.bootstrap") return configurationDirectories.bootstrap();
+          if (request.action === "configuration.authorize") { const input = privateCoreActions["configuration.authorize"].input.parse(payload); return configurationDirectories.authorize(input.grant, input.kind); }
           if (request.action === "desktop.state.reconcile-restored") { ingestion.reconcileRestored(); corrections.reconcileRestored(); downloads.reconcileRestored(); return {}; }
           if (request.action === "source-rules.apply") { const input = privateCoreActions["source-rules.apply"].input.parse(payload); return sourceRules.apply({ previewId: input.previewId, requestKey: input.requestKey, runOnce: input.runOnce, ...(input.automaticConsent ? { automaticConsent: input.automaticConsent } : {}) }, input.grants); }
           if (request.action === "media.targets.find") return ingestion.targetGrant((payload as { path: string }).path);
