@@ -84,6 +84,18 @@ it("已受理 COPY 冻结原目标，改规则与全局暂停不替换计划，�
   const paused = await f.recognition.control({ ...versions(rule), requestKey: randomUUID(), operation: "pause" }); await f.recognition.control({ ...versions(paused), requestKey: randomUUID(), operation: "resume" }); expect(f.pipeline.pauseStatus().paused).toBe(true);
   f.pipeline.setPaused({ paused: false, requestKey: randomUUID() }); await f.advance(sourceId); await f.pipeline.tick(); expect(f.pipeline.task(taskId).state).toBe("DONE"); expect(await readFile(preview.targetPath, "utf8")).toBe(f.bytes); await expect(readFile(join(f.secondMovie.path, "测试电影/测试电影.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
 });
+it("手动重试沿已受理计划恢复，不被规则的新输入或目标替换", async () => {
+  const f = await fixture(); let rule = await f.enable(f.save(undefined, { targets: [f.movieTarget] })); const sourceId = rule.runtime!.sourceId!;
+  await f.pipeline.scan(sourceId); await f.advance(sourceId); const taskId = await f.task(sourceId, "测试电影.2026.mp4");
+  const preview = await f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false });
+  await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); f.pipeline.setPaused({ paused: true, requestKey: randomUUID() }); await f.pipeline.tick();
+  rule = await f.enable(f.save(rule, { input: { kind: "default" }, targets: [{ ...f.movieTarget, id: randomUUID(), directoryId: f.secondMovie.id }] }));
+  expect(() => f.pipeline.retry(taskId)).toThrow(/全局整理已暂停/);
+  f.pipeline.setPaused({ paused: false, requestKey: randomUUID() }); expect(() => f.pipeline.retry(taskId)).not.toThrow();
+  for (let i = 0; i < 14; i++) { await f.advance(undefined, 10); await f.pipeline.tick(); }
+  expect(f.pipeline.task(taskId).state).toBe("DONE"); expect(await readFile(preview.targetPath, "utf8")).toBe(f.bytes);
+  await expect(readFile(join(f.secondMovie.path, "测试电影/测试电影.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+});
 it("自动策略须按规则版本核对首次样本；普通目录保持人工，正式成果可自动分库", async () => {
   const f = await fixture(); await f.synchronize(); let rule = await f.enable(f.save(undefined, { input: { kind: "default" }, automatic: true, targets: [f.movieTarget, f.tvTarget] })); const sourceId = rule.runtime!.sourceId!;
   await f.pipeline.scan(sourceId); await f.advance(sourceId); await f.pipeline.tick(); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_automatic").get()).toEqual({ n: 0 });

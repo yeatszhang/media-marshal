@@ -1183,14 +1183,16 @@ export class IngestionPipeline implements ManagedIngestionSink {
   retry(taskId: string) {
     if (this.database.connection.prepare("SELECT 1 FROM media_correction_operation WHERE new_task_id=?").get(taskId) || this.correctionLeases.has(taskId) || this.database.connection.prepare("SELECT 1 FROM media_task WHERE id=? AND status='CORRECTED'").get(taskId) || this.database.connection.prepare("SELECT 1 FROM correction_item WHERE task_id=? AND state IN ('PENDING','RUNNING','NEEDS_ATTENTION')").get(taskId)) throw conflict("此任务已被修正或正在修正，不能重放旧附属文件计划；请查看最新任务与修正作业");
     if (this.database.connection.prepare("SELECT 1 FROM app_setting s JOIN ingestion_operation o ON s.key='ingestion.restore.audit.'||o.id WHERE o.task_id=?").get(taskId)) throw conflict("恢复备份后的目标文件尚待核对，请等待原卷和权限恢复");
-    const db = this.database.connection, candidate = db.prepare("SELECT * FROM ingestion_candidate WHERE task_id=?").get(taskId) as CandidateRow | undefined; if (!candidate) throw conflict(); this.candidateSource(candidate);
+    const db = this.database.connection, candidate = db.prepare("SELECT * FROM ingestion_candidate WHERE task_id=?").get(taskId) as CandidateRow | undefined; if (!candidate) throw conflict();
     if (this.contentReviews.active(candidate.source_id)) throw conflict("该来源正在全量复核内容，请等待完成或取消后重试");
     const operation = db.prepare("SELECT * FROM ingestion_operation WHERE task_id=?").get(taskId) as OperationRow | undefined;
+    if (operation) this.operationSource(operation, JSON.parse(operation.plan_json) as Plan); else this.candidateSource(candidate);
     if (operation?.phase === "RECORDED") {
       const changed = db.prepare("UPDATE ingestion_accessory SET phase=CASE WHEN evidence_json IS NULL THEN 'COPYING' ELSE 'VERIFIED' END,failure_code=NULL WHERE operation_id=? AND phase='NEEDS_ATTENTION'").run(operation.id);
       if (!changed.changes) throw conflict("文件已完成，请仅重试 Emby 交付"); this.accessoryJobState(operation.id); void this.tick().catch(() => {}); return {};
     }
-    this.assertCandidateCurrent(candidate);
+    // 已受理操作在复制时核对冻结输入；当前规则的新输入不能替换或阻断原计划。
+    if (!operation) this.assertCandidateCurrent(candidate);
     if (operation) db.prepare("UPDATE ingestion_operation SET phase=CASE WHEN evidence_json IS NULL THEN 'COPYING' ELSE 'VERIFIED' END,failure_code=NULL WHERE id=?").run(operation.id);
     db.prepare("UPDATE media_task SET status=?,updated_at=? WHERE id=?").run(operation ? "PROCESSING" : "PENDING", timestamp(this.now), taskId); db.prepare("UPDATE ingestion_candidate SET reason=NULL WHERE id=?").run(candidate.id); void this.tick().catch(() => {}); return {};
   }
@@ -1221,7 +1223,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         db.prepare("UPDATE media_task SET status='AWAITING_CONFIRMATION',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(recognitionFailure(error), row.id);
       } }
       await this.automatic.tick();
-      const operations = db.prepare("SELECT o.* FROM ingestion_operation o JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND s.paused=0 ORDER BY o.created_at,o.id LIMIT 10").all() as OperationRow[];
+      const operations = db.prepare("SELECT o.* FROM ingestion_operation o JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND (s.paused=0 OR json_extract(o.plan_json,'$.recognitionSnapshot') IS NOT NULL OR EXISTS(SELECT 1 FROM recognition_input ri WHERE ri.source_id=s.id)) ORDER BY o.created_at,o.id LIMIT 10").all() as OperationRow[];
       for (const operation of operations) { if (controller.signal.aborted) return; if (!this.operationRunnable(operation)) continue; try { await this.withSourceWork(operation.candidate_id, controller.signal, (signal) => this.copy(operation, signal)); } catch (error) {
         if (controller.signal.aborted) return;
         if (error instanceof SourceWorkInterrupted) continue;
@@ -1232,7 +1234,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         db.prepare("UPDATE media_task SET status='FAILED',updated_at=? WHERE id=?").run(timestamp(this.now), operation.task_id);
         db.prepare("UPDATE ingestion_candidate SET reason='整理中断或证据冲突，未覆盖现有文件；请检查后重试' WHERE id=?").run(operation.candidate_id);
       } }
-      const accessories = db.prepare("SELECT a.*,o.task_id,o.candidate_id FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase='RECORDED' AND a.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND s.paused=0 ORDER BY a.created_at,a.id LIMIT 100").all() as (OperationRow & { operation_id: string })[];
+      const accessories = db.prepare("SELECT a.*,o.task_id,o.candidate_id FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase='RECORDED' AND a.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND (s.paused=0 OR json_extract(o.plan_json,'$.recognitionSnapshot') IS NOT NULL OR EXISTS(SELECT 1 FROM recognition_input ri WHERE ri.source_id=s.id)) ORDER BY a.created_at,a.id LIMIT 100").all() as (OperationRow & { operation_id: string })[];
       for (const asset of accessories) { if (controller.signal.aborted) return; if (!this.operationRunnable(asset)) continue; try { await this.withSourceWork(asset.candidate_id, controller.signal, (signal) => this.copyAccessory(asset, signal)); } catch (error) {
         if (controller.signal.aborted) return;
         if (error instanceof SourceWorkInterrupted) continue;
