@@ -156,6 +156,19 @@
 .source-archive .source-rule-card { border-top: 1px solid var(--border); }
 .source-lifecycle-dialog { margin: auto; width: min(580px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid var(--border); border-radius: 12px; padding: 24px; background: var(--background, white); color: var(--foreground); }
 .source-lifecycle-dialog::backdrop { background: rgb(20 30 45 / 45%); }
+.sync-panel { padding: 22px; }
+.sync-check { display: flex; align-items: start; gap: 10px; margin: 14px 0; line-height: 1.6; }
+.sync-check input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 16px; margin-top: 4px; }
+.sync-filter-list > div { display: grid; grid-template-columns: 95px minmax(140px, 1fr) auto auto auto; gap: 8px; align-items: end; margin: 12px 0; }
+.sync-filter-list label { min-width: 0; }
+.sync-filter-list .sync-check { align-self: center; }
+.sync-files article { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.sync-files article > span { display: block; color: var(--muted-foreground); margin-top: 6px; font-size: 13px; }
+.sync-remote-dialog { width: min(780px, calc(100vw - 40px)); }
+.sync-remote-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.sync-remote-list > div > span { min-width: 0; overflow-wrap: anywhere; }
+.sync-remote-list > div > div { display: flex; flex-shrink: 0; gap: 6px; }
+@media (max-width: 1000px) { .sync-filter-list > div { grid-template-columns: 90px minmax(120px, 1fr); } .sync-filter-list .sync-check { grid-column: 1 / -1; margin: 2px 0; } }
 .source-lifecycle-dialog h2 { margin: 0 0 16px; }
 .source-lifecycle-dialog p { line-height: 1.7; }
 .source-lifecycle-dialog dl { max-height: 32vh; overflow: auto; background: #f6f8fa; border-radius: 8px; padding: 14px; }

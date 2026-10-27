@@ -74,6 +74,36 @@ async function completedCorrectionFixture(mediaType: "MOVIE" | "TV_SHOW" = "MOVI
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${join(directory, "data")}`], env }); window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
   return { window, canonical, source, target, fileName, bytes, original };
 }
+test("独立目录授权在 Core 重启后恢复", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(60000);
+  const page = await application.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible(); const canonical = await realpath(directory), input = join(canonical, "普通输入"), target = join(canonical, "受管目标"); await mkdir(input); await mkdir(target);
+  await application.evaluate(({ dialog }, paths) => { let i = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[i++]!] })) as typeof dialog.showOpenDialog; }, [input, target]);
+  await page.evaluate(async () => { await window.desktopApi.chooseConfigurationDirectory("ordinary"); await window.desktopApi.chooseConfigurationDirectory("managed"); await window.desktopApi.restartCore(); });
+  await expect.poll(() => page.evaluate(() => window.desktopApi.listConfigurationDirectories()), { timeout: 30000 }).toMatchObject([{ available: true }, { available: true }]);
+});
+test("独立本地同步在无账号窗口完成就绪、精确复制、移除跳过和重载恢复", async () => {
+  test.skip(process.platform !== "darwin"); test.setTimeout(220000);
+  const page = await application.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), input = join(canonical, "本地输入 中文 空格"), target = join(canonical, "独立下载目标 中文 长路径 ".repeat(3)); await mkdir(input); await mkdir(target);
+  const filename = "原片 [1] 中文.mp4", bytes = Buffer.from("无账号独立同步，保留输入和历史。".repeat(8000)); await writeFile(join(input, filename), bytes); await writeFile(join(input, "仍在下载.mp4.part"), "临时内容"); await writeFile(join(input, "不选.txt"), "不在精确清单"); const inode = (await stat(join(input, filename))).ino;
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => { const path = paths[index++]; return { canceled: !path, filePaths: path ? [path] : [] }; }) as typeof dialog.showOpenDialog; }, [null, input, target]);
+  await page.getByRole("link", { name: "来源", exact: true }).click(); await expect(page.getByRole("heading", { name: "来源同步", exact: true })).toBeVisible(); await page.getByRole("button", { name: "添加同步来源", exact: true }).click(); await page.getByLabel("来源名称", { exact: true }).fill("窗口无账号单向同步");
+  await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await expect(page.getByLabel("本地输入目录", { exact: true })).toHaveValue(""); await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await expect(page.getByLabel("本地输入目录", { exact: true })).not.toHaveValue("");
+  await page.getByRole("button", { name: "添加过滤规则", exact: true }).click(); await page.getByLabel("规则 1 表达式").fill("*.mp4"); await page.getByRole("button", { name: "添加过滤规则", exact: true }).click(); await page.getByLabel("规则 2 表达式").fill("**"); await page.getByLabel("规则 2 动作").selectOption("exclude");
+  await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click(); await expect(page.getByRole("alert")).toContainText("默认本地下载目录"); expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
+  await page.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
+  const preview = page.getByRole("region", { name: "同步预览", exact: true }); await expect(preview).toContainText("完整范围 · 1 项"); await preview.getByRole("button", { name: "确认配置范围", exact: true }).click(); await expect(preview).toContainText("范围已确认");
+  const card = page.getByRole("article", { name: "同步来源 窗口无账号单向同步", exact: true }); await card.getByRole("button", { name: "执行一次", exact: true }).click(); await expect(preview).toContainText("观察中 1"); await expect(preview.getByRole("button", { name: "确认执行一次", exact: true })).toBeDisabled();
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: "test-results/desktop/independent-sync-observing-minimum.png" });
+  // 使用生产的连续观察期限，不修改时钟或读取用户目录。
+  await expect(preview).toContainText("观察中 0", { timeout: 140000 }); await preview.getByRole("checkbox", { name: "我已确认本次本地文件完整，允许复制此精确清单", exact: true }).check(); await preview.getByRole("button", { name: "确认执行一次", exact: true }).click();
+  const detail = page.getByRole("region", { name: "同步任务详情", exact: true }); await expect(detail).toContainText("完成 · 冻结版本", { timeout: 30000 }); expect(await readFile(join(target, "completed", filename))).toEqual(bytes); expect(await readdir(join(target, "completed"))).toEqual([filename]); expect((await stat(join(input, filename))).ino).toBe(inode);
+  const jobs = await page.evaluate(() => window.desktopApi.listSyncJobs()); expect(jobs.total).toBe(1); const jobId = jobs.items[0]!.id;
+  await page.reload(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(detail).toContainText(jobId); await page.evaluate(() => window.desktopApi.restartCore()); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(detail).toContainText("完成 · 冻结版本"); expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 1 });
+  await expect.poll(() => page.evaluate(() => window.desktopApi.listConfigurationDirectories()), { timeout: 30000 }).toMatchObject([{ available: true }, { available: true }]);
+  await rm(join(target, "completed", filename)); await card.getByRole("button", { name: "执行一次", exact: true }).click(); await expect(preview).toContainText("已移除 1"); await preview.getByRole("checkbox", { name: "我已确认本次本地文件完整，允许复制此精确清单", exact: true }).check(); await preview.getByRole("button", { name: "确认执行一次", exact: true }).click(); await expect(detail).toContainText("移除 1"); expect(await readdir(join(target, "completed"))).toEqual([]); expect(await readFile(join(input, filename))).toEqual(bytes);
+  await detail.screenshot({ path: "test-results/desktop/independent-sync-local-removed.png" });
+});
 test("成功同步的本地移除状态经固定 IPC 展示，重载与核心重启不创建传输", async () => {
   test.skip(process.platform !== "darwin"); test.setTimeout(60000);
   let page = await application.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();

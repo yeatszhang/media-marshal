@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-28",
+  "platform": "darwin-arm64",
+  "coreCommit": "ee4fd2d",
+  "build": "development Electron，未签名",
+  "scope": "隔离本地目录、无网盘账号；生产 120 秒观察、明确预览、COPY、Renderer 重载、Core 重启、本地移除跳过",
+  "checks": {
+    "typecheck": "passed",
+    "renderer": "32 passed",
+    "desktop": "2 passed：独立目录授权恢复、生产 120 秒本地同步闭环"
+  },
+  "sha256": {
+    "apps/desktop/out/main/index.js": "8280307bbc72c5c92f6ba089bfccd795d78fc41d64e64ca824bc5ce17690d967",
+    "apps/desktop/out/main/worker.js": "e00b557891fc9aca57645f96d40de60343c3988862072a88c6647ce85d0c76d3",
+    "apps/desktop/out/preload/index.js": "82cc603f3637002d84b5993fdfb812932eea2d4bb4f1ba84f9ddf13c5642e154",
+    "apps/desktop/out/renderer/assets/index-C3o3AMW1.js": "157870a264439d6992cf7ecfb60f802e5831e4adb3b549d5079d5d78833b7c3f",
+    "apps/desktop/out/renderer/assets/index-DSbgHxe-.css": "278d0dd146f42d92f6dce19f994261143f7380272629b4746145a3291cef66f0",
+    "apps/desktop/src/renderer/src/pages/SyncSources.tsx": "31b57ea1791b1ae9bd7e8534201574e483b7c32da87d172dfda9e985c73dbb98",
+    "apps/desktop/src/renderer/src/sync-model.ts": "7b8b2b7d42991abcef361f72348c2bd439bed827d6d79fb8b38e6094e13363d7",
+    "apps/desktop/src/renderer/src/components/SyncRemotePicker.tsx": "efec8b4ae034c31760c717c018130f36d2e5dc3f34d541923df6068383cf5cfb",
+    "test-results/desktop/independent-sync-observing-minimum.png": "6154a1005d4ad8e0c14b065d4998ea83fa33f1c6b805e2d02e9cfa68d07a519f",
+    "test-results/desktop/independent-sync-local-removed.png": "90f115c111317518c3f67af4678cbe90291b1cb810c6985182a9ceba42d06713"
+  },
+  "limits": [
+    "未访问个人媒体、网盘或凭据",
+    "不是打包发行或真实官方客户端完整矩阵验收",
+    "独立识别与逻辑目标 Emby 接线继续实施"
+  ],
+  "reviewedScreenshots": [
+    "test-results/desktop/independent-sync-observing-minimum.png",
+    "test-results/desktop/independent-sync-local-removed.png"
+  ],
+  "initialFailures": "首轮断言文案不一致已修正；后续暴露 Core ready 与 Main 授权恢复的时序差异，界面补等待状态和禁用执行，窗口用例显式核对原目录恢复后再提交预览。未修改恢复授权或绕过卷身份校验。"
+}

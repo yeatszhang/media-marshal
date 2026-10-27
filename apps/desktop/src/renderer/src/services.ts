@@ -1,4 +1,5 @@
 import { ConfigurationViewModel } from "./configuration-model";
+import { SyncViewModel } from "./sync-model";
 import {
   createApplication,
   type ApplicationModule,
@@ -364,6 +365,7 @@ export function createRendererApplication(client: DesktopApi) {
       dependencies: [connection.id],
       register(bind) {
         bind(SourceRulesViewModel).toSelf().inSingletonScope();
+        bind(SyncViewModel).toSelf().inSingletonScope();
       },
     },
     {

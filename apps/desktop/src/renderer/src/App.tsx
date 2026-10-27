@@ -17,6 +17,8 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { SourceDraftProvider } from "./source-draft-context";
+import { SyncDraftProvider } from "./sync-draft-context";
+import { SyncSources } from "./pages/SyncSources";
 import { RuntimeViewModel, DesktopClient } from "./services";
 import { Button, cn } from "./components/ui/button";
 import { ErrorNotice, Empty } from "./components/shared";
@@ -117,7 +119,8 @@ function Shell() {
           {ready ? (
             <Routes>
               <Route path="/" element={<Overview />} />
-              <Route path="/sources" element={<Sources />} />
+              <Route path="/sources" element={<SyncSources />} />
+              <Route path="/sources/legacy" element={<Sources />} />
               <Route path="/cloud" element={<CloudDrives />} />
               <Route path="/downloads" element={<Downloads />} />
               <Route path="/subscriptions" element={<Subscriptions />} />
@@ -163,8 +166,8 @@ function Shell() {
 }
 export function App() {
   return (
-    <SourceDraftProvider><HashRouter>
+    <SourceDraftProvider><SyncDraftProvider><HashRouter>
       <Shell />
-    </HashRouter></SourceDraftProvider>
+    </HashRouter></SyncDraftProvider></SourceDraftProvider>
   );
 }
