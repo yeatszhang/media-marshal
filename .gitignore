@@ -70,3 +70,8 @@ ehthumbs.db
 # ── Logs ─────────────────────────────────────────────────────
 *.log
 logs/
+
+# Impeccable：平台引擎由校验过的启动器恢复，本地信任不共享
+.agents/skills/impeccable/scripts/bin/
+.impeccable/config.local.json
+.impeccable/cache/
