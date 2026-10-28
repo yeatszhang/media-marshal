@@ -102,7 +102,7 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
     await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
     await noOverflow(page);
     await adjacentCheckboxes(form);
-    await form.screenshot({ path: `test-results/desktop/layout-sync-form-${width}.png` });
+    await page.screenshot({ path: `test-results/desktop/layout-sync-form-${width}.png` });
     const actions = form.getByRole("region", { name: "按顺序过滤文件", exact: true });
     const expression = await actions.getByLabel("规则 1 表达式").boundingBox();
     const remove = await actions.getByRole("button", { name: "删除规则 1", exact: true }).boundingBox();
@@ -117,6 +117,8 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await noOverflow(page);
   await page.screenshot({ path: "test-results/desktop/layout-cloud-form-920.png", fullPage: true });
 
+  await page.getByRole("button", { name: "关闭同步表单", exact: true }).click();
+  await page.getByRole("button", { name: "放弃修改", exact: true }).click();
   await nav.getByRole("link", { name: "识别与映射", exact: true }).click();
   await page.getByRole("button", { name: "添加识别规则", exact: true }).click();
   await page.getByLabel("识别规则名称").fill("布局检查：电影与剧集映射");
@@ -129,14 +131,13 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
     await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
     await noOverflow(page);
     await adjacentCheckboxes(recognition);
-    await recognition.screenshot({ path: `test-results/desktop/layout-recognition-form-${width}.png` });
+    await page.screenshot({ path: `test-results/desktop/layout-recognition-form-${width}.png` });
   }
   await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click();
   await expect(page.getByRole("region", { name: "识别配置范围预览", exact: true })).toContainText("待确认范围");
   await noOverflow(page);
   const card = page.getByRole("article", { name: "识别规则 布局检查：电影与剧集映射", exact: true });
   await card.screenshot({ path: "test-results/desktop/layout-recognition-card-920.png" });
-  await page.getByRole("button", { name: "关闭识别表单", exact: true }).click();
   await card.getByRole("button", { name: "编辑并预览识别规则", exact: true }).click();
   await expect(page.getByLabel("识别规则名称")).toHaveValue("布局检查：电影与剧集映射");
   await expect(page.getByLabel("识别规则名称")).toBeInViewport();
@@ -218,4 +219,31 @@ test("全新来源的删除、重载和恢复明确反馈，保留原文件且�
   expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
   expect(await page.evaluate(() => window.desktopApi.listDownloads({ page: 1, pageSize: 25 }))).toMatchObject({ total: 0 });
   expect(await page.evaluate(() => window.desktopApi.listTasks({ page: 1, pageSize: 100 }))).toMatchObject({ total: 0 });
+});
+
+test("编辑抽屉隔离背景、保护草稿并恢复焦点", async () => {
+  const page = await application.firstWindow();
+  await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "来源", exact: true }).click();
+  const trigger = page.getByRole("button", { name: "添加同步来源", exact: true });
+  await trigger.click();
+  const drawer = page.getByRole("dialog", { name: "添加同步来源", exact: true });
+  await expect(page.getByLabel("来源名称", { exact: true })).toBeFocused();
+  await expect(drawer.getByRole("button", { name: "保存草稿并预览", exact: true })).toBeInViewport();
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0); await expect(trigger).toBeFocused();
+  await trigger.click(); await page.getByLabel("来源名称", { exact: true }).fill("未保存的来源");
+  await page.keyboard.press("Escape");
+  const confirm = page.getByRole("dialog", { name: "放弃未保存的修改？", exact: true });
+  await expect(confirm.getByRole("button", { name: "继续编辑" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0); await expect(page.getByLabel("来源名称", { exact: true })).toHaveValue("未保存的来源");
+  await drawer.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
+  await expect(drawer.getByRole("alert")).toContainText("请选择本地输入目录");
+  await expect(drawer.getByRole("alert")).toBeInViewport();
+  await page.screenshot({ path: "test-results/desktop/drawer-validation-920.png" });
+  await drawer.getByRole("button", { name: "关闭同步表单", exact: true }).click();
+  await confirm.getByRole("button", { name: "放弃修改", exact: true }).click();
+  await expect(drawer).toHaveCount(0); await expect(trigger).toBeFocused();
 });

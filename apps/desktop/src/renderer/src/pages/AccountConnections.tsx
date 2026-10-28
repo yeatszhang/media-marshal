@@ -1,3 +1,4 @@
+import { EditorSurface } from "../components/EditorSurface";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -12,13 +13,13 @@ const statusKey: Record<CloudAccount["status"], string> = { UNCONFIGURED: "uncon
 export function AccountConnections() {
   const { t } = useTranslation(), model = useService(CloudAccountsViewModel), state = useServiceState(model, (value) => value), navigate = useNavigate(), [query] = useSearchParams();
   const [editing, setEditing] = useState(false), [name, setName] = useState(""), [cookie, setCookie] = useState(""), [accountId, setAccountId] = useState<string | undefined>(), [localError, setLocalError] = useState<string | null>(null), [submitting, setSubmitting] = useState(false), [disconnectId, setDisconnectId] = useState<string | null>(null), [method, setMethod] = useState<"scan" | "cookie">("scan");
-  const addRef = useRef<HTMLButtonElement>(null), nameRef = useRef<HTMLInputElement>(null), previousSuccess = useRef(state.authorization?.state === "SUCCEEDED" ? state.authorization.id : null);
+  const addRef = useRef<HTMLButtonElement>(null), nameRef = useRef<HTMLInputElement>(null), initialName = useRef(""), previousSuccess = useRef(state.authorization?.state === "SUCCEEDED" ? state.authorization.id : null);
   const legacyReturn = query.get("returnTo") === "legacy-sources", returning = legacyReturn || query.get("returnTo") === "sources";
   useEffect(() => model.watch(), [model]);
   useEffect(() => { if (editing) nameRef.current?.focus(); }, [editing]);
   useEffect(() => { if (returning && state.authorization?.state === "SUCCEEDED" && state.authorization.id !== previousSuccess.current) navigate(legacyReturn ? "/sources/legacy" : "/sources", { replace: true }); }, [navigate, returning, legacyReturn, state.authorization]);
-  const close = () => { setCookie(""); setName(""); setEditing(false); setLocalError(null); requestAnimationFrame(() => addRef.current?.focus()); };
-  const edit = (account?: CloudAccount) => { setCookie(""); setName(account?.name ?? ""); setAccountId(account?.id); setMethod("scan"); setLocalError(null); setEditing(true); };
+  const close = () => { setCookie(""); setName(""); setEditing(false); setLocalError(null); };
+  const edit = (account?: CloudAccount) => { initialName.current = account?.name ?? ""; setCookie(""); setName(account?.name ?? ""); setAccountId(account?.id); setMethod("scan"); setLocalError(null); setEditing(true); };
   const submit = async (event: FormEvent) => {
     event.preventDefault(); if (submitting || state.authorizing || state.loggingIn) return;
     if (method === "scan") { if (!name.trim()) { setLocalError(t("cloud.scanNameRequired")); return; } setLocalError(null); if (await model.login(name, accountId)) close(); return; }
@@ -35,15 +36,15 @@ export function AccountConnections() {
     <p className="cloud-hint">连接账号不会创建来源、开启扫描或启动下载。<Link to="/sources">前往来源配置</Link></p>
     {state.authorizing && <p className="notice" role="status">{t("cloud.authorizing")}</p>}
     {state.authorization?.state === "SUCCEEDED" && !state.authorizing && <p className="notice" role="status"><ShieldCheck size={16} />{t("cloud.authorizationSucceeded")}</p>}
-    {editing && <form className="panel source-form cloud-credential-form" onSubmit={submit} onKeyDown={(event) => { if (event.key === "Escape" && !submitting) { if (state.loggingIn) void model.cancelLogin(); else close(); } }}>
+    {editing && <EditorSurface title={t(accountId ? "cloud.reauthorize" : "cloud.add")} variant="modal" dirty={name !== initialName.current || !!cookie} busy={submitting || state.authorizing || state.loggingIn} onClose={close}>{(requestClose) => <form className="panel source-form cloud-credential-form" onSubmit={submit} onKeyDown={(event) => { if (event.key === "Escape" && state.loggingIn && !submitting) { event.preventDefault(); event.stopPropagation(); void model.cancelLogin(); } }}>
       <h2>{t(accountId ? "cloud.reauthorize" : "cloud.add")}</h2>
       <div className="cloud-login-methods" role="group" aria-label={t("cloud.loginMethod")}><Button variant={method === "scan" ? "default" : "outline"} aria-pressed={method === "scan"} disabled={submitting || state.loggingIn} onClick={() => { setMethod("scan"); setCookie(""); setLocalError(null); }}><QrCode size={16} />{t("cloud.scanMethod")}</Button><Button variant={method === "cookie" ? "default" : "outline"} disabled={submitting || state.loggingIn} aria-pressed={method === "cookie"} onClick={() => { setMethod("cookie"); setLocalError(null); }}>{t("cloud.cookieMethod")}</Button></div>
       <label>{t("cloud.accountName")}<input ref={nameRef} value={name} maxLength={100} disabled={submitting || state.loggingIn} onChange={(event) => setName(event.target.value)} /></label>
       {method === "cookie" ? <><label>{t("cloud.cookie")}<input type="password" autoComplete="off" spellCheck={false} value={cookie} maxLength={32768} onChange={(event) => setCookie(event.target.value)} /></label><p className="cloud-hint">{t("cloud.cookieHelp")}</p></> : <p className="cloud-hint">{t("cloud.scanHelp")}</p>}
       {state.loggingIn && <p className="notice" role="status">{t("cloud.scanWaiting")}</p>}
-      <p className="cloud-hint">{t("cloud.privacy")}</p><ErrorNotice message={localError} />
-      <div className="form-actions"><Button variant="ghost" disabled={submitting} onClick={() => { if (state.loggingIn) void model.cancelLogin(); else close(); }}>{state.loggingIn ? t("cloud.cancelScan") : t("cancel")}</Button><Button type="submit" disabled={submitting || state.authorizing || state.loggingIn}>{t(method === "scan" ? "cloud.scanSubmit" : "cloud.submit")}</Button></div>
-    </form>}
+      <p className="cloud-hint">{t("cloud.privacy")}</p><ErrorNotice message={localError ?? state.error} />
+      <div className="form-actions"><Button variant="ghost" disabled={submitting} onClick={() => { if (state.loggingIn) void model.cancelLogin(); else requestClose(); }}>{state.loggingIn ? t("cloud.cancelScan") : t("cancel")}</Button><Button type="submit" disabled={submitting || state.authorizing || state.loggingIn}>{t(method === "scan" ? "cloud.scanSubmit" : "cloud.submit")}</Button></div>
+    </form>}</EditorSurface>}
     {!state.loadingAccounts && !state.accounts.length && !editing && <section className="panel"><Empty icon={<Cloud size={28} />} title={t("cloud.emptyTitle")} description="连接账号后，在来源页选择需要下载的远端范围。" /></section>}
     <div className="source-list">{state.accounts.map((account) => <article className="panel cloud-account" key={account.id} aria-label={`账号 ${account.name}`}>
       <div className="cloud-browser-toolbar"><h2>{account.name}</h2><span className="badge">{t(`cloud.${statusKey[account.status]}`)}</span></div>

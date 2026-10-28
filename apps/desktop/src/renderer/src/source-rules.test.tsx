@@ -204,7 +204,7 @@ describe("统一来源页、连接返回和确认边界", () => {
   });
   it("未保存编辑阻止删除；响应丢失通过当前记录核对，不生成第二次删除", async () => {
     const f = await mount(); await cloudDraft(f); await click("保存草稿"); const row = [...f.rows.values()][0]!; await fill("来源名称", "尚未保存的新名称"); await click("删除来源…");
-    expect(document.querySelector("dialog")).toBeNull(); expect(f.element.textContent).toContain("请先保存草稿或取消当前编辑"); expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("取消编辑");
+    expect(document.querySelector("dialog.source-lifecycle-dialog")).toBeNull(); expect(f.element.textContent).toContain("请先保存草稿或取消当前编辑"); expect(f.api.removeSourceRule).not.toHaveBeenCalled(); await click("取消编辑"); await click("放弃修改");
     const remove = f.api.removeSourceRule.getMockImplementation()!; f.api.removeSourceRule.mockImplementationOnce(async (input) => { await remove(input); throw new Error("响应丢失"); });
     await click("删除来源…"); await click("确认删除来源"); expect(f.api.removeSourceRule).toHaveBeenCalledTimes(1); expect(f.element.textContent).toContain("来源已移入已删除来源");
     expect(f.api.getSourceRule).toHaveBeenCalledWith(row.id); expect(f.api.applySourceRule).not.toHaveBeenCalled();

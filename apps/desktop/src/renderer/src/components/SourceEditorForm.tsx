@@ -44,8 +44,8 @@ export function SourceEditorForm({ onClose }: { onClose(): void }) {
     </div>
     <div className="source-explanation"><strong>开启整理后，还需要哪些配置？</strong><dl><div><dt>TMDB · 必需</dt><dd>在 <Link className="source-inline-link" to="/settings">设置</Link> 配置密钥，用于识别作品和季集。</dd></div><div><dt>媒体库目录 · 必需</dt><dd>整理后的文件复制到上方目标，下载原文件保留。两个目录需要分开。</dd></div><div><dt>Emby · 可选</dt><dd>连接已有服务器后，复制完成会通知 Emby 更新，并检查是否收录；只整理文件无需连接。</dd></div></dl></div>
   </>;
-  return <form className="panel source-form source-rule-editor" aria-label="来源配置草稿" onSubmit={(event) => { event.preventDefault(); void model.save(); }} onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.preventDefault(); if (state.picker) model.closePicker(); else onClose(); } }}>
-    <div className="cloud-browser-toolbar"><h2>{editor.draftRevision ? "编辑来源" : "添加来源"}</h2><span className="badge">{editor.version ? `生效版本 v${editor.version}` : "尚未确认"}</span></div>
+  return <form className="panel source-form source-rule-editor" aria-label="来源配置草稿" onSubmit={(event) => { event.preventDefault(); void model.save(); }}>
+    <div className="cloud-browser-toolbar"><h2>{editor.draftRevision ? "编辑来源" : "添加来源"}</h2><span className="badge">{editor.version ? `生效版本 v${editor.version}` : "尚未确认"}</span><Button variant="ghost" disabled={busy} onClick={onClose}>关闭配置</Button></div>
     <p className="source-editor-intro">{editor.type === "cloud" ? "先确定文件从哪里来、保存到哪里，再分别设置下载时间和下载后的处理方式。" : "从已有本地文件中识别作品，确认后复制到你的媒体库。"}</p>
     <ol className="source-flow" aria-label="文件处理流程">
       <li><span>{editor.type === "cloud" ? <Cloud size={16} aria-hidden="true" /> : <Folder size={16} aria-hidden="true" />}{editor.type === "cloud" ? "网盘内容" : "本地已有文件"}</span><strong title={editor.type === "cloud" ? editor.remoteName : editor.sourcePath}>{editor.type === "cloud" ? editor.remoteName || "选择文件或目录" : editor.sourcePath || "选择本地输入目录"}</strong></li>

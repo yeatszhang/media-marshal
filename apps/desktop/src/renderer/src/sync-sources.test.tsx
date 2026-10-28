@@ -64,7 +64,7 @@ it("登录往返保留 React 草稿；账号根变化要求重新选范围，模
   const f = await mount(); await click("添加同步来源"); await fill("来源名称", "登录往返保留"); await fill("来源类型", "cloud"); await fill("网盘账号", f.account.id); await click("选择远端范围"); await click("选择");
   await act(async () => document.querySelector<HTMLAnchorElement>('a[href="/cloud?returnTo=sources"]')!.click()); f.account.rootRef = crypto.randomUUID(); await act(async () => document.querySelector<HTMLAnchorElement>('a[href="/sources"]')!.click());
   expect(field("来源名称").value).toBe("登录往返保留"); expect(document.body.textContent).toContain("账号授权已变化"); await click("保存草稿并预览"); expect(f.api.saveSyncSource).not.toHaveBeenCalled();
-  await click("选择远端范围"); await click("取消选择远端范围"); expect(document.querySelector("dialog")).toBeNull(); expect(document.body.textContent).toContain("中文 目录");
+  await click("选择远端范围"); await click("取消选择远端范围"); expect(document.querySelector("dialog.sync-remote-dialog")).toBeNull(); expect(document.body.textContent).toContain("中文 目录");
 });
 it("离页不续发查询，StrictMode 只查询不重放命令；迟到读取不覆盖新一代", async () => {
   const f = await mount(); expect(f.api.saveSyncSource).not.toHaveBeenCalled(); expect(f.api.previewSyncSource).not.toHaveBeenCalled(); expect(f.api.confirmSyncSource).not.toHaveBeenCalled();

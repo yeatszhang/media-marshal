@@ -255,3 +255,7 @@ parser 独立启动至 health 为 91.03 ms，首个解析请求为 37.31 ms，�
 云端测试默认使用 `npm test` 的 Electron Node 运行器，SQLite 与桌面 ABI 保持一致；`npm run test:electron-node` 为兼容别名。准备与验证命令见 [网盘与传输扩展开发](./cloud-adapter-development.md)。不要在桌面原生模块重建之后直接用另一 Node ABI 加载该 SQLite 二进制。
 
 `npm test` 的 Electron Node 运行器先串行构建 contracts 与 `packages/media-core/dist`，成功后才运行并行测试；真实强杀夹具统一读取这份编译输出，测试文件不再各自重编共享目录。`typecheck` 会更新 contracts 声明，`desktop:build` 会更新完整产物，因此类型构建、单元测试和桌面构建仍须按顺序执行，不能并行运行多个写入同一 dist 的入口。Electron 窗口测试在构建成功后启动；构建失败后不得继续沿用旧 Renderer 或混合宿主／核心产物作为当前验收。
+
+### 桌面表单交互验证
+
+来源同步、识别映射和旧来源配置使用共享编辑抽屉，网盘连接使用居中弹窗；设置与文件核对／修正保持页面内流程。容器选择与交互规则见 `apps/desktop/DESIGN.md` 的「表单任务容器」。`editor-surface.test.tsx` 检查关闭保护与焦点恢复；`layout.spec.ts` 覆盖常用／最小窗口布局、真实 Escape、放弃修改、错误可见和保存后的范围确认。所有测试使用隔离数据目录，目录选择使用受控替身。
