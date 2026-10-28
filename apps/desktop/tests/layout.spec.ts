@@ -1,5 +1,5 @@
 import { expect, test, _electron, type ElectronApplication, type Locator, type Page } from "@playwright/test";
-import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -175,5 +175,47 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await expect(editedCard).toContainText("识别已暂停");
   expect((await page.evaluate(() => window.desktopApi.listRecognitionRules()))[0]).toMatchObject({ id: ruleId, paused: true, deletedAt: null });
   expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
+  expect(await page.evaluate(() => window.desktopApi.listTasks({ page: 1, pageSize: 100 }))).toMatchObject({ total: 0 });
+});
+
+
+test("全新来源的删除、重载和恢复明确反馈，保留原文件且不创建文件任务", async () => {
+  test.skip(process.platform !== "darwin");
+  const page = await application.firstWindow();
+  await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  const canonical = await realpath(directory), input = join(canonical, "保留原文件"), target = join(canonical, "下载目标");
+  await mkdir(input); await mkdir(target); await writeFile(join(input, "原片.mp4"), "删除来源不能修改原文件");
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [input, target]);
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "来源", exact: true }).click();
+  await page.getByRole("button", { name: "添加同步来源", exact: true }).click();
+  await page.getByLabel("来源名称", { exact: true }).fill("全新来源删除验证");
+  await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click();
+  await page.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
+  await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
+  await page.getByRole("button", { name: "确认配置范围", exact: true }).click();
+  const card = page.getByRole("article", { name: "同步来源 全新来源删除验证", exact: true });
+  await card.getByRole("button", { name: "暂停来源同步", exact: true }).click();
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  await card.getByRole("button", { name: "删除同步来源…", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "删除同步来源", exact: true });
+  await expect(dialog.getByRole("button", { name: "取消", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape"); await expect(dialog).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "删除同步来源…", exact: true })).toBeFocused();
+  await card.getByRole("button", { name: "删除同步来源…", exact: true }).click();
+  await dialog.screenshot({ path: "test-results/desktop/sync-remove-confirm.png" });
+  await dialog.getByRole("button", { name: "确认删除同步来源", exact: true }).click();
+  await expect(dialog).toHaveCount(0); await expect(card).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "同步预览", exact: true })).toHaveCount(0);
+  await page.reload(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.desktopApi.listSyncSources())).toEqual([]);
+  const deleted = (await page.evaluate(() => window.desktopApi.listSyncSources({ includeDeleted: true })))[0]!;
+  expect(deleted).toMatchObject({ paused: true, runtime: { claimed: true } }); expect(deleted.deletedAt).not.toBeNull();
+  await page.getByText("已删除同步来源", { exact: true }).click();
+  await page.getByRole("button", { name: "恢复已删除来源", exact: true }).click();
+  await expect(card).toContainText("已暂停");
+  expect(await readFile(join(input, "原片.mp4"), "utf8")).toBe("删除来源不能修改原文件");
+  await page.screenshot({ path: "test-results/desktop/sync-restored-paused.png", fullPage: true });
+  expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
+  expect(await page.evaluate(() => window.desktopApi.listDownloads({ page: 1, pageSize: 25 }))).toMatchObject({ total: 0 });
   expect(await page.evaluate(() => window.desktopApi.listTasks({ page: 1, pageSize: 100 }))).toMatchObject({ total: 0 });
 });

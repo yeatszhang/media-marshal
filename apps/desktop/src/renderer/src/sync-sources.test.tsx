@@ -72,3 +72,26 @@ it("离页不续发查询，StrictMode 只查询不重放命令；迟到读取�
   await act(async () => { document.querySelector<HTMLAnchorElement>('a[href="/recognition"]')!.click(); });
   const count = f.api.listSyncSources.mock.calls.length; await act(async () => { await model.command("离页已提交命令", async () => "完成"); }); expect(f.api.listSyncSources.mock.calls.length).toBe(count);
 });
+
+it("删除失败在弹窗内定位来源与原因，重试期间明确反馈并禁止重复提交，成功关闭弹窗", async () => {
+  const f = await mount(); await click("添加同步来源"); await fill("来源名称", "等待停止的来源"); await click("选择本地输入目录"); await click("保存草稿并预览");
+  const row = [...f.rows.values()][0]!;
+  f.api.controlSyncSource.mockRejectedValueOnce(new Error("下载任务 isolated-job 仍在停止中，请等待停止完成后重试"));
+  await click("删除同步来源…");
+  const dialog = document.querySelector<HTMLDialogElement>('dialog[aria-label="删除同步来源"]')!;
+  expect(dialog.contains(document.activeElement)).toBe(true); expect(document.activeElement?.textContent).toBe("取消");
+  await click("确认删除同步来源");
+  expect(dialog.querySelector('[role="alert"]')?.textContent).toContain("删除「等待停止的来源」未完成");
+  expect(dialog.querySelector('[role="alert"]')?.textContent).toContain("下载任务 isolated-job 仍在停止中");
+  expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1);
+  expect(f.rows.get(row.id)?.deletedAt).toBeNull();
+  let complete!: (value: SyncSourceRule) => void;
+  f.api.controlSyncSource.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+  await click("确认删除同步来源");
+  expect(button("正在删除…").disabled).toBe(true); expect(button("取消").disabled).toBe(true);
+  await act(async () => button("正在删除…").click()); expect(f.api.controlSyncSource).toHaveBeenCalledTimes(2);
+  await act(async () => { const removed = { ...row, paused: true, lifecycleRevision: row.lifecycleRevision + 1, deletedAt: new Date().toISOString() }; f.rows.set(row.id, removed); complete(structuredClone(removed)); });
+  expect(document.querySelector("dialog")).toBeNull();
+  expect(document.querySelector('article[aria-label="同步来源 等待停止的来源"]')).toBeNull();
+  expect(f.api.confirmSyncSource).not.toHaveBeenCalled();
+});
