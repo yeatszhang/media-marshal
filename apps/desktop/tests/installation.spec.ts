@@ -8,6 +8,7 @@ import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core
 // 必须显式指向本轮只读映像；不能用工作区目录包替代安装态证据。
 const executable = process.env.MARSHAL_APP_PATH;
 test.skip(process.platform !== "darwin" || process.env.MARSHAL_INSTALL_MATRIX !== "1" || !executable, "需要本轮 macOS 只读 DMG 与显式安装态验收入口");
+test.skip(process.env.MARSHAL_E2E_MODE === "background", "包含历史安装包与 OS 原生启动的安装矩阵需显式使用前台模式");
 let directory: string, application: ElectronApplication | undefined;
 const digest = async (path: string) => createHash("sha256").update(await readFile(path)).digest("hex");
 const launch = async (path: string, profile: string) => {

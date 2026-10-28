@@ -5,6 +5,8 @@ import {
   type CloudAuthorization, type CloudCredentialDraft, type CloudLoginDraft,
 } from "@media-marshal/contracts";
 
+import { windowPresentation } from "../window-presentation";
+
 const LOGIN_URL = "https://pan.quark.cn/";
 const LOGIN_TIMEOUT = 5 * 60 * 1000;
 
@@ -39,7 +41,7 @@ export class QuarkLoginController {
     if (this.active) {
       if (JSON.stringify(this.active.input) !== JSON.stringify(input))
         return Promise.reject(new DesktopError("CONFLICT", "请先完成或取消当前夸克登录。"));
-      if (this.active.window && !this.active.window.isDestroyed()) this.active.window.focus();
+      if (this.active.window && !this.active.window.isDestroyed()) windowPresentation.focus(this.active.window);
       return this.active.promise;
     }
     const attempt: LoginAttempt = { input, abort: new AbortController(), promise: Promise.resolve(null) };
@@ -81,8 +83,10 @@ export class QuarkLoginController {
     try {
       login = new BrowserWindow({
         width: 1000, height: 760, minWidth: 760, minHeight: 600,
+        ...windowPresentation.windowOptions,
         parent, show: false, title: "扫码连接夸克网盘", autoHideMenuBar: true,
         webPreferences: {
+          ...windowPresentation.webPreferences,
           session: isolated, sandbox: true, contextIsolation: true,
           nodeIntegration: false, webSecurity: true,
         },
@@ -157,7 +161,7 @@ export class QuarkLoginController {
       contents.on("will-navigate", guard);
       contents.on("will-redirect", guard);
       contents.on("will-attach-webview", (event) => event.preventDefault());
-      login.once("ready-to-show", () => { if (!finished && !login.isDestroyed()) { login.show(); login.focus(); } });
+      login.once("ready-to-show", () => { if (!finished && !login.isDestroyed()) { windowPresentation.show(login); } });
       if (attempt.abort.signal.aborted) return cancel();
       void login.loadURL(LOGIN_URL).catch(() => finish(null, new DesktopError("NETWORK_UNAVAILABLE", "夸克登录页面加载失败，请检查网络后重试。", true)));
     });

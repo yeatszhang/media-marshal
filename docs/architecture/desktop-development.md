@@ -26,6 +26,22 @@ npm run test:desktop
 npm run desktop:pack
 ```
 
+### E2E 前台与后台模式
+
+`npm run test:desktop` 默认使用后台模式。它保留真实 Electron 主窗口、登录子窗口、DOM 和截图能力，但窗口不显示、不请求焦点、不出现在任务栏或 macOS Dock；隐藏窗口关闭后台节流。测试仍使用各自隔离的用户数据目录，不连接正在使用的开发实例。
+
+```bash
+npm run test:desktop -- apps/desktop/tests/presentation.spec.ts
+npm run test:desktop:background -- apps/desktop/tests/layout.spec.ts
+npm run test:desktop:foreground -- apps/desktop/tests/presentation.spec.ts
+```
+
+`MARSHAL_E2E_MODE=background|foreground` 也可显式选择模式，适用于直接运行 Playwright 和 `npm run test:packaged`；未设置时，Playwright 配置默认为后台。普通 `desktop:dev` 启动不受测试默认值影响。后台行为需要当前宿主构建，打包验证须先生成包含该实现的新包。
+
+后台用例必须为原生目录／保存／消息对话框及打开外部应用提供受控替身；未提供时明确拒绝，不自动确认或弹出系统界面，原生错误框输出到测试进程 stderr。实际 OS 菜单、系统对话框、登录项和历史包安装矩阵使用显式前台模式；安装矩阵在后台模式跳过，不将 DOM／Main 回调断言当作 OS 实测。`presentation.spec.ts` 检查启动、显示请求、重载、窗口重建后的原生可见与焦点状态，并保存 `test-results/desktop/presentation-mode.json` 和截图；扫码用例另核对父子窗口均隐藏且不可聚焦。
+
+2026-10-28 本机 macOS arm64：呈现策略及登录控制器 13 项单元测试、9 项后台 Electron 回归通过，覆盖隐藏主窗口与登录子窗口、DOM 键盘取消、运行设置、原生菜单回调、受控重载、窗口重建及来源删除。记录确认 `visible=false`、`focused=false`、`focusable=false`、后台节流关闭、Dock 隐藏且截图非空；类型、依赖边界、桌面构建、测试严格类型检查与文档构建通过。前台命令已验证清单入口，普通前台行为另有单元覆盖；本轮没有额外运行前台窗口或 OS 原生操作验收。
+
 Mac 首次运行测试前，先执行 `npm run desktop:prepare-native-files`。它使用锁文件已有 node-gyp 从 Electron 官方地址校验并缓存当前版本头文件，再通过 Xcode Command Line Tools 编译修正所需的 Node-API 原语；其他平台的该组原生测试按条件跳过。随后执行 `npm test`。当前原语已连接 Core 单条／批量修正服务、Main 资源准备、worker 私有注入、客户端页面及 arm64 安装包，输出位于 `build-artifacts/desktop-files`；Intel 运行和正式签名仍分别验收。
 
 原生模块需要匹配目标平台、架构和运行时。`npm test` 通过仓库运行器使用 Electron 内置 Node，`test:electron-node` 是兼容别名；SQLite 二进制必须先匹配桌面 ABI。当前 SQLite 包提供平台预编译文件，产物检查核对它在 ASAR 外可用，实际加载仍以窗口测试为准。不要用另一系统 Node ABI 直接加载已经重建的 SQLite 模块。`desktop:build` 只编译，不启动旧服务。

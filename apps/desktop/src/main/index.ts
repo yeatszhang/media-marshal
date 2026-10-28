@@ -37,6 +37,7 @@ import { nativeFilesLaunch } from "./native-files";
 import { Credentials } from "./credentials";
 import { APP_ORIGIN, assetPath, requireEmbyItemUrl, requireTrustedRequest } from "./security";
 import { trayIcon } from "./tray-icon";
+import { windowPresentation } from "./window-presentation";
 import { HostPreferencesController } from "./host-preferences";
 import { DesktopAboutController } from "./desktop-about";
 import { RendererReloadController } from "./renderer-reload";
@@ -69,6 +70,8 @@ const dataArgument = process.argv.find((value) =>
 );
 if (dataArgument)
   app.setPath("userData", dataArgument.slice("--user-data-dir=".length));
+windowPresentation.prepare(app);
+windowPresentation.guardNativeUi(dialog, shell);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
 else void app.whenReady().then(bootstrap);
@@ -130,8 +133,7 @@ async function bootstrap() {
   const rememberGrant = (path: string, purpose: "source" | "target") => { const purposes = grants.get(path) ?? new Set<"source" | "target">(); purposes.add(purpose); grants.set(path, purposes); };
   const show = () => {
     if (window && !window.isDestroyed()) {
-      window.show();
-      window.focus();
+      windowPresentation.show(window);
     }
   };
   const showWindow = async () => {
@@ -146,9 +148,11 @@ async function bootstrap() {
       minWidth: 920,
       minHeight: 640,
       show: false,
+      ...windowPresentation.windowOptions,
       title: "Media Marshal",
       backgroundColor: "#f7f8fa",
       webPreferences: {
+        ...windowPresentation.webPreferences,
         preload: join(__dirname, "../preload/index.js"),
         sandbox: true,
         contextIsolation: true,

@@ -42,6 +42,7 @@ test("扫码默认入口、真实沙盒窗口、取消与重载清理", async ()
   const login = await opened;
   await expect(login.getByRole("heading", { name: "夸克登录测试页" })).toBeVisible();
   expect(login.url()).toBe("https://pan.quark.cn/");
+  if (process.env.MARSHAL_E2E_MODE === "background") expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isVisible() && !window.isFocused() && !window.isFocusable()))).toBe(true);
   const preferences = await application.evaluate(({ BrowserWindow }) => {
     const child = BrowserWindow.getAllWindows().find((item) => !!item.getParentWindow())!;
     const value = child.webContents.getLastWebPreferences();

@@ -30,7 +30,7 @@ test("原生暂停菜单分别控制整理与下载，页面、重载和整应�
   await expect.poll(state).toMatchObject([{ checked: true, enabled: true }, { checked: false, enabled: true }]);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.hide()); await select("downloads", true); await expect.poll(() => page.evaluate(() => window.desktopApi.getCloudDownloadPause())).toMatchObject({ paused: true });
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.show()); await page.reload(); await page.evaluate(() => window.desktopApi.restartCore());
+  await application.evaluate(({ BrowserWindow }) => { if (process.env.MARSHAL_E2E_MODE !== "background") BrowserWindow.getAllWindows()[0]!.show(); }); await page.reload(); await page.evaluate(() => window.desktopApi.restartCore());
   await expect.poll(state).toMatchObject([{ checked: true, enabled: true }, { checked: true, enabled: true }]); expect(await page.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
   await application.close(); page = await launch(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
   await expect.poll(state).toMatchObject([{ checked: true, enabled: true }, { checked: true, enabled: true }]);
