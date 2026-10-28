@@ -57,7 +57,7 @@
 .content-review-files > div > span { display: block; color: var(--muted-foreground); }
 
 .source-rule-fields { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; padding: 0; margin: 18px 0 0; border: 0; }
-.source-rule-fields label { display: grid; gap: 8px; min-width: 0; }
+.source-rule-fields label:where(:not(.sync-check)) { display: grid; gap: 8px; min-width: 0; }
 .source-rule-editor { container-type: inline-size; max-width: 1080px; }
 .source-rule-editor .cloud-browser-toolbar h2 { margin: 0; }
 .source-editor-intro { margin-top: 10px; color: var(--muted-foreground); font-size: 13px; line-height: 1.7; }
@@ -156,7 +156,10 @@
 .source-archive .source-rule-card { border-top: 1px solid var(--border); }
 .source-lifecycle-dialog { margin: auto; width: min(580px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid var(--border); border-radius: 12px; padding: 24px; background: var(--background, white); color: var(--foreground); }
 .source-lifecycle-dialog::backdrop { background: rgb(20 30 45 / 45%); }
-.sync-panel { padding: 22px; }
+.sync-panel { display: grid; gap: 12px; padding: 24px; margin-bottom: 20px; min-width: 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.sync-panel > .button { justify-self: start; }
+.sync-panel > .cloud-hint, .sync-panel > .notice, .sync-panel > .download-controls { margin: 0; }
+.source-list > .sync-panel { margin-bottom: 0; }
 .sync-check { display: flex; align-items: start; gap: 10px; margin: 14px 0; line-height: 1.6; }
 .sync-check input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 16px; margin-top: 4px; }
 .sync-filter-list > div { display: grid; grid-template-columns: 95px minmax(140px, 1fr) auto auto auto; gap: 8px; align-items: end; margin: 12px 0; }
@@ -184,7 +187,7 @@
 .source-card-status { font-size: 12px; color: var(--muted); margin: 10px 0; }
 .task-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px; margin: 0; font-size: 13px; color: var(--muted); }
 .task-filter select { width: auto; margin: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); }
-.source-inline-link { font-size: 12px; color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
+.source-inline-link { align-self: center; font-size: 12px; color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
 .source-remote-picker { margin-bottom: 24px; scroll-margin-top: 16px; }
 .source-remote-picker .cloud-files th:first-child { width: 50%; }
 .source-remote-picker .cloud-files th:nth-child(2) { width: 16%; }
@@ -200,10 +203,10 @@
 .cloud-account-select span { min-width: 0; }
 .cloud-account-select strong { display: block; overflow-wrap: anywhere; font-size: 13px; }
 .cloud-account-select small { display: block; margin-top: 5px; color: var(--muted); }
-.cloud-account-actions, .cloud-file-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.cloud-account-actions, .cloud-file-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .cloud-disconnect p, .cloud-hint { font-size: 12px; line-height: 1.7; color: var(--muted); margin: 10px 0; }
 .cloud-browser { min-width: 0; padding: 20px; }
-.cloud-browser-toolbar { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.cloud-browser-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: center; }
 .cloud-breadcrumbs { min-width: 0; display: flex; flex-wrap: wrap; gap: 3px; }
 .cloud-breadcrumbs > span { min-width: 0; max-width: 100%; display: inline-flex; align-items: center; }
 .cloud-breadcrumbs button { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -249,6 +252,8 @@
 body {
   margin: 0;
   min-width: 900px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 button,
 input,
@@ -279,7 +284,8 @@ button:disabled {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
   outline: 3px solid var(--ring);
   outline-offset: 3px;
 }
@@ -291,6 +297,7 @@ p {
 }
 h1 {
   font-size: 27px;
+  line-height: 1.35;
   letter-spacing: -0.7px;
   font-weight: 650;
 }
@@ -302,9 +309,11 @@ h3 {
   font-size: 15px;
   font-weight: 610;
 }
-input,
-select {
+input:where(:not([type="checkbox"]):not([type="radio"])),
+select,
+textarea {
   width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: #fff;
@@ -312,6 +321,20 @@ select {
   color: var(--foreground);
   margin-top: 8px;
   font-size: 13px;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--primary);
+}
+textarea {
+  min-height: 96px;
+  resize: vertical;
+  font: inherit;
 }
 label {
   display: block;
@@ -463,9 +486,12 @@ main {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px 24px;
+  flex-wrap: wrap;
   margin: 26px 0;
 }
+.page-heading > div:first-child { flex: 1 1 300px; min-width: 0; }
+.page-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-left: auto; }
 .page-heading p {
   color: var(--muted);
   font-size: 12px;
@@ -480,7 +506,7 @@ main {
 }
 .stats {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
   margin-bottom: 22px;
 }
@@ -569,9 +595,10 @@ main {
   gap: 7px;
   border: 1px solid transparent;
   border-radius: 7px;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.5;
   font-weight: 550;
-  min-height: 35px;
+  min-height: 36px;
   padding: 8px 13px;
   white-space: nowrap;
 }
@@ -598,7 +625,7 @@ main {
 .button-small {
   min-height: 30px;
   padding: 6px 10px;
-  font-size: 10px;
+  font-size: 11px;
 }
 .section-title {
   display: flex;
@@ -711,12 +738,12 @@ main {
   padding: 24px;
   margin-bottom: 20px;
 }
-.source-form h2 {
+.source-form > h2 {
   margin-bottom: 23px;
 }
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
 .folder-field {
@@ -748,10 +775,12 @@ main {
 }
 .form-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
 }
+.source-list:not(:empty) { margin-bottom: 20px; }
 .source-list {
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
@@ -972,6 +1001,14 @@ th:first-child {
 .cloud-scope-options .cloud-checkbox { display: flex; align-items: center; gap: 8px; }
 /* 识别与计划只呈现 DTO，长文件名不能撑破桌面最小窗口。 */
 .ingestion-candidates { margin-top: 16px; overflow: auto; }
+.ingestion-candidates th:first-child { width: 52px; }
+.ingestion-candidates th:nth-child(2) { width: 42%; }
+.ingestion-candidates th:last-child { width: 120px; }
+.ingestion-candidates td, .task-table td { overflow-wrap: anywhere; }
+.task-table th:first-child { width: 34%; }
+.task-table th:nth-child(2) { width: 15%; }
+.task-table th:nth-child(3) { width: 23%; }
+.task-table .download-controls { margin-top: 0; }
 .ingestion-candidates small { display: block; margin-top: 5px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .recognition-matches { display: grid; gap: 10px; }
 .recognition-match { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }

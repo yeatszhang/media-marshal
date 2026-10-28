@@ -6,6 +6,7 @@ import { App } from "./App";
 import { i18nReady } from "./i18n";
 import { rendererGeneration, rendererStop } from "./lifecycle";
 import "./styles.css";
+import "./configuration.css";
 
 let application: ReturnType<typeof createRendererApplication> | undefined;
 let root: Root | undefined;

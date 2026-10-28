@@ -44,7 +44,7 @@ export function Tasks({ review = false }: { review?: boolean }) {
           </div>
         ) : data.items.length ? (
           <>
-            <table>
+            <table className="task-table">
               <thead>
                 <tr>
                   <th>{t("file")}</th>

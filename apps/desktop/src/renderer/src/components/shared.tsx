@@ -58,7 +58,7 @@ export function Header({
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
-      {children}
+      {children && <div className="page-actions">{children}</div>}
     </div>
   );
 }

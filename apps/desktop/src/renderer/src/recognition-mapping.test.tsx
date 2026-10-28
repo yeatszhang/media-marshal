@@ -10,7 +10,7 @@ import { RecognitionViewModel } from "./recognition-model";
 import { RecognitionDraftProvider } from "./recognition-draft-context";
 import { RecognitionPage } from "./pages/Recognition";
 import { i18nReady } from "./i18n";
-Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); Object.assign(HTMLDialogElement.prototype, { showModal() { this.setAttribute("open", ""); }, close() { this.removeAttribute("open"); } });
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); Object.assign(HTMLDialogElement.prototype, { showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); }, close(this: HTMLDialogElement) { this.removeAttribute("open"); } });
 const cleanup: (() => Promise<void>)[] = []; afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); document.body.innerHTML = ""; });
 const button = (name: string) => { const node = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === name); expect(node, name).toBeTruthy(); return node!; };
 async function click(name: string) { await act(async () => button(name).click()); }
@@ -47,4 +47,51 @@ it("首次样本授权需要明确勾选且绑定当前版本，普通查询与�
   const id = crypto.randomUUID(), sample = crypto.randomUUID(); const f = await mount(`/recognition?rule=${id}&sample=${sample}`, (f) => { const configuration = recognitionRuleConfigurationSchema.parse({ name: "有条件自动", input: { kind: "directory", directoryId: f.input.id }, targets: [], automatic: true }); const stamp = new Date().toISOString(); f.rows.set(id, { id, version: 3, draftRevision: 4, lifecycleRevision: 0, draft: configuration, snapshot: { ruleId: id, ruleVersion: 3, configuration, inputDirectory: { id: f.input.id, version: 1, path: f.input.path }, inputMode: "ordinary", defaultDirectoryVersion: null, targets: [] }, paused: false, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: true, sourceId: crypto.randomUUID(), unavailableInputs: 0, failure: null, automaticAuthorized: false } }); });
   expect(button("确认首次样本自动授权").disabled).toBe(true); await act(async () => document.querySelector<HTMLInputElement>('[aria-label="已核对首次样本并授权当前规则版本"]')!.click()); await click("确认首次样本自动授权"); expect(f.api.authorizeRecognitionAutomatic).toHaveBeenCalledWith(expect.objectContaining({ id, expectedVersion: 3, samplePreviewId: sample, accepted: true })); await f.remount(); expect(f.api.authorizeRecognitionAutomatic).toHaveBeenCalledTimes(1); expect(f.api.confirmOrganize).not.toHaveBeenCalled();
   await click("暂停全部识别整理"); await click("暂停此识别规则"); await click("恢复此识别规则"); expect(f.element.textContent).toContain("全部识别整理已暂停"); expect(f.api.setOrganizePause).toHaveBeenCalledTimes(1);
+});
+
+it("编辑已确认规则移除旧预览并聚焦，轮询不覆盖未保存修改", async () => {
+  const f = await mount();
+  await click("添加识别规则"); await fill("识别规则名称", "可编辑规则"); await click("选择识别输入目录"); await click("保存识别草稿并预览"); await click("确认识别配置范围");
+  expect(document.querySelector('[aria-label="识别规则表单"]')).toBeNull();
+  await click("编辑并预览识别规则");
+  expect(document.querySelector('[aria-label="识别配置范围预览"]')).toBeNull();
+  expect(document.activeElement).toBe(document.querySelector('[aria-label="识别规则名称"]'));
+  await fill("识别规则名称", "编辑后的规则");
+  await act(async () => { await f.app.container.get(RecognitionViewModel).refresh(); });
+  expect(document.querySelector<HTMLInputElement>('[aria-label="识别规则名称"]')!.value).toBe("编辑后的规则");
+  await click("保存识别草稿并预览");
+  expect(f.api.saveRecognitionRule.mock.calls.at(-1)![0]).toMatchObject({ expectedVersion: 1, expectedDraftRevision: 1, configuration: { name: "编辑后的规则" } });
+  expect(document.querySelector('[aria-label="识别配置范围预览"]')).not.toBeNull();
+});
+
+it("删除规则清除表单、预览和接入区，恢复入口保持折叠且恢复后仍暂停", async () => {
+  const f = await mount();
+  await click("添加识别规则"); await fill("识别规则名称", "待删除规则"); await click("选择识别输入目录"); await click("保存识别草稿并预览"); await click("确认识别配置范围");
+  await click("暂停此识别规则"); await click("删除识别规则…"); await click("确认删除识别规则");
+  expect(document.querySelector('[aria-label="识别配置范围预览"]')).toBeNull();
+  expect(document.querySelector('[aria-label="识别规则表单"]')).toBeNull();
+  expect(document.querySelector('[aria-label="规则接入与文件任务"]')).toBeNull();
+  expect(document.querySelector('article[aria-label="识别规则 待删除规则"]')).toBeNull();
+  expect(document.querySelector(".recognition-archive")?.hasAttribute("open")).toBe(false);
+  await click("恢复已删除识别规则");
+  expect(document.querySelector('article[aria-label="识别规则 待删除规则"]')?.textContent).toContain("识别已暂停");
+  expect(document.querySelector(".recognition-archive")).toBeNull();
+  expect(f.api.confirmRecognitionRule).toHaveBeenCalledTimes(1);
+});
+
+it("已删除规则的旧链接不会重新打开编辑器、过期预览或自动授权", async () => {
+  const id = crypto.randomUUID();
+  const f = await mount(`/recognition?rule=${id}&configurationPreview=${crypto.randomUUID()}`, (f) => {
+    const configuration = recognitionRuleConfigurationSchema.parse({ name: "旧链接已删除规则", input: { kind: "directory", directoryId: f.input.id }, targets: [], automatic: true });
+    const stamp = new Date().toISOString();
+    f.rows.set(id, { id, version: 0, draftRevision: 1, lifecycleRevision: 1, draft: configuration, snapshot: null, paused: true, deletedAt: stamp, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: true, sourceId: null, unavailableInputs: 0, failure: null, automaticAuthorized: false } });
+    // 首次列表返回前预览可能已发起读取，返回已删除规则对应的过期快照。
+    f.api.getRecognitionConfigurationPreview.mockResolvedValue({ id: crypto.randomUUID(), ruleId: id, state: "EXPIRED", expiresAt: 0, automaticAuthorized: false, snapshot: { ruleId: id, ruleVersion: 1, configuration, inputDirectory: { id: f.input.id, version: 1, path: f.input.path }, inputMode: "ordinary", defaultDirectoryVersion: null, targets: [] } });
+  });
+  expect(document.querySelector('[aria-label="识别规则表单"]')).toBeNull();
+  expect(document.querySelector('[aria-label="识别配置范围预览"]')).toBeNull();
+  expect(document.querySelector('[aria-label="首次样本自动授权"]')).toBeNull();
+  await f.remount();
+  expect(document.querySelector('[aria-label="识别规则表单"]')).toBeNull();
+  expect(f.api.controlRecognitionRule).not.toHaveBeenCalled();
 });
