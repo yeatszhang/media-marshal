@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-28T15:20:38.221727+00:00",
+  "title": "Design System: Media Marshal",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "操作蓝"
+      },
+      "sidebar": {
+        "role": "neutral",
+        "displayName": "深蓝导航"
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "浅灰工作区"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "页面标题",
+        "purpose": "应用内标题；沿用系统字体，不建立展示字体规范。"
+      },
+      "metric": {
+        "displayName": "统计数字",
+        "purpose": "总览配置与记录数量，使用等宽数字。"
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "button-transition",
+        "value": "background-color 140ms ease-out, border-color 140ms ease-out",
+        "purpose": "按钮悬停过渡；减少动态效果时关闭。"
+      },
+      {
+        "name": "loading-spin",
+        "value": "spin 1.2s linear infinite",
+        "purpose": "加载旋转；减少动态效果时关闭。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "desktop-compact",
+        "value": "1040px"
+      },
+      {
+        "name": "desktop-short-height",
+        "value": "700px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "主按钮",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "公共按钮的现有样式。",
+      "html": "<button class=\"ds-button ds-primary\">查看待处理</button>",
+      "css": ".ds-button{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:7px;font-size:12px;line-height:1.5;font-weight:550;min-height:36px;padding:8px 13px;white-space:nowrap;cursor:pointer;transition:background-color 140ms ease-out,border-color 140ms ease-out}.ds-button:focus-visible{outline:3px solid var(--ring,#486bd3);outline-offset:3px}.ds-button:active:not(:disabled){filter:brightness(.95)}.ds-button:disabled{opacity:.5;cursor:default}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-primary{background:var(--primary,#3458c0);color:var(--primary-foreground,#fff);border-color:var(--primary,#3458c0)}.ds-primary:hover:not(:disabled){background:var(--primary-hover,#29469b)}"
+    },
+    {
+      "name": "描边按钮",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "公共按钮的现有样式。",
+      "html": "<button class=\"ds-button ds-outline\">查看待处理</button>",
+      "css": ".ds-button{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:7px;font-size:12px;line-height:1.5;font-weight:550;min-height:36px;padding:8px 13px;white-space:nowrap;cursor:pointer;transition:background-color 140ms ease-out,border-color 140ms ease-out}.ds-button:focus-visible{outline:3px solid var(--ring,#486bd3);outline-offset:3px}.ds-button:active:not(:disabled){filter:brightness(.95)}.ds-button:disabled{opacity:.5;cursor:default}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-outline{background:white;color:#65727e;border-color:var(--border,#dce2eb)}.ds-outline:hover:not(:disabled){background:#f5f7f7}"
+    },
+    {
+      "name": "透明按钮",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "公共按钮的现有样式。",
+      "html": "<button class=\"ds-button ds-ghost\">查看待处理</button>",
+      "css": ".ds-button{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:7px;font-size:12px;line-height:1.5;font-weight:550;min-height:36px;padding:8px 13px;white-space:nowrap;cursor:pointer;transition:background-color 140ms ease-out,border-color 140ms ease-out}.ds-button:focus-visible{outline:3px solid var(--ring,#486bd3);outline-offset:3px}.ds-button:active:not(:disabled){filter:brightness(.95)}.ds-button:disabled{opacity:.5;cursor:default}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-ghost{background:transparent;color:var(--muted-foreground,#58677b)}.ds-ghost:hover:not(:disabled){background:#eaf0f8;color:var(--foreground,#262d3b)}"
+    },
+    {
+      "name": "文本输入",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "占位文字保留完整透明度。",
+      "html": "<input class=\"ds-input\" aria-label=\"目录名称\" placeholder=\"输入目录名称\">",
+      "css": ".ds-input{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;width:100%;min-width:0;border:1px solid var(--border,#dce2eb);border-radius:7px;background:#fff;padding:10px 12px;color:var(--foreground,#262d3b);font-size:13px;caret-color:var(--primary,#3458c0)}.ds-input::placeholder{color:var(--muted-foreground,#58677b);opacity:1}.ds-input:focus-visible{outline:3px solid var(--ring,#486bd3);outline-offset:3px}"
+    },
+    {
+      "name": "侧栏导航",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "深色区域中的当前项与普通项。",
+      "html": "<nav class=\"ds-nav\" aria-label=\"主导航\"><a class=\"ds-active\" aria-current=\"page\" href=\"#overview\">总览</a><a href=\"#sources\">来源</a></nav>",
+      "css": ".ds-nav{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;background:var(--sidebar,#172338);padding:16px;display:flex;flex-direction:column;gap:4px}.ds-nav a{color:var(--sidebar-foreground,#d2dbea);text-decoration:none;padding:10px 12px;border-radius:7px;font-size:13px;line-height:1.5}.ds-nav .ds-active{background:#304c7b;color:#fff;font-weight:600}.ds-nav a:hover{background:#263a58;color:#fff}.ds-nav a:focus-visible{outline:3px solid #b9d0ff;outline-offset:3px}"
+    },
+    {
+      "name": "状态标签",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "只读状态或类型标签。",
+      "html": "<span class=\"ds-badge\">本地目录</span>",
+      "css": ".ds-badge{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;display:inline-block;font-size:12px;font-weight:400;line-height:1.5;background:#f4f5f6;border:1px solid #e9ecf0;padding:3px 6px;border-radius:5px;color:var(--muted-foreground,#58677b)}"
+    },
+    {
+      "name": "工作面板",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "公共面板搭配总览内边距。",
+      "html": "<section class=\"ds-panel\"><h2>配置媒体库</h2><p>连接来源，配置识别与映射。</p></section>",
+      "css": ".ds-panel{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;background:var(--card,#fff);color:var(--foreground,#262d3b);border:1px solid var(--border,#dce2eb);border-radius:var(--radius,10px);padding:24px}.ds-panel h2{margin:0;font-size:18px;font-weight:620;line-height:1.5}.ds-panel p{margin:6px 0 0;font-size:13px;line-height:1.7;color:var(--muted-foreground,#58677b)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "清晰媒体工作台",
+    "overview": "深蓝侧栏承载分组导航，浅灰工作区承载白色内容面，蓝色强调操作和当前路径。整体采用紧凑文字、细边框和明确分组，让目录、文件和处理状态保持可读。\n\n本文记录当前共享外壳、公共控件和总览的实现事实；方向名称来自现有方向契约，不代表用户另行批准过视觉候选方案。系统字体是产品已有约束，不引入外部字体服务。",
+    "keyCharacteristics": [
+      "深蓝导航、蓝色操作与浅灰工作区。",
+      "以细边框和背景层次组织内容。",
+      "清晰键盘焦点，文字状态与图标并用。"
+    ],
+    "rules": [],
+    "dos": [
+      "**Do** 复用蓝色操作、深蓝导航和浅灰工作区的语义分工。",
+      "**Do** 保留占位文字对比度、键盘焦点和减少动态效果支持。",
+      "**Do** 让长文字换行，并保持动作和状态可辨认。"
+    ],
+    "donts": [
+      "**Don't** 仅凭颜色或统计数量表达处理成功。",
+      "**Don't** 为新界面引入外部字体加载依赖。",
+      "**Don't** 把总览三步配置布局作为所有业务页面的固定模板。"
+    ]
+  }
+}

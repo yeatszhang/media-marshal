@@ -1,9 +1,8 @@
-import { useEffect } from "react";
-import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
+import { useEffect, Fragment } from "react";
+import { HashRouter, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useService, useServiceState } from "@yeatz/app-framework/react";
 import {
-  ArrowRight,
   ChevronRight,
   Clapperboard,
   Cloud,
@@ -57,18 +56,22 @@ function Shell() {
       active = false;
     };
   }, [client, ready]);
+  const { pathname } = useLocation();
   const links = [
-    { to: "/", name: "overview", Icon: LayoutDashboard },
+    { to: "/", name: "overview", group: "navActivity", Icon: LayoutDashboard },
     { to: "/tasks", name: "tasks", Icon: Clapperboard },
     { to: "/review", name: "review", Icon: ListTodo },
-    { to: "/sources", name: "sources", Icon: Folder },
+    { to: "/sources", name: "sources", group: "navLibrary", Icon: Folder },
     { to: "/recognition", name: "recognitionMapping", Icon: ListTodo },
     { to: "/cloud", name: "cloud.title", Icon: Cloud },
     { to: "/downloads", name: "cloud.downloads", Icon: Download },
-    { to: "/settings", name: "settings", Icon: Settings },
+    { to: "/settings", name: "settings", group: "navPreferences", Icon: Settings },
   ];
+  const currentPage = links.find((link) => link.to !== "/" && (pathname === link.to || pathname.startsWith(`${link.to}/`)))?.name
+    ?? (pathname.startsWith("/corrections") ? "tasks" : pathname.startsWith("/subscriptions") ? "sources" : "overview");
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>{t("skipToContent")}</a>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-icon">
@@ -79,14 +82,16 @@ function Shell() {
             <span>{t("local")}</span>
           </div>
         </div>
-        <div className="nav-label">WORKSPACE</div>
-        <nav aria-label="主导航">
-          {links.map(({ to, name, Icon }) => (
-            <NavLink key={to} to={to} end={to === "/"}>
+        <nav aria-label={t("mainNavigation")}>
+          {links.map(({ to, name, group, Icon }) => (
+            <Fragment key={to}>
+              {group && <div className="nav-label">{t(group)}</div>}
+            <NavLink to={to} end={to === "/"}>
               <Icon size={18} />
               <span>{t(name)}</span>
               <ChevronRight size={13} />
             </NavLink>
+            </Fragment>
           ))}
         </nav>
         <div className="sidebar-bottom">
@@ -99,27 +104,24 @@ function Shell() {
         <header className="topbar">
           <span className="breadcrumb">
             Media Marshal<span>/</span>
-            {t("independent")}
+            <strong>{t(currentPage)}</strong>
           </span>
           <div className={cn("connection", ready ? "connected" : "")}>
             <i />
             {t(ready ? "running" : (runtime?.core ?? "starting"))}
           </div>
         </header>
-        <main>
+        <main id="main-content" tabIndex={-1}>
           <ErrorNotice
             message={error || runtime?.detail || null}
             retry={() => {
               void model.restart();
             }}
           />
-          <div className="notice migration-notice">
-            <span className="notice-marker" />
-            <div>
-              <strong>{t("stageTitle")}</strong>
-              <p>{t("stageHelp")}</p>
-            </div>
-          </div>
+          <details className="release-note">
+            <summary>{t("stageTitle")}<span>{t("stageDisclosure")}</span></summary>
+            <p>{t("stageHelp")}</p>
+          </details>
           {ready ? (
             <Routes>
               <Route path="/" element={<Overview />} />
