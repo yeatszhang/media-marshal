@@ -21,7 +21,7 @@ async function fixture() {
 describe("独立目录授权与默认下载目录", () => {
   it("无网盘或媒体连接可授权目录，默认变更不修改已冻结绑定和源文件", async () => {
     const f = await fixture(), source = await f.grant("本地输入"), a = await f.grant("下载 A 中文 空格"), b = await f.grant("下载 B"); await writeFile(join(source.path, "原视频.mp4"), "保留原输入");
-    expect(f.service.defaults()).toEqual({ version: 0, directory: null }); expect(() => f.service.resolve({ kind: "default" })).toThrow(/默认本地下载目录/);
+    expect(f.service.defaults()).toEqual({ version: 0, directory: null }); expect(() => f.service.resolve({ kind: "default" })).toThrow(/本地下载目录/);
     await f.service.authorize(source, "ordinary"); await f.service.authorize(a, "managed"); await f.service.authorize(b, "managed");
     const input = { expectedVersion: 0, directoryId: a.id, requestKey: randomUUID() }, saved = f.service.setDefault(input), snapshot = f.service.resolve({ kind: "default" });
     const sourceId = randomUUID(), configuration = syncSourceConfigurationSchema.parse({ type: "local", name: "已冻结来源", inputDirectoryId: source.id }), stamp = new Date().toISOString();

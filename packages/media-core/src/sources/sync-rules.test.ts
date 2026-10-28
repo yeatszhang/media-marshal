@@ -64,11 +64,11 @@ describe("独立本地单向同步、成功历史和阶段控制", () => {
     const input = { ...f.version(f.rules.get(id)), requestKey: randomUUID(), operation: "pause" as const }, paused = await f.rules.control(input); expect(await f.rules.control(input)).toEqual(paused); expect(paused.paused).toBe(true); expect(db.prepare("SELECT paused FROM source_rule WHERE id=?").get(id)).toEqual({ paused: 1 }); expect(db.prepare("SELECT sync_claimed,recognition_claimed FROM legacy_configuration_owner WHERE source_id=?").get(id)).toEqual({ sync_claimed: 0, recognition_claimed: 1 });
     await expect(f.rules.control({ ...f.version(paused), requestKey: randomUUID(), operation: "resume" })).rejects.toThrow(/预览确认接管/);
   });
-  it("默认目录改变后普通编辑保留已绑定目录，只有明确改绑才使用新默认值", async () => {
+  it("下载目录改变后编辑和新执行使用当前设置，旧预览失效", async () => {
     const f = await fixture(), source = await f.enable();
     f.directories.setDefault({ expectedVersion: 1, directoryId: f.secondTarget.id, requestKey: randomUUID() });
     const changed = f.save(source), ordinary = await f.preview(changed);
-    expect(ordinary.snapshot.targetDirectory.id).toBe(f.target.id);
+    expect(ordinary.snapshot.targetDirectory.id).toBe(f.secondTarget.id);
     const rebound = await f.rules.preview({ ...f.version(changed), requestKey: randomUUID(), useCurrentDefault: true });
     expect(rebound.snapshot.targetDirectory.id).toBe(f.secondTarget.id);
     await f.rules.confirm({ previewId: rebound.id, requestKey: randomUUID() }); expect(f.rules.get(source.id).snapshot?.targetDirectory.id).toBe(f.secondTarget.id);
@@ -143,4 +143,16 @@ describe("独立本地单向同步、成功历史和阶段控制", () => {
     await writeFile(join(f.target.path, "completed/原片.mp4"), "第三方目标"); const conflict = await f.preview(source, "execution"); expect(conflict).toMatchObject({ state: "BLOCKED", conflicts: 1 });
     expect(f.rules.previewFiles({ id: conflict.id }).items[0]?.reason).toContain("不覆盖"); expect(await readFile(join(f.target.path, "completed/原片.mp4"), "utf8")).toBe("第三方目标");
   });
+});
+
+it("新同步使用当前下载目录，已受理作业和已确认预览仍保留原计划", async () => {
+  const f = await fixture(), rule = await f.enable(); await f.advance();
+  const original = await f.preview(rule, "execution");
+  const job = await f.rules.confirm({ previewId: original.id, requestKey: randomUUID(), filesComplete: true });
+  const pending = await f.preview(rule, "execution");
+  f.directories.setDefault({ expectedVersion: 1, directoryId: f.secondTarget.id, requestKey: randomUUID() });
+  expect(f.rules.getPreview(pending.id).state).toBe("EXPIRED");
+  const next = await f.preview(rule, "execution"); expect(next.snapshot.targetDirectory.id).toBe(f.secondTarget.id);
+  await f.rules.tick(); expect(f.rules.getJob(job.jobId!).state).toBe("DONE");
+  expect(await readFile(join(f.target.path, "completed/原片.mp4"), "utf8")).toBe(f.content);
 });

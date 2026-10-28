@@ -107,3 +107,12 @@ describe("同步来源与识别映射的独立契约", () => {
     for (const extra of [{ accepted: false }, { ruleVersion: undefined }, { sourceId: randomUUID() }, { filesComplete: true }, { verifiedProfile: "猜测客户端" }]) expect(recognitionAutomaticConsentSchema.safeParse({ ...consent, ...extra }).success).toBe(false);
   });
 });
+
+it("公开写入仅接受公共下载目录，拒绝识别客户端和逐规则目录覆盖", () => {
+  expect(syncSourceWriteSchema.safeParse({ ...edit(), configuration: local() }).success).toBe(true);
+  expect(syncSourceWriteSchema.safeParse({ ...edit(), configuration: { ...local(), target: { kind: "directory", directoryId: randomUUID() } } }).success).toBe(false);
+  for (const patch of [{ input: { kind: "directory", directoryId: randomUUID() } }, { client: "quark" }]) {
+    expect(recognitionRuleWriteSchema.safeParse({ ...edit(), configuration: { name: "公共目录识别", targets: [], ...patch } }).success).toBe(false);
+  }
+  expect(recognitionRuleWriteSchema.safeParse({ ...edit(), configuration: { name: "公共目录识别", targets: [target()] } }).success).toBe(true);
+});

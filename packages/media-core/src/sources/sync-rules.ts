@@ -66,15 +66,15 @@ export class SyncRules {
     if (row && !row.claimed && row.legacy_fingerprint !== legacyConfigurationFingerprint(this.database.connection, id)) throw conflict("旧来源在迁移后已有变化，请重新读取当前范围、保存草稿并完整预览后接管");
     if (row && !row.claimed && this.database.connection.prepare("SELECT 1 FROM source_rule WHERE id=? AND deleted_at IS NOT NULL").get(id)) throw conflict("旧来源已删除，请先从旧配置入口恢复并保持暂停，再完整预览确认接管");
   }
-  private snapshot(row: Row, mode: Preview["mode"], useCurrentDefault: boolean): SyncSourceSnapshot {
+  private snapshot(row: Row, mode: Preview["mode"]): SyncSourceSnapshot {
     if (mode === "execution") {
       if (!this.get(row.id).runtime?.claimed) throw conflict("升级后的来源需要先编辑并完整预览确认接管；可在旧配置入口暂停原来源，原任务和历史保留");
       const snapshot = this.get(row.id).snapshot;
       if (!snapshot || row.paused || row.deleted_at || JSON.parse(row.review_json).length) throw conflict("请先预览确认并恢复同步来源；执行不会使用未生效草稿");
-      return snapshot;
+      return syncSourceSnapshotSchema.parse({ ...snapshot, targetDirectory: this.directories.resolve({ kind: "default" }).directory, defaultDirectoryVersion: this.directories.defaults().version, configuration: { ...snapshot.configuration, target: { kind: "default" } } });
     }
-    const configuration = syncSourceConfigurationSchema.parse(JSON.parse(row.draft_json)), active = this.get(row.id).snapshot;
-    const target = configuration.target.kind === "default" && active?.configuration.target.kind === "default" && !useCurrentDefault ? { directory: active.targetDirectory, defaultDirectoryVersion: active.defaultDirectoryVersion } : this.directories.resolve(configuration.target);
+    const configuration = syncSourceConfigurationSchema.parse(JSON.parse(row.draft_json));
+    const target = this.directories.resolve(configuration.target);
     if (this.directories.kind(target.directory.id) !== "managed") throw conflict("同步 target 必须是受管下载根，请先通过原生目录选择授权");
     const input = configuration.type === "local" ? this.directories.binding(configuration.inputDirectoryId) : null;
     const legacy = !this.get(row.id).runtime?.claimed ? this.database.connection.prepare("SELECT version FROM source_rule WHERE id=?").get(row.id) as { version: number } | undefined : undefined;
@@ -101,8 +101,7 @@ export class SyncRules {
     const row = this.row(input.id); this.assertVersion(row, input); this.assertLegacy(input.id);
     const mode = input.mode ?? "configuration"; if (input.force && mode !== "execution") throw conflict("显式重新同步需要从已生效来源预览执行，不改写配置");
     if (input.useCurrentDefault && (mode !== "configuration" || this.get(input.id).draft.target.kind !== "default")) throw conflict("只有默认 target 的配置预览可以显式重新绑定当前默认目录");
-    const active = this.get(input.id).snapshot;
-    const snapshot = this.snapshot(row!, mode, !!input.useCurrentDefault), defaultDependency = mode === "configuration" && snapshot.configuration.target.kind === "default" && (!active || active.configuration.target.kind !== "default" || !!input.useCurrentDefault); await this.checkSnapshot(snapshot);
+    const snapshot = this.snapshot(row!, mode), defaultDependency = snapshot.configuration.target.kind === "default"; await this.checkSnapshot(snapshot);
     const download = snapshot.configuration.type === "cloud" ? this.downloads.previews.start({ accountId: snapshot.configuration.accountId, remoteRef: snapshot.configuration.remoteRef, targetGrantId: snapshot.targetDirectory.id, requestKey: input.requestKey, layout: "drive", filters: { rules: snapshot.configuration.filters }, forceRedownload: input.force ?? false }) : null;
     const local = snapshot.configuration.type === "local" ? await this.local.create(snapshot, input.requestKey, input.force ?? false) : null;
     this.writable(); this.assertVersion(this.row(input.id), input); this.assertLegacy(input.id);
@@ -197,7 +196,7 @@ export class SyncRules {
     if (!rule.runtime?.claimed && db.prepare("SELECT 1 FROM legacy_configuration_owner WHERE source_id=?").get(rule.id)) throw conflict("请先完整预览确认接管此来源，或从旧配置入口控制原来源；不会同时修改两套有效配置");
     if (input.operation === "resume") {
       if (!rule.snapshot || rule.deletedAt || rule.reviewReasons.length) throw conflict("请先恢复、预览确认来源配置，再恢复同步");
-      await this.checkSnapshot(rule.snapshot);
+      await this.checkSnapshot({ ...rule.snapshot, targetDirectory: this.directories.resolve({ kind: "default" }).directory, defaultDirectoryVersion: this.directories.defaults().version, configuration: { ...rule.snapshot.configuration, target: { kind: "default" } } });
     }
     if (input.operation === "remove" && (!rule.paused || this.local.hasActive(rule.id) || db.prepare("SELECT 1 FROM sync_job s JOIN download_job j ON j.id=s.download_job_id WHERE s.source_id=? AND j.state IN ('RUNNING','VERIFYING','COMMITTING','PAUSING','CANCELLING') LIMIT 1").get(rule.id))) throw conflict("请先暂停此来源并等待在途同步到达安全点，再删除；文件和历史会保留");
     const result = db.transaction(() => {

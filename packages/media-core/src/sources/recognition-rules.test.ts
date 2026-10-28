@@ -44,7 +44,7 @@ async function fixture() {
   const advance = async (sourceId?: string, seconds = 130) => { for (let elapsed = 0; elapsed < seconds; elapsed += 10) { clock += 10000; await sync.tick(); if (sourceId) await pipeline.scan(sourceId); } };
   const task = async (sourceId: string, name: string) => { const candidate = pipeline.list({ sourceId }).items.find((row) => row.relativePath.endsWith(name))!; const result = await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() }); await pipeline.tick(); expect(pipeline.task(result.taskId).state).toBe("AWAITING_CONFIRMATION"); return result.taskId; };
   const synchronize = async () => { const draft = sync.save({ id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0, requestKey: randomUUID(), configuration: { name: "无账号同步", type: "local", inputDirectoryId: input.id } }); const configuration = await sync.preview({ ...versions(draft), requestKey: randomUUID() }), active = (await sync.confirm({ previewId: configuration.id, requestKey: randomUUID() })).rule; await advance(); const execution = await sync.preview({ ...versions(active), requestKey: randomUUID(), mode: "execution" }); await sync.confirm({ previewId: execution.id, requestKey: randomUUID(), filesComplete: true }); await sync.tick(); return active; };
-  return { folder, db, roots, directories, input, download, movie, tv, secondMovie, movieTarget, tvTarget, pipeline, recognition, sync, downloads, bytes, save, enable, advance, task, synchronize };
+  return { grant, folder, db, roots, directories, input, download, movie, tv, secondMovie, movieTarget, tvTarget, pipeline, recognition, sync, downloads, bytes, save, enable, advance, task, synchronize };
 }
 it("普通已有目录可以先空目标识别，再混合电影与剧集分库，不要求同步或 Emby", async () => {
   const f = await fixture(); let rule = await f.enable(f.save()); const sourceId = rule.runtime!.sourceId!; await f.pipeline.scan(sourceId); await f.advance(sourceId);
@@ -144,4 +144,30 @@ it("同步和识别并发确认时，在事务提交前重新核对目录图，�
   const original = f.pipeline.prepareRecognitionInput.bind(f.pipeline); let release!: () => void, entered!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }), ready = new Promise<void>((resolve) => { entered = resolve; });
   vi.spyOn(f.pipeline, "prepareRecognitionInput").mockImplementation(async (...args) => { const prepared = await original(...args); entered(); await gate; return prepared; });
   const flight = f.recognition.confirm({ previewId: preview.id, requestKey: randomUUID() }); await ready; await f.sync.confirm({ previewId: syncPreview.id, requestKey: randomUUID() }); release(); await expect(flight).rejects.toThrow(/循环/); expect(f.recognition.get(recognition.id).version).toBe(0); expect(f.sync.get(sync.id).version).toBe(1);
+});
+
+it("设置切换统一识别输入，已受理 COPY 保留原路径，设置重试不重复追加规则版本", async () => {
+  const f = await fixture(); await f.synchronize();
+  const rule = await f.enable(f.save(undefined, { input: { kind: "default" }, targets: [f.movieTarget] }));
+  const sourceId = rule.runtime!.sourceId!; await f.advance(sourceId);
+  const taskId = await f.task(sourceId, "测试电影.2026.mp4");
+  const preview = await f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false });
+  await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() });
+  f.pipeline.setPaused({ paused: true, requestKey: randomUUID() }); await f.pipeline.tick();
+  const before = f.db.connection.prepare("SELECT plan_json FROM ingestion_operation").get();
+  const next = await f.grant("新的公共下载目录", "managed"), command = { expectedVersion: 1, directoryId: next.id, requestKey: randomUUID() };
+  const saved = await f.recognition.setDownloadDirectory(command); expect(await f.recognition.setDownloadDirectory(command)).toEqual(saved);
+  const changed = f.recognition.get(rule.id); expect(changed.version).toBe(rule.version + 1);
+  expect(changed.snapshot).toMatchObject({ inputDirectory: { id: next.id }, inputMode: "managed-completed", defaultDirectoryVersion: 2 });
+  expect(changed.runtime!.sourceId).not.toBe(sourceId);
+  expect(f.db.connection.prepare("SELECT plan_json FROM ingestion_operation").get()).toEqual(before);
+  f.pipeline.setPaused({ paused: false, requestKey: randomUUID() }); for (let i = 0; i < 14; i++) { await f.advance(undefined, 10); await f.pipeline.tick(); } expect(f.pipeline.task(taskId)).toMatchObject({ state: "DONE" }); expect(await readFile(preview.targetPath, "utf8")).toBe(f.bytes);
+});
+it("设置切换失败原子保留原目录和识别版本，清除设置停止新接入", async () => {
+  const f = await fixture(), rule = await f.enable(f.save(undefined, { input: { kind: "default" }, targets: [f.movieTarget] }));
+  await expect(f.recognition.setDownloadDirectory({ expectedVersion: 1, directoryId: f.movie.id, requestKey: randomUUID() })).rejects.toThrow(/下载目录/);
+  expect(f.directories.defaults().directory!.id).toBe(f.download.id); expect(f.recognition.get(rule.id).version).toBe(rule.version);
+  await f.recognition.setDownloadDirectory({ expectedVersion: 1, directoryId: null, requestKey: randomUUID() });
+  expect(f.recognition.get(rule.id).runtime!.sourceId).toBeNull();
+  expect(() => f.recognition.scan({ ...versions(rule), requestKey: randomUUID() })).toThrow();
 });

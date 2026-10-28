@@ -29,18 +29,18 @@ describe("默认目录选择、明确保存与持久读取", () => {
     await f.model.refresh(); expect(await f.model.saveDefault(f.directory.id)).toBe(false); expect(f.api.getDefaultDownloadDirectory).toHaveBeenCalledTimes(reads); expect(f.api.setDefaultDownloadDirectory).not.toHaveBeenCalled();
   });
   it("StrictMode 和轮询只查询，选择及取消不改默认；保存明确写入版本", async () => {
-    const f = await fixture(); expect(f.api.getDefaultDownloadDirectory).toHaveBeenCalledTimes(1); expect(f.button("保存默认目录").disabled).toBe(true);
+    const f = await fixture(); expect(f.api.getDefaultDownloadDirectory).toHaveBeenCalledTimes(1); expect(f.button("保存下载目录").disabled).toBe(true);
     f.api.chooseConfigurationDirectory.mockResolvedValueOnce(null); await act(async () => f.button("选择本地下载目录").click()); expect(f.api.setDefaultDownloadDirectory).not.toHaveBeenCalled();
     await act(async () => f.button("选择本地下载目录").click()); expect(f.element.textContent).toContain("有未保存"); expect(f.element.textContent).toContain(f.directory.path);
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); }); expect(f.api.setDefaultDownloadDirectory).not.toHaveBeenCalled();
-    await act(async () => f.button("保存默认目录").click()); expect(f.api.setDefaultDownloadDirectory).toHaveBeenCalledExactlyOnceWith({ expectedVersion: 0, directoryId: f.directory.id, requestKey: expect.any(String) }); expect(f.element.textContent).toContain("已有绑定和文件保持原位置");
+    await act(async () => f.button("保存下载目录").click()); expect(f.api.setDefaultDownloadDirectory).toHaveBeenCalledExactlyOnceWith({ expectedVersion: 0, directoryId: f.directory.id, requestKey: expect.any(String) }); expect(f.element.textContent).toContain("已受理任务和已有文件保留原路径");
     await act(async () => { await vi.advanceTimersByTimeAsync(6000); }); expect(f.api.setDefaultDownloadDirectory).toHaveBeenCalledTimes(1);
   });
   it("原卷错误保留原因，回执丢失使用同一请求重试，查询恢复不吞掉操作失败", async () => {
     const f = await fixture(); await act(async () => f.button("选择本地下载目录").click());
     f.api.setDefaultDownloadDirectory.mockRejectedValueOnce(new Error("原目录尚未恢复，请连接原磁盘"));
-    await act(async () => f.button("保存默认目录").click()); const command = f.api.setDefaultDownloadDirectory.mock.calls[0];
+    await act(async () => f.button("保存下载目录").click()); const command = f.api.setDefaultDownloadDirectory.mock.calls[0];
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); }); expect(f.element.textContent).toContain("原目录尚未恢复");
-    await act(async () => f.button("保存默认目录").click()); expect(f.api.setDefaultDownloadDirectory.mock.calls[1]).toEqual(command); expect(f.element.textContent).not.toContain("原目录尚未恢复");
+    await act(async () => f.button("保存下载目录").click()); expect(f.api.setDefaultDownloadDirectory.mock.calls[1]).toEqual(command); expect(f.element.textContent).not.toContain("原目录尚未恢复");
   });
 });

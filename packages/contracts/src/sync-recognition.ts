@@ -41,7 +41,7 @@ export const syncSourceConfigurationSchema = z.discriminatedUnion("type", [
 export type SyncSourceConfiguration = z.infer<typeof syncSourceConfigurationSchema>;
 
 const edit = { id, expectedVersion: revision, expectedDraftRevision: revision, expectedLifecycleRevision: revision, requestKey: id };
-export const syncSourceWriteSchema = z.strictObject({ ...edit, configuration: syncSourceConfigurationSchema });
+export const syncSourceWriteSchema = z.strictObject({ ...edit, configuration: syncSourceConfigurationSchema }).refine((value) => value.configuration.target.kind === "default", "来源统一使用设置中的本地下载目录，请前往设置修改");
 export const syncSourceSnapshotSchema = z.strictObject({
   sourceId: id, sourceVersion: version, configuration: syncSourceConfigurationSchema,
   inputDirectory: directoryBindingSchema.nullable(), targetDirectory: directoryBindingSchema,
@@ -64,7 +64,7 @@ export const recognitionRuleConfigurationSchema = z.strictObject({
   operation: z.literal("COPY").default("COPY"), automatic: z.boolean().default(false),
 });
 export type RecognitionRuleConfiguration = z.infer<typeof recognitionRuleConfigurationSchema>;
-export const recognitionRuleWriteSchema = z.strictObject({ ...edit, configuration: recognitionRuleConfigurationSchema });
+export const recognitionRuleWriteSchema = z.strictObject({ ...edit, configuration: recognitionRuleConfigurationSchema }).refine((value) => value.configuration.input.kind === "default" && value.configuration.client === "custom", "识别统一使用设置中的本地下载目录，无需指定输入目录或客户端");
 
 /** 绑定具体库根，不能只保存库名或库内第一条路径。 */
 export const embyTargetBindingSchema = z.strictObject({

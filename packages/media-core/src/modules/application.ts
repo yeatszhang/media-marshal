@@ -101,7 +101,7 @@ declare module "@yeatz/app-framework/command" {
     "media.sync.retry": (input: CoreInput<"sync.retry">) => CoreOutput<"sync.retry">;
     "media.configuration.directories": () => Promise<CoreOutput<"configuration.directories">>;
     "media.configuration.default": () => CoreOutput<"configuration.default">;
-    "media.configuration.set-default": (input: CoreInput<"configuration.set-default">) => CoreOutput<"configuration.set-default">;
+    "media.configuration.set-default": (input: CoreInput<"configuration.set-default">) => Promise<CoreOutput<"configuration.set-default">>;
     "media.emby.libraries": () => Promise<CoreOutput<"emby.libraries">>;
     "media.emby.discover": (input: CoreInput<"emby.discover">) => Promise<CoreOutput<"emby.discover">>;
     "media.emby.connect": (input: CoreInput<"emby.connect">) => Promise<CoreOutput<"emby.connect">>;
@@ -301,7 +301,7 @@ export function createMediaApplication(
       add(registry.register("media.sync.job", (_, input) => syncRules.getJob(input.id)));
       add(registry.register("media.sync.job-files", (_, input) => syncRules.jobFiles(input)));
       add(registry.register("media.sync.retry", (_, input) => syncRules.retry(input)));
-      add(registry.register("media.configuration.set-default", (_, input) => configurationDirectories.setDefault(input)));
+      add(registry.register("media.configuration.set-default", (_, input) => recognitionRules.setDownloadDirectory(input)));
       add(registry.register("media.emby.libraries", () => delivery.libraries()));
       add(registry.register("media.emby.discover", (_, input) => delivery.discover(input)));
       add(registry.register("media.emby.connect", (_, input) => delivery.connect(input)));

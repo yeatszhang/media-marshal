@@ -1,5 +1,8 @@
 # 完成来源单向同步与成功历史设计
 
+2026-10-28 产品决策更新：逐规则下载目标／识别输入覆盖及识别客户端选择由后续变更 [unify-local-download-directory](../unify-local-download-directory/proposal.md) 收敛到设置页唯一目录。以下为本变更已完成时的设计记录。
+
+
 ## 上下文
 
 以已完成的原 21.1／21.2 契约和 schema v28／v29 为基础，可首先实施。

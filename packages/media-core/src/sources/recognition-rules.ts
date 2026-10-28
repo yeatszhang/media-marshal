@@ -72,9 +72,9 @@ export class RecognitionRules {
     this.writable(); const db = this.database.connection, repeated = db.prepare("SELECT * FROM recognition_configuration_preview WHERE request_key=?").get(input.requestKey) as Preview | undefined;
     if (repeated) { const old = this.previous<{ id: string }>(input.requestKey, { action: "recognition.preview", input }); if (!old || old.id !== repeated.id) throw conflict(); return this.getPreview(repeated.id); }
     const row = this.row(input.id); this.versions(row, input); this.assertLegacy(input.id);
-    const configuration = recognitionRuleConfigurationSchema.parse(JSON.parse(row!.draft_json)), active = this.get(input.id).snapshot;
+    const configuration = recognitionRuleConfigurationSchema.parse(JSON.parse(row!.draft_json));
     if (input.useCurrentDefault && configuration.input.kind !== "default") throw conflict("只有默认输入可以明确重新绑定当前默认目录");
-    const resolved = configuration.input.kind === "default" && active?.configuration.input.kind === "default" && !input.useCurrentDefault ? { directory: active.inputDirectory, defaultDirectoryVersion: active.defaultDirectoryVersion } : this.directories.resolve(configuration.input), dependent = configuration.input.kind === "default" && (!active || active.configuration.input.kind !== "default" || !!input.useCurrentDefault);
+    const resolved = this.directories.resolve(configuration.input), dependent = configuration.input.kind === "default";
     const snapshot = recognitionRuleSnapshotSchema.parse({ ruleId: input.id, ruleVersion: row!.version + 1, configuration, inputDirectory: resolved.directory, inputMode: this.directories.kind(resolved.directory.id) === "managed" ? "managed-completed" : "ordinary", defaultDirectoryVersion: resolved.defaultDirectoryVersion, targets: configuration.targets.map((target) => ({ targetId: target.id, directory: this.directories.binding(target.directoryId), embyBinding: recognitionEmbyBinding(this.database, target.id) })) });
     await this.checkSnapshot(snapshot); this.writable(); this.versions(this.row(input.id), input); this.assertLegacy(input.id); if (dependent && this.directories.defaults().version !== snapshot.defaultDirectoryVersion) throw conflict("默认目录已变化，请重新预览");
     const id = randomUUID(); db.transaction(() => { const prior = this.previous<{ id: string }>(input.requestKey, { action: "recognition.preview", input }); if (prior) return;
@@ -137,6 +137,53 @@ export class RecognitionRules {
       this.ingestion.assertRecognitionAutomaticSample(rule.snapshot, input.samplePreviewId);
       this.database.connection.prepare("INSERT INTO recognition_automatic_consent VALUES(?,?,?,?,?) ON CONFLICT(rule_id,rule_version) DO UPDATE SET sample_preview_id=excluded.sample_preview_id,scope_hash=excluded.scope_hash,acknowledged_at=excluded.acknowledged_at").run(rule.id, rule.version, input.samplePreviewId, recognitionScopeHash(rule.snapshot), new Date(this.now()).toISOString()); const result = this.get(rule.id); this.receipt(input.requestKey, command, result); return result;
     })();
+  }
+  /** 设置目录与新的识别输入原子切换；已受理的文件操作持有自己的冻结计划。 */
+  setDownloadDirectory(input: CoreInput<"configuration.set-default">): Promise<CoreOutput<"configuration.set-default">> {
+    const work = this.queue.catch(() => {}).then(async () => {
+      this.writable();
+      const db = this.database.connection, previous = this.directories.defaults();
+      const receipt = db.prepare("SELECT 1 FROM app_setting WHERE key=?").get("configuration.default." + input.requestKey);
+      if (receipt) return this.directories.setDefault(input);
+      if (previous.version !== input.expectedVersion) throw conflict("下载目录设置已变化，请刷新后再保存");
+      if (!input.directoryId) return db.transaction(() => {
+        const saved = this.directories.setDefault(input);
+        db.prepare("UPDATE recognition_input SET active=0").run();
+        db.prepare("UPDATE recognition_configuration_preview SET state='EXPIRED' WHERE state='READY'").run();
+        return saved;
+      })();
+      if (input.directoryId === previous.directory?.id) return this.directories.setDefault(input);
+      if (this.directories.kind(input.directoryId) !== "managed") throw conflict("请在设置中选择本地下载目录");
+      const directory = this.directories.binding(input.directoryId);
+      await this.directories.reader(directory.id).check();
+      const prepared: { rule: RecognitionRule; snapshot: RecognitionRuleSnapshot; input: Awaited<ReturnType<IngestionPipeline["prepareRecognitionInput"]>> }[] = [];
+      try {
+        for (const rule of this.list()) {
+          if (!rule.runtime?.claimed || !rule.snapshot) continue;
+          this.ingestion.assertRecognitionChangeSafe(rule.id);
+          const snapshot = recognitionRuleSnapshotSchema.parse({ ...rule.snapshot, ruleVersion: rule.version + 1, configuration: { ...rule.snapshot.configuration, input: { kind: "default" }, client: "custom" }, inputDirectory: directory, inputMode: "managed-completed", defaultDirectoryVersion: previous.version + 1 });
+          await this.checkSnapshot(snapshot);
+          prepared.push({ rule, snapshot, input: await this.ingestion.prepareRecognitionInput(snapshot, this.directories.grant(directory.id)) });
+        }
+        const saved = db.transaction(() => {
+          this.writable();
+          for (const entry of prepared) { this.versions(this.row(entry.rule.id), { expectedVersion: entry.rule.version, expectedDraftRevision: entry.rule.draftRevision, expectedLifecycleRevision: entry.rule.lifecycleRevision }); this.ingestion.assertRecognitionChangeSafe(entry.rule.id); assertDirectoryGraph(this.database, "recognition", entry.snapshot, this.legacyIds(entry.rule.id)); }
+          const result = this.directories.setDefault(input);
+          for (const entry of prepared) {
+            db.prepare("INSERT INTO recognition_rule_version VALUES(?,?,?)").run(entry.rule.id, entry.snapshot.ruleVersion, JSON.stringify(entry.snapshot));
+            db.prepare("UPDATE recognition_rule SET version=?,updated_at=? WHERE id=?").run(entry.snapshot.ruleVersion, new Date(this.now()).toISOString(), entry.rule.id);
+            db.prepare("UPDATE recognition_configuration_preview SET state='EXPIRED' WHERE rule_id=? AND state='READY'").run(entry.rule.id);
+            entry.input.commit(entry.rule.paused);
+          }
+          return result;
+        })();
+        for (const entry of prepared) { await entry.input.activate(); this.ingestion.recognitionRuleChanged(entry.rule.id); }
+        this.scans.kick();
+        return saved;
+      } catch (error) { await Promise.allSettled(prepared.map((entry) => entry.input.close())); throw error; }
+    });
+    this.queue = work;
+    return work;
   }
   async restore() { if (!this.closed) await this.ingestion.restoreRecognitionInputs(this.directories); }
   start() { if (!this.closed) this.scans.start(); }

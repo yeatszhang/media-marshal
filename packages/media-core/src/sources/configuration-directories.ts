@@ -77,7 +77,7 @@ export class ConfigurationDirectories {
   }
   resolve(selection: { kind: "default" } | { kind: "directory"; directoryId: string }) {
     const defaults = this.defaults(), id = selection.kind === "default" ? defaults.directory?.id : selection.directoryId;
-    if (!id) throw new DesktopError("CONFLICT", "尚未设置默认本地下载目录，请先在设置选择目录或显式选择目标");
+    if (!id) throw new DesktopError("CONFLICT", "尚未设置本地下载目录，请前往设置选择并保存目录");
     return { directory: this.binding(id), defaultDirectoryVersion: selection.kind === "default" ? defaults.version : null };
   }
   async close() { this.closed = true; await this.queue.catch(() => {}); await Promise.allSettled([...this.readers.values()].map((root) => root.close())); this.readers.clear(); }

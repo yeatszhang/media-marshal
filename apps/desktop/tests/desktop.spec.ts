@@ -539,25 +539,37 @@ test("仅电影目标绑定已有非空媒体库，Core 重启复核结果自动
 test("默认下载目录经原生授权和固定 IPC 保存，取消、重载和更换保留旧成果", async () => {
   const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
   const canonical = await realpath(directory), a = join(canonical, "下载 A 中文 空格 " + "长路径".repeat(10)), b = join(canonical, "下载 B"); await mkdir(a); await mkdir(b);
-  await window.getByRole("link", { name: "设置", exact: true }).click(); const panel = window.getByRole("region", { name: "默认本地下载目录", exact: true });
+  await window.getByRole("link", { name: "设置", exact: true }).click(); const panel = window.getByRole("region", { name: "本地下载目录", exact: true });
   expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toEqual({ version: 0, directory: null });
   await application.evaluate(({ dialog }) => { dialog.showOpenDialog = (async () => ({ canceled: true, filePaths: [] })) as typeof dialog.showOpenDialog; });
-  await panel.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await expect(panel.getByRole("button", { name: "保存默认目录", exact: true })).toBeDisabled();
+  await panel.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await expect(panel.getByRole("button", { name: "保存下载目录", exact: true })).toBeDisabled();
   expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toEqual({ version: 0, directory: null });
   await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, a);
   await panel.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await expect(panel).toContainText("有未保存的目录选择");
   expect((await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).version).toBe(0);
-  await panel.getByRole("button", { name: "保存默认目录", exact: true }).click(); await expect(panel).toContainText("默认目录已保存"); const first = await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory()); expect(first).toMatchObject({ version: 1, directory: { path: a } });
+  await panel.getByRole("button", { name: "保存下载目录", exact: true }).click(); await expect(panel).toContainText("下载目录已保存"); const first = await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory()); expect(first).toMatchObject({ version: 1, directory: { path: a } });
   const retained = join(a, "completed/保留的同步成果.mp4"); await writeFile(retained, "更改默认目录不移动旧文件"); const before = await stat(retained);
-  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.getByRole("link", { name: "设置", exact: true }).click(); await expect(panel.getByRole("combobox", { name: "下载目录", exact: true })).toHaveValue(first.directory!.id);
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.getByRole("link", { name: "设置", exact: true }).click(); await expect(panel).toContainText(a);
   expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toEqual(first);
   await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, b);
-  await panel.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await panel.getByRole("button", { name: "保存默认目录", exact: true }).click(); await expect(panel).toContainText("默认目录已保存"); expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toMatchObject({ version: 2, directory: { path: b } });
+  await panel.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await panel.getByRole("button", { name: "保存下载目录", exact: true }).click(); await expect(panel).toContainText("下载目录已保存"); expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toMatchObject({ version: 2, directory: { path: b } });
   await window.evaluate(() => window.desktopApi.restartCore()); await expect.poll(() => window.evaluate(() => window.desktopApi.listConfigurationDirectories())).toMatchObject([{ id: first.directory!.id, available: true }, { path: b, available: true }]);
   expect(await readFile(retained, "utf8")).toBe("更改默认目录不移动旧文件"); expect((await stat(retained)).ino).toBe(before.ino);
   expect(await window.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 }); expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await panel.getByRole("combobox", { name: "下载目录", exact: true }).selectOption(first.directory!.id);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await expect(panel).toContainText(b);
   expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await panel.screenshot({ path: "test-results/desktop/default-download-directory-minimum.png" });
+  await window.getByRole("link", { name: "来源", exact: true }).click(); await window.getByRole("button", { name: "添加同步来源", exact: true }).click();
+  await expect(window.getByLabel("本地下载目标", { exact: true })).toHaveCount(0);
+  await expect(window.getByRole("button", { name: "选择本地下载目录", exact: true })).toHaveCount(0);
+  await expect(window.getByRole("region", { name: "本地下载目录", exact: true })).toContainText(b);
+  await window.getByRole("region", { name: "本地下载目录", exact: true }).scrollIntoViewIfNeeded();
+  await window.screenshot({ path: "test-results/desktop/shared-download-source.png" });
+  await window.getByRole("button", { name: "关闭同步表单", exact: true }).click();
+  await window.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "识别与映射", exact: true }).click(); await window.getByRole("button", { name: "添加识别规则", exact: true }).click();
+  await expect(window.getByLabel("识别输入目录", { exact: true })).toHaveCount(0); await expect(window.getByLabel("识别输入客户端", { exact: true })).toHaveCount(0);
+  await expect(window.getByRole("region", { name: "识别输入", exact: true })).toContainText(b);
+  await window.screenshot({ path: "test-results/desktop/shared-download-recognition.png" });
+
 });
 
 test("Emby 显式路径转换经真实 IPC 保存，多库根发现与重载不猜测目标", async () => {
@@ -807,13 +819,12 @@ test("受管下载目录原生授权、取消与核心重启恢复", async () =>
     let calls = 0;
     dialog.showOpenDialog = (async () => ++calls === 1 ? { canceled: true, filePaths: [] } : { canceled: false, filePaths: [path] }) as typeof dialog.showOpenDialog;
   }, root);
-  await window.getByRole("link", { name: "来源", exact: true }).click();
-  await window.getByRole("button", { name: "添加同步来源", exact: true }).click();
+  await window.getByRole("link", { name: "设置", exact: true }).click();
   await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
-  await expect(window.getByLabel("本地下载目标", { exact: true })).toHaveValue("default");
+  expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toMatchObject({ directory: null });
   await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
   await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listDownloadRoots())).length).toBe(1);
-  await expect(window.getByLabel("本地下载目标", { exact: true })).toHaveValue((await window.evaluate(() => window.desktopApi.listDownloadRoots()))[0]!.id);
+  await window.getByRole("button", { name: "保存下载目录", exact: true }).click();
   const before = await window.evaluate(() => window.desktopApi.listDownloadRoots()); expect(before).toHaveLength(1); expect(before[0]?.state).toBe("AVAILABLE");
   await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
   await expect.poll(async () => window.evaluate(() => window.desktopApi.listDownloadRoots())).toMatchObject([{ id: before[0]!.id, state: "AVAILABLE" }]);
@@ -823,7 +834,7 @@ test("受管下载目录原生授权、取消与核心重启恢复", async () =>
   expect((await window.evaluate(() => window.desktopApi.listDownloadRoots()))[0]?.id).toBe(before[0]?.id);
   await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
   await window.getByRole("link", { name: "来源", exact: true }).click();
-  await window.getByRole("button", { name: "添加同步来源", exact: true }).click(); await window.getByLabel("本地下载目标", { exact: true }).selectOption(before[0]!.id); await expect(window.getByLabel("本地下载目标", { exact: true })).toHaveValue(before[0]!.id);
+  await window.getByRole("button", { name: "添加同步来源", exact: true }).click(); await expect(window.getByRole("region", { name: "本地下载目录", exact: true })).toContainText(root);
   await window.screenshot({ path: "test-results/desktop/download-root.png" });
 });
 test("目录授权经实际 IPC 保留具体失败原因，未知管理标记不被认领", async () => {
@@ -833,8 +844,7 @@ test("目录授权经实际 IPC 保留具体失败原因，未知管理标记不
   const marker = JSON.stringify({ version: 1, grantId: "00000000-0000-4000-8000-000000000001", volumeId: "untrusted-fixture" });
   const { writeFile } = await import("node:fs/promises"); await writeFile(join(metadata, "owner.json"), marker); await writeFile(join(selected, "保留.mp4"), "preserved");
   await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, selected);
-  await window.getByRole("link", { name: "来源", exact: true }).click();
-  await window.getByRole("button", { name: "添加同步来源", exact: true }).click();
+  await window.getByRole("link", { name: "设置", exact: true }).click();
   await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
   await expect(window.getByRole("alert")).toContainText("目录管理标记无法与当前授权核对");
   await expect(window.getByRole("alert")).toContainText("不会自动接管或清理已有文件");
@@ -989,7 +999,7 @@ test("主进程异常退出后核心与离线解析器不残留", async () => {
 test("最小窗口下键盘取消新增来源恢复焦点", async () => {
   test.skip(process.platform !== "darwin"); const window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
   const input = join(await realpath(directory), "键盘取消输入"); await mkdir(input); await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, input);
-  await window.evaluate(async () => { const directory = await window.desktopApi.chooseConfigurationDirectory("ordinary"); const row = await window.desktopApi.saveRecognitionRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0, requestKey: crypto.randomUUID(), configuration: { name: "键盘取消识别删除", input: { kind: "directory", directoryId: directory!.id }, targets: [] } }); const preview = await window.desktopApi.previewRecognitionRule({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, expectedLifecycleRevision: row.lifecycleRevision, requestKey: crypto.randomUUID() }); const active = await window.desktopApi.confirmRecognitionRule({ previewId: preview.id, requestKey: crypto.randomUUID() }); await window.desktopApi.controlRecognitionRule({ id: active.id, expectedVersion: active.version, expectedDraftRevision: active.draftRevision, expectedLifecycleRevision: active.lifecycleRevision, operation: "pause", requestKey: crypto.randomUUID() }); });
+  await window.evaluate(async () => { const directory = await window.desktopApi.chooseConfigurationDirectory("managed"); const current = await window.desktopApi.getDefaultDownloadDirectory(); await window.desktopApi.setDefaultDownloadDirectory({ expectedVersion: current.version, directoryId: directory!.id, requestKey: crypto.randomUUID() }); const row = await window.desktopApi.saveRecognitionRule({ id: crypto.randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0, requestKey: crypto.randomUUID(), configuration: { name: "键盘取消识别删除", input: { kind: "default" }, targets: [] } }); const preview = await window.desktopApi.previewRecognitionRule({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, expectedLifecycleRevision: row.lifecycleRevision, requestKey: crypto.randomUUID() }); const active = await window.desktopApi.confirmRecognitionRule({ previewId: preview.id, requestKey: crypto.randomUUID() }); await window.desktopApi.controlRecognitionRule({ id: active.id, expectedVersion: active.version, expectedDraftRevision: active.draftRevision, expectedLifecycleRevision: active.lifecycleRevision, operation: "pause", requestKey: crypto.randomUUID() }); });
   await window.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "识别与映射", exact: true }).click(); await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
   const remove = window.getByRole("button", { name: "删除识别规则…", exact: true }); await remove.focus(); await window.keyboard.press("Enter"); await expect(window.getByRole("dialog", { name: "删除识别规则", exact: true })).toBeVisible(); await window.keyboard.press("Escape"); await expect(window.getByRole("dialog")).toHaveCount(0); await expect(remove).toBeFocused(); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await window.screenshot({ path: "test-results/desktop/minimum-window.png" });
 });
@@ -1359,19 +1369,21 @@ test("独立同步、识别映射与 Emby 路径绑定经真实窗口完成三�
   } catch (error) { await page.screenshot({ path: "test-results/desktop/independent-three-change-failure.png", fullPage: true }); await writeFile("test-results/desktop/independent-three-change-failure.txt", await page.locator("body").innerText()); throw error; } finally { server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done())); }
 });
 
-test("独立普通目录可空目标启用，取消、暂停删除恢复与账号管理往返不执行 COPY", async () => {
+test("公共下载目录可空目标启用，取消、暂停删除恢复与账号管理往返不执行 COPY", async () => {
   test.skip(process.platform !== "darwin"); test.setTimeout(60000);
   const page = await application.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
   const input = join(await realpath(directory), "普通已有目录 中文 长路径 ".repeat(3)); await mkdir(input); await writeFile(join(input, "保留原片.mp4"), "普通目录不新增中间同步");
-  await application.evaluate(({ dialog }, input) => { let index = 0; dialog.showOpenDialog = (async () => index++ ? ({ canceled: false, filePaths: [input] }) : ({ canceled: true, filePaths: [] })) as typeof dialog.showOpenDialog; }, input);
-  const nav = page.getByRole("navigation", { name: "主导航" }); await nav.getByRole("link", { name: "识别与映射", exact: true }).click(); await page.getByRole("button", { name: "添加识别规则", exact: true }).click(); await page.getByLabel("识别规则名称").fill("普通目录先识别");
-  await page.getByRole("button", { name: "选择识别输入目录", exact: true }).click(); await expect(page.getByLabel("识别输入目录", { exact: true })).toHaveValue("default"); await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click(); await expect(page.getByRole("alert")).toContainText("默认");
-  await page.getByRole("button", { name: "选择识别输入目录", exact: true }).click(); await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click(); const preview = page.getByRole("region", { name: "识别配置范围预览", exact: true }); await expect(preview).toContainText("当前没有映射目标"); await preview.getByRole("button", { name: "确认识别配置范围", exact: true }).click(); await expect(preview).toContainText("配置已确认");
-  const card = page.getByRole("article", { name: "识别规则 普通目录先识别", exact: true }); await card.getByRole("button", { name: "暂停此识别规则", exact: true }).click(); await card.getByRole("button", { name: "删除识别规则…", exact: true }).click(); await page.getByRole("dialog", { name: "删除识别规则", exact: true }).getByRole("button", { name: "取消", exact: true }).click(); await expect(card).toContainText("识别已暂停");
-  await card.getByRole("button", { name: "删除识别规则…", exact: true }).click(); await page.getByRole("button", { name: "确认删除识别规则", exact: true }).click(); await expect(card).not.toBeVisible(); await page.getByText("已删除识别规则", { exact: true }).click(); await page.getByRole("button", { name: "恢复已删除识别规则", exact: true }).click(); await expect(card).toContainText("识别已暂停");
+  await application.evaluate(({ dialog }, input) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [input] })) as typeof dialog.showOpenDialog; }, input);
+  await page.evaluate(async () => { const root = await window.desktopApi.chooseConfigurationDirectory("managed"); await window.desktopApi.setDefaultDownloadDirectory({ expectedVersion: 0, directoryId: root!.id, requestKey: crypto.randomUUID() }); });
+  const nav = page.getByRole("navigation", { name: "主导航" }); await nav.getByRole("link", { name: "识别与映射", exact: true }).click(); await page.getByRole("button", { name: "添加识别规则", exact: true }).click(); await page.getByLabel("识别规则名称").fill("公共目录识别");
+  await expect(page.getByLabel("识别输入目录", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click(); const preview = page.getByRole("region", { name: "识别配置范围预览", exact: true }); await expect(preview).toContainText("当前没有映射目标"); await preview.getByRole("button", { name: "确认识别配置范围", exact: true }).click(); await expect(preview).toContainText("配置已确认");
+  const card = page.getByRole("article", { name: "识别规则 公共目录识别", exact: true }); await card.getByRole("button", { name: "暂停此识别规则", exact: true }).click(); await card.getByRole("button", { name: "删除识别规则…", exact: true }).click(); await page.getByRole("dialog", { name: "删除识别规则", exact: true }).getByRole("button", { name: "取消", exact: true }).click(); await expect(card).toContainText("识别已暂停");
+  await card.getByRole("button", { name: "删除识别规则…", exact: true }).click(); await page.getByRole("button", { name: "确认删除识别规则", exact: true }).click(); await expect(card).not.toBeVisible(); await page.locator(".recognition-archive summary").click(); await page.getByRole("button", { name: "恢复已删除识别规则", exact: true }).click(); await expect(card).toContainText("识别已暂停");
   await page.getByRole("button", { name: "暂停全部识别整理", exact: true }).click(); await card.getByRole("button", { name: "恢复此识别规则", exact: true }).click(); await expect(page.getByText("全部识别整理已暂停，原计划和文件保留。来源同步与已提交文件的 Emby 交付仍各自处理。", { exact: true })).toBeVisible();
   await nav.getByRole("link", { name: "来源", exact: true }).click(); await page.getByRole("button", { name: "添加同步来源", exact: true }).click(); await page.getByLabel("来源名称", { exact: true }).fill("账号管理往返保留草稿"); await page.getByLabel("来源类型", { exact: true }).selectOption("cloud"); await page.getByRole("button", { name: "添加过滤规则", exact: true }).click(); await page.getByLabel("规则 1 表达式").fill("*.mp4");
   await page.getByRole("link", { name: "连接／管理网盘账号（返回保留草稿）", exact: true }).click(); await page.getByRole("button", { name: "返回来源草稿", exact: true }).click(); await expect(page.getByLabel("来源名称", { exact: true })).toHaveValue("账号管理往返保留草稿"); await expect(page.getByLabel("来源类型", { exact: true })).toHaveValue("cloud"); await expect(page.getByLabel("规则 1 表达式")).toHaveValue("*.mp4");
   expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 }); expect(await page.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 }); expect(await readFile(join(input, "保留原片.mp4"), "utf8")).toBe("普通目录不新增中间同步");
+  await page.getByRole("button", { name: "关闭同步表单", exact: true }).click(); await page.getByRole("button", { name: "放弃修改", exact: true }).click();
   await nav.getByRole("link", { name: "识别与映射", exact: true }).click(); await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: "test-results/desktop/independent-recognition-paused-minimum.png", fullPage: true });
 });
