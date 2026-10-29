@@ -860,6 +860,22 @@ test("目录授权经实际 IPC 保留具体失败原因，未知管理标记不
   await application.evaluate(({ dialog }) => { dialog.showOpenDialog = (async () => ({ canceled: true, filePaths: [] })) as typeof dialog.showOpenDialog; });
   await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
   expect(await window.evaluate(() => window.desktopApi.listDownloadRoots())).toEqual([]);
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, selected);
+  await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
+  await expect(window.getByRole("button", { name: "保存下载目录", exact: true })).toBeDisabled();
+  const fresh = join(await realpath(directory), "新的下载目录"); await mkdir(fresh);
+  await application.evaluate(({ dialog }, path) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog; }, fresh);
+  await window.getByRole("alert").getByRole("button", { name: "重试", exact: true }).click();
+  await expect(window.getByRole("alert")).toHaveCount(0);
+  await expect(window.getByRole("region", { name: "本地下载目录", exact: true })).toContainText(fresh);
+  await expect(window.getByRole("button", { name: "保存下载目录", exact: true })).toBeEnabled();
+  await window.getByRole("button", { name: "保存下载目录", exact: true }).click();
+  await expect(window.getByRole("region", { name: "本地下载目录", exact: true }).getByRole("status")).toContainText("下载目录已保存");
+  await window.reload(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
+  expect(await window.evaluate(() => window.desktopApi.getDefaultDownloadDirectory())).toMatchObject({ directory: { path: fresh } });
+  expect(await readFile(join(metadata, "owner.json"), "utf8")).toBe(marker);
+  await window.getByRole("link", { name: "设置", exact: true }).click();
+  await window.getByRole("region", { name: "本地下载目录", exact: true }).screenshot({ path: "test-results/desktop/download-directory-retry-saved.png" });
 });
 test("云端账号界面取消、无凭据回显与非法远端参数拒绝", async () => {
   const window = await application.firstWindow();
@@ -1378,6 +1394,10 @@ test("公共下载目录可空目标启用，取消、暂停删除恢复与账�
   const nav = page.getByRole("navigation", { name: "主导航" }); await nav.getByRole("link", { name: "识别与映射", exact: true }).click(); await page.getByRole("button", { name: "添加识别规则", exact: true }).click(); await page.getByLabel("识别规则名称").fill("公共目录识别");
   await expect(page.getByLabel("识别输入目录", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click(); const preview = page.getByRole("region", { name: "识别配置范围预览", exact: true }); await expect(preview).toContainText("当前没有映射目标"); await preview.getByRole("button", { name: "确认识别配置范围", exact: true }).click(); await expect(preview).toContainText("配置已确认");
+  const reselected = await page.evaluate(() => window.desktopApi.chooseConfigurationDirectory("managed"));
+  expect(reselected?.path).toBe(input);
+  await page.evaluate(() => window.desktopApi.restartCore());
+  await expect.poll(() => page.evaluate(() => window.desktopApi.listConfigurationDirectories())).toMatchObject([{ id: reselected!.id, available: true }]);
   const card = page.getByRole("article", { name: "识别规则 公共目录识别", exact: true }); await card.getByRole("button", { name: "暂停此识别规则", exact: true }).click(); await card.getByRole("button", { name: "删除识别规则…", exact: true }).click(); await page.getByRole("dialog", { name: "删除识别规则", exact: true }).getByRole("button", { name: "取消", exact: true }).click(); await expect(card).toContainText("识别已暂停");
   await card.getByRole("button", { name: "删除识别规则…", exact: true }).click(); await page.getByRole("button", { name: "确认删除识别规则", exact: true }).click(); await expect(card).not.toBeVisible(); await page.locator(".recognition-archive summary").click(); await page.getByRole("button", { name: "恢复已删除识别规则", exact: true }).click(); await expect(card).toContainText("识别已暂停");
   await page.getByRole("button", { name: "暂停全部识别整理", exact: true }).click(); await card.getByRole("button", { name: "恢复此识别规则", exact: true }).click(); await expect(page.getByText("全部识别整理已暂停，原计划和文件保留。来源同步与已提交文件的 Emby 交付仍各自处理。", { exact: true })).toBeVisible();

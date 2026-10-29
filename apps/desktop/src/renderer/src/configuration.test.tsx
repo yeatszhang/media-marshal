@@ -6,11 +6,13 @@ import { ContainerProvider } from "@yeatz/app-framework/react";
 import type { CoreInput, CoreOutput, DesktopApi } from "@media-marshal/contracts";
 import { createRendererApplication } from "./services";
 import { DownloadDirectorySettings } from "./components/DownloadDirectorySettings";
+import { i18nReady } from "./i18n";
 import { ConfigurationViewModel } from "./configuration-model";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.useRealTimers(); document.body.innerHTML = ""; });
 async function fixture() {
+  await i18nReady;
   vi.useFakeTimers(); const directory = { id: crypto.randomUUID(), version: 1, kind: "managed" as const, path: "/中文 空格/" + "长目录".repeat(30), available: true }; let defaults: CoreOutput<"configuration.default"> = { version: 0, directory: null };
   const api = { listConfigurationDirectories: vi.fn(async () => [directory]), getDefaultDownloadDirectory: vi.fn(async () => defaults), chooseConfigurationDirectory: vi.fn(async () => directory as typeof directory | null), setDefaultDownloadDirectory: vi.fn(async (input: CoreInput<"configuration.set-default">) => { defaults = { version: input.expectedVersion + 1, directory: input.directoryId ? { id: directory.id, version: 1, path: directory.path } : null }; return defaults; }) };
   const app = createRendererApplication(api as unknown as DesktopApi); await app.start(); const element = document.createElement("div"); document.body.append(element); const root = createRoot(element);
@@ -41,6 +43,33 @@ describe("默认目录选择、明确保存与持久读取", () => {
     f.api.setDefaultDownloadDirectory.mockRejectedValueOnce(new Error("原目录尚未恢复，请连接原磁盘"));
     await act(async () => f.button("保存下载目录").click()); const command = f.api.setDefaultDownloadDirectory.mock.calls[0];
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); }); expect(f.element.textContent).toContain("原目录尚未恢复");
-    await act(async () => f.button("保存下载目录").click()); expect(f.api.setDefaultDownloadDirectory.mock.calls[1]).toEqual(command); expect(f.element.textContent).not.toContain("原目录尚未恢复");
+    await act(async () => f.button("重试").click()); expect(f.api.setDefaultDownloadDirectory.mock.calls[1]).toEqual(command); expect(f.element.textContent).not.toContain("原目录尚未恢复");
   });
+});
+
+it("目录选择失败的重试重新打开原生选择，成功后可保存且取消不写设置", async () => {
+  const f = await fixture();
+  f.api.chooseConfigurationDirectory.mockRejectedValueOnce(new Error("目录管理标记无法与当前授权核对"));
+  await act(async () => f.button("选择本地下载目录").click());
+  expect(f.button("保存下载目录").disabled).toBe(true);
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+  expect(f.element.textContent).toContain("目录管理标记无法");
+  await act(async () => f.button("重试").click());
+  expect(f.api.chooseConfigurationDirectory).toHaveBeenCalledTimes(2);
+  expect(f.element.textContent).not.toContain("目录管理标记无法");
+  expect(f.button("保存下载目录").disabled).toBe(false);
+  expect(f.api.setDefaultDownloadDirectory).not.toHaveBeenCalled();
+  await act(async () => f.button("保存下载目录").click());
+  expect(f.api.setDefaultDownloadDirectory).toHaveBeenCalledTimes(1);
+});
+it("改选目录失败后禁止误保存上一次选择，取消重选后可恢复原草稿", async () => {
+  const f = await fixture(); await act(async () => f.button("选择本地下载目录").click());
+  f.api.chooseConfigurationDirectory.mockRejectedValueOnce(new Error("目录不可访问"));
+  await act(async () => f.button("选择本地下载目录").click());
+  expect(f.button("保存下载目录").disabled).toBe(true);
+  f.api.chooseConfigurationDirectory.mockResolvedValueOnce(null);
+  await act(async () => f.button("重试").click());
+  expect(f.element.textContent).toContain(f.directory.path);
+  expect(f.button("保存下载目录").disabled).toBe(false);
+  expect(f.api.setDefaultDownloadDirectory).not.toHaveBeenCalled();
 });

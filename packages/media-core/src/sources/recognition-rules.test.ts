@@ -171,3 +171,8 @@ it("设置切换失败原子保留原目录和识别版本，清除设置停止�
   expect(f.recognition.get(rule.id).runtime!.sourceId).toBeNull();
   expect(() => f.recognition.scan({ ...versions(rule), requestKey: randomUUID() })).toThrow();
 });
+
+it("启用识别后仍可重新授权同一个公共下载根，识别完成区不误判为外部来源重叠", async () => {
+  const f = await fixture(); await f.enable(f.save(undefined, { input: { kind: "default" }, targets: [f.movieTarget] }));
+  await expect(f.directories.authorize(f.download, "managed")).resolves.toMatchObject({ id: f.download.id, path: f.download.path });
+});
