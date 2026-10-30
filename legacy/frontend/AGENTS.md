@@ -6,9 +6,9 @@
 
 - Vue 3 Composition API，使用 `<script setup lang="ts">`；页面放 `src/views/`，共享组件放 `src/components/`，沿用 Element Plus。
 - 共享业务类型维护在 `src/types/index.ts`；避免 `any`，使用 `unknown` 并收窄。
-- API 调用通过 `src/api/*.ts`，组件不直接使用 axios。阅读[旧 API 快照](../docs/legacy/api-contracts.md)后核对实际 DTO、控制器和调用点，不将快照凌驾于当前契约。
+- API 调用通过 `src/api/*.ts`，组件不直接使用 axios。阅读[旧 API 快照](../docs/api-contracts.md)后核对实际 DTO、控制器和调用点，不将快照凌驾于当前契约。
 - 全局状态使用 Pinia，解构响应式状态用 `storeToRefs()`；WebSocket 使用 `onTaskEvent()`，在 `onUnmounted` 调用取消函数。
-- 网络错误由 `http.ts` 统一提示，组件避免重复弹窗；字段、逐项和后台失败仍按[错误反馈约定](../docs/development/error-feedback.md)持久展示。反馈优先用现有 `ElMessage` / `ElMessageBox`；大表格按需要使用 `el-table-v2`。
+- 网络错误由 `http.ts` 统一提示，组件避免重复弹窗；字段、逐项和后台失败仍按[错误反馈约定](../../docs/development/error-feedback.md)持久展示。反馈优先用现有 `ElMessage` / `ElMessageBox`；大表格按需要使用 `el-table-v2`。
 
 ## 语言、版本与发布说明
 

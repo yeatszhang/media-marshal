@@ -2,7 +2,7 @@
 
 桌面迁移采用 npm workspaces：`apps/desktop` 负责 Electron 宿主、最小 Preload、Utility Process 入口和 React；`packages/contracts` 定义普通数据与严格动作；`packages/media-core` 负责框架组装和 SQLite。迁移范围及旧行为证据见[迁移基线](./desktop-migration.md)。
 
-旧 `backend/`、`frontend/`、`parser/` 和 Docker 入口仍独立使用。客户端构建不运行 Maven、不引用 Vue、不打开旧数据库。不要通过个人目录或全局软链接接入应用依赖。
+旧 Java / Vue / HTTP parser 源码、Docker 入口与历史文档统一放在仓库根 `legacy/`，仅供参考。客户端构建不运行 Maven、不引用 Vue、不打开旧数据库。不要通过个人目录或全局软链接接入应用依赖。
 
 ## 环境与命令
 

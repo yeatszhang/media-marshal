@@ -1,6 +1,6 @@
 # Media Marshal 产品定位与运营方向
 
-更新日期：2026-10-25。本文用于产品规划和内容运营；本文中的桌面安装、一站式配置和引导流程是当时的规划；当前桌面范围与实施状态以对应 OpenSpec 变更为准。旧版本能力见[旧工程用户手册](../legacy/user-guide.md)。
+更新日期：2026-10-25。本文用于产品规划和内容运营；本文中的桌面安装、一站式配置和引导流程是当时的规划；当前桌面范围与实施状态以对应 OpenSpec 变更为准。旧版本能力见[旧工程用户手册](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/user-guide.md)。
 
 ## 核心定位
 

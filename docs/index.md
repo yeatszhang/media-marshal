@@ -16,7 +16,7 @@ hero:
       link: /architecture/
     - theme: alt
       text: 旧工程资料
-      link: /legacy/
+      link: https://github.com/yeatszhang/media-marshal/tree/main/legacy
 ---
 
 ## 当前工程
@@ -29,4 +29,4 @@ hero:
 
 ## 旧工程资料
 
-Java / Vue / Docker 工程的[项目介绍](./legacy/overview.md)、[用户手册](./legacy/user-guide.md)、[部署指南](./legacy/deployment.md)和[常见问题](./legacy/faq.md)已归档。完整入口见[旧工程资料](./legacy/index.md)，仅在维护旧工程或迁移规则时参考。
+Java / Vue / Docker 工程的[项目介绍](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/overview.md)、[用户手册](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/user-guide.md)、[部署指南](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/deployment.md)和[常见问题](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/faq.md)已归档。完整入口见[旧工程资料](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/index.md)，仅在维护旧工程或迁移规则时参考。

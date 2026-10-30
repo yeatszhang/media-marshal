@@ -8,10 +8,10 @@ hero:
   actions:
     - theme: brand
       text: 阅读用户手册
-      link: /legacy/user-guide
+      link: ./user-guide
     - theme: alt
       text: 查看部署指南
-      link: /legacy/deployment
+      link: ./deployment
     - theme: alt
       text: GitHub
       link: https://github.com/media-marshal/media-marshal
@@ -47,12 +47,12 @@ Media Marshal 是自托管媒体文件整理工具，不下载内容，不集成
 | ISO、剧集蓝光、裸 BDMV、离散多集 | 当前不支持整理 |
 | Webhook、内置认证、邮件通知页面、独立媒体库 / 播放统计 | 尚未开放 |
 
-最近修正作业的重新打开依赖同一浏览器的本地记录；尚无服务端作业检索页面。完整使用边界见[用户手册](./user-guide.md)，安装与升级见[部署指南](./deployment.md)。
+最近修正作业的重新打开依赖同一浏览器的本地记录；尚无服务端作业检索页面。完整使用边界见[用户手册](user-guide.md)，安装与升级见[部署指南](deployment.md)。
 
 ## 开发者文档
 
-产品规划见[产品定位与运营方向](../product/positioning.md)，包含低成本家庭影院场景、播放器与 Apple TV 上手引导，以及自媒体内容运营思路；其中规划内容不代表当前版本已经交付。
+产品规划见[产品定位与运营方向](../../docs/product/positioning.md)，包含低成本家庭影院场景、播放器与 Apple TV 上手引导，以及自媒体内容运营思路；其中规划内容不代表当前版本已经交付。
 
-[商业模式、内容运营与付费策略](../product/business-and-operations.md)记录“免费整理工具 → 官方 API 按需付费 → 通知等会员服务”的三个阶段，以及免费边界、价格实验与转化验证方式。候选价格与付费能力尚未上线。
+[商业模式、内容运营与付费策略](../../docs/product/business-and-operations.md)记录“免费整理工具 → 官方 API 按需付费 → 通知等会员服务”的三个阶段，以及免费边界、价格实验与转化验证方式。候选价格与付费能力尚未上线。
 
-维护者可从[架构总览](./architecture/index.md)了解部署拓扑和模块边界，再阅读[发现与整理流程](./architecture/processing.md)及[数据与恢复机制](./architecture/data-and-recovery.md)。架构文档按 2026-10-17 当前工作区核对，包含尚未提交的实现；与上方较早的能力表核对时间不同，也不代表对应镜像已发行。
+维护者可从[架构总览](architecture/index.md)了解部署拓扑和模块边界，再阅读[发现与整理流程](architecture/processing.md)及[数据与恢复机制](architecture/data-and-recovery.md)。架构文档按 2026-10-17 当前工作区核对，包含尚未提交的实现；与上方较早的能力表核对时间不同，也不代表对应镜像已发行。

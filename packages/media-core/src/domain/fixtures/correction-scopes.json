@@ -17,7 +17,7 @@
   "cases": [
     {
       "id": "stable-SAME_SEASON",
-      "source": "backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java#resolvesCompleteSeasonAndSeriesRangesInStableEpisodeOrder",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java#resolvesCompleteSeasonAndSeriesRangesInStableEpisodeOrder",
       "basis": "preserved",
       "scope": "SAME_SEASON",
       "anchorId": "anchor",
@@ -47,7 +47,7 @@
     },
     {
       "id": "stable-SAME_SERIES",
-      "source": "backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java#resolvesCompleteSeasonAndSeriesRangesInStableEpisodeOrder",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/correction/TaskCorrectionScopeServiceTest.java#resolvesCompleteSeasonAndSeriesRangesInStableEpisodeOrder",
       "basis": "preserved",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -78,7 +78,7 @@
     },
     {
       "id": "source-policy-status-and-work-boundary",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
       "basis": "desktop-source-identity",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -136,7 +136,7 @@
     },
     {
       "id": "missing-member-fields-stay-visible",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#scopeWarnings",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#scopeWarnings",
       "basis": "legacy-scopeWarnings",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -178,7 +178,7 @@
     },
     {
       "id": "non-video-member-is-not-silently-dropped",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
       "basis": "desktop-ordinary-video-boundary",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -208,7 +208,7 @@
     },
     {
       "id": "natural-file-order-and-special-season",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#taskComparator",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#taskComparator",
       "basis": "preserved",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -241,7 +241,7 @@
     },
     {
       "id": "anchor-not-done",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
       "basis": "legacy-anchorUnsupportedReasons",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -257,7 +257,7 @@
     },
     {
       "id": "anchor-not-series",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
       "basis": "legacy-anchorUnsupportedReasons",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -273,7 +273,7 @@
     },
     {
       "id": "anchor-not-video",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
       "basis": "legacy-anchorUnsupportedReasons",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -289,7 +289,7 @@
     },
     {
       "id": "anchor-missing-tmdb",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
       "basis": "legacy-anchorUnsupportedReasons",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -305,7 +305,7 @@
     },
     {
       "id": "anchor-missing-source",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
       "basis": "legacy-anchorUnsupportedReasons",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -321,7 +321,7 @@
     },
     {
       "id": "anchor-missing-target",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#anchorUnsupportedReasons",
       "basis": "legacy-anchorUnsupportedReasons",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -337,7 +337,7 @@
     },
     {
       "id": "missing-anchor",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#loadAnchor",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#loadAnchor",
       "basis": "preserved",
       "scope": "SAME_SERIES",
       "anchorId": "absent",
@@ -363,7 +363,7 @@
     },
     {
       "id": "duplicate-member",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
       "basis": "desktop-stale-read-boundary",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -381,7 +381,7 @@
     },
     {
       "id": "invalid-scope",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#parseScope",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#parseScope",
       "basis": "preserved",
       "scope": "ALL",
       "anchorId": "anchor",
@@ -407,7 +407,7 @@
     },
     {
       "id": "missing-anchor-season",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
       "basis": "preserved",
       "scope": "SAME_SEASON",
       "anchorId": "anchor",
@@ -423,7 +423,7 @@
     },
     {
       "id": "whole-series-includes-anchor-with-missing-season",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#scopeWarnings",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#scopeWarnings",
       "basis": "legacy-scopeWarnings",
       "scope": "SAME_SERIES",
       "anchorId": "anchor",
@@ -448,7 +448,7 @@
     },
     {
       "id": "whole-range-crosses-ui-page-size",
-      "source": "backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
+      "source": "legacy/backend/src/main/java/com/mediamarshal/service/correction/TaskCorrectionScopeService.java#resolve",
       "basis": "desktop-complete-database-scope",
       "scope": "SAME_SEASON",
       "anchorId": "episode-2",

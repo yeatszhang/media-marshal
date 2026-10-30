@@ -2,7 +2,7 @@
   "cases": [
     {
       "id": "scoresExactTitleYearAndTypeHighly",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#scoresExactTitleYearAndTypeHighly",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#scoresExactTitleYearAndTypeHighly",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "movie",
@@ -40,7 +40,7 @@
     },
     {
       "id": "filtersStrongMediaTypeMismatch",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#filtersStrongMediaTypeMismatch",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#filtersStrongMediaTypeMismatch",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "episode",
@@ -75,7 +75,7 @@
     },
     {
       "id": "givesPartialCreditForAdjacentYear",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#givesPartialCreditForAdjacentYear",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#givesPartialCreditForAdjacentYear",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "movie",
@@ -108,7 +108,7 @@
     },
     {
       "id": "treatsLaterSeasonTvYearAsSeasonAirYear",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#treatsLaterSeasonTvYearAsSeasonAirYear",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#treatsLaterSeasonTvYearAsSeasonAirYear",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "episode",
@@ -143,7 +143,7 @@
     },
     {
       "id": "keepsFirstSeasonTvYearStrict",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#keepsFirstSeasonTvYearStrict",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#keepsFirstSeasonTvYearStrict",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "episode",
@@ -178,7 +178,7 @@
     },
     {
       "id": "awardsStructureBonusOnlyWhenLocalizedAndOriginalQueriesHitSameCandidate",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#awardsStructureBonusOnlyWhenLocalizedAndOriginalQueriesHitSameCandidate",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#awardsStructureBonusOnlyWhenLocalizedAndOriginalQueriesHitSameCandidate",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "episode",
@@ -218,7 +218,7 @@
     },
     {
       "id": "doesNotAwardStructureBonusForSeriesStructureAlone",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#doesNotAwardStructureBonusForSeriesStructureAlone",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#doesNotAwardStructureBonusForSeriesStructureAlone",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "episode",
@@ -253,7 +253,7 @@
     },
     {
       "id": "boostsConfidenceWhenEnglishAliasUniquelyFindsChineseMovieCandidate",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsConfidenceWhenEnglishAliasUniquelyFindsChineseMovieCandidate",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsConfidenceWhenEnglishAliasUniquelyFindsChineseMovieCandidate",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "movie",
@@ -286,7 +286,7 @@
     },
     {
       "id": "boostsConfidenceWhenEnglishAliasUniquelyFindsChineseSeriesCandidate",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsConfidenceWhenEnglishAliasUniquelyFindsChineseSeriesCandidate",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsConfidenceWhenEnglishAliasUniquelyFindsChineseSeriesCandidate",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "episode",
@@ -321,7 +321,7 @@
     },
     {
       "id": "boostsAliasEvidenceForLaterSeasonTvWhenSeriesStartedEarlier",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsAliasEvidenceForLaterSeasonTvWhenSeriesStartedEarlier",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#boostsAliasEvidenceForLaterSeasonTvWhenSeriesStartedEarlier",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "episode",
@@ -356,7 +356,7 @@
     },
     {
       "id": "penalizesAliasEvidenceWhenYearDoesNotMatch",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#penalizesAliasEvidenceWhenYearDoesNotMatch",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#penalizesAliasEvidenceWhenYearDoesNotMatch",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "episode",
@@ -391,7 +391,7 @@
     },
     {
       "id": "penalizesAliasEvidenceWhenYearIsMissing",
-      "source": "backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#penalizesAliasEvidenceWhenYearIsMissing",
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java#penalizesAliasEvidenceWhenYearIsMissing",
       "filename": "固定识别样例.mkv",
       "raw": {
         "type": "movie",

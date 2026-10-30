@@ -1,6 +1,6 @@
 # 旧 Java 后端维护约定
 
-仅适用于 `backend/`；当前桌面 TypeScript Core 不使用这些 Spring/JPA 约定。先读根目录 `AGENTS.md`，按需对照[旧 API 快照](../docs/legacy/api-contracts.md)与[旧 ADR](../docs/legacy/design-decisions.md)，实际行为须核对源码和测试。
+仅适用于 `backend/`；当前桌面 TypeScript Core 不使用这些 Spring/JPA 约定。先读根目录 `AGENTS.md`，按需对照[旧 API 快照](../docs/api-contracts.md)与[旧 ADR](../docs/design-decisions.md)，实际行为须核对源码和测试。
 
 ## 结构与接口
 
@@ -14,6 +14,6 @@
 
 - 使用 Lombok `@Slf4j`，不使用 `System.out.println`；业务节点用 info、非致命异常用 warn、故障用 error 并把异常放最后保留堆栈。
 - debug 输出遵循现有 debug 配置与日志级别；按需记录解析、匹配评分、文件操作和事件上下文，敏感字段脱敏，不默认输出完整第三方响应或用户路径。
-- 响应、任务和事件保留可信错误类别、对象及可展示原因，遵循[错误反馈约定](../docs/development/error-feedback.md)，不能只写日志或泛化为失败。
+- 响应、任务和事件保留可信错误类别、对象及可展示原因，遵循[错误反馈约定](../../docs/development/error-feedback.md)，不能只写日志或泛化为失败。
 - 注释解释职责、关键取舍、参数语义和异常边界，不复述代码动作。
 - 按改动在本目录执行 `mvn test` 或定向测试；接口变更核对 DTO、控制器及旧前端调用，更新对应 OpenSpec 与当前维护文档。历史实施日志冻结，不要求追加或先经旧 PM 流程。
