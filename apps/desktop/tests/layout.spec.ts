@@ -198,7 +198,7 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
 });
 
 
-test("全新来源的删除、重载和恢复明确反馈，保留原文件且不创建文件任务", async () => {
+test("全新来源删除后直接移除信息，重载和旧链接不再显示，保留原文件且不创建文件任务", async () => {
   test.skip(process.platform !== "darwin");
   const page = await application.firstWindow();
   await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
@@ -209,7 +209,10 @@ test("全新来源的删除、重载和恢复明确反馈，保留原文件且�
   await page.getByRole("button", { name: "添加同步来源", exact: true }).click();
   await page.getByLabel("来源名称", { exact: true }).fill("全新来源删除验证");
   await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click();
-  await page.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
+  await page.evaluate(async () => {
+    const target = await window.desktopApi.chooseConfigurationDirectory("managed");
+    await window.desktopApi.setDefaultDownloadDirectory({ directoryId: target!.id, expectedVersion: 0, requestKey: crypto.randomUUID() });
+  });
   await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
   await page.getByRole("button", { name: "确认配置范围", exact: true }).click();
   const card = page.getByRole("article", { name: "同步来源 全新来源删除验证", exact: true });
@@ -229,11 +232,16 @@ test("全新来源的删除、重载和恢复明确反馈，保留原文件且�
   await expect.poll(() => page.evaluate(() => window.desktopApi.listSyncSources())).toEqual([]);
   const deleted = (await page.evaluate(() => window.desktopApi.listSyncSources({ includeDeleted: true })))[0]!;
   expect(deleted).toMatchObject({ paused: true, runtime: { claimed: true } }); expect(deleted.deletedAt).not.toBeNull();
-  await page.getByText("已删除同步来源", { exact: true }).click();
-  await page.getByRole("button", { name: "恢复已删除来源", exact: true }).click();
-  await expect(card).toContainText("已暂停");
+  await expect(page.getByText("已删除同步来源", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "恢复已删除来源", exact: true })).toHaveCount(0);
+  await expect(page.getByText("全新来源删除验证", { exact: true })).toHaveCount(0);
+  await page.evaluate((id) => { window.location.hash = `/sources?source=${id}`; }, deleted.id);
+  await page.reload(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "添加同步来源", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "编辑同步来源", exact: true })).toHaveCount(0);
+  await expect(card).toHaveCount(0);
   expect(await readFile(join(input, "原片.mp4"), "utf8")).toBe("删除来源不能修改原文件");
-  await page.screenshot({ path: "test-results/desktop/sync-restored-paused.png", fullPage: true });
+  await page.screenshot({ path: "test-results/desktop/sync-removed.png", fullPage: true });
   expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
   expect(await page.evaluate(() => window.desktopApi.listDownloads({ page: 1, pageSize: 25 }))).toMatchObject({ total: 0 });
   expect(await page.evaluate(() => window.desktopApi.listTasks({ page: 1, pageSize: 100 }))).toMatchObject({ total: 0 });

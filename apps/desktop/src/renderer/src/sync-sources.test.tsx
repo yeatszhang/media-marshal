@@ -108,7 +108,7 @@ it("离页不续发查询，StrictMode 只查询不重放命令；迟到读取�
   const count = f.api.listSyncSources.mock.calls.length; await act(async () => { await model.command("离页已提交命令", async () => "完成"); }); expect(f.api.listSyncSources.mock.calls.length).toBe(count);
 });
 
-it("删除失败在弹窗内定位来源与原因，重试期间明确反馈并禁止重复提交，成功关闭弹窗", async () => {
+it("删除失败在弹窗内定位来源与原因，重试期间明确反馈并禁止重复提交，成功移除来源信息且刷新不再显示", async () => {
   const f = await mount(); await click("添加同步来源"); await fill("来源名称", "等待停止的来源"); await click("选择本地输入目录"); await click("保存草稿并预览");
   const row = [...f.rows.values()][0]!;
   f.api.controlSyncSource.mockRejectedValueOnce(new Error("下载任务 isolated-job 仍在停止中，请等待停止完成后重试"));
@@ -128,5 +128,11 @@ it("删除失败在弹窗内定位来源与原因，重试期间明确反馈并�
   await act(async () => { const removed = { ...row, paused: true, lifecycleRevision: row.lifecycleRevision + 1, deletedAt: new Date().toISOString() }; f.rows.set(row.id, removed); complete(structuredClone(removed)); });
   expect(document.querySelector("dialog")).toBeNull();
   expect(document.querySelector('article[aria-label="同步来源 等待停止的来源"]')).toBeNull();
+  expect(f.element.textContent).not.toContain("等待停止的来源");
+  expect(f.element.textContent).not.toContain("已删除同步来源");
+  expect(f.element.textContent).not.toContain("恢复已删除来源");
+  await act(async () => { await f.app.container.get(SyncViewModel).refresh(); });
+  expect(f.element.textContent).not.toContain("等待停止的来源");
+  expect(document.querySelector('[aria-label="同步预览"]')).toBeNull();
   expect(f.api.confirmSyncSource).not.toHaveBeenCalled();
 });
