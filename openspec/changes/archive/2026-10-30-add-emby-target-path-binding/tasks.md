@@ -1,6 +1,6 @@
 # 实施任务
 
-承接[原变更任务](../archive/2026-10-27-add-local-desktop-emby-ingestion/tasks.md)中尚未完成的范围；不以迁出或部分实现标记完成。原 21.1／21.2 已完成，v29 网盘成功历史已有局部接线，均按已有基线复用。
+承接[原变更任务](../2026-10-27-add-local-desktop-emby-ingestion/tasks.md)中尚未完成的范围；不以迁出或部分实现标记完成。原 21.1／21.2 已完成，v29 网盘成功历史已有局部接线，均按已有基线复用。
 
 基于原 21.1／21.2 的 EmbyTargetBinding 契约及既有交付协调器；最终页面和文件交付联调依赖 add-independent-recognition-mapping。
 
@@ -20,4 +20,4 @@
 - 使用 `$openspec-apply-change add-emby-target-path-binding` 实施本变更。
 - 完整验收后单独归档；公开发布、真实凭据和个人媒体操作依照具体授权，不由本次规划迁移自动执行。
 
-2026-10-28 闭环完成：多库根发现、显式转换、逻辑 target 的版本化绑定及冻结交付完成；同一本机目录可按逻辑目标和媒体类型分别关联，未关联仍可独立 COPY，修复仅重试交付。电影／剧集在最终目录包分别按服务端路径核对收录。两个实施任务现已勾选，CLI 复核 all_done。全量回归 1004 通过、13 条件跳过；最后账号返回分支定向 35 项通过。类型、依赖边界、文档构建、OpenSpec 严格校验和当前 arm64 目录包资源检查通过；最终未签名目录包 6 项真实窗口检查全部通过，其中完整链路使用生产两段连续 120 秒观察，电影／剧集实际 COPY 后分别核对为 COLLECTED，重载和 Core 重启保留原任务。源码提交 `d1c1cec`；构建、截图摘要和验证边界见 `tools/desktop-files/fixtures/mac-independent-pipeline-2026-10-28.json` 及[独立流水线验收](../../../docs/development/independent-pipeline-validation.md)。本记录不补记真实下载客户端、其他 OS／架构或正式发行任务；变更未归档。
+2026-10-28 闭环完成：多库根发现、显式转换、逻辑 target 的版本化绑定及冻结交付完成；同一本机目录可按逻辑目标和媒体类型分别关联，未关联仍可独立 COPY，修复仅重试交付。电影／剧集在最终目录包分别按服务端路径核对收录。两个实施任务现已勾选，CLI 复核 all_done。全量回归 1004 通过、13 条件跳过；最后账号返回分支定向 35 项通过。类型、依赖边界、文档构建、OpenSpec 严格校验和当前 arm64 目录包资源检查通过；最终未签名目录包 6 项真实窗口检查全部通过，其中完整链路使用生产两段连续 120 秒观察，电影／剧集实际 COPY 后分别核对为 COLLECTED，重载和 Core 重启保留原任务。源码提交 `d1c1cec`；构建、截图摘要和验证边界见 `tools/desktop-files/fixtures/mac-independent-pipeline-2026-10-28.json` 及[独立流水线验收](../../../../docs/development/independent-pipeline-validation.md)。本记录不补记真实下载客户端、其他 OS／架构或正式发行任务；变更未归档。

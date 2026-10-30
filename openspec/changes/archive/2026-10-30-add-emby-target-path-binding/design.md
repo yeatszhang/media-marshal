@@ -4,7 +4,7 @@
 
 基于原 21.1／21.2 的 EmbyTargetBinding 契约及既有交付协调器；最终页面和文件交付联调依赖 add-independent-recognition-mapping。
 
-当前基线为提交 87f2ac6：sync-recognition.ts 契约、schema v28 配置迁移及 v29 网盘成功收据已存在，主页面与调度仍有兼容模型。原完成项不重做，未完成项的局部证据不能代表整项通过。详见[归档设计](../archive/2026-10-27-add-local-desktop-emby-ingestion/design.md)与[任务证据](../archive/2026-10-27-add-local-desktop-emby-ingestion/tasks.md)。
+当前基线为提交 87f2ac6：sync-recognition.ts 契约、schema v28 配置迁移及 v29 网盘成功收据已存在，主页面与调度仍有兼容模型。原完成项不重做，未完成项的局部证据不能代表整项通过。详见[归档设计](../2026-10-27-add-local-desktop-emby-ingestion/design.md)与[任务证据](../2026-10-27-add-local-desktop-emby-ingestion/tasks.md)。
 
 ## 目标与非目标
 
