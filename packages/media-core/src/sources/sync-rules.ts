@@ -4,6 +4,8 @@ import { DesktopError, CloudError, cloudFailure, type CloudFailure, sourceConfig
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { CloudDownloads } from "../cloud/downloads.js";
 import type { ConfigurationDirectories } from "./configuration-directories.js";
+import { EmbyLibraryFiles, libraryFilePath, libraryFileReason, type LibraryFileEvidence } from "./emby-library-files.js";
+import type { PreviewSnapshot } from "../cloud/previews.js";
 import { LocalSync } from "./local-sync.js";
 import { SyncReceipts } from "./sync-receipts.js";
 import { assertDirectoryGraph } from "./directory-graph.js";
@@ -102,7 +104,7 @@ export class SyncRules {
     const mode = input.mode ?? "configuration"; if (input.force && mode !== "execution") throw conflict("显式重新同步需要从已生效来源预览执行，不改写配置");
     if (input.useCurrentDefault && (mode !== "configuration" || this.get(input.id).draft.target.kind !== "default")) throw conflict("只有默认 target 的配置预览可以显式重新绑定当前默认目录");
     const snapshot = this.snapshot(row!, mode), defaultDependency = snapshot.configuration.target.kind === "default"; await this.checkSnapshot(snapshot);
-    const download = snapshot.configuration.type === "cloud" ? this.downloads.previews.start({ accountId: snapshot.configuration.accountId, remoteRef: snapshot.configuration.remoteRef, targetGrantId: snapshot.targetDirectory.id, requestKey: input.requestKey, layout: "drive", filters: { rules: snapshot.configuration.filters }, forceRedownload: input.force ?? false }) : null;
+    const download = snapshot.configuration.type === "cloud" ? this.downloads.previews.start({ accountId: snapshot.configuration.accountId, remoteRef: snapshot.configuration.remoteRef, targetGrantId: snapshot.targetDirectory.id, requestKey: input.requestKey, layout: "drive", filters: { rules: snapshot.configuration.filters }, forceRedownload: input.force ?? false }, new EmbyLibraryFiles(this.database)) : null;
     const local = snapshot.configuration.type === "local" ? await this.local.create(snapshot, input.requestKey, input.force ?? false) : null;
     this.writable(); this.assertVersion(this.row(input.id), input); this.assertLegacy(input.id);
     if (defaultDependency && this.directories.defaults().version !== snapshot.defaultDirectoryVersion) throw conflict("默认下载目录已变化，请重新预览以核对实际目标");
@@ -122,13 +124,13 @@ export class SyncRules {
     const complete = download ? download.complete : !!row.local_preview_id;
     const state = row.state === "APPLIED" ? "APPLIED" : expired || download?.state === "EXPIRED" ? "EXPIRED" : download?.state === "BUILDING" ? "BUILDING" : failure || conflicts || !complete || row.mode === "execution" && observing ? "BLOCKED" : "READY";
     const job = this.database.connection.prepare("SELECT id FROM sync_job WHERE preview_id IN (?,?) ORDER BY created_at LIMIT 1").get(row.local_preview_id, row.download_preview_id) as { id: string } | undefined;
-    return { id, sourceId: row.source_id, mode: row.mode, state, snapshot, expiresAt: row.expires_at, files: download?.files ?? files.length, bytes: download?.bytes ?? files.reduce((sum, file) => sum + file.size, 0), complete, observing, conflicts, reused: download?.reuseFiles ?? files.filter((file) => file.state === "REUSED").length, removed: download?.localRemovedFiles ?? files.filter((file) => file.state === "REMOVED").length, force: !!row.force, failure, download, jobId: job?.id ?? null };
+    return { id, sourceId: row.source_id, mode: row.mode, state, snapshot, expiresAt: row.expires_at, files: download?.files ?? files.length, bytes: download?.bytes ?? files.reduce((sum, file) => sum + file.size, 0), complete, observing, conflicts, inLibrary: cloudRow ? (JSON.parse(cloudRow.snapshot_json) as PreviewSnapshot).items.filter((file) => file.libraryFile).length : files.filter((file) => file.libraryFile).length, reused: download?.reuseFiles ?? files.filter((file) => file.state === "REUSED").length, removed: download?.localRemovedFiles ?? files.filter((file) => file.state === "REMOVED").length, force: !!row.force, failure, download, jobId: job?.id ?? null };
   }
   previewFiles(input: CoreInput<"sync.preview-files">): CoreOutput<"sync.preview-files"> {
     const row = this.previewRow(input.id), snapshot = JSON.parse(row.snapshot_json) as SyncSourceSnapshot, size = input.pageSize ?? 25, start = ((input.page ?? 1) - 1) * size;
-    if (row.local_preview_id) { const files = this.local.preview(row.local_preview_id).files; return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.segments.join("/"), targetPath: join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.size, state: file.state, reason: file.reason })) }; }
-    const cloud = row.download_preview_id ? this.downloads.previews.row(row.download_preview_id) : null, files: { targetSegments: string[]; expectedSize: number; localRemoved?: boolean; receiptId?: string; reuseItemId?: string; issue?: { message: string } }[] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
-    return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.targetSegments.join("/"), targetPath: join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state: file.issue ? "CONFLICT" : file.localRemoved ? "REMOVED" : file.receiptId || file.reuseItemId ? "REUSED" : "READY", reason: file.issue?.message ?? (file.localRemoved ? "已同步，本地已移除；普通执行不会补回" : null) })) };
+    if (row.local_preview_id) { const files = this.local.preview(row.local_preview_id).files; return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.segments.join("/"), targetPath: file.libraryFile ? libraryFilePath(file.libraryFile) : join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.size, state: file.state, reason: file.reason })) }; }
+    const cloud = row.download_preview_id ? this.downloads.previews.row(row.download_preview_id) : null, files: { targetSegments: string[]; expectedSize: number; localRemoved?: boolean; libraryFile?: LibraryFileEvidence; receiptId?: string; reuseItemId?: string; issue?: { message: string } }[] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
+    return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.targetSegments.join("/"), targetPath: file.libraryFile ? libraryFilePath(file.libraryFile) : join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state: file.libraryFile ? "IN_LIBRARY" : file.issue ? "CONFLICT" : file.localRemoved ? "REMOVED" : file.receiptId || file.reuseItemId ? "REUSED" : "READY", reason: file.libraryFile ? libraryFileReason(file.libraryFile) : file.issue?.message ?? (file.localRemoved ? "已同步，本地已移除；普通执行不会补回" : null) })) };
   }
   confirm(input: CoreInput<"sync.confirm">): Promise<CoreOutput<"sync.confirm">> {
     const work = this.queue.catch(() => {}).then(() => this.confirmOnce(input)); this.queue = work; return work;
@@ -225,9 +227,13 @@ export class SyncRules {
     const db = this.database.connection;
     const counts = db.prepare("SELECT count(*) AS files,sum(state='DONE') AS done,sum(state='REUSED') AS reused,sum(state='REMOVED') AS removed,sum(state='NEEDS_ATTENTION') AS failed FROM local_sync_member WHERE job_id=?").get(row.id) as { files: number; done: number | null; reused: number | null; removed: number | null; failed: number | null };
     const cloud = row.download_job_id ? this.downloads.get(row.download_job_id) : null;
+    const isCloud = (JSON.parse(row.snapshot_json) as SyncSourceSnapshot).configuration.type === "cloud";
+    const cloudPreview = isCloud && row.preview_id ? this.downloads.previews.row(row.preview_id) : null;
+    const cloudFiles = cloudPreview ? (JSON.parse(cloudPreview.snapshot_json) as PreviewSnapshot).items : null;
+    const libraryFiles = isCloud ? cloudFiles?.filter((file) => file.libraryFile).length ?? 0 : row.preview_id ? this.local.preview(row.preview_id).files.filter((file) => file.libraryFile).length : 0;
     const failed = row.download_job_id ? (db.prepare("SELECT count(*) AS n FROM download_job_item j JOIN download_item i ON i.id=j.item_id WHERE j.job_id=? AND i.failure_code IS NOT NULL AND i.state IN ('FAILED','AUTH_REQUIRED','BLOCKED_LOCAL','RECONCILING')").get(row.download_job_id) as { n: number }).n : counts.failed ?? 0;
     const destination = (JSON.parse(row.snapshot_json) as SyncSourceSnapshot).targetDirectory.id, recognition = db.prepare("SELECT r.id,r.paused FROM recognition_input i JOIN recognition_rule r ON r.id=i.rule_id WHERE i.directory_id=? AND i.mode='managed-completed' AND i.active=1 AND r.deleted_at IS NULL LIMIT 1").get(destination) as { id: string; paused: number } | undefined;
-    return { recognition: { state: !recognition ? "NOT_ENABLED" as const : recognition.paused ? "PAUSED" as const : "ENABLED" as const, ruleId: recognition?.id ?? null }, id: row.id, sourceId: row.source_id, sourceVersion: row.source_version, state: row.state, files: cloud?.progress.totalItems ?? counts.files, done: cloud?.progress.completedItems ?? counts.done ?? 0, reused: counts.reused ?? 0, removed: cloud?.localRemovedFiles ?? counts.removed ?? 0, failed, failure: row.failure ?? cloud?.failure?.message ?? null, downloadJobId: row.download_job_id, createdAt: row.created_at, updatedAt: row.updated_at };
+    return { recognition: { state: !recognition ? "NOT_ENABLED" as const : recognition.paused ? "PAUSED" as const : "ENABLED" as const, ruleId: recognition?.id ?? null }, id: row.id, sourceId: row.source_id, sourceVersion: row.source_version, state: row.state, files: cloudFiles?.length ?? counts.files, inLibrary: libraryFiles, done: cloud?.progress.completedItems ?? counts.done ?? 0, reused: cloud ? 0 : Math.max(0, (counts.reused ?? 0) - libraryFiles), removed: cloud?.localRemovedFiles ?? counts.removed ?? 0, failed, failure: row.failure ?? cloud?.failure?.message ?? null, downloadJobId: row.download_job_id, createdAt: row.created_at, updatedAt: row.updated_at };
   }
   jobs(input: CoreInput<"sync.jobs">): CoreOutput<"sync.jobs"> {
     const db = this.database.connection, size = input.pageSize ?? 25, offset = ((input.page ?? 1) - 1) * size;
@@ -237,12 +243,13 @@ export class SyncRules {
   getJob(id: string): CoreOutput<"sync.job"> { return this.jobDto(this.job(id)); }
   jobFiles(input: CoreInput<"sync.job-files">): CoreOutput<"sync.job-files"> {
     const row = this.job(input.id), snapshot = JSON.parse(row.snapshot_json) as SyncSourceSnapshot;
-    if (row.download_job_id) {
+    if (snapshot.configuration.type === "cloud") {
       const cloud = row.preview_id ? this.downloads.previews.row(row.preview_id) : null;
-      const files: { targetSegments: string[]; targetPathKey: string; expectedSize: number; receiptId?: string; reuseItemId?: string }[] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
+      const files: { targetSegments: string[]; targetPathKey: string; expectedSize: number; libraryFile?: LibraryFileEvidence; receiptId?: string; reuseItemId?: string }[] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
       const size = input.pageSize ?? 25, start = ((input.page ?? 1) - 1) * size;
       const item = this.database.connection.prepare("SELECT i.state,i.failure_code FROM download_job_item j JOIN download_item i ON i.id=j.item_id WHERE j.job_id=? AND i.target_path_key=?");
       return { total: files.length, items: files.slice(start, start + size).map((file) => {
+        if (file.libraryFile) return { relativePath: file.targetSegments.join("/"), targetPath: libraryFilePath(file.libraryFile), size: file.expectedSize, state: row.state === "NEEDS_ATTENTION" && !row.download_job_id ? "NEEDS_ATTENTION" as const : "IN_LIBRARY" as const, reason: row.state === "NEEDS_ATTENTION" && !row.download_job_id ? row.failure : libraryFileReason(file.libraryFile) };
         const value = item.get(row.download_job_id, file.targetPathKey) as { state: string; failure_code: CloudFailure["code"] | null } | undefined;
         const removed = file.receiptId ? !!this.database.connection.prepare("SELECT 1 FROM sync_receipt_local_state WHERE receipt_id=? AND state='REMOVED'").get(file.receiptId) : false;
         const failed = value?.failure_code && ["FAILED", "AUTH_REQUIRED", "BLOCKED_LOCAL", "RECONCILING"].includes(value.state);
@@ -251,7 +258,8 @@ export class SyncRules {
       }) };
     }
     const size = input.pageSize ?? 25, rows = this.database.connection.prepare("SELECT m.*,o.plan_json FROM local_sync_member m LEFT JOIN local_sync_operation o ON o.id=m.operation_id WHERE m.job_id=? ORDER BY m.ordinal LIMIT ? OFFSET ?").all(row.id, size, ((input.page ?? 1) - 1) * size) as { relative_path: string; state: "PENDING" | "REUSED" | "REMOVED" | "DONE" | "NEEDS_ATTENTION"; failure: string | null; plan_json: string | null; receipt_id: string | null }[];
-    return { items: rows.map((file) => { const plan = file.plan_json ? JSON.parse(file.plan_json) : null, receipt = file.receipt_id ? new SyncReceipts(this.database).get(file.receipt_id) : null; return { relativePath: file.relative_path, targetPath: join(snapshot.targetDirectory.path, "completed", ...(plan?.targetSegments ?? JSON.parse(receipt?.target_segments_json ?? "[]"))), size: plan?.snapshot.size ?? receipt?.size ?? 0, state: file.state, reason: file.failure ?? (file.state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回" : null) }; }), total: (this.database.connection.prepare("SELECT count(*) AS n FROM local_sync_member WHERE job_id=?").get(row.id) as { n: number }).n };
+    const libraryFiles = row.preview_id ? this.local.preview(row.preview_id).files : [];
+    return { items: rows.map((file) => { const libraryFile = libraryFiles.find((entry) => entry.segments.join("/") === file.relative_path)?.libraryFile; if (libraryFile) return { relativePath: file.relative_path, targetPath: libraryFilePath(libraryFile), size: libraryFile.snapshot.size, state: "IN_LIBRARY" as const, reason: libraryFileReason(libraryFile) }; const plan = file.plan_json ? JSON.parse(file.plan_json) : null, receipt = file.receipt_id ? new SyncReceipts(this.database).get(file.receipt_id) : null; return { relativePath: file.relative_path, targetPath: join(snapshot.targetDirectory.path, "completed", ...(plan?.targetSegments ?? JSON.parse(receipt?.target_segments_json ?? "[]"))), size: plan?.snapshot.size ?? receipt?.size ?? 0, state: file.state, reason: file.failure ?? (file.state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回" : null) }; }), total: (this.database.connection.prepare("SELECT count(*) AS n FROM local_sync_member WHERE job_id=?").get(row.id) as { n: number }).n };
   }
   retry(input: CoreInput<"sync.retry">): CoreOutput<"sync.retry"> {
     this.writable(); const row = this.job(input.id), rule = this.get(row.source_id);

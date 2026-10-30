@@ -8,11 +8,12 @@ import type { CloudRoots } from "../cloud/roots.js";
 import { assertSpaceBudget, sameVolumeRoot } from "../files/index.js";
 import { sourceVersion, sameSnapshot, type SourceSnapshot } from "../files/source-root.js";
 import { SyncReceipts } from "./sync-receipts.js";
+import { EmbyLibraryFiles, type LibraryFileEvidence } from "./emby-library-files.js";
 import type { ConfigurationDirectories } from "./configuration-directories.js";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const conflict = (message: string) => new DesktopError("CONFLICT", message);
-export interface LocalSyncFile { segments: string[]; size: number; snapshot: SourceSnapshot; namespace: string; version: VersionEvidence; versionKey: string; targetSegments: string[]; slot: string; receiptId: string | null; state: "READY" | "OBSERVING" | "REUSED" | "REMOVED" | "CONFLICT" | "UNAVAILABLE"; reason: string | null }
+export interface LocalSyncFile { segments: string[]; size: number; snapshot: SourceSnapshot; namespace: string; version: VersionEvidence; versionKey: string; targetSegments: string[]; slot: string; receiptId: string | null; libraryFile?: LibraryFileEvidence; state: "IN_LIBRARY" | "READY" | "OBSERVING" | "REUSED" | "REMOVED" | "CONFLICT" | "UNAVAILABLE"; reason: string | null }
 interface Preview { id: string; request_key: string; signature: string; snapshot_json: string; files_json: string; force: number; expires_at: number; job_id: string | null }
 interface Plan { source: ManagedRootGrant; snapshot: SourceSnapshot; sourceSegments: string[]; targetSegments: string[]; target: ManagedRootGrant; variant: string }
 interface Operation { id: string; identity_key: string; source_namespace: string; source_object_key: string; source_version_key: string; version_json: string; target_directory_id: string; target_slot: string; plan_json: string; attempt_id: string; phase: string; evidence_json: string | null }
@@ -50,7 +51,7 @@ export class LocalSync {
     await source.check(); await target.check();
     const files = await source.discover([], 10000), id = randomUUID(), result: LocalSyncFile[] = [];
     const namespace = hash([source.grant.volume.volumeId, source.grant.volume.rootInode, source.grant.volume.rootBirthtimeNs]);
-    const receipts = new SyncReceipts(this.database, this.now);
+    const receipts = new SyncReceipts(this.database, this.now), library = new EmbyLibraryFiles(this.database);
     for (const segments of files) {
       if (this.closed) throw new DesktopError("INTERRUPTED", "本地同步预览已停止", true);
       if (!includes(segments.join("/")) || /(?:\.(?:part|tmp|temp|aria2|download|downloading|qkdownloading|crdownload)|\.!qB)$/i.test(segments.at(-1)!)) continue;
@@ -60,7 +61,10 @@ export class LocalSync {
       const targetSegments = force ? ["resync-" + id, ...segments] : segments, slot = target.slotKey(targetSegments);
       const receipt = !force ? receipts.find("local", namespace, JSON.stringify(segments), version, target.grant.id, slot) : undefined;
       const file: LocalSyncFile = { segments, size: proof.size, snapshot: proof, namespace, version, versionKey, targetSegments, slot, receiptId: receipt?.id ?? null, state: "OBSERVING", reason: "等待文件连续稳定至少 120 秒；稳定后仍需确认文件完整" };
-      if (receipt) {
+      const libraryFile = !force ? await library.find(segments.at(-1)!, proof.size, { root: source, segments, snapshot: proof }) : undefined;
+      if (libraryFile) {
+        file.libraryFile = libraryFile; file.receiptId = null; file.state = "IN_LIBRARY"; file.reason = "已在媒体库，跳过同步";
+      } else if (receipt) {
         const state = await receipts.observe(receipt, target);
         file.state = state === "PRESENT" ? "REUSED" : state === "REMOVED" ? "REMOVED" : state === "CONFLICT" ? "CONFLICT" : "UNAVAILABLE";
         file.reason = state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回，可显式预览重新同步" : state === "PRESENT" ? "已同步，复用成功收据" : state === "CONFLICT" ? "已同步目标的身份或内容已变化，请保留双方文件并核对" : "原目标卷或目录不可用，不认定为删除";
@@ -71,7 +75,7 @@ export class LocalSync {
       result.push(file);
     }
     target.assertMappings(result.map((file) => file.targetSegments));
-    await source.check(); assertSpaceBudget(await target.check(), result.filter((file) => !file.receiptId).reduce((sum, file) => sum + file.size, 0));
+    await source.check(); assertSpaceBudget(await target.check(), result.filter((file) => !file.receiptId && !file.libraryFile).reduce((sum, file) => sum + file.size, 0));
     if (this.closed) throw new DesktopError("INTERRUPTED", "本地同步预览已停止", true);
     db.prepare("INSERT INTO local_sync_preview(id,request_key,signature,snapshot_json,files_json,force,expires_at) VALUES(?,?,?,?,?,?,?)").run(id, requestKey, signature, JSON.stringify(snapshot), JSON.stringify(result), Number(force), this.now() + 15 * 60 * 1000);
     return this.preview(id);
@@ -81,16 +85,17 @@ export class LocalSync {
     if (preview.job_id) { if (preview.job_id !== jobId) throw conflict("预览已用于其他作业，请查看原作业"); return; }
     if (!filesComplete || preview.expires_at <= this.now() || this.closed) throw conflict("请重新预览并确认本地文件完整；过期预览不能执行");
     const snapshot = JSON.parse(preview.snapshot_json) as SyncSourceSnapshot, files = this.preview(previewId).files;
-    if (files.some((file) => !["READY", "REUSED", "REMOVED"].includes(file.state))) throw conflict("同步预览仍有未就绪、冲突或不可用文件，请逐项处理并重新预览");
+    if (files.some((file) => !["IN_LIBRARY", "READY", "REUSED", "REMOVED"].includes(file.state))) throw conflict("同步预览仍有未就绪、冲突或不可用文件，请逐项处理并重新预览");
     const source = this.directories.reader(snapshot.inputDirectory!.id), target = this.roots.files.get(snapshot.targetDirectory.id), receipts = new SyncReceipts(this.database, this.now);
     for (const file of files) {
       let actual: SourceSnapshot;
       try { actual = await source.inspect(file.segments); } catch { throw new DesktopError("LOCAL_UNAVAILABLE", `来源「${file.segments.join("/").slice(-180)}」无法读取，请恢复原文件、原磁盘和权限后重新预览`, true); }
       if (!sameSnapshot(file.snapshot, actual)) throw conflict(`来源 ${file.segments.join("/").slice(-180)} 已变化，请重新预览`);
-      if (file.receiptId) { const receipt = receipts.get(file.receiptId); if (!receipt || !["PRESENT", "REMOVED"].includes(await receipts.observe(receipt, target))) throw conflict(`已同步目标 ${file.targetSegments.join("/")} 已变化，请核对后重新预览`); }
+      if (file.libraryFile) await new EmbyLibraryFiles(this.database).verify(file.libraryFile);
+      else if (file.receiptId) { const receipt = receipts.get(file.receiptId); if (!receipt || !["PRESENT", "REMOVED"].includes(await receipts.observe(receipt, target))) throw conflict(`已同步目标 ${file.targetSegments.join("/")} 已变化，请核对后重新预览`); }
       else if (!this.stable(file.namespace + JSON.stringify(file.segments), file.snapshot)) throw conflict(`来源 ${file.segments.join("/")} 需要重新连续观察至少 120 秒`);
     }
-    await source.check(); assertSpaceBudget(await target.check(), files.filter((file) => !file.receiptId).reduce((sum, file) => sum + file.size, 0));
+    await source.check(); assertSpaceBudget(await target.check(), files.filter((file) => !file.receiptId && !file.libraryFile).reduce((sum, file) => sum + file.size, 0));
     return () => {
       const db = this.database.connection;
       if (!db.inTransaction) throw new Error("本地同步确认必须与作业在同一事务提交");
@@ -98,7 +103,7 @@ export class LocalSync {
       const current = this.previewRow(previewId)!; if (current.job_id) { if (current.job_id !== jobId) throw conflict("同步预览已经确认"); return; }
       for (const [ordinal, file] of files.entries()) {
         let operationId: string | null = null;
-        if (!file.receiptId) {
+        if (!file.receiptId && !file.libraryFile) {
           const variant = preview.force ? "resync:" + preview.id : "", identity = hash([file.namespace, file.segments, file.versionKey, snapshot.targetDirectory.id, file.slot, variant]);
           const old = db.prepare("SELECT id FROM local_sync_operation WHERE identity_key=?").get(identity) as { id: string } | undefined;
           operationId = old?.id ?? randomUUID();
@@ -108,7 +113,7 @@ export class LocalSync {
           }
         }
         const completed = operationId ? new SyncReceipts(this.database, this.now).byResult("local-sync", operationId) : undefined;
-        db.prepare("INSERT INTO local_sync_member(job_id,ordinal,relative_path,operation_id,receipt_id,state) VALUES(?,?,?,?,?,?)").run(jobId, ordinal, file.segments.join("/"), operationId, completed?.id ?? file.receiptId, completed ? "DONE" : file.receiptId ? file.state === "REMOVED" ? "REMOVED" : "REUSED" : "PENDING");
+        db.prepare("INSERT INTO local_sync_member(job_id,ordinal,relative_path,operation_id,receipt_id,state) VALUES(?,?,?,?,?,?)").run(jobId, ordinal, file.segments.join("/"), operationId, completed?.id ?? file.receiptId, file.libraryFile ? "REUSED" : completed ? "DONE" : file.receiptId ? file.state === "REMOVED" ? "REMOVED" : "REUSED" : "PENDING");
       }
       db.prepare("UPDATE local_sync_preview SET job_id=? WHERE id=?").run(jobId, preview.id);
     };

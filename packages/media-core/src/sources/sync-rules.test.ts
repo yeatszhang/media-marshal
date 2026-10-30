@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, lstat, statfs, realpath, rm, writeFile, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,9 +11,11 @@ import { legacyConfigurationFingerprint } from "../infrastructure/independent-sy
 import { CoreDatabase } from "../infrastructure/database.js";
 import { CloudRoots } from "../cloud/roots.js";
 import { CloudDownloads } from "../cloud/downloads.js";
+import { CloudAccounts } from "../cloud/accounts.js";
 import { RemoteCatalog } from "../cloud/catalog.js";
 import { unavailableHost } from "../cloud/host-gateway.js";
 import { ConfigurationDirectories } from "./configuration-directories.js";
+import { EmbyLibraryFiles } from "./emby-library-files.js";
 import { LocalSync } from "./local-sync.js";
 import { SyncRules } from "./sync-rules.js";
 
@@ -35,8 +37,102 @@ async function fixture() {
   const preview = (row: SyncSourceRule, mode: "configuration" | "execution" = "configuration", force = false) => rules.preview({ ...version(row), requestKey: randomUUID(), mode, force });
   const enable = async () => { const row = save(), p = await preview(row); return (await rules.confirm({ previewId: p.id, requestKey: randomUUID() })).rule; };
   const advance = async (seconds = 130) => { for (let elapsed = 0; elapsed < seconds; elapsed += 10) { clock += 10000; await rules.tick(); } };
-  return { directory, db, roots, directories, input, target, secondTarget, downloads, local, rules, content, now, version, save, preview, enable, advance };
+  return { grant, catalog, directory, db, roots, directories, input, target, secondTarget, downloads, local, rules, content, now, version, save, preview, enable, advance };
 }
+async function libraryFixture(f: Awaited<ReturnType<typeof fixture>>, content = f.content) {
+  const grant = await f.grant("媒体库"), connectionId = randomUUID(), logicalId = randomUUID();
+  const binding = { id: randomUUID(), version: 1, targetId: logicalId, targetDirectory: { id: grant.id, version: 1, path: grant.path }, serverId: "server", connectionVersion: 1, libraryId: "movies", libraryRoot: "/media/movies", mediaType: "MOVIE", conversion: { id: randomUUID(), version: 1, localRoot: { id: randomUUID(), version: 1, path: grant.path }, serverRoot: "/media/movies", serverPathStyle: "posix" } };
+  f.db.connection.prepare("INSERT INTO media_target_root VALUES(?,?,1)").run(grant.id, JSON.stringify(grant));
+  f.db.connection.prepare("INSERT INTO emby_connection VALUES(?,1,'server','http://127.0.0.1',1,'测试')").run(connectionId);
+  // 逻辑 target 与物理目录使用独立身份。
+  f.db.connection.prepare("INSERT INTO media_target_root VALUES(?,?,1)").run(logicalId, JSON.stringify(grant));
+  f.db.connection.prepare("INSERT INTO emby_library VALUES(?,'movies','/media/movies',?,?)").run(connectionId, logicalId, JSON.stringify(binding));
+  await mkdir(join(grant.path, "影片")); const path = join(grant.path, "影片/原片.mp4"); await writeFile(path, content);
+  return { grant, path, binding, connectionId };
+}
+describe("同步优先检查 Emby 已有文件", () => {
+  async function cloudPreview(f: Awaited<ReturnType<typeof fixture>>) {
+    const accounts = new CloudAccounts(f.db), prepared = accounts.dispatch("cloud.authorization.begin", { name: "测试网盘", requestKey: randomUUID(), implementationId: "test.drive" });
+    accounts.dispatch("cloud.authorization.finish", { jobId: prepared.job.id, failure: null, capabilities: { authorizationMethods: ["cookie"], accountIdentity: "unavailable", objectIdentity: "path", reliableRevision: false, hashAlgorithms: [], rangeRead: "unknown", sourceKinds: ["webdav"] }, identityKey: null });
+    const account = f.catalog.accounts()[0]!, candidate = prepared.candidate.binding, binding = { accountId: candidate.accountId, bindingId: candidate.bindingId, generation: candidate.generation };
+    const ref = randomUUID(), size = Buffer.byteLength(f.content), version = { kind: "weak" as const, size, modifiedAt: null };
+    f.db.connection.prepare("INSERT INTO remote_entry(id,account_id,name,type,size,observed_at) VALUES(?,?,'原片.mp4','file',?,'测试')").run(ref, account.id, size);
+    vi.spyOn(f.catalog, "source").mockReturnValue({ binding, remoteRef: ref, expectedVersion: version, locator: { kind: "path", segments: ["原片.mp4"] } });
+    vi.spyOn(f.catalog, "stat").mockResolvedValue({ ref, parentRef: null, accountId: account.id, name: "原片.mp4", type: "file", size, modifiedAt: null, version });
+    vi.spyOn(f.catalog, "relativePath").mockReturnValue(["原片.mp4"]);
+    const source = f.rules.save({ id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0, requestKey: randomUUID(), configuration: { type: "cloud", name: "网盘同步", accountId: account.id, remoteRef: ref, target: { kind: "default" } } });
+    let preview = await f.preview(source);
+    for (let attempt = 0; preview.state === "BUILDING" && attempt < 100; attempt++) { await new Promise((resolve) => setTimeout(resolve, 5)); preview = f.rules.getPreview(preview.id); }
+    expect(preview, preview.failure ?? undefined).toMatchObject({ state: "READY" }); return preview;
+  }
+  it("网盘命中媒体文件时全跳过作业完成且不生成下载项；重新读取任务仍显示媒体库路径", async () => {
+    const f = await fixture(), library = await libraryFixture(f), preview = await cloudPreview(f);
+    expect(preview).toMatchObject({ files: 1, inLibrary: 1, download: { weakComparison: true } });
+    expect(f.rules.previewFiles({ id: preview.id }).items[0]).toMatchObject({ state: "IN_LIBRARY", targetPath: library.path });
+    const result = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), runOnce: true });
+    expect(f.rules.getJob(result.jobId!)).toMatchObject({ files: 1, inLibrary: 1 });
+    await f.rules.tick();
+    expect(f.rules.getJob(result.jobId!)).toMatchObject({ state: "DONE", files: 1, done: 0, inLibrary: 1 });
+    expect(f.rules.jobFiles({ id: result.jobId! }).items[0]).toMatchObject({ state: "IN_LIBRARY", targetPath: library.path });
+    for (const table of ["download_item", "download_attempt", "sync_receipt"]) expect(f.db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    expect(f.downloads.get(f.rules.getJob(result.jobId!).downloadJobId!)?.state).toBe("COMPLETED");
+  });
+  it("网盘预览后库内文件消失时持久报告失败，重新预览恢复普通下载候选", async () => {
+    const f = await fixture(), library = await libraryFixture(f), preview = await cloudPreview(f);
+    await rm(library.path); const result = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), runOnce: true }); await f.rules.tick();
+    expect(f.rules.getJob(result.jobId!)).toMatchObject({ state: "NEEDS_ATTENTION", failure: expect.stringContaining("媒体库") });
+    expect(f.rules.jobFiles({ id: result.jobId! }).items[0]).toMatchObject({ state: "NEEDS_ATTENTION", reason: expect.stringContaining("媒体库") });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 0 });
+    const next = await f.preview(f.rules.get(preview.sourceId), "execution");
+    let ready = f.rules.getPreview(next.id); for (let attempt = 0; ready.state === "BUILDING" && attempt < 100; attempt++) { await new Promise((resolve) => setTimeout(resolve, 5)); ready = f.rules.getPreview(next.id); }
+    expect(ready).toMatchObject({ state: "READY", inLibrary: 0 }); expect(f.rules.previewFiles({ id: ready.id }).items[0]?.state).toBe("READY");
+  });
+  it("本地来源命中媒体库时不等待稳定、不创建复制或成功传输收据，任务保留实际媒体路径", async () => {
+    const f = await fixture(), library = await libraryFixture(f), source = await f.enable();
+    const preview = await f.preview(source, "execution"); expect(preview).toMatchObject({ state: "READY", inLibrary: 1, observing: 0 });
+    expect(f.rules.previewFiles({ id: preview.id }).items[0]).toMatchObject({ state: "IN_LIBRARY", targetPath: library.path });
+    const result = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true }); await f.rules.tick();
+    expect(f.rules.getJob(result.jobId!)).toMatchObject({ files: 1, state: "DONE", inLibrary: 1, done: 0, reused: 0 });
+    expect(f.rules.jobFiles({ id: result.jobId! }).items[0]).toMatchObject({ state: "IN_LIBRARY", targetPath: library.path, size: Buffer.byteLength(f.content) });
+    for (const table of ["local_sync_operation", "sync_receipt", "download_item"]) expect(f.db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    await expect(readFile(join(f.target.path, "completed/原片.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(library.path, "utf8")).toBe(f.content);
+  });
+  it("命中与未命中混合时仅复制缺失文件，两个状态分别计数", async () => {
+    const f = await fixture(); await libraryFixture(f); await writeFile(join(f.input.path, "新片.mp4"), "需要复制的新视频");
+    const source = await f.enable(); await f.advance(); const preview = await f.preview(source, "execution");
+    expect(preview).toMatchObject({ files: 2, inLibrary: 1, state: "READY" });
+    const result = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true }); await f.rules.tick();
+    expect(f.rules.getJob(result.jobId!)).toMatchObject({ files: 2, state: "DONE", inLibrary: 1, done: 1, reused: 0 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM local_sync_operation").get()).toEqual({ n: 1 });
+    expect(await readFile(join(f.target.path, "completed/新片.mp4"), "utf8")).toBe("需要复制的新视频");
+    await expect(readFile(join(f.target.path, "completed/原片.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("同名同大小但内容不同的本地文件继续同步；不同名称或大小也不命中", async () => {
+    const f = await fixture(), library = await libraryFixture(f, "x".repeat(Buffer.byteLength(f.content)));
+    const source = await f.enable(); expect(await f.preview(source, "execution")).toMatchObject({ inLibrary: 0, observing: 1 });
+    const index = new EmbyLibraryFiles(f.db);
+    expect(await index.find("其他片.mp4", Buffer.byteLength(f.content))).toBeUndefined(); expect(await index.find("原片.mp4", 1)).toBeUndefined();
+    await rm(library.path); expect(await new EmbyLibraryFiles(f.db).find("原片.mp4", Buffer.byteLength(f.content))).toBeUndefined();
+  });
+  it.each(["删除", "替换", "关联变化", "卷离线"])("预览后%s不允许沿用已在媒体库的证据", async (action) => {
+    const f = await fixture(), library = await libraryFixture(f), source = await f.enable(), preview = await f.preview(source, "execution");
+    if (action === "删除") await rm(library.path);
+    if (action === "替换") { await rm(library.path); await writeFile(library.path, f.content); }
+    if (action === "关联变化") f.db.connection.prepare("UPDATE emby_connection SET version=version+1").run();
+    if (action === "卷离线") await rename(library.grant.path, library.grant.path + "-离线");
+    await expect(f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true })).rejects.toThrow(/媒体库|来源文件|原卷/);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_job").get()).toEqual({ n: 0 });
+  });
+  it("远端提供摘要时必须一致；无摘要时只接受完整同名同大小；显式重同步仍执行", async () => {
+    const f = await fixture(); await libraryFixture(f); const index = new EmbyLibraryFiles(f.db), size = Buffer.byteLength(f.content);
+    expect(await index.find("原片.mp4", size, undefined, { kind: "hash", algorithm: "sha256", value: "0".repeat(64) })).toBeUndefined();
+    const sha256 = createHash("sha256").update(f.content).digest("hex");
+    expect(await index.find("原片.mp4", size, undefined, { kind: "hash", algorithm: "sha256", value: sha256 })).toMatchObject({ sha256 });
+    const source = await f.enable(); await f.advance(); const forced = await f.preview(source, "execution", true);
+    expect(forced).toMatchObject({ inLibrary: 0, force: true }); expect(f.rules.previewFiles({ id: forced.id }).items[0]?.state).toBe("READY");
+  });
+});
 describe("独立本地单向同步、成功历史和阶段控制", () => {
   it.each(["planned", "copying", "verified", "published", "recorded"])("本地同步在 %s 真实 SIGKILL 后沿原操作恢复，不覆盖或重复成果", async (checkpoint) => {
     const f = await fixture(), source = await f.enable(); await f.advance(); const preview = await f.preview(source, "execution");

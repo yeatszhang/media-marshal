@@ -8,6 +8,7 @@ import type { RemoteCatalog } from "./catalog.js";
 import { DownloadPreviews, type PreviewSnapshot } from "./previews.js";
 import { DownloadCommits } from "./commits.js";
 import { acceptExecutionEvent } from "./planning.js";
+import { EmbyLibraryFiles } from "../sources/emby-library-files.js";
 import { SyncReceipts } from "../sources/sync-receipts.js";
 
 interface Item { id: string; account_id: string; remote_ref: string; version_json: string; target_root_id: string; target_path_key: string; target_segments_json: string; expected_size: number; state: DownloadState; attempt_count: number }
@@ -169,7 +170,11 @@ export class CloudDownloads {
     if (!owner && db.prepare("SELECT 1 FROM cloud_subscription WHERE confirmed_preview_id=?").get(preview.id)) throw new CloudError("CONFLICT");
     if (this.catalog.source(preview.account_id, preview.remote_root_ref).binding.generation !== snapshot.binding.generation) throw new CloudError("REMOTE_CHANGED");
     const root = this.roots.files.get(preview.target_root_id); root.assertMappings(snapshot.items.map((item) => item.targetSegments));
-    await this.roots.budget(preview.target_root_id, snapshot.items.reduce((sum, item) => sum + (!item.reuseItemId && !item.receiptId && !item.issue ? item.expectedSize : 0), 0));
+    await this.roots.budget(preview.target_root_id, snapshot.items.reduce((sum, item) => sum + (!item.libraryFile && !item.reuseItemId && !item.receiptId && !item.issue ? item.expectedSize : 0), 0));
+    for (const item of snapshot.items) if (item.libraryFile) {
+      if (!syncOwner || snapshot.variant) throw new CloudError("CONFLICT");
+      await new EmbyLibraryFiles(this.database).verify(item.libraryFile);
+    }
     const id = randomUUID(), now = new Date(this.now()).toISOString();
     const jobId = db.transaction(() => {
       const repeated = db.prepare("SELECT id,preview_id FROM download_job WHERE request_key=? OR preview_id=?").get(input.requestKey, preview.id) as { id: string; preview_id: string } | undefined;
@@ -186,6 +191,7 @@ export class CloudDownloads {
         db.prepare("UPDATE sync_job SET download_job_id=?,state='RUNNING',updated_at=? WHERE id=?").run(id, now, syncOwner.syncJobId);
       }
       for (const item of snapshot.items) {
+        if (item.libraryFile) continue;
         if (item.receiptId && !item.issue) {
           if (snapshot.variant || !item.source.expectedVersion) throw new CloudError("CONFLICT");
           const receipts = new SyncReceipts(this.database), receipt = receipts.findCloud(preview.account_id, item.source.remoteRef, item.source.expectedVersion, preview.target_root_id, item.targetPathKey, snapshot.binding.bindingId);

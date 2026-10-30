@@ -5,12 +5,13 @@ import type { CoreDatabase } from "../infrastructure/database.js";
 import type { RemoteCatalog } from "./catalog.js";
 import type { CloudRoots } from "./roots.js";
 import { planOnce } from "./planning.js";
+import { EmbyLibraryFiles, type LibraryFileEvidence } from "../sources/emby-library-files.js";
 import { SyncReceipts } from "../sources/sync-receipts.js";
 
 export interface PreviewSnapshot {
   binding: BindingRef; name: string; complete: boolean; failure: CloudFailure | null;
   rootType?: "file" | "directory"; variant?: string; filters?: { extensions: string[]; names?: string[]; rules?: SyncFilter[] }; layout?: "selection" | "drive"; selectionPath?: string;
-  items: (TransferItem & { versionKey: string; targetPathKey: string; reuseItemId?: string; existingItemId?: string; receiptId?: string; historyPending?: boolean; localRemoved?: boolean; issue?: CloudFailure })[];
+  items: (TransferItem & { versionKey: string; targetPathKey: string; reuseItemId?: string; existingItemId?: string; receiptId?: string; libraryFile?: LibraryFileEvidence; historyPending?: boolean; localRemoved?: boolean; issue?: CloudFailure })[];
   policy: { maxAttempts: number; retryBaseMs: number };
 }
 export interface PreviewRow { id: string; account_id: string; remote_root_ref: string; target_root_id: string; request_key: string; state: string; expires_at: string; snapshot_json: string }
@@ -29,9 +30,9 @@ export class DownloadPreviews {
     const localRemovedFiles = snapshot.items.filter((item) => item.localRemoved).length, historyFiles = snapshot.items.filter((item) => item.historyPending).length;
     const historyRestore = historyFiles ? { files: historyFiles, confirmed: !!this.database.connection.prepare("SELECT 1 FROM sync_history_confirmation WHERE preview_id=?").get(row.id) } : undefined;
     const historyExpired = historyFiles > 0 && !this.database.connection.prepare("SELECT 1 FROM provider_binding b JOIN cloud_account a ON a.id=b.account_id WHERE b.id=? AND b.account_id=? AND b.generation=? AND b.state='ACTIVE' AND a.status IN ('READY','RESELECT_REQUIRED')").get(snapshot.binding.bindingId, row.account_id, snapshot.binding.generation);
-    return { id: row.id, accountId: row.account_id, remoteRef: row.remote_root_ref, targetGrantId: row.target_root_id, files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), complete: snapshot.complete, weakComparison: snapshot.items.some((item) => item.source.expectedVersion?.kind === "weak"), expiresAt: row.expires_at, state: snapshot.failure ? "FAILED" : row.state === "CONFIRMED" ? "CONFIRMED" : historyExpired || row.expires_at <= new Date(this.now()).toISOString() ? "EXPIRED" : row.state as DownloadPreview["state"], failure: snapshot.failure, reuseFiles: snapshot.items.filter((item) => item.reuseItemId || item.receiptId).length, conflicts: snapshot.items.filter((item) => item.issue).length, forceRedownload: !!snapshot.variant, destinationPrefix: snapshot.variant ? `completed/redownload-${row.id}` : "completed", selectionPath: snapshot.selectionPath ?? snapshot.name, layout: snapshot.layout ?? "selection", ...(localRemovedFiles ? { localRemovedFiles } : {}), ...(historyRestore ? { historyRestore } : {}) };
+    return { id: row.id, accountId: row.account_id, remoteRef: row.remote_root_ref, targetGrantId: row.target_root_id, files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), complete: snapshot.complete, weakComparison: snapshot.items.some((item) => item.source.expectedVersion?.kind === "weak" || item.libraryFile?.comparison === "NAME_SIZE"), expiresAt: row.expires_at, state: snapshot.failure ? "FAILED" : row.state === "CONFIRMED" ? "CONFIRMED" : historyExpired || row.expires_at <= new Date(this.now()).toISOString() ? "EXPIRED" : row.state as DownloadPreview["state"], failure: snapshot.failure, reuseFiles: snapshot.items.filter((item) => item.reuseItemId || item.receiptId).length, conflicts: snapshot.items.filter((item) => item.issue).length, forceRedownload: !!snapshot.variant, destinationPrefix: snapshot.variant ? `completed/redownload-${row.id}` : "completed", selectionPath: snapshot.selectionPath ?? snapshot.name, layout: snapshot.layout ?? "selection", ...(localRemovedFiles ? { localRemovedFiles } : {}), ...(historyRestore ? { historyRestore } : {}) };
   }
-  start(input: CloudInput<"cloud.downloads.preview">): DownloadPreview {
+  start(input: CloudInput<"cloud.downloads.preview">, library?: EmbyLibraryFiles): DownloadPreview {
     if (this.closed) throw new CloudError("INTERRUPTED");
     const previous = this.database.connection.prepare("SELECT * FROM cloud_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     const filters = cloudFiltersSchema.parse(input.filters); filters.extensions = [...new Set(filters.extensions)].sort(); filters.names = [...new Set(filters.names)].sort();
@@ -46,10 +47,10 @@ export class DownloadPreviews {
     const row: PreviewRow = { id, account_id: input.accountId, remote_root_ref: input.remoteRef, target_root_id: input.targetGrantId, request_key: input.requestKey, state: "BUILDING", expires_at: new Date(this.now() + 15 * 60 * 1000).toISOString(), snapshot_json: JSON.stringify(snapshot) };
     this.database.connection.prepare("INSERT INTO cloud_preview(id,account_id,remote_root_ref,target_root_id,request_key,snapshot_json,state,configuration_version,created_at,expires_at) VALUES(?,?,?,?,?,?,'BUILDING',1,?,?)")
       .run(id, input.accountId, input.remoteRef, input.targetGrantId, input.requestKey, row.snapshot_json, now, row.expires_at);
-    const task = this.scan(row, snapshot, root); this.flights.set(id, task); void task.finally(() => { this.flights.delete(id); this.cancelled.delete(id); }).catch(() => {});
+    const task = this.scan(row, snapshot, root, library); this.flights.set(id, task); void task.finally(() => { this.flights.delete(id); this.cancelled.delete(id); }).catch(() => {});
     return this.dto(row);
   }
-  private async scan(row: PreviewRow, snapshot: PreviewSnapshot, root: ReturnType<CloudRoots["files"]["get"]>) {
+  private async scan(row: PreviewRow, snapshot: PreviewSnapshot, root: ReturnType<CloudRoots["files"]["get"]>, library?: EmbyLibraryFiles) {
     const save = (state: string) => this.database.connection.prepare("UPDATE cloud_preview SET snapshot_json=?,state=? WHERE id=?").run(JSON.stringify(snapshot), state, row.id);
     try {
       const selected = await this.catalog.stat(row.account_id, row.remote_root_ref); snapshot.name = selected.name; snapshot.rootType = selected.type;
@@ -76,7 +77,9 @@ export class DownloadPreviews {
           const receipts = new SyncReceipts(this.database, this.now), existingReceipt = !snapshot.variant && item.source.expectedVersion ? receipts.findCloud(row.account_id, current.entry.ref, item.source.expectedVersion, row.target_root_id, item.targetPathKey, snapshot.binding.bindingId) : undefined;
           const pendingReceipt = !existingReceipt && !snapshot.variant && item.source.expectedVersion ? receipts.pendingCloudHistory(row.account_id, current.entry.ref, item.source.expectedVersion, row.target_root_id, item.targetPathKey, snapshot.binding.bindingId) : undefined;
           const receipt = existingReceipt ?? pendingReceipt;
-          if (receipt) {
+          const libraryFile = !snapshot.variant ? await library?.find(current.entry.name, item.expectedSize, undefined, item.source.expectedVersion ?? undefined) : undefined;
+          if (libraryFile) { item.libraryFile = libraryFile; }
+          else if (receipt) {
             const state = await receipts.observe(receipt, root);
             if (state === "PRESENT" || state === "REMOVED") {
               item.receiptId = receipt.id; item.localRemoved = state === "REMOVED"; if (pendingReceipt) item.historyPending = true;
@@ -102,7 +105,7 @@ export class DownloadPreviews {
           } else {
             try { await root.assertVacant(item.targetSegments); } catch (error) { item.issue = cloudFailure(error); }
           }
-          if (!item.reuseItemId && !item.receiptId && !item.issue) requiredBytes += current.entry.size!;
+          if (!item.libraryFile && !item.reuseItemId && !item.receiptId && !item.issue) requiredBytes += current.entry.size!;
           snapshotBytes += Buffer.byteLength(JSON.stringify(item)) + 1;
           if (snapshotBytes > 16 * 1024 * 1024) throw new CloudError("UNSUPPORTED_CAPABILITY");
           snapshot.items.push(item); bytes += current.entry.size!;
