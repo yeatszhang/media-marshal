@@ -98,6 +98,7 @@ declare module "@yeatz/app-framework/command" {
     "media.sync.jobs": (input: CoreInput<"sync.jobs">) => CoreOutput<"sync.jobs">;
     "media.sync.job": (input: CoreInput<"sync.job">) => CoreOutput<"sync.job">;
     "media.sync.job-files": (input: CoreInput<"sync.job-files">) => CoreOutput<"sync.job-files">;
+    "media.sync.remove-job": (input: CoreInput<"sync.remove-job">) => CoreOutput<"sync.remove-job">;
     "media.sync.retry": (input: CoreInput<"sync.retry">) => CoreOutput<"sync.retry">;
     "media.configuration.directories": () => Promise<CoreOutput<"configuration.directories">>;
     "media.configuration.default": () => CoreOutput<"configuration.default">;
@@ -300,6 +301,7 @@ export function createMediaApplication(
       add(registry.register("media.sync.jobs", (_, input) => syncRules.jobs(input)));
       add(registry.register("media.sync.job", (_, input) => syncRules.getJob(input.id)));
       add(registry.register("media.sync.job-files", (_, input) => syncRules.jobFiles(input)));
+      add(registry.register("media.sync.remove-job", (_, input) => syncRules.removeJob(input)));
       add(registry.register("media.sync.retry", (_, input) => syncRules.retry(input)));
       add(registry.register("media.configuration.set-default", (_, input) => recognitionRules.setDownloadDirectory(input)));
       add(registry.register("media.emby.libraries", () => delivery.libraries()));

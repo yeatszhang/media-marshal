@@ -19,5 +19,6 @@ export const syncActions = {
   "sync.jobs": { input: z.strictObject({ sourceId: id.optional(), ...page }), output: z.strictObject({ items: z.array(syncJobSchema).max(100), total: revision }) },
   "sync.job": { input: z.strictObject({ id }), output: syncJobSchema },
   "sync.job-files": { input: z.strictObject({ id, ...page }), output: z.strictObject({ items: z.array(syncFileSchema).max(100), total: revision }) },
+  "sync.remove-job": { input: z.strictObject({ id, requestKey: id }), output: z.strictObject({ id }) },
   "sync.retry": { input: z.strictObject({ id, requestKey: id }), output: syncJobSchema },
 } as const;

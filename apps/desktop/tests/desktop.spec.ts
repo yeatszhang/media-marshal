@@ -106,6 +106,7 @@ test("独立本地同步在无账号窗口完成就绪、精确复制、移除�
   const jobs = await page.evaluate(() => window.desktopApi.listSyncJobs()); expect(jobs.total).toBe(1); const jobId = jobs.items[0]!.id;
   await page.reload(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(detail).toContainText(jobId); await page.evaluate(() => window.desktopApi.restartCore()); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible(); await expect(detail).toContainText("完成 · 冻结版本"); expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 1 });
   await expect.poll(() => page.evaluate(() => window.desktopApi.listConfigurationDirectories()), { timeout: 30000 }).toMatchObject([{ available: true }, { available: true }]);
+  await page.getByRole("button", { name: "关闭任务详情", exact: true }).click();
   await rm(join(target, "completed", filename)); await card.getByRole("button", { name: "执行一次", exact: true }).click(); await expect(preview).toContainText("已移除 1"); await preview.getByRole("checkbox", { name: "我已确认本次本地文件完整，允许复制此精确清单", exact: true }).check(); await preview.getByRole("button", { name: "确认执行一次", exact: true }).click(); await expect(detail).toContainText("移除 1"); expect(await readdir(join(target, "completed"))).toEqual([]); expect(await readFile(join(input, filename))).toEqual(bytes);
   await detail.screenshot({ path: "test-results/desktop/independent-sync-local-removed.png" });
 });
@@ -1388,6 +1389,7 @@ test("独立同步、识别映射与 Emby 路径绑定经真实窗口完成三�
     // 两段就绪观察均使用生产连续 120 秒；不注入稳定状态或完成收据。
     await expect(syncPreview).toContainText("观察中 0", { timeout: 140000 }); await syncPreview.getByRole("checkbox", { name: "我已确认本次本地文件完整，允许复制此精确清单", exact: true }).check(); await syncPreview.getByRole("button", { name: "确认执行一次", exact: true }).click();
     await expect(page.getByRole("region", { name: "同步任务详情", exact: true })).toContainText("完成 · 冻结版本", { timeout: 30000 });
+    await page.getByRole("button", { name: "关闭任务详情", exact: true }).click();
     await writeFile(join(download, "completed/外部文件.mp4"), bytes);
     await expect.poll(async () => (await page.evaluate(() => window.desktopApi.listIngestionCandidates({}))).items.map((row) => row.state), { timeout: 160000 }).toEqual(["READY", "READY"]);
     await syncCard.getByRole("button", { name: "暂停来源同步", exact: true }).click(); expect((await page.evaluate(() => window.desktopApi.listRecognitionRules()))[0]!.paused).toBe(false);

@@ -252,3 +252,39 @@ it("新同步使用当前下载目录，已受理作业和已确认预览仍保�
   await f.rules.tick(); expect(f.rules.getJob(job.jobId!).state).toBe("DONE");
   expect(await readFile(join(f.target.path, "completed/原片.mp4"), "utf8")).toBe(f.content);
 });
+
+
+describe("删除同步任务保留文件与成功历史", () => {
+  it("未停止任务不能删除，暂停后移除列表且恢复来源不会继续旧任务，重复删除幂等", async () => {
+    const f = await fixture(), source = await f.enable(); await f.advance();
+    const preview = await f.preview(source, "execution"), result = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true });
+    const input = { id: result.jobId!, requestKey: randomUUID() };
+    expect(() => f.rules.removeJob(input)).toThrow("请先暂停对应来源"); expect(f.rules.jobs({}).total).toBe(1);
+    const paused = await f.rules.control({ ...f.version(source), operation: "pause", requestKey: randomUUID() });
+    let finishTick!: () => void;
+    vi.spyOn(f.local, "tick").mockReturnValueOnce(new Promise<void>((resolve) => { finishTick = resolve; }));
+    const draining = f.rules.tick();
+    expect(() => f.rules.removeJob(input)).toThrow("等待在途同步停止");
+    finishTick(); await draining;
+    expect(f.rules.removeJob(input)).toEqual({ id: result.jobId }); expect(f.rules.removeJob(input)).toEqual({ id: result.jobId });
+    expect(f.rules.removeJob({ ...input, requestKey: randomUUID() })).toEqual({ id: result.jobId });
+    expect(f.rules.jobs({})).toEqual({ items: [], total: 0 }); expect(f.rules.jobs({ sourceId: source.id }).total).toBe(0);
+    expect(f.rules.getJob(input.id).state).toBe("CANCELED");
+    await f.rules.control({ ...f.version(paused), operation: "resume", requestKey: randomUUID() }); await f.rules.tick();
+    expect(f.rules.getJob(input.id).state).toBe("CANCELED");
+    expect(() => f.rules.retry({ id: input.id, requestKey: randomUUID() })).toThrow("已删除");
+    await expect(readFile(join(f.target.path, "completed/原片.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(f.input.path, "原片.mp4"), "utf8")).toBe(f.content);
+  });
+  it("完成任务删除后保留文件和去重收据，分页总数一致", async () => {
+    const f = await fixture(), source = await f.enable(); await f.advance();
+    const preview = await f.preview(source, "execution"), result = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true }); await f.rules.tick();
+    expect(f.rules.getJob(result.jobId!).state).toBe("DONE");
+    f.rules.removeJob({ id: result.jobId!, requestKey: randomUUID() });
+    expect(f.rules.jobs({ page: 1, pageSize: 1 })).toEqual({ items: [], total: 0 });
+    expect(await readFile(join(f.target.path, "completed/原片.mp4"), "utf8")).toBe(f.content);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
+    const next = await f.preview(source, "execution"); expect(next.reused).toBe(1);
+    expect(f.rules.jobFiles({ id: result.jobId! }).total).toBe(1);
+  });
+});

@@ -102,9 +102,27 @@ test("同步优先复核 Emby 目录已有文件，窗口标记已在媒体库�
     await preview.getByLabel("我已确认本次本地文件完整，允许复制此精确清单", { exact: true }).check();
     await preview.getByRole("button", { name: "确认配置范围", exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.desktopApi.listSyncJobs({}))).toMatchObject({ items: [{ state: "DONE", files: 1, inLibrary: 1, done: 0 }] });
-    const detail = page.getByRole("region", { name: "同步任务详情", exact: true }); await expect(detail).toContainText("已在媒体库 1");
+    const detail = page.getByRole("dialog", { name: "同步任务详情", exact: true }); await expect(detail).toContainText("已在媒体库 1");
     await page.reload(); await expect(detail).toContainText("已在媒体库 1"); await expect(detail.locator(".sync-files")).toContainText(join(media, name));
-    await detail.screenshot({ path: "test-results/desktop/sync-existing-library-job.png" });
+    for (const width of [1240, 920]) {
+      await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
+      await expect(detail).toBeVisible();
+      expect(await detail.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await detail.screenshot({ path: `test-results/desktop/sync-job-modal-${width}.png` });
+    }
+    await page.keyboard.press("Escape"); await expect(detail).not.toBeVisible();
+    const trigger = page.getByRole("button", { name: "查看任务明细", exact: true });
+    await trigger.click(); await expect(detail).toBeVisible();
+    await detail.getByRole("button", { name: "关闭任务详情", exact: true }).click(); await expect(trigger).toBeFocused();
+    await page.getByRole("button", { name: "删除任务…", exact: true }).click();
+    const removal = page.getByRole("dialog", { name: "删除同步任务", exact: true });
+    await expect(removal).toContainText("成功历史保留");
+    await removal.getByRole("button", { name: "取消", exact: true }).click();
+    expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 1 });
+    await page.getByRole("button", { name: "删除任务…", exact: true }).click();
+    await removal.getByRole("button", { name: "确认删除同步任务", exact: true }).click();
+    await expect(removal).not.toBeVisible(); await expect(page.getByText("暂无同步任务。", { exact: true })).toBeVisible();
+    await page.reload(); expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
     await expect(readFile(join(target, "completed", name))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(join(media, name), "utf8")).toBe(content); expect((await stat(join(media, name))).ino).toBe(inode);
     expect(await page.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 }); expect(refreshes).toBe(1);

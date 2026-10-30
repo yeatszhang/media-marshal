@@ -129,6 +129,21 @@ describe.skipIf(process.platform !== "darwin")("独立来源同步与既有网�
     const files = f.sync.previewFiles({ id: forced.p.id }); expect(files.items[0]?.targetPath).toContain("redownload-"); expect(await readFile(files.items[0]!.targetPath, "utf8")).toBe("独立来源的完整内容");
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 2 }); await expect(readFile(join(f.rootPath, "completed/目录/电影.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
   });
+  it("删除暂停的网盘同步任务撤销自身需求，共享下载仍完成且已删除任务不复活", async () => {
+    const f = await setup(), first = await f.enable(), second = await f.enable();
+    const a = await f.execute(first), b = await f.execute(second);
+    expect(() => f.sync.removeJob({ id: a.result.jobId!, requestKey: randomUUID() })).toThrow("请先暂停对应来源");
+    const paused = await f.sync.control({ ...f.versions(first), operation: "pause", requestKey: randomUUID() });
+    const command = { id: a.result.jobId!, requestKey: randomUUID() };
+    expect(f.sync.removeJob(command)).toEqual({ id: a.result.jobId }); expect(f.sync.removeJob(command)).toEqual({ id: a.result.jobId });
+    expect(f.sync.jobs({})).toMatchObject({ total: 1, items: [{ id: b.result.jobId }] });
+    await f.sync.control({ ...f.versions(paused), operation: "resume", requestKey: randomUUID() });
+    f.downloads.start(); await f.done(b.result.jobId!);
+    expect(f.sync.getJob(a.result.jobId!).state).toBe("CANCELED"); expect(f.fileEngine.starts).toBe(1);
+    expect(await readFile(join(f.rootPath, "completed/目录/电影.mp4"), "utf8")).toBe("独立来源的完整内容");
+    f.sync.removeJob({ id: b.result.jobId!, requestKey: randomUUID() }); expect(f.sync.jobs({}).total).toBe(0);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
+  });
   it("重新登录须明确确认原账号目录，历史别名与新来源版本原子提交", async () => {
     const f = await setup(), source = await f.enable(), first = await f.execute(source); f.downloads.start(); await f.done(first.result.jobId!); await rm(join(f.rootPath, "completed/目录/电影.mp4"));
     const login = f.accounts.dispatch("cloud.authorization.begin", { accountId: f.account.id, name: "重新连接", requestKey: randomUUID(), implementationId: f.provider.implementationId });

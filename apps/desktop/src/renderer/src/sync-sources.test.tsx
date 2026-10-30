@@ -32,7 +32,7 @@ function fixture() {
     saveSyncSource: vi.fn<DesktopApi["saveSyncSource"]>(async (value) => { const configuration = syncSourceConfigurationSchema.parse(value.configuration), old = rows.get(value.id); const row: SyncSourceRule = { id: value.id, version: old?.version ?? 0, draftRevision: value.expectedDraftRevision + 1, lifecycleRevision: 0, draft: configuration, snapshot: old?.snapshot ?? null, paused: true, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: false, nextScanAt: null, failure: null } }; rows.set(row.id, row); return structuredClone(row); }),
     previewSyncSource: vi.fn<DesktopApi["previewSyncSource"]>(async (value) => { const row = rows.get(value.id)!; if (!(await api.getDefaultDownloadDirectory()).directory) throw new Error("尚未设置默认下载目录，请选择具体目录"); const preview: CoreOutput<"sync.preview"> = { id: crypto.randomUUID(), sourceId: row.id, mode: value.mode ?? "configuration", state: "READY", snapshot: { sourceId: row.id, sourceVersion: row.version + 1, configuration: row.draft, inputDirectory: row.draft.type === "local" ? binding(input) : null, targetDirectory: binding(target), defaultDirectoryVersion: 1 }, expiresAt: Date.now() + 900000, files: 1, bytes: 100, complete: true, observing: 0, conflicts: 0, reused: 0, removed: 0, force: false, failure: null, download: null, jobId: null }; previews.set(preview.id, preview); return structuredClone(preview); }),
     getSyncPreview: vi.fn<DesktopApi["getSyncPreview"]>(async (id) => structuredClone(previews.get(id)!)), listSyncPreviewFiles: vi.fn<DesktopApi["listSyncPreviewFiles"]>(async () => ({ items: [{ relativePath: "原片.mp4", targetPath: target.path + "/completed/原片.mp4", size: 100, state: "READY" as const, reason: null }], total: 1 })),
-    confirmSyncSource: vi.fn<DesktopApi["confirmSyncSource"]>(async (value) => { const preview = previews.get(value.previewId)!, row = rows.get(preview.sourceId)!; row.snapshot = preview.snapshot; row.version = preview.snapshot.sourceVersion; row.paused = false; row.runtime!.claimed = true; preview.state = "APPLIED"; return { rule: structuredClone(row), jobId: null }; }), controlSyncSource: vi.fn(), setCloudDownloadPause: vi.fn(), retrySyncJob: vi.fn(),
+    confirmSyncSource: vi.fn<DesktopApi["confirmSyncSource"]>(async (value) => { const preview = previews.get(value.previewId)!, row = rows.get(preview.sourceId)!; row.snapshot = preview.snapshot; row.version = preview.snapshot.sourceVersion; row.paused = false; row.runtime!.claimed = true; preview.state = "APPLIED"; return { rule: structuredClone(row), jobId: null }; }), controlSyncSource: vi.fn(), setCloudDownloadPause: vi.fn(), retrySyncJob: vi.fn(), removeSyncJob: vi.fn(), getSyncJob: vi.fn(), listSyncJobFiles: vi.fn(),
     listRemote: vi.fn(async () => ({ items: [directory], nextCursor: null, total: 1, complete: true })), statRemote: vi.fn(async () => directory),
   };
   return { api, input, target, rows, previews, account, directory };
@@ -135,4 +135,21 @@ it("删除失败在弹窗内定位来源与原因，重试期间明确反馈并�
   expect(f.element.textContent).not.toContain("等待停止的来源");
   expect(document.querySelector('[aria-label="同步预览"]')).toBeNull();
   expect(f.api.confirmSyncSource).not.toHaveBeenCalled();
+});
+
+
+it("任务明细使用弹窗，关闭不改变任务；删除失败保留原因，成功刷新列表", async () => {
+  const job = { id: crypto.randomUUID(), sourceId: crypto.randomUUID(), sourceVersion: 1, state: "DONE" as const, files: 1, done: 1, reused: 0, removed: 0, failed: 0, failure: null, downloadJobId: null, createdAt: "2026-10-30", updatedAt: "2026-10-30" };
+  const f = await mount("/sources", (f) => {
+    f.api.listSyncJobs.mockResolvedValue({ items: [job], total: 1 } as never);
+    f.api.getSyncJob.mockResolvedValue(job); f.api.listSyncJobFiles.mockResolvedValue({ items: [], total: 0 });
+    f.api.removeSyncJob.mockRejectedValueOnce(new Error("同步任务尚未停止，请等待在途同步停止后重试删除"));
+    f.api.removeSyncJob.mockImplementationOnce(async () => { f.api.listSyncJobs.mockResolvedValue({ items: [], total: 0 }); return { id: job.id }; });
+  });
+  await click("查看任务明细"); expect(document.querySelector('dialog[aria-label="同步任务详情"]')?.hasAttribute("open")).toBe(true);
+  expect(document.querySelector('dialog[aria-label="同步任务详情"]')?.textContent).toContain(job.id);
+  await click("关闭任务详情"); expect(document.querySelector('dialog[aria-label="同步任务详情"]')).toBeNull(); expect(f.api.removeSyncJob).not.toHaveBeenCalled();
+  await click("删除任务…"); await click("取消"); expect(f.api.removeSyncJob).not.toHaveBeenCalled();
+  await click("删除任务…"); await click("确认删除同步任务"); expect(document.querySelector('dialog[aria-label="删除同步任务"] [role="alert"]')?.textContent).toContain("在途同步停止");
+  await click("确认删除同步任务"); expect(document.querySelector('dialog[aria-label="删除同步任务"]')).toBeNull(); expect(document.body.textContent).toContain("暂无同步任务");
 });

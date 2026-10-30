@@ -45,6 +45,7 @@ const api: DesktopApi = {
   listSyncJobs: (input = {}) => invoke("sync.jobs", input),
   getSyncJob: (id) => invoke("sync.job", { id }),
   listSyncJobFiles: (input) => invoke("sync.job-files", input),
+  removeSyncJob: (input) => invoke("sync.remove-job", input),
   retrySyncJob: (input) => invoke("sync.retry", input),
   listConfigurationDirectories: () => invoke("configuration.directories", {}),
   getDefaultDownloadDirectory: () => invoke("configuration.default", {}),

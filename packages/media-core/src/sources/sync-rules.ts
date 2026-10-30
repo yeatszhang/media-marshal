@@ -237,8 +237,8 @@ export class SyncRules {
   }
   jobs(input: CoreInput<"sync.jobs">): CoreOutput<"sync.jobs"> {
     const db = this.database.connection, size = input.pageSize ?? 25, offset = ((input.page ?? 1) - 1) * size;
-    const rows = db.prepare("SELECT * FROM sync_job WHERE ? IS NULL OR source_id=? ORDER BY created_at DESC,id LIMIT ? OFFSET ?").all(input.sourceId ?? null, input.sourceId ?? null, size, offset) as Job[];
-    return { items: rows.map((row) => this.jobDto(row)), total: (db.prepare("SELECT count(*) AS n FROM sync_job WHERE ? IS NULL OR source_id=?").get(input.sourceId ?? null, input.sourceId ?? null) as { n: number }).n };
+    const rows = db.prepare("SELECT * FROM sync_job WHERE NOT EXISTS(SELECT 1 FROM app_setting a WHERE a.key='sync.job.removed.' || sync_job.id) AND (? IS NULL OR source_id=?) ORDER BY created_at DESC,id LIMIT ? OFFSET ?").all(input.sourceId ?? null, input.sourceId ?? null, size, offset) as Job[];
+    return { items: rows.map((row) => this.jobDto(row)), total: (db.prepare("SELECT count(*) AS n FROM sync_job WHERE NOT EXISTS(SELECT 1 FROM app_setting a WHERE a.key='sync.job.removed.' || sync_job.id) AND (? IS NULL OR source_id=?)").get(input.sourceId ?? null, input.sourceId ?? null) as { n: number }).n };
   }
   getJob(id: string): CoreOutput<"sync.job"> { return this.jobDto(this.job(id)); }
   jobFiles(input: CoreInput<"sync.job-files">): CoreOutput<"sync.job-files"> {
@@ -261,8 +261,30 @@ export class SyncRules {
     const libraryFiles = row.preview_id ? this.local.preview(row.preview_id).files : [];
     return { items: rows.map((file) => { const libraryFile = libraryFiles.find((entry) => entry.segments.join("/") === file.relative_path)?.libraryFile; if (libraryFile) return { relativePath: file.relative_path, targetPath: libraryFilePath(libraryFile), size: libraryFile.snapshot.size, state: "IN_LIBRARY" as const, reason: libraryFileReason(libraryFile) }; const plan = file.plan_json ? JSON.parse(file.plan_json) : null, receipt = file.receipt_id ? new SyncReceipts(this.database).get(file.receipt_id) : null; return { relativePath: file.relative_path, targetPath: join(snapshot.targetDirectory.path, "completed", ...(plan?.targetSegments ?? JSON.parse(receipt?.target_segments_json ?? "[]"))), size: plan?.snapshot.size ?? receipt?.size ?? 0, state: file.state, reason: file.failure ?? (file.state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回" : null) }; }), total: (this.database.connection.prepare("SELECT count(*) AS n FROM local_sync_member WHERE job_id=?").get(row.id) as { n: number }).n };
   }
+  removeJob(input: CoreInput<"sync.remove-job">): CoreOutput<"sync.remove-job"> {
+    this.writable();
+    const db = this.database.connection, signature = hash({ operation: "sync.remove-job", input });
+    return db.transaction(() => {
+      const previous = this.previous<CoreOutput<"sync.remove-job">>(input.requestKey, signature); if (previous) return previous;
+      const row = this.job(input.id), hidden = db.prepare("SELECT 1 FROM app_setting WHERE key=?").get(`sync.job.removed.${row.id}`);
+      if (!hidden) {
+        const cloud = row.download_job_id ? this.downloads.get(row.download_job_id) : null;
+        const unfinished = row.state !== "DONE" && row.state !== "CANCELED";
+        // 暂停生效后，已进入异步确认／提交的调度轮次仍须先结束。
+        const pendingStop = unfinished && (!this.get(row.source_id).paused || !!this.flight || this.local.hasActive(row.source_id));
+        const cloudBusy = cloud && ["RUNNING", "VERIFYING", "COMMITTING", "PAUSING", "CANCELLING"].includes(cloud.state);
+        if (pendingStop || cloudBusy) throw conflict(`同步任务 ${row.id} 尚未停止，请先暂停对应来源并等待在途同步停止后重试删除；文件和成功历史保留`);
+        if (unfinished && row.download_job_id) this.downloads.control({ jobId: row.download_job_id, operation: "cancel", requestKey: input.requestKey });
+        if (unfinished) db.prepare("UPDATE sync_job SET state='CANCELED',updated_at=? WHERE id=?").run(new Date(this.now()).toISOString(), row.id);
+        // 仅持久化列表可见性，冻结计划和成功收据仍供幂等、恢复与去重使用。
+        db.prepare("INSERT INTO app_setting(key,value) VALUES(?,?)").run(`sync.job.removed.${row.id}`, new Date(this.now()).toISOString());
+      }
+      const result = { id: row.id }; this.receipt(input.requestKey, signature, result); return result;
+    })();
+  }
   retry(input: CoreInput<"sync.retry">): CoreOutput<"sync.retry"> {
     this.writable(); const row = this.job(input.id), rule = this.get(row.source_id);
+    if (this.database.connection.prepare("SELECT 1 FROM app_setting WHERE key=?").get(`sync.job.removed.${row.id}`)) throw conflict("此同步任务已删除，请从来源重新预览执行；成功历史保留");
     if (rule.paused || rule.deletedAt) throw conflict("请先恢复来源，再重试原同步作业；全局暂停仍独立生效");
     const signature = hash({ operation: "sync.retry", input }), old = this.previous<CoreOutput<"sync.retry">>(input.requestKey, signature); if (old) return old;
     if (row.download_job_id) { this.downloads.control({ jobId: row.download_job_id, operation: "retry", requestKey: input.requestKey }); this.database.connection.prepare("UPDATE sync_job SET state='RUNNING',failure=NULL,updated_at=? WHERE id=?").run(new Date(this.now()).toISOString(), row.id); }
