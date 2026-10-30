@@ -46,6 +46,20 @@ async function fixture() {
   const synchronize = async () => { const draft = sync.save({ id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0, requestKey: randomUUID(), configuration: { name: "无账号同步", type: "local", inputDirectoryId: input.id } }); const configuration = await sync.preview({ ...versions(draft), requestKey: randomUUID() }), active = (await sync.confirm({ previewId: configuration.id, requestKey: randomUUID() })).rule; await advance(); const execution = await sync.preview({ ...versions(active), requestKey: randomUUID(), mode: "execution" }); await sync.confirm({ previewId: execution.id, requestKey: randomUUID(), filesComplete: true }); await sync.tick(); return active; };
   return { grant, folder, db, roots, directories, input, download, movie, tv, secondMovie, movieTarget, tvTarget, pipeline, recognition, sync, downloads, bytes, save, enable, advance, task, synchronize };
 }
+it("媒体目录列表标识当前设置，历史识别目标不冒充默认目录", async () => {
+  const f = await fixture();
+  await f.pipeline.authorizeLibrary({ mediaType: "MOVIE", target: f.movie });
+  await f.pipeline.authorizeLibrary({ mediaType: "TV_SHOW", target: f.tv });
+  const rule = await f.enable(f.save(undefined, { targets: [f.movieTarget, f.tvTarget] }));
+  expect(f.pipeline.libraries()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ targetId: f.movie.id, configuredMediaTypes: ["MOVIE"] }),
+    expect.objectContaining({ targetId: f.tv.id, configuredMediaTypes: ["TV_SHOW"] }),
+  ]));
+  expect(f.pipeline.libraries().some((row) => row.targetId === rule.snapshot!.configuration.targets[0]!.id)).toBe(false);
+  await f.pipeline.authorizeLibrary({ mediaType: "MOVIE", target: f.secondMovie });
+  expect(f.pipeline.libraries().find((row) => row.targetId === f.secondMovie.id)!.configuredMediaTypes).toEqual(["MOVIE"]);
+  expect(f.pipeline.libraries().find((row) => row.targetId === f.movieTarget.id)!.configuredMediaTypes).toBeUndefined();
+});
 it("普通已有目录可以先空目标识别，再混合电影与剧集分库，不要求同步或 Emby", async () => {
   const f = await fixture(); let rule = await f.enable(f.save()); const sourceId = rule.runtime!.sourceId!; await f.pipeline.scan(sourceId); await f.advance(sourceId);
   expect(new CoreService(f.db).getRuntime()).toMatchObject({ sourceCount: 0, recognitionCount: 1 });

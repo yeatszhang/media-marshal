@@ -1346,15 +1346,25 @@ test("独立同步、识别映射与 Emby 路径绑定经真实窗口完成三�
   await application.close(); const config = join(canonical, "cache.json"); await writeFile(config, JSON.stringify({ database: join(directory, "data/desktop.sqlite3") }));
   await new Promise<void>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [resolve("tools/desktop-files/seed-independent-recognition.mjs"), config], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 20000 }, (error) => error ? fail(error) : done()));
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${join(directory, "data")}`], env }); page = await application.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
-  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [input, download, movie, tv]);
+  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [download, input, movie, tv]);
+  await page.evaluate(async () => {
+    const directory = await window.desktopApi.chooseConfigurationDirectory("managed");
+    const defaults = await window.desktopApi.getDefaultDownloadDirectory();
+    await window.desktopApi.setDefaultDownloadDirectory({ directoryId: directory!.id, expectedVersion: defaults.version, requestKey: crypto.randomUUID() });
+  });
   await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "来源", exact: true }).click(); await page.getByRole("button", { name: "添加同步来源", exact: true }).click(); await page.getByLabel("来源名称", { exact: true }).fill("闭环本地同步");
-  await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await page.getByRole("button", { name: "选择本地下载目录", exact: true }).click(); await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
+  await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click(); await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
   const syncPreview = page.getByRole("region", { name: "同步预览", exact: true }); await expect(syncPreview).toContainText("完整范围 · 2 项"); await syncPreview.getByRole("button", { name: "确认配置范围", exact: true }).click(); await expect(syncPreview).toContainText("范围已确认");
   const syncCard = page.getByRole("article", { name: "同步来源 闭环本地同步", exact: true }); await syncCard.getByRole("button", { name: "执行一次", exact: true }).click(); await expect(syncPreview).toContainText("观察中 2");
+  await page.evaluate(async (download) => {
+    const directory = (await window.desktopApi.listConfigurationDirectories()).find((row) => row.path === download)!;
+    const defaults = await window.desktopApi.getDefaultDownloadDirectory();
+    await window.desktopApi.setDefaultDownloadDirectory({ directoryId: directory.id, expectedVersion: defaults.version, requestKey: crypto.randomUUID() });
+    await window.desktopApi.chooseMediaTarget("MOVIE"); await window.desktopApi.chooseMediaTarget("TV_SHOW");
+  }, download);
   await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "识别与映射", exact: true }).click(); await page.getByRole("button", { name: "添加识别规则", exact: true }).click(); await page.getByLabel("识别规则名称").fill("闭环混合分库");
-  const dirs = await page.evaluate(() => window.desktopApi.listConfigurationDirectories()); await page.getByLabel("识别输入目录", { exact: true }).selectOption(dirs.find((row) => row.path === download)!.id);
-  await page.getByRole("button", { name: "添加映射目标目录", exact: true }).click(); await page.getByLabel("目标 1 名称").fill("独立电影库"); await page.getByLabel("目标 1 模板").fill("{title}/{title}.{ext}");
-  await page.getByRole("button", { name: "添加映射目标目录", exact: true }).click(); await page.getByLabel("目标 2 名称").fill("独立剧集库"); await page.getByLabel("目标 2 类型").selectOption("TV_SHOW"); await page.getByLabel("目标 2 模板").fill("{title}/Season {season}/{title}.S{season}E{episode}.{ext}");
+  await expect(page.getByRole("region", { name: "按媒体类型映射", exact: true })).toContainText(movie);
+  await expect(page.getByRole("region", { name: "按媒体类型映射", exact: true })).toContainText(tv);
   await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click(); const recognitionPreview = page.getByRole("region", { name: "识别配置范围预览", exact: true }); await expect(recognitionPreview).toContainText("仅正式同步成果"); await recognitionPreview.getByRole("button", { name: "确认识别配置范围", exact: true }).click(); await expect(recognitionPreview).toContainText("配置已确认");
   expect(await page.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 });
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: "test-results/desktop/independent-recognition-config-minimum.png", fullPage: true });
@@ -1373,7 +1383,7 @@ test("独立同步、识别映射与 Emby 路径绑定经真实窗口完成三�
     await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "设置", exact: true }).click(); await page.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click();
     for (const [path, root] of [[movie, "/server/movies"], [tv, "/server/shows"]]) { await page.getByRole("checkbox", { name: `配置路径转换 · ${path}`, exact: true }).check(); await page.getByRole("textbox", { name: `服务端根 · ${path}`, exact: true }).fill(root!); }
     await page.getByRole("button", { name: "重新发现关联", exact: true }).click(); await page.getByRole("button", { name: "验证并保存（触发扫描）", exact: true }).click(); await expect(page.getByText("连接已验证", { exact: true })).toBeVisible();
-    expect((await page.evaluate(() => window.desktopApi.getEmbyConfiguration()))?.libraries.map((row) => row.targetId).sort()).toEqual(rule.snapshot!.configuration.targets.map((target) => target.id).sort());
+    expect((await page.evaluate(() => window.desktopApi.getEmbyConfiguration()))?.libraries.map((row) => row.targetId).sort()).toEqual(rule.snapshot!.configuration.targets.map((target) => target.directoryId).sort());
     await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "来源", exact: true }).click(); await syncCard.getByRole("button", { name: "执行一次", exact: true }).click();
     // 两段就绪观察均使用生产连续 120 秒；不注入稳定状态或完成收据。
     await expect(syncPreview).toContainText("观察中 0", { timeout: 140000 }); await syncPreview.getByRole("checkbox", { name: "我已确认本次本地文件完整，允许复制此精确清单", exact: true }).check(); await syncPreview.getByRole("button", { name: "确认执行一次", exact: true }).click();

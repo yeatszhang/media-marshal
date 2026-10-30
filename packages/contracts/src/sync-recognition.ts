@@ -71,7 +71,7 @@ export const embyTargetBindingSchema = z.strictObject({
   id, version, targetId: id, targetDirectory: directoryBindingSchema,
   serverId: z.string().regex(/^[a-zA-Z0-9-]{1,128}$/), connectionVersion: version,
   libraryId: z.string().regex(/^[a-zA-Z0-9-]{1,128}$/), libraryRoot: path,
-  mediaType: z.enum(["MOVIE", "TV_SHOW"]),
+  mediaType: z.enum(["AUTO", "MOVIE", "TV_SHOW"]),
   conversion: z.strictObject({ id, version, localRoot: directoryBindingSchema, serverRoot: path, serverPathStyle: z.enum(["posix", "win32"]) }).nullable(),
 });
 export type EmbyTargetBinding = z.infer<typeof embyTargetBindingSchema>;
@@ -90,7 +90,7 @@ export const recognitionRuleSnapshotSchema = z.strictObject({
     const snapshot = targets.get(target.id);
     if (!snapshot || snapshot.directory.id !== target.directoryId) context.addIssue({ code: "custom", path: ["targets"], message: "映射目录与配置不一致" });
     const binding = snapshot?.embyBinding;
-    if (binding && (binding.targetId !== target.id || binding.mediaType !== target.mediaType || binding.targetDirectory.id !== snapshot.directory.id || binding.targetDirectory.version !== snapshot.directory.version || binding.targetDirectory.path !== snapshot.directory.path)) context.addIssue({ code: "custom", path: ["targets"], message: "Emby 关联与目标版本不一致" });
+    if (binding && ((binding.targetId !== target.id && binding.targetId !== target.directoryId) || (binding.mediaType !== "AUTO" && binding.mediaType !== target.mediaType) || binding.targetDirectory.id !== snapshot.directory.id || binding.targetDirectory.version !== snapshot.directory.version || binding.targetDirectory.path !== snapshot.directory.path)) context.addIssue({ code: "custom", path: ["targets"], message: "Emby 关联与目标版本不一致" });
   }
 });
 export type RecognitionRuleSnapshot = z.infer<typeof recognitionRuleSnapshotSchema>;

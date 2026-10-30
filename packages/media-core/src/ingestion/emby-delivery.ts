@@ -256,7 +256,7 @@ export class EmbyDelivery {
       return item.Type === "Episode" && item.ParentIndexNumber === selection.season && item.IndexNumber === selection.episode && (item.IndexNumberEnd ?? item.IndexNumber) === (selection.episodeEnd ?? selection.episode) && !!item.SeriesId && series.get(item.SeriesId)?.Type === "Series" && series.get(item.SeriesId)?.ProviderIds?.Tmdb === String(selection.tmdbId);
     }); return matches.length === 1 ? matches[0]!.Id : null;
   }
-  private deliveryTarget(row: Delivery) { return (JSON.parse(row.plan_json) as DeliveryPlan).logicalTargetId ?? row.target_root_id; }
+  private deliveryTarget(row: Delivery) { return row.binding_json ? bindingSchema.parse(JSON.parse(row.binding_json)).targetId : (JSON.parse(row.plan_json) as DeliveryPlan).logicalTargetId ?? row.target_root_id; }
   private deliveryPath(row: Delivery) {
     const binding = row.binding_json ? bindingSchema.parse(JSON.parse(row.binding_json)) : null;
     if (binding && (binding.targetDirectory.id !== row.target_root_id || binding.targetDirectory.path !== this.ingestion.targets.get(row.target_root_id).grant.path || !contains(binding.targetDirectory.path, row.target_path))) throw new DesktopError("UNSAFE_PATH", "文件与冻结的 Emby 目标不一致，请重新核验目录后仅重试交付");

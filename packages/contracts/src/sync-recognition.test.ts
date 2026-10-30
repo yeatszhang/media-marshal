@@ -83,6 +83,9 @@ describe("同步来源与识别映射的独立契约", () => {
     const embyBinding = { id: randomUUID(), version: 3, targetId: mapping.id, targetDirectory: output, serverId: "fixture-server", connectionVersion: 2, libraryId: "movies", libraryRoot: "/server/media", mediaType: "MOVIE", conversion: { id: randomUUID(), version: 4, localRoot: output, serverRoot: "/server/media", serverPathStyle: "posix" } };
     const snapshot = { ruleId: randomUUID(), ruleVersion: 5, configuration: { name: "识别", targets: [mapping] }, inputDirectory: directory(), inputMode: "managed-completed", defaultDirectoryVersion: 1, targets: [{ targetId: mapping.id, directory: output, embyBinding }] };
     expect(recognitionRuleSnapshotSchema.parse(snapshot).targets[0]?.embyBinding).toMatchObject({ version: 3, connectionVersion: 2, conversion: { version: 4 } });
+    for (const mediaType of ["MOVIE", "AUTO"]) {
+      expect(recognitionRuleSnapshotSchema.safeParse({ ...snapshot, targets: [{ ...snapshot.targets[0], embyBinding: { ...embyBinding, targetId: output.id, mediaType } }] }).success).toBe(true);
+    }
     expect(recognitionRuleSnapshotSchema.safeParse({ ...snapshot, targets: [] }).success).toBe(false);
     expect(recognitionRuleSnapshotSchema.safeParse({ ...snapshot, targets: [snapshot.targets[0], snapshot.targets[0]] }).success).toBe(false);
     for (const patch of [{ targetId: randomUUID() }, { mediaType: "TV_SHOW" }, { targetDirectory: { ...output, version: 2 } }]) expect(recognitionRuleSnapshotSchema.safeParse({ ...snapshot, targets: [{ ...snapshot.targets[0], embyBinding: { ...embyBinding, ...patch } }] }).success).toBe(false);

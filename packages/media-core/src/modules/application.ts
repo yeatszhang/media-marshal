@@ -425,7 +425,7 @@ export function createMediaApplication(
           if (request.action === "media.sources.authorize") return ingestion.authorize(privateCoreActions["media.sources.authorize"].input.parse(payload));
           if (request.action === "media.sources.configure-managed") return ingestion.configureManaged(privateCoreActions["media.sources.configure-managed"].input.parse(payload));
           if (request.action === "media.library.bootstrap") return ingestion.libraryBootstrap();
-          if (request.action === "media.library.authorize") { const input = privateCoreActions["media.library.authorize"].input.parse(payload), previous = ingestion.libraryBootstrap().find((row) => row.mediaType === input.mediaType); const result = await ingestion.authorizeLibrary(input); if (previous && previous.target.id !== input.target.id) delivery.invalidate(); return result; }
+          if (request.action === "media.library.authorize") { const input = privateCoreActions["media.library.authorize"].input.parse(payload), previous = ingestion.libraryBootstrap().find((row) => row.mediaType === input.mediaType); const result = await ingestion.authorizeLibrary(input); await configurationDirectories.authorize(input.target, "media"); if (previous && previous.target.id !== input.target.id) delivery.invalidate(); return result; }
           if (request.action === "media.emby.open-url") return delivery.openUrl((payload as { taskId: string }).taskId);
           if (request.action === "cloud.downloads.reconcile-restored") { downloads.reconcileRestored(); return {}; }
           if (request.action === "cloud.downloads.quiesce") { downloads.quiesce(); return {}; }

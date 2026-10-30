@@ -84,13 +84,17 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await application.evaluate(({ dialog }, paths) => {
     let index = 0;
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog;
-  }, [input, target, media]);
+  }, [target, input, media]);
+  await page.evaluate(async () => {
+    const directory = await window.desktopApi.chooseConfigurationDirectory("managed");
+    const defaults = await window.desktopApi.getDefaultDownloadDirectory();
+    await window.desktopApi.setDefaultDownloadDirectory({ directoryId: directory!.id, expectedVersion: defaults.version, requestKey: crypto.randomUUID() });
+  });
   const nav = page.getByRole("navigation", { name: "主导航" });
   await nav.getByRole("link", { name: "来源", exact: true }).click();
   await page.getByRole("button", { name: "添加同步来源", exact: true }).click();
   await page.getByLabel("来源名称", { exact: true }).fill("布局检查：长路径与有序规则");
   await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click();
-  await page.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
   for (let index = 1; index <= 2; index++) {
     await page.getByRole("button", { name: "添加过滤规则", exact: true }).click();
     await page.getByLabel(`规则 ${index} 表达式`, { exact: true }).fill(index === 1 ? "目录/**/*.mp4" : "**");
@@ -119,12 +123,18 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
 
   await page.getByRole("button", { name: "关闭同步表单", exact: true }).click();
   await page.getByRole("button", { name: "放弃修改", exact: true }).click();
+  await page.evaluate(async (target) => {
+    const directory = (await window.desktopApi.listConfigurationDirectories()).find((row) => row.path === target)!;
+    const defaults = await window.desktopApi.getDefaultDownloadDirectory();
+    await window.desktopApi.setDefaultDownloadDirectory({ directoryId: directory.id, expectedVersion: defaults.version, requestKey: crypto.randomUUID() });
+    await window.desktopApi.chooseMediaTarget("MOVIE");
+  }, target);
   await nav.getByRole("link", { name: "识别与映射", exact: true }).click();
   await page.getByRole("button", { name: "添加识别规则", exact: true }).click();
   await page.getByLabel("识别规则名称").fill("布局检查：电影与剧集映射");
-  const inputId = (await page.evaluate(() => window.desktopApi.listConfigurationDirectories())).find((row) => row.path === input)!.id;
-  await page.getByLabel("识别输入目录", { exact: true }).selectOption(inputId);
-  await page.getByRole("button", { name: "添加映射目标目录", exact: true }).click();
+  await expect(page.getByRole("region", { name: "按媒体类型映射", exact: true })).toContainText(media);
+  await expect(page.getByRole("region", { name: "按媒体类型映射", exact: true })).toContainText("尚未设置媒体库目录");
+  await expect(page.getByRole("button", { name: "添加映射目标目录", exact: true })).toHaveCount(0);
   await page.getByRole("checkbox", { name: "启用有条件自动整理策略", exact: true }).check();
   const recognition = page.getByRole("region", { name: "识别规则表单", exact: true });
   for (const width of [1240, 920]) {

@@ -9,6 +9,7 @@ import { CoreDatabase } from "../infrastructure/database";
 import { CoreService } from "../application/core-service";
 import { ManagedRoots } from "../files/index";
 import { MediaConnections } from "../application/media-connections";
+import { recognitionEmbyBinding } from "./recognition-routing";
 import { EmbyDelivery } from "./emby-delivery";
 import { EmbyClient, type EmbyItem } from "../infrastructure/emby";
 import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
@@ -60,6 +61,24 @@ describe("独立 Emby 交付、合并与核对", () => {
     f.setItems([{ Id: "legacy-item", Type: "Movie", Path: item.path, ProviderIds: { Tmdb: "1" } }]);
     f.jump(30000); await restored.tick(); f.jump(15000); await restored.tick(); expect(f.state(item.taskId).state).toBe("COLLECTED");
     expect(await restored.openUrl(item.taskId)).toContain("legacy-item"); expect((await lstat(item.path)).ino).toBe(before.ino);
+  });
+  it("识别逻辑目标复用设置目录的 Emby 绑定并完成交付，无需再次配置关联", async () => {
+    const f = await fixture({ mediaType: "AUTO" }); await f.configure();
+    const physical = f.pipeline.libraries()[0]!, owner = randomUUID(), logical = randomUUID();
+    const raw = (f.db.connection.prepare("SELECT grant_json FROM media_target_root WHERE id=?").get(physical.targetId) as { grant_json: string }).grant_json;
+    f.db.connection.prepare("INSERT INTO configuration_directory VALUES(?,1,?,?,'media',NULL,'测试')").run(physical.targetId, physical.path, raw);
+    f.db.connection.prepare("INSERT INTO recognition_rule VALUES(?,1,1,0,'{}',0,NULL,'[]','测试','测试')").run(owner);
+    f.db.connection.prepare("INSERT INTO recognition_target_identity VALUES(?,?,?,'MOVIE','电影媒体库')").run(logical, owner, physical.targetId);
+    const binding = recognitionEmbyBinding(f.db, logical)!;
+    expect(binding.targetId).toBe(physical.targetId);
+    expect(binding.targetDirectory.path).toBe(physical.path);
+    const item = await f.add("MOVIE", logical);
+    f.db.connection.prepare("UPDATE emby_delivery SET binding_json=? WHERE task_id=?").run(JSON.stringify(binding), item.taskId);
+    f.setItems([{ Id: "settings-movie", Type: "Movie", Path: item.path, ProviderIds: { Tmdb: "1" } }]);
+    f.jump(30000); await f.delivery.tick(); f.jump(15000); await f.delivery.tick();
+    expect(f.state(item.taskId).state).toBe("COLLECTED");
+    expect(await f.delivery.openUrl(item.taskId)).toContain("id=settings-movie");
+    expect(f.delivery.configuration()!.libraries).toHaveLength(1);
   });
   it("同一本机目录下的电影和剧集逻辑 target 分别绑定并按冻结逻辑身份交付", async () => {
     const f = await fixture(), physical = f.pipeline.libraries()[0]!, movieTarget = randomUUID(), tvTarget = randomUUID();

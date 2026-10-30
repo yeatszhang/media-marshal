@@ -19,6 +19,7 @@ function fixture() {
   const input = { id: crypto.randomUUID(), version: 1, path: "/已有输入 中文", kind: "ordinary" as const, available: true }, media = { ...input, id: crypto.randomUUID(), path: "/电影媒体目标 中文 长路径".repeat(10), kind: "media" as const }, rows = new Map<string, RecognitionRule>(), previews = new Map<string, CoreOutput<"recognition.get-preview">>(); const stamp = new Date().toISOString(); let paused = false;
   const binding = (value: typeof input | typeof media) => ({ id: value.id, version: value.version, path: value.path });
   const api = {
+    listMediaLibraries: vi.fn<DesktopApi["listMediaLibraries"]>(async () => [{ targetId: media.id, mediaType: "MOVIE", configuredMediaTypes: ["MOVIE"], path: media.path, available: true }, { targetId: input.id, mediaType: "TV_SHOW", configuredMediaTypes: ["TV_SHOW"], path: "/剧集库", available: true }]),
     listRecognitionRules: vi.fn(async () => structuredClone([...rows.values()])), listConfigurationDirectories: vi.fn(async () => [input, media]), getDefaultDownloadDirectory: vi.fn(async () => ({ version: 1, directory: binding(input) })), getOrganizePause: vi.fn(async () => ({ paused })), setOrganizePause: vi.fn(async (value: { paused: boolean }) => ({ paused: paused = value.paused })),
     chooseConfigurationDirectory: vi.fn(async (kind: string) => kind === "ordinary" ? input : media), listIngestionCandidates: vi.fn(async () => ({ items: [], total: 0 })), listIngestionScans: vi.fn(async () => ({ items: [], total: 0 })),
     saveRecognitionRule: vi.fn<DesktopApi["saveRecognitionRule"]>(async (value) => { const configuration = recognitionRuleConfigurationSchema.parse(value.configuration), old = rows.get(value.id); const row: RecognitionRule = { id: value.id, version: old?.version ?? 0, draftRevision: value.expectedDraftRevision + 1, lifecycleRevision: old?.lifecycleRevision ?? 0, draft: configuration, snapshot: old?.snapshot ?? null, paused: old?.paused ?? true, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: old?.runtime ?? { claimed: false, sourceId: null, failure: null, unavailableInputs: 0, automaticAuthorized: false } }; rows.set(row.id, row); return structuredClone(row); }),
@@ -52,10 +53,50 @@ it("下载目录未设置时展示设置入口，配置错误保留草稿", asyn
   await click("保存识别草稿并预览"); expect(f.rows.size).toBe(1); expect(f.api.confirmRecognitionRule).not.toHaveBeenCalled();
 });
 
-it("电影／剧集多个目标和各自模板进入范围预览，改变类型生成新身份", async () => {
-  const f = await mount(); await click("添加识别规则"); await fill("识别规则名称", "混合输入分库"); await click("添加映射目标目录"); await fill("目标 1 名称", "电影主库"); await fill("目标 1 模板", "{title}/{title}.{ext}"); await click("添加映射目标目录"); const original = document.querySelector<HTMLSelectElement>('[aria-label="目标 2 类型"]')!.value; expect(original).toBe("MOVIE"); await fill("目标 2 类型", "TV_SHOW"); await fill("目标 2 名称", "剧集主库"); await click("保存识别草稿并预览");
-  expect(f.api.saveRecognitionRule.mock.calls[0]![0].configuration).toMatchObject({ targets: [{ name: "电影主库", mediaType: "MOVIE", template: "{title}/{title}.{ext}" }, { name: "剧集主库", mediaType: "TV_SHOW" }] }); expect(f.element.textContent).toContain("仅正式同步成果"); expect(f.element.textContent).toContain("电影主库 · 电影"); expect(f.element.textContent).toContain("剧集主库 · 剧集"); expect(f.api.confirmRecognitionRule).not.toHaveBeenCalled();
-  await click("编辑并预览识别规则"); await fill("识别规则名称", "尚未保存的新名称"); await act(async () => { await f.app.container.get(RecognitionViewModel).refresh(); }); expect(document.querySelector<HTMLInputElement>('[aria-label="识别规则名称"]')!.value).toBe("尚未保存的新名称");
+it("只读展示设置页电影和剧集目录，保存与预览直接使用同一配置", async () => {
+  const f = await mount(); await click("添加识别规则"); await fill("识别规则名称", "混合输入分库");
+  const mapping = document.querySelector('[aria-label="按媒体类型映射"]')!;
+  expect(mapping.textContent).toContain(f.media.path); expect(mapping.textContent).toContain("/剧集库");
+  expect(mapping.querySelector("input,select,button")).toBeNull();
+  await click("保存识别草稿并预览");
+  expect(f.api.saveRecognitionRule.mock.calls[0]![0].configuration.targets).toEqual([
+    expect.objectContaining({ name: "电影媒体库", mediaType: "MOVIE", directoryId: f.media.id, template: null }),
+    expect.objectContaining({ name: "剧集媒体库", mediaType: "TV_SHOW", directoryId: f.input.id, template: null }),
+  ]);
+  expect(f.element.textContent).toContain("电影媒体库 · 电影"); expect(f.element.textContent).toContain("剧集媒体库 · 剧集");
+  expect(f.api.chooseConfigurationDirectory).not.toHaveBeenCalled(); expect(f.api.confirmRecognitionRule).not.toHaveBeenCalled();
+  const targets = f.api.saveRecognitionRule.mock.calls[0]![0].configuration.targets;
+  await click("编辑并预览识别规则"); await fill("识别规则名称", "尚未保存的新名称");
+  await act(async () => { await f.app.container.get(RecognitionViewModel).refresh(); });
+  expect(document.querySelector<HTMLInputElement>('[aria-label="识别规则名称"]')!.value).toBe("尚未保存的新名称");
+  await click("保存识别草稿并预览"); expect(f.api.saveRecognitionRule.mock.calls.at(-1)![0].configuration.targets).toEqual(targets);
+});
+it("范围预览失败后重试复用目标身份，避免重复创建相同设置目标", async () => {
+  const f = await mount(); await click("添加识别规则"); await fill("识别规则名称", "重试识别预览");
+  f.api.previewRecognitionRule.mockRejectedValueOnce(new Error("目录暂不可用，请恢复磁盘后重新预览"));
+  await click("保存识别草稿并预览");
+  const targets = f.api.saveRecognitionRule.mock.calls[0]![0].configuration.targets;
+  await click("保存识别草稿并预览");
+  expect(f.api.saveRecognitionRule.mock.calls.at(-1)![0].configuration.targets).toEqual(targets);
+  expect(f.element.textContent).toContain("待确认范围");
+});
+it("设置未配置目标时展示缺失提示，不把历史目标当作当前设置", async () => {
+  const f = await mount("/recognition", (f) => { f.api.listMediaLibraries.mockResolvedValue([{ targetId: f.media.id, mediaType: "MOVIE", path: f.media.path, available: true }]); });
+  await click("添加识别规则"); await fill("识别规则名称", "尚无默认目标");
+  expect(document.querySelector('[aria-label="按媒体类型映射"]')!.textContent).toContain("尚未设置媒体库目录");
+  await click("保存识别草稿并预览"); expect(f.api.saveRecognitionRule.mock.calls[0]![0].configuration.targets).toEqual([]);
+});
+it("编辑期间设置目录变更使用新目录，查询失败不能保存旧映射", async () => {
+  const f = await mount(); await click("添加识别规则"); await fill("识别规则名称", "跟随设置");
+  f.api.listMediaLibraries.mockResolvedValue([{ targetId: f.input.id, mediaType: "MOVIE", configuredMediaTypes: ["MOVIE"], path: "/新的电影库", available: false }]);
+  await act(async () => { await f.app.container.get(RecognitionViewModel).refresh(); });
+  expect(document.querySelector('[aria-label="按媒体类型映射"]')!.textContent).toContain("/新的电影库（原目录不可用");
+  f.api.listMediaLibraries.mockRejectedValueOnce(new Error("媒体库目录读取失败"));
+  await act(async () => { await f.app.container.get(RecognitionViewModel).refresh(); });
+  expect(button("保存识别草稿并预览").disabled).toBe(true);
+  await act(async () => { await f.app.container.get(RecognitionViewModel).refresh(); });
+  await click("保存识别草稿并预览");
+  expect(f.api.saveRecognitionRule.mock.calls[0]![0].configuration.targets).toEqual([expect.objectContaining({ directoryId: f.input.id, mediaType: "MOVIE" })]);
 });
 it("首次样本授权需要明确勾选且绑定当前版本，普通查询与重载不重放授权", async () => {
   const id = crypto.randomUUID(), sample = crypto.randomUUID(); const f = await mount(`/recognition?rule=${id}&sample=${sample}`, (f) => { const configuration = recognitionRuleConfigurationSchema.parse({ name: "有条件自动", input: { kind: "directory", directoryId: f.input.id }, targets: [], automatic: true }); const stamp = new Date().toISOString(); f.rows.set(id, { id, version: 3, draftRevision: 4, lifecycleRevision: 0, draft: configuration, snapshot: { ruleId: id, ruleVersion: 3, configuration, inputDirectory: { id: f.input.id, version: 1, path: f.input.path }, inputMode: "managed-completed", defaultDirectoryVersion: 1, targets: [] }, paused: false, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: true, sourceId: crypto.randomUUID(), unavailableInputs: 0, failure: null, automaticAuthorized: false } }); });

@@ -466,7 +466,12 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const targets = new Map<string, CoreOutput<"media.libraries">[number]>();
     for (const row of rows) { const previous = targets.get(row.id); targets.set(row.id, { targetId: row.id, mediaType: previous && previous.mediaType !== row.media_type ? "AUTO" : row.media_type, path: managedRootGrantSchema.parse(JSON.parse(row.grant_json)).path, available: !!row.available }); }
     const logical = this.database.connection.prepare("SELECT x.id,x.directory_id,x.media_type,x.name,d.version,d.path,t.available FROM recognition_target_identity x JOIN configuration_directory d ON d.id=x.directory_id LEFT JOIN media_target_root t ON t.id=d.id WHERE EXISTS(SELECT 1 FROM recognition_rule r JOIN recognition_rule_version v ON v.rule_id=r.id AND v.version=r.version,json_each(v.snapshot_json,'$.configuration.targets') j WHERE r.deleted_at IS NULL AND json_extract(j.value,'$.id')=x.id) OR EXISTS(SELECT 1 FROM ingestion_operation o WHERE json_extract(o.plan_json,'$.logicalTargetId')=x.id) OR EXISTS(SELECT 1 FROM media_correction_operation o WHERE json_extract(o.plan_json,'$.logicalTargetId')=x.id) ORDER BY x.id LIMIT 2000").all() as { id: string; directory_id: string; media_type: "MOVIE" | "TV_SHOW"; name: string; version: number; path: string; available: number | null }[];
-    for (const target of logical) targets.set(target.id, { targetId: target.id, directoryId: target.directory_id, directoryVersion: target.version, name: target.name, mediaType: target.media_type, path: target.path, available: !!target.available });
+    const settingsRoutes = this.libraryBootstrap();
+    for (const target of logical) { if (settingsRoutes.some((route) => route.target.id === target.directory_id && route.mediaType === target.media_type)) continue; targets.set(target.id, { targetId: target.id, directoryId: target.directory_id, directoryVersion: target.version, name: target.name, mediaType: target.media_type, path: target.path, available: !!target.available }); }
+    for (const route of settingsRoutes) {
+      const target = targets.get(route.target.id);
+      if (target) target.configuredMediaTypes = [...(target.configuredMediaTypes ?? []), route.mediaType];
+    }
     return [...targets.values()];
   }
   private targetFor(source: SourceRow, type: "MOVIE" | "TV_SHOW", targetId?: string) {
