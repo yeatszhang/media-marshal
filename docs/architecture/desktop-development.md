@@ -26,6 +26,8 @@ npm run test:desktop
 npm run desktop:pack
 ```
 
+`npm run desktop:dev` 默认启用 Main／Preload 文件监听：Main 改动后重新构建并重启 Electron，Preload 改动后重新构建并整页刷新 Renderer，避免界面调用新方法时仍使用旧桥接。若修改启动脚本，已运行的开发进程须退出后重新启动；仅刷新界面不会更新启动参数。
+
 ### E2E 前台与后台模式
 
 `npm run test:desktop` 默认使用后台模式。它保留真实 Electron 主窗口、登录子窗口、DOM 和截图能力，但窗口不显示、不请求焦点、不出现在任务栏或 macOS Dock；隐藏窗口关闭后台节流。测试仍使用各自隔离的用户数据目录，不连接正在使用的开发实例。
