@@ -169,6 +169,10 @@
 .sync-filter-list .sync-check { align-self: center; }
 .sync-files article { padding: 14px 0; border-bottom: 1px solid var(--border); }
 .sync-files article > span { display: block; color: var(--muted-foreground); margin-top: 6px; font-size: 13px; }
+.sync-conflict, .sync-conflict-count { color: #903d30; font-weight: 650; }
+.sync-conflict-count { display: inline-block; padding: 2px 8px; border: 1px solid #ebc6be; border-radius: 5px; background: #fff3f1; }
+.sync-files article.sync-file-blocked { padding: 14px; border: 1px solid #ebc6be; border-radius: 8px; background: #fff3f1; }
+.sync-file-blocked > strong { color: #903d30; }
 .sync-remote-dialog { width: min(780px, calc(100vw - 40px)); }
 .sync-remote-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .sync-remote-list > div > span { min-width: 0; overflow-wrap: anywhere; }

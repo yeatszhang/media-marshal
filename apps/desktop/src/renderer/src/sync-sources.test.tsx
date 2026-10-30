@@ -31,7 +31,7 @@ function fixture() {
     listSyncSources: vi.fn(async () => structuredClone([...rows.values()])), listConfigurationDirectories: vi.fn(async () => [input, target]), getDefaultDownloadDirectory: vi.fn(async () => ({ version: 1, directory: binding(target) })), listCloudAccounts: vi.fn(async () => [{ ...account }]), listSyncJobs: vi.fn(async () => ({ items: [], total: 0 })), getCloudDownloadPause: vi.fn(async () => ({ paused: false })), chooseConfigurationDirectory: vi.fn(async (kind: string) => kind === "ordinary" ? input : target),
     saveSyncSource: vi.fn<DesktopApi["saveSyncSource"]>(async (value) => { const configuration = syncSourceConfigurationSchema.parse(value.configuration), old = rows.get(value.id); const row: SyncSourceRule = { id: value.id, version: old?.version ?? 0, draftRevision: value.expectedDraftRevision + 1, lifecycleRevision: 0, draft: configuration, snapshot: old?.snapshot ?? null, paused: true, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: false, nextScanAt: null, failure: null } }; rows.set(row.id, row); return structuredClone(row); }),
     previewSyncSource: vi.fn<DesktopApi["previewSyncSource"]>(async (value) => { const row = rows.get(value.id)!; if (!(await api.getDefaultDownloadDirectory()).directory) throw new Error("尚未设置默认下载目录，请选择具体目录"); const preview: CoreOutput<"sync.preview"> = { id: crypto.randomUUID(), sourceId: row.id, mode: value.mode ?? "configuration", state: "READY", snapshot: { sourceId: row.id, sourceVersion: row.version + 1, configuration: row.draft, inputDirectory: row.draft.type === "local" ? binding(input) : null, targetDirectory: binding(target), defaultDirectoryVersion: 1 }, expiresAt: Date.now() + 900000, files: 1, bytes: 100, complete: true, observing: 0, conflicts: 0, reused: 0, removed: 0, force: false, failure: null, download: null, jobId: null }; previews.set(preview.id, preview); return structuredClone(preview); }),
-    getSyncPreview: vi.fn<DesktopApi["getSyncPreview"]>(async (id) => structuredClone(previews.get(id)!)), listSyncPreviewFiles: vi.fn(async () => ({ items: [{ relativePath: "原片.mp4", targetPath: target.path + "/completed/原片.mp4", size: 100, state: "READY" as const, reason: null }], total: 1 })),
+    getSyncPreview: vi.fn<DesktopApi["getSyncPreview"]>(async (id) => structuredClone(previews.get(id)!)), listSyncPreviewFiles: vi.fn<DesktopApi["listSyncPreviewFiles"]>(async () => ({ items: [{ relativePath: "原片.mp4", targetPath: target.path + "/completed/原片.mp4", size: 100, state: "READY" as const, reason: null }], total: 1 })),
     confirmSyncSource: vi.fn<DesktopApi["confirmSyncSource"]>(async (value) => { const preview = previews.get(value.previewId)!, row = rows.get(preview.sourceId)!; row.snapshot = preview.snapshot; row.version = preview.snapshot.sourceVersion; row.paused = false; row.runtime!.claimed = true; preview.state = "APPLIED"; return { rule: structuredClone(row), jobId: null }; }), controlSyncSource: vi.fn(), setCloudDownloadPause: vi.fn(), retrySyncJob: vi.fn(),
     listRemote: vi.fn(async () => ({ items: [directory], nextCursor: null, total: 1, complete: true })), statRemote: vi.fn(async () => directory),
   };
@@ -46,6 +46,41 @@ it("本地来源没有媒体或整理开关；取消原生目录不改变草稿�
 });
 it("缺默认目录时保留已保存草稿且不确认、不执行", async () => {
   const f = await mount("/sources", (f) => f.api.getDefaultDownloadDirectory.mockResolvedValue({ version: 0, directory: null } as never)); await click("添加同步来源"); await fill("来源名称", "等默认目录"); await click("选择本地输入目录"); await click("保存草稿并预览"); expect(document.body.textContent).toContain("尚未设置默认下载目录"); expect(f.rows.size).toBe(1); expect(f.api.confirmSyncSource).not.toHaveBeenCalled();
+});
+it("完整预览仍有冲突时高亮计数和文件，翻页保留按钮拦截原因，修复后恢复确认", async () => {
+  let conflicted = true;
+  const f = await mount("/sources", (f) => {
+    f.api.getSyncPreview.mockImplementation(async (id) => ({ ...structuredClone(f.previews.get(id)!), files: 26, state: conflicted ? "BLOCKED" : "READY", conflicts: conflicted ? 1 : 0 }));
+    f.api.listSyncPreviewFiles.mockImplementation(async (query?: { page?: number }) => ({ total: 26, items: [{ relativePath: query?.page === 2 ? "其他文件.mp4" : "冲突原片.mp4", targetPath: f.target.path + "/completed/原片.mp4", size: 100, state: (conflicted && query?.page !== 2 ? "CONFLICT" : "READY") as "CONFLICT" | "READY", reason: conflicted && query?.page !== 2 ? "目标文件已存在，请核对目标路径" : null }] }));
+  });
+  await click("添加同步来源"); await fill("来源名称", "冲突反馈"); await click("选择本地输入目录"); await click("保存草稿并预览");
+  expect(document.querySelector(".sync-conflict-count")?.textContent).toBe("冲突 1");
+  expect(document.querySelector(".sync-file-blocked")?.textContent).toContain("冲突原片.mp4");
+  expect(document.querySelector(".sync-file-blocked")?.textContent).toContain("目标文件已存在，请核对目标路径");
+  const confirm = button("确认配置范围");
+  expect(confirm.disabled).toBe(true);
+  const reason = () => document.getElementById(confirm.getAttribute("aria-describedby")!);
+  expect(reason()?.textContent).toContain("有 1 项冲突或目录不可用");
+  expect(reason()?.textContent).toContain("处理后重新预览");
+  await click("下一页");
+  expect(document.querySelector(".sync-file-blocked")).toBeNull();
+  expect(confirm.disabled).toBe(true); expect(reason()?.textContent).toContain("有 1 项冲突");
+  await click("确认配置范围"); expect(f.api.confirmSyncSource).not.toHaveBeenCalled();
+  conflicted = false;
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 2100)); });
+  expect(confirm.disabled).toBe(false); expect(confirm.hasAttribute("aria-describedby")).toBe(false);
+  expect(document.querySelector(".sync-conflict-count")).toBeNull();
+});
+it.each([
+  ["EXPIRED", true, null, "预览已过期或配置已变化"],
+  ["BUILDING", false, null, "正在扫描文件范围"],
+  ["BLOCKED", true, "文件范围不能启用周期扫描", "暂时无法确认：文件范围不能启用周期扫描"],
+  ["BLOCKED", false, null, "文件范围尚未完整"],
+] as const)("预览 %s 时在按钮旁解释禁用原因", async (state, complete, failure, reason) => {
+  await mount("/sources", (f) => f.api.getSyncPreview.mockImplementation(async (id) => ({ ...structuredClone(f.previews.get(id)!), state, complete, failure })));
+  await click("添加同步来源"); await fill("来源名称", "状态反馈"); await click("选择本地输入目录"); await click("保存草稿并预览");
+  const confirm = button("确认配置范围"); expect(confirm.disabled).toBe(true);
+  expect(document.getElementById(confirm.getAttribute("aria-describedby")!)?.textContent).toContain(reason);
 });
 it("执行一次必须单独核对本地完整性，确认传入冻结预览而不重存规则", async () => {
   const f = await mount(); await click("添加同步来源"); await fill("来源名称", "人工核对完整性"); await click("选择本地输入目录"); await click("保存草稿并预览"); await click("确认配置范围"); await click("执行一次");
