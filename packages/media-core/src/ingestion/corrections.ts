@@ -14,6 +14,7 @@ import type { IngestionPipeline } from "./pipeline.js";
 import { assertMediaCoordinates } from "./coordinates.js";
 import { previewFailure } from "./preview-errors.js";
 import { validateMediaSelection } from "./selection-validation.js";
+import { recognitionEmbyBinding } from "./recognition-routing.js";
 import { CorrectionBatches, type BatchConfirmationMember } from "./correction-batches.js";
 import { CorrectionPreparations, type PreparationProgress } from "./correction-preparations.js";
 import { correctionConflict, correctionHash, correctionManifest, correctionReceipt, correctionTask, collectCorrectionAssets, assertCorrectionTarget, type CorrectionPlan, type CorrectionAsset } from "./correction-assets.js";
@@ -70,6 +71,7 @@ export class Corrections {
   private storedFiles(id: string) { return this.database.connection.prepare("SELECT * FROM media_file_relocation WHERE item_id=? ORDER BY ordinal,id").all(id) as RelocationRow[]; }
   private row(id: string) { const row = this.database.connection.prepare(operationQuery + " WHERE o.id=?").get(id) as OperationRow | undefined; if (!row) throw correctionConflict("修正作业不存在，请刷新作业列表"); return row; }
   private target(id: string, original?: CorrectionPlan["target"]) {
+    id = (this.database.connection.prepare("SELECT directory_id FROM recognition_target_identity WHERE id=?").get(id) as { directory_id: string } | undefined)?.directory_id ?? id;
     const stored = this.database.connection.prepare("SELECT grant_json,available FROM media_target_root WHERE id=?").get(id) as { grant_json: string; available: number } | undefined;
     if (!stored?.available) throw new DesktopError("LOCAL_UNAVAILABLE", "修正媒体目标尚未恢复授权，请连接原磁盘并核对目录", true);
     const grant = managedRootGrantSchema.parse(JSON.parse(stored.grant_json)), root = this.ingestion.targets.get(id);
@@ -106,11 +108,14 @@ export class Corrections {
       const { selection, metadata, episodeTitle } = await validateMediaSelection(this.database, this.connections.tmdb, input.selection, { taskId: input.taskId, fileName: receipt.plan.targetSegments.at(-1)!, signal });
       const parsed = receipt.plan.parsed, variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(receipt.plan.targetSegments.at(-1)!).slice(1) };
       const template = input.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}"), segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments);
-      const assets = await collectCorrectionAssets(receipt, target, segments, input.includeAccessories !== false, signal, progress), plan: CorrectionPlan = { taskId: input.taskId, originalContext: receipt.context, previewGeneration: this.previewGeneration, connectionVersion, target: target.grant, targetSegments: segments, template, selection, metadata, parsed, includeAccessories: input.includeAccessories !== false, ...assets };
+      const candidates = this.ingestion.libraries().filter((value) => value.directoryId === target.grant.id && value.mediaType === selection.mediaType);
+      const selected = candidates.find((value) => value.targetId === input.targetId || value.targetId === input.selection.targetId) ?? candidates.find((value) => value.targetId === receipt.plan.logicalTargetId) ?? (candidates.length === 1 ? candidates[0] : undefined);
+      const logical = selected ? { logicalTargetId: selected.targetId, embyBinding: recognitionEmbyBinding(this.database, selected.targetId) } : {};
+      const assets = await collectCorrectionAssets(receipt, target, segments, input.includeAccessories !== false, signal, progress), plan: CorrectionPlan = { ...logical, taskId: input.taskId, originalContext: receipt.context, previewGeneration: this.previewGeneration, connectionVersion, target: target.grant, targetSegments: segments, template, selection, metadata, parsed, includeAccessories: input.includeAccessories !== false, ...assets };
       await this.checkFiles(plan, target); signal.throwIfAborted(); this.checkContext(plan); const id = randomUUID(); db.prepare("INSERT INTO media_correction_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(id, input.requestKey, input.taskId, hash, JSON.stringify(plan), this.now() + 600000); return this.getPreview(id);
     });
   }
-  private checkContext(plan: CorrectionPlan) { this.writable(); if (plan.previewGeneration !== this.previewGeneration || this.connections.version !== plan.connectionVersion || correctionReceipt(this.database, this.ingestion.targets, plan.taskId).context !== plan.originalContext) throw correctionConflict("任务、文件收据、连接或核心已变化，请重新预览修正"); assertMediaCoordinates(this.database, plan.selection, plan.taskId, plan.files[0]!.from.segments.at(-1)!); }
+  private checkContext(plan: CorrectionPlan) { this.writable(); if (plan.logicalTargetId && JSON.stringify(plan.embyBinding ?? null) !== JSON.stringify(recognitionEmbyBinding(this.database, plan.logicalTargetId))) throw correctionConflict("目标 Emby 关联已有变化，请重新预览修正"); if (plan.previewGeneration !== this.previewGeneration || this.connections.version !== plan.connectionVersion || correctionReceipt(this.database, this.ingestion.targets, plan.taskId).context !== plan.originalContext) throw correctionConflict("任务、文件收据、连接或核心已变化，请重新预览修正"); assertMediaCoordinates(this.database, plan.selection, plan.taskId, plan.files[0]!.from.segments.at(-1)!); }
   private async checkFiles(plan: CorrectionPlan, target: ManagedRoot) {
     let bytes = 0;
     for (const file of plan.files) {
@@ -251,7 +256,7 @@ export class Corrections {
       db.prepare("UPDATE ingestion_operation SET target_slot='history:'||id WHERE task_id=?").run(row.original_task_id); db.prepare("UPDATE media_correction_operation SET target_slot='history:'||id WHERE new_task_id=?").run(row.original_task_id);
       db.prepare("UPDATE media_correction_operation SET phase='RECORDED',target_slot=?,evidence_json=?,failure=NULL,updated_at=? WHERE id=?").run(this.ingestion.targets.get(plan.target.id).slotKey(plan.targetSegments), JSON.stringify(evidence), time, row.id); db.prepare("UPDATE correction_item SET state='RECORDED' WHERE id=?").run(row.id); executor.releaseRecorded(row.id); db.prepare("UPDATE desktop_job SET state='DONE',updated_at=? WHERE id=?").run(time, row.job_id);
       const connection = db.prepare("SELECT id,version FROM emby_connection ORDER BY verified_at DESC,id LIMIT 1").get() as { id: string; version: number } | undefined;
-      db.prepare("INSERT INTO emby_delivery(task_id,correction_id,connection_id,connection_version,state,next_attempt_at,updated_at) VALUES(?,?,?,?,'REFRESH_PENDING',?,?)").run(row.new_task_id, row.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, time);
+      db.prepare("INSERT INTO emby_delivery(task_id,correction_id,connection_id,connection_version,state,next_attempt_at,updated_at,binding_json) VALUES(?,?,?,?,'REFRESH_PENDING',?,?,?)").run(row.new_task_id, row.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, time, plan.embyBinding ? JSON.stringify(plan.embyBinding) : null);
     })();
   }
   async close() { this.closed = true; this.lifetime.abort(); clearInterval(this.timer); this.interrupt(); await this.batches.close(); await this.preparations.close(); await Promise.allSettled([...this.previews.values()].map((value) => value.flight)); await this.flight?.catch(() => {}); await this.files?.close(); }

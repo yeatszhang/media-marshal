@@ -1,5 +1,8 @@
 # 独立识别配置与多目标映射设计
 
+2026-10-28 产品决策更新：逐规则下载目标／识别输入覆盖及识别客户端选择由后续变更 [unify-local-download-directory](../unify-local-download-directory/proposal.md) 收敛到设置页唯一目录。以下为本变更已完成时的设计记录。
+
+
 ## 上下文
 
 复用原 21.1／21.2 契约与迁移。普通目录入口可先实现；受管同步联调依赖 finish-source-sync-rules，Emby 自动路径关联由 add-emby-target-path-binding 承接。

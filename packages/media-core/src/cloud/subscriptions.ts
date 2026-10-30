@@ -5,6 +5,7 @@ import type { RemoteCatalog } from "./catalog.js";
 import type { CloudRoots } from "./roots.js";
 import type { CloudDownloads } from "./downloads.js";
 import type { PreviewSnapshot, PreviewRow } from "./previews.js";
+import { SyncReceipts } from "../sources/sync-receipts.js";
 
 interface SubscriptionRow {
   id: string; account_id: string; remote_root_ref: string; target_root_id: string; filters_json: string; interval_seconds: number;
@@ -53,12 +54,20 @@ export class CloudSubscriptions {
     const owner = this.database.connection.prepare("SELECT s.paused,s.review_required,json_extract(v.configuration_json,'$.periodic.enabled') AS periodic FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.subscription_id=?").get(id) as { paused: number; review_required: number; periodic: number } | undefined;
     return !owner || (!owner.paused && !owner.review_required && !!owner.periodic);
   }
+  private assertHistoryConfirmed(snapshot: PreviewSnapshot, accountId: string, targetId: string) {
+    const receipts = new SyncReceipts(this.database, this.now);
+    for (const item of snapshot.items.filter((item) => item.historyPending)) {
+      const receipt = item.source.expectedVersion && receipts.findCloud(accountId, item.source.remoteRef, item.source.expectedVersion, targetId, item.targetPathKey, snapshot.binding.bindingId);
+      if (!receipt || receipt.id !== item.receiptId) throw new CloudError("CONFLICT");
+    }
+  }
   configure(input: CloudInput<"cloud.subscriptions.configure">): CloudSubscription {
     if (this.closed) throw new CloudError("INTERRUPTED");
     const db = this.database.connection, interval = input.intervalSeconds ?? 900, hash = signature({ operation: "configure", subscriptionId: input.subscriptionId ?? null, configurationVersion: input.configurationVersion ?? null, previewId: input.previewId, interval });
     const repeated = this.previous(input.requestKey, hash); if (repeated) return this.dto(this.row(repeated));
     if (input.subscriptionId && db.prepare("SELECT 1 FROM source_rule_version WHERE subscription_id=? LIMIT 1").get(input.subscriptionId)) throw new CloudError("CONFLICT");
     if (db.prepare("SELECT 1 FROM source_rule_preview WHERE download_preview_id=?").get(input.previewId)) throw new CloudError("CONFLICT");
+    if (db.prepare("SELECT 1 FROM sync_configuration_preview WHERE download_preview_id=?").get(input.previewId)) throw new CloudError("CONFLICT");
     const preview = this.downloads.previews.row(input.previewId);
     if (!preview) throw new CloudError("REMOTE_NOT_FOUND");
     const snapshot: PreviewSnapshot = JSON.parse(preview.snapshot_json), old = input.subscriptionId ? this.row(input.subscriptionId) : null;
@@ -69,6 +78,7 @@ export class CloudSubscriptions {
     const id = old?.id ?? randomUUID(), version = (old?.configuration_version ?? 0) + 1, now = new Date(this.now()).toISOString();
     let abandoned: string[] = [];
     db.transaction(() => {
+      this.assertHistoryConfirmed(snapshot, preview.account_id, preview.target_root_id);
       if (old) abandoned = this.abandon(id, undefined, false);
       db.prepare("INSERT INTO cloud_subscription(id,account_id,remote_root_ref,target_root_id,filters_json,interval_seconds,enabled,configuration_version,confirmed_preview_id,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET remote_root_ref=excluded.remote_root_ref,target_root_id=excluded.target_root_id,filters_json=excluded.filters_json,interval_seconds=excluded.interval_seconds,enabled=1,configuration_version=excluded.configuration_version,confirmed_preview_id=excluded.confirmed_preview_id,updated_at=excluded.updated_at")
         .run(id, preview.account_id, preview.remote_root_ref, preview.target_root_id, JSON.stringify(cloudFiltersSchema.parse(snapshot.filters)), interval, version, preview.id, now, now);
@@ -102,6 +112,7 @@ export class CloudSubscriptions {
       commit: () => {
         if (!db.inTransaction) throw new Error("周期配置必须与来源在同一事务提交");
         if (this.closed || preview.expires_at <= new Date(this.now()).toISOString()) throw new CloudError("INTERRUPTED");
+        this.assertHistoryConfirmed(snapshot, preview.account_id, preview.target_root_id);
         const now = new Date(this.now()).toISOString();
         if (old) {
           if (this.row(old.id).configuration_version !== old.configuration_version) throw new CloudError("CONFLICT");
@@ -203,6 +214,7 @@ export class CloudSubscriptions {
     if (full.state === "BUILDING") return;
     if (snapshot.failure || !snapshot.complete || full.state === "EXPIRED") { this.fail(scan, row, snapshot.failure ? new CloudError(snapshot.failure.code, snapshot.failure.retryAfterSeconds) : new CloudError("INTERRUPTED"), summary); return; }
     try {
+      this.assertHistoryConfirmed(snapshot, row.account_id, row.target_root_id);
       if (!scan.execution_preview_id) {
         const needed = snapshot.items.filter((item) => {
           if (item.reuseItemId || item.receiptId) return false;
@@ -246,7 +258,7 @@ export class CloudSubscriptions {
         this.createScan(row.id, row.account_id, row.remote_root_ref, row.configuration_version);
         db.prepare("UPDATE cloud_subscription_runtime SET state='SCANNING' WHERE subscription_id=?").run(row.id);
       })();
-      db.prepare("DELETE FROM cloud_preview WHERE expires_at<=? AND NOT EXISTS(SELECT 1 FROM source_rule_execution_preview e WHERE e.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_run r WHERE r.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_preview r WHERE r.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM download_job j WHERE j.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_subscription s WHERE s.confirmed_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_scan_plan p JOIN cloud_scan c ON c.id=p.scan_id WHERE c.state='SCANNING' AND (p.preview_id=cloud_preview.id OR p.execution_preview_id=cloud_preview.id))").run(now);
+      db.prepare("DELETE FROM cloud_preview WHERE expires_at<=? AND NOT EXISTS(SELECT 1 FROM sync_configuration_preview p WHERE p.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM sync_job j WHERE j.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM sync_history_confirmation h WHERE h.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_execution_preview e WHERE e.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_run r WHERE r.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM source_rule_preview r WHERE r.download_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM download_job j WHERE j.preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_subscription s WHERE s.confirmed_preview_id=cloud_preview.id) AND NOT EXISTS(SELECT 1 FROM cloud_scan_plan p JOIN cloud_scan c ON c.id=p.scan_id WHERE c.state='SCANNING' AND (p.preview_id=cloud_preview.id OR p.execution_preview_id=cloud_preview.id))").run(now);
     } finally { this.ticking = false; }
   }
   async wake(hostGeneration: string) {

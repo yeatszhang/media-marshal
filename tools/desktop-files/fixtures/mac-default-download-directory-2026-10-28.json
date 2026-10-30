@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-28",
+  "scope": "独立目录引用与默认目录基础；真实 Electron 开发构建，隔离目录和受控目录窗口，不含来源/识别整体验收或安装发行",
+  "schemaVersion": 31,
+  "verification": {
+    "targetedTests": "29 passed",
+    "desktop": "2 passed：默认目录取消/保存/更换/重载/Core 重启/920×640 长路径，以及 Emby 转换回归",
+    "typecheck": "passed",
+    "boundaries": "passed",
+    "docs": "passed"
+  },
+  "sha256": {
+    "packages/contracts/src/configuration-api.ts": "153b9f07d14c8933afd59530b123bc7d7d424614f0e3c816a0ffe05c4a0389ab",
+    "packages/contracts/src/internal/core.ts": "0cd1aa82d4a1cbf17739c356149f5ac5bd3c0044e1f2646adb39c10a0f313c0a",
+    "packages/media-core/src/sources/configuration-directories.ts": "84566b21bac39bbf2c2b6a6381432efa4d997f2bb5994d26be0548155534018b",
+    "packages/media-core/src/modules/application.ts": "213a5e83887076f2462d7ca1f09c06f5cba232454cbbef56680ba30177144ea8",
+    "apps/desktop/src/main/index.ts": "afc7a0186ec5fc6297c0f8fc9076d2549c92eedfa328cb0dfe3725510bc49132",
+    "apps/desktop/src/preload/index.ts": "c5f76b97f7bde7208f25ff2a66ab92b69b3b42826c476497071a58da88d15b0a",
+    "apps/desktop/src/renderer/src/configuration-model.ts": "7cfd9b00cb440cc87c98b767ddf1d5cbcff0873b8627d0b8c009b004dff707d3",
+    "apps/desktop/src/renderer/src/components/DownloadDirectorySettings.tsx": "81e2bb07634f1131458f10f391c5e4be2adcba7d94f1be760e30a689a9b80729",
+    "apps/desktop/src/renderer/src/pages/SettingsPage.tsx": "73cb6222684c0c2c928f1227687ee3867a727be4c685a6936b474776b33ad4a5",
+    "apps/desktop/out/main/worker.js": "218e2f4a3e5f2c059db6bc8f257fe3598b41223556ede797ababfb3863ad4571",
+    "apps/desktop/out/main/index.js": "44ce72a8bc6a9303524b3e2a3ac3749d53a53797619d982520f3379999dac75e",
+    "apps/desktop/out/preload/index.js": "8b543c5b9cc7866941c01c9a4553ec5e586f885df6bb8119b86b5dc334290f4a",
+    "apps/desktop/out/renderer/index.html": "9f689e6b232366d736b309400e2c90fe5c194e8194b6c97bc985bacf5093685a",
+    "test-results/desktop/default-download-directory-minimum.png": "dcf334d29412cc7c86079c915fa173b6e016fcac85e6669df8077afe2e97a629",
+    "apps/desktop/out/renderer/assets/index-BDDzRbmB.css": "d4cee369fa0e9a07ad0b7d5d71419f20dd69565d2d45bd65b9de573041a7ad23",
+    "apps/desktop/out/renderer/assets/index-C6h2Y6P5.js": "4e8f116afa29a9dbfcd3ebb135dd521117574042e81cad709f1f6c85fb58facc"
+  }
+}

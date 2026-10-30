@@ -1,0 +1,112 @@
+// @vitest-environment jsdom
+import { afterEach, expect, it, vi } from "vitest";
+import { act, StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
+import { ContainerProvider } from "@yeatz/app-framework/react";
+import { recognitionRuleConfigurationSchema, type CoreOutput, type DesktopApi, type RecognitionRule } from "@media-marshal/contracts";
+import { createRendererApplication } from "./services";
+import { RecognitionViewModel } from "./recognition-model";
+import { RecognitionDraftProvider } from "./recognition-draft-context";
+import { RecognitionPage } from "./pages/Recognition";
+import { i18nReady } from "./i18n";
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); Object.assign(HTMLDialogElement.prototype, { showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); }, close(this: HTMLDialogElement) { this.removeAttribute("open"); } });
+const cleanup: (() => Promise<void>)[] = []; afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); document.body.innerHTML = ""; });
+const button = (name: string) => { const node = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === name); expect(node, name).toBeTruthy(); return node!; };
+async function click(name: string) { await act(async () => button(name).click()); }
+async function fill(name: string, value: string) { const input = document.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${name}"]`)!; expect(input, name).toBeTruthy(); await act(async () => { Object.getOwnPropertyDescriptor(input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event(input instanceof HTMLSelectElement ? "change" : "input", { bubbles: true })); }); }
+function fixture() {
+  const input = { id: crypto.randomUUID(), version: 1, path: "/已有输入 中文", kind: "ordinary" as const, available: true }, media = { ...input, id: crypto.randomUUID(), path: "/电影媒体目标 中文 长路径".repeat(10), kind: "media" as const }, rows = new Map<string, RecognitionRule>(), previews = new Map<string, CoreOutput<"recognition.get-preview">>(); const stamp = new Date().toISOString(); let paused = false;
+  const binding = (value: typeof input | typeof media) => ({ id: value.id, version: value.version, path: value.path });
+  const api = {
+    listRecognitionRules: vi.fn(async () => structuredClone([...rows.values()])), listConfigurationDirectories: vi.fn(async () => [input, media]), getDefaultDownloadDirectory: vi.fn(async () => ({ version: 1, directory: binding(input) })), getOrganizePause: vi.fn(async () => ({ paused })), setOrganizePause: vi.fn(async (value: { paused: boolean }) => ({ paused: paused = value.paused })),
+    chooseConfigurationDirectory: vi.fn(async (kind: string) => kind === "ordinary" ? input : media), listIngestionCandidates: vi.fn(async () => ({ items: [], total: 0 })), listIngestionScans: vi.fn(async () => ({ items: [], total: 0 })),
+    saveRecognitionRule: vi.fn<DesktopApi["saveRecognitionRule"]>(async (value) => { const configuration = recognitionRuleConfigurationSchema.parse(value.configuration), old = rows.get(value.id); const row: RecognitionRule = { id: value.id, version: old?.version ?? 0, draftRevision: value.expectedDraftRevision + 1, lifecycleRevision: old?.lifecycleRevision ?? 0, draft: configuration, snapshot: old?.snapshot ?? null, paused: old?.paused ?? true, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: old?.runtime ?? { claimed: false, sourceId: null, failure: null, unavailableInputs: 0, automaticAuthorized: false } }; rows.set(row.id, row); return structuredClone(row); }),
+    previewRecognitionRule: vi.fn<DesktopApi["previewRecognitionRule"]>(async (value) => { const row = rows.get(value.id)!;  const result: CoreOutput<"recognition.get-preview"> = { id: crypto.randomUUID(), ruleId: row.id, state: "READY", expiresAt: Date.now() + 900000, automaticAuthorized: false, snapshot: { ruleId: row.id, ruleVersion: row.version + 1, configuration: structuredClone(row.draft), inputDirectory: binding(input), inputMode: "managed-completed", defaultDirectoryVersion: 1, targets: row.draft.targets.map((target) => ({ targetId: target.id, directory: binding(media), embyBinding: null })) } }; previews.set(result.id, result); return structuredClone(result); }),
+    getRecognitionConfigurationPreview: vi.fn<DesktopApi["getRecognitionConfigurationPreview"]>(async (id) => structuredClone(previews.get(id)!)),
+    confirmRecognitionRule: vi.fn<DesktopApi["confirmRecognitionRule"]>(async (value) => { const p = previews.get(value.previewId)!, row = rows.get(p.ruleId)!; row.version = p.snapshot.ruleVersion; row.snapshot = p.snapshot; row.paused = false; row.runtime = { claimed: true, sourceId: row.runtime?.sourceId ?? crypto.randomUUID(), failure: null, unavailableInputs: 0, automaticAuthorized: false }; p.state = "APPLIED"; return structuredClone(row); }),
+    controlRecognitionRule: vi.fn<DesktopApi["controlRecognitionRule"]>(async (value) => { const row = rows.get(value.id)!; row.lifecycleRevision++; row.paused = value.operation !== "resume"; if (value.operation === "remove") row.deletedAt = stamp; if (value.operation === "restore") row.deletedAt = null; return structuredClone(row); }), scanRecognitionRule: vi.fn(),
+    authorizeRecognitionAutomatic: vi.fn<DesktopApi["authorizeRecognitionAutomatic"]>(async (value) => { const row = rows.get(value.id)!; row.runtime!.automaticAuthorized = true; return structuredClone(row); }), confirmOrganize: vi.fn(), recognizeIngestion: vi.fn(),
+  };
+  return { input, media, rows, previews, api };
+}
+async function mount(path = "/recognition", setup?: (value: ReturnType<typeof fixture>) => void) {
+  await i18nReady; const f = fixture(); setup?.(f); const app = createRendererApplication(f.api as unknown as DesktopApi); await app.start(); const element = document.createElement("div"); document.body.append(element); let root = createRoot(element), mounted = true;
+  const render = () => act(async () => root.render(<StrictMode><ContainerProvider value={app.container}><RecognitionDraftProvider><MemoryRouter initialEntries={[path]}><RecognitionPage /></MemoryRouter></RecognitionDraftProvider></ContainerProvider></StrictMode>)); const unmount = async () => { if (mounted) { mounted = false; await act(async () => root.unmount()); } }; const remount = async () => { await unmount(); root = createRoot(element); mounted = true; await render(); }; await render(); cleanup.push(async () => { await unmount(); await app.stop(); }); return { ...f, app, element, unmount, remount };
+}
+it("识别统一使用设置目录，不提供输入目录或客户端选择", async () => {
+  const f = await mount(); await click("添加识别规则"); await fill("识别规则名称", "统一目录识别");
+  expect(document.querySelector('[aria-label="识别输入目录"]')).toBeNull();
+  expect(document.querySelector('[aria-label="识别输入客户端"]')).toBeNull();
+  expect(f.element.textContent).toContain(f.input.path);
+  expect(document.querySelector('a[href="/settings"]')).not.toBeNull();
+  await click("保存识别草稿并预览");
+  expect(f.api.saveRecognitionRule.mock.calls[0]![0].configuration).toMatchObject({ input: { kind: "default" }, client: "custom" });
+  expect(f.api.chooseConfigurationDirectory).not.toHaveBeenCalled();
+  await click("确认识别配置范围"); expect(f.api.confirmRecognitionRule).toHaveBeenCalledTimes(1);
+});
+it("下载目录未设置时展示设置入口，配置错误保留草稿", async () => {
+  const f = await mount("/recognition", (f) => { f.api.getDefaultDownloadDirectory.mockResolvedValue({ version: 0, directory: null } as never); f.api.previewRecognitionRule.mockRejectedValue(new Error("尚未设置本地下载目录，请前往设置")); });
+  await click("添加识别规则"); await fill("识别规则名称", "等待目录");
+  expect(f.element.textContent).toContain("尚未设置本地下载目录");
+  await click("保存识别草稿并预览"); expect(f.rows.size).toBe(1); expect(f.api.confirmRecognitionRule).not.toHaveBeenCalled();
+});
+
+it("电影／剧集多个目标和各自模板进入范围预览，改变类型生成新身份", async () => {
+  const f = await mount(); await click("添加识别规则"); await fill("识别规则名称", "混合输入分库"); await click("添加映射目标目录"); await fill("目标 1 名称", "电影主库"); await fill("目标 1 模板", "{title}/{title}.{ext}"); await click("添加映射目标目录"); const original = document.querySelector<HTMLSelectElement>('[aria-label="目标 2 类型"]')!.value; expect(original).toBe("MOVIE"); await fill("目标 2 类型", "TV_SHOW"); await fill("目标 2 名称", "剧集主库"); await click("保存识别草稿并预览");
+  expect(f.api.saveRecognitionRule.mock.calls[0]![0].configuration).toMatchObject({ targets: [{ name: "电影主库", mediaType: "MOVIE", template: "{title}/{title}.{ext}" }, { name: "剧集主库", mediaType: "TV_SHOW" }] }); expect(f.element.textContent).toContain("仅正式同步成果"); expect(f.element.textContent).toContain("电影主库 · 电影"); expect(f.element.textContent).toContain("剧集主库 · 剧集"); expect(f.api.confirmRecognitionRule).not.toHaveBeenCalled();
+  await click("编辑并预览识别规则"); await fill("识别规则名称", "尚未保存的新名称"); await act(async () => { await f.app.container.get(RecognitionViewModel).refresh(); }); expect(document.querySelector<HTMLInputElement>('[aria-label="识别规则名称"]')!.value).toBe("尚未保存的新名称");
+});
+it("首次样本授权需要明确勾选且绑定当前版本，普通查询与重载不重放授权", async () => {
+  const id = crypto.randomUUID(), sample = crypto.randomUUID(); const f = await mount(`/recognition?rule=${id}&sample=${sample}`, (f) => { const configuration = recognitionRuleConfigurationSchema.parse({ name: "有条件自动", input: { kind: "directory", directoryId: f.input.id }, targets: [], automatic: true }); const stamp = new Date().toISOString(); f.rows.set(id, { id, version: 3, draftRevision: 4, lifecycleRevision: 0, draft: configuration, snapshot: { ruleId: id, ruleVersion: 3, configuration, inputDirectory: { id: f.input.id, version: 1, path: f.input.path }, inputMode: "managed-completed", defaultDirectoryVersion: 1, targets: [] }, paused: false, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: true, sourceId: crypto.randomUUID(), unavailableInputs: 0, failure: null, automaticAuthorized: false } }); });
+  expect(document.querySelector(".editor-surface")).toBeNull();
+  expect(button("确认首次样本自动授权").disabled).toBe(true); await act(async () => document.querySelector<HTMLInputElement>('[aria-label="已核对首次样本并授权当前规则版本"]')!.click()); await click("确认首次样本自动授权"); expect(f.api.authorizeRecognitionAutomatic).toHaveBeenCalledWith(expect.objectContaining({ id, expectedVersion: 3, samplePreviewId: sample, accepted: true })); await f.remount(); expect(f.api.authorizeRecognitionAutomatic).toHaveBeenCalledTimes(1); expect(f.api.confirmOrganize).not.toHaveBeenCalled();
+  await click("暂停全部识别整理"); await click("暂停此识别规则"); await click("恢复此识别规则"); expect(f.element.textContent).toContain("全部识别整理已暂停"); expect(f.api.setOrganizePause).toHaveBeenCalledTimes(1);
+});
+
+it("编辑已确认规则移除旧预览并聚焦，轮询不覆盖未保存修改", async () => {
+  const f = await mount();
+  await click("添加识别规则"); await fill("识别规则名称", "可编辑规则"); await click("保存识别草稿并预览"); await click("确认识别配置范围");
+  expect(document.querySelector('[aria-label="识别规则表单"]')).toBeNull();
+  await click("编辑并预览识别规则");
+  expect(document.querySelector('[aria-label="识别配置范围预览"]')).toBeNull();
+  expect(document.activeElement).toBe(document.querySelector('[aria-label="识别规则名称"]'));
+  await fill("识别规则名称", "编辑后的规则");
+  await act(async () => { await f.app.container.get(RecognitionViewModel).refresh(); });
+  expect(document.querySelector<HTMLInputElement>('[aria-label="识别规则名称"]')!.value).toBe("编辑后的规则");
+  await click("保存识别草稿并预览");
+  expect(f.api.saveRecognitionRule.mock.calls.at(-1)![0]).toMatchObject({ expectedVersion: 1, expectedDraftRevision: 1, configuration: { name: "编辑后的规则" } });
+  expect(document.querySelector('[aria-label="识别配置范围预览"]')).not.toBeNull();
+});
+
+it("删除规则清除表单、预览和接入区，恢复入口保持折叠且恢复后仍暂停", async () => {
+  const f = await mount();
+  await click("添加识别规则"); await fill("识别规则名称", "待删除规则"); await click("保存识别草稿并预览"); await click("确认识别配置范围");
+  await click("暂停此识别规则"); await click("删除识别规则…"); await click("确认删除识别规则");
+  expect(document.querySelector('[aria-label="识别配置范围预览"]')).toBeNull();
+  expect(document.querySelector('[aria-label="识别规则表单"]')).toBeNull();
+  expect(document.querySelector('[aria-label="规则接入与文件任务"]')).toBeNull();
+  expect(document.querySelector('article[aria-label="识别规则 待删除规则"]')).toBeNull();
+  expect(document.querySelector(".recognition-archive")?.hasAttribute("open")).toBe(false);
+  await click("恢复已删除识别规则");
+  expect(document.querySelector('article[aria-label="识别规则 待删除规则"]')?.textContent).toContain("识别已暂停");
+  expect(document.querySelector(".recognition-archive")).toBeNull();
+  expect(f.api.confirmRecognitionRule).toHaveBeenCalledTimes(1);
+});
+
+it("已删除规则的旧链接不会重新打开编辑器、过期预览或自动授权", async () => {
+  const id = crypto.randomUUID();
+  const f = await mount(`/recognition?rule=${id}&configurationPreview=${crypto.randomUUID()}`, (f) => {
+    const configuration = recognitionRuleConfigurationSchema.parse({ name: "旧链接已删除规则", input: { kind: "directory", directoryId: f.input.id }, targets: [], automatic: true });
+    const stamp = new Date().toISOString();
+    f.rows.set(id, { id, version: 0, draftRevision: 1, lifecycleRevision: 1, draft: configuration, snapshot: null, paused: true, deletedAt: stamp, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: true, sourceId: null, unavailableInputs: 0, failure: null, automaticAuthorized: false } });
+    // 首次列表返回前预览可能已发起读取，返回已删除规则对应的过期快照。
+    f.api.getRecognitionConfigurationPreview.mockResolvedValue({ id: crypto.randomUUID(), ruleId: id, state: "EXPIRED", expiresAt: 0, automaticAuthorized: false, snapshot: { ruleId: id, ruleVersion: 1, configuration, inputDirectory: { id: f.input.id, version: 1, path: f.input.path }, inputMode: "managed-completed", defaultDirectoryVersion: 1, targets: [] } });
+  });
+  expect(document.querySelector('[aria-label="识别规则表单"]')).toBeNull();
+  expect(document.querySelector('[aria-label="识别配置范围预览"]')).toBeNull();
+  expect(document.querySelector('[aria-label="首次样本自动授权"]')).toBeNull();
+  await f.remount();
+  expect(document.querySelector('[aria-label="识别规则表单"]')).toBeNull();
+  expect(f.api.controlRecognitionRule).not.toHaveBeenCalled();
+});

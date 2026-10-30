@@ -25,7 +25,11 @@ import { sourceScanMigrationSql } from "./source-scan-migration.js";
 import { automaticIngestionMigrationSql } from "./automatic-ingestion-migration.js";
 import { sourceHealthMigrationSql } from "./source-health-migration.js";
 import { syncRecognitionMigrationSql, migrateSyncRecognition } from "./sync-recognition-migration.js";
+import { embyBindingMigrationSql } from "./emby-binding-migration.js";
+import { independentRecognitionMigrationSql, migrateIndependentRecognition } from "./independent-recognition-migration.js";
+import { independentSyncMigrationSql, migrateIndependentSync } from "./independent-sync-migration.js";
 import { syncReceiptMigrationSql, migrateSyncReceiptEvidence } from "./sync-receipt-migration.js";
+import { syncHistoryMigrationSql, migrateSyncHistory } from "./sync-history-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
@@ -92,6 +96,10 @@ export const migrations: readonly Migration[] = [
   { version: 27, sql: automaticIngestionMigrationSql },
   { version: 28, sql: syncRecognitionMigrationSql, apply: migrateSyncRecognition },
   { version: 29, sql: syncReceiptMigrationSql, apply: migrateSyncReceiptEvidence },
+  { version: 30, sql: syncHistoryMigrationSql, apply: migrateSyncHistory },
+  { version: 31, sql: embyBindingMigrationSql },
+  { version: 32, sql: independentSyncMigrationSql, apply: migrateIndependentSync },
+  { version: 33, sql: independentRecognitionMigrationSql, apply: migrateIndependentRecognition, rebuildsReferencedTables: true },
 ];
 
 export class CoreDatabase {

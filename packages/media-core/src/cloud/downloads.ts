@@ -13,7 +13,7 @@ import { SyncReceipts } from "../sources/sync-receipts.js";
 interface Item { id: string; account_id: string; remote_ref: string; version_json: string; target_root_id: string; target_path_key: string; target_segments_json: string; expected_size: number; state: DownloadState; attempt_count: number }
 interface Attempt { id: string; host_generation: string; core_generation: string; binding_generation: string; execution_id: string | null; state: string; plan_json: string }
 interface Running { item: Item; context?: ExecutionContext; handle?: ExecutionHandle; stop: boolean; sequence: number; confirmedExit?: { exitCode: number; stopped: boolean }; failure?: CloudFailure; done?: Promise<void> }
-export type DownloadOwner = { subscriptionId: string; configurationVersion: number; scanId: string } | { sourceId: string; sourceVersion: number; runId: string };
+export type DownloadOwner = { subscriptionId: string; configurationVersion: number; scanId: string } | { sourceId: string; sourceVersion: number; runId: string } | { syncSourceId: string; syncSourceVersion: number; syncJobId: string };
 const activeStates = "'QUEUED','RUNNING','VERIFYING','COMMITTING','RETRY_WAIT','AUTH_REQUIRED','BLOCKED_LOCAL','RECONCILING'";
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const versionKey = (version: unknown) => createHash("sha256").update(JSON.stringify(version)).digest("hex");
@@ -125,10 +125,10 @@ export class CloudDownloads {
     })(); return this.pauseStatus();
   }
   private demands(itemId: string, excludeJob?: string): number {
-    return (this.database.connection.prepare(`SELECT count(*) AS n FROM download_job_item d JOIN download_job j ON j.id=d.job_id LEFT JOIN download_source_demand o ON o.job_id=j.id LEFT JOIN source_rule s ON s.id=o.source_id WHERE d.item_id=? AND d.demand_state='ACTIVE' AND j.state IN (${activeStates}) AND (o.job_id IS NULL OR (s.version=o.source_version AND s.paused=0 AND s.review_required=0)) AND (? IS NULL OR j.id!=?)`).get(itemId, excludeJob ?? null, excludeJob ?? null) as { n: number }).n;
+    return (this.database.connection.prepare(`SELECT count(*) AS n FROM download_job_item d JOIN download_job j ON j.id=d.job_id LEFT JOIN download_source_demand o ON o.job_id=j.id LEFT JOIN source_rule s ON s.id=o.source_id LEFT JOIN sync_cloud_demand m ON m.job_id=j.id LEFT JOIN sync_source_rule r ON r.id=m.source_id WHERE d.item_id=? AND d.demand_state='ACTIVE' AND j.state IN (${activeStates}) AND (o.job_id IS NULL OR (s.version=o.source_version AND s.paused=0 AND s.review_required=0)) AND (m.job_id IS NULL OR (r.paused=0 AND r.deleted_at IS NULL)) AND (? IS NULL OR j.id!=?)`).get(itemId, excludeJob ?? null, excludeJob ?? null) as { n: number }).n;
   }
   sourceEligible(jobId: string) {
-    return !this.database.connection.prepare("SELECT 1 FROM download_source_demand d JOIN source_rule s ON s.id=d.source_id WHERE d.job_id=? AND (s.version!=d.source_version OR s.paused=1 OR s.review_required=1)").get(jobId);
+    return !this.database.connection.prepare("SELECT 1 FROM download_source_demand d JOIN source_rule s ON s.id=d.source_id WHERE d.job_id=? AND (s.version!=d.source_version OR s.paused=1 OR s.review_required=1) UNION SELECT 1 FROM sync_cloud_demand d JOIN sync_source_rule s ON s.id=d.source_id WHERE d.job_id=? AND (s.paused=1 OR s.deleted_at IS NOT NULL)").get(jobId, jobId);
   }
   sourceRuntimeReady(accountId: string, rootId: string) {
     if (!this.catalog.accounts().some((account) => account.id === accountId && ["READY", "RESELECT_REQUIRED"].includes(account.status))) return false;
@@ -137,6 +137,7 @@ export class CloudDownloads {
   private retainedDemand(itemId: string) { return !!this.database.connection.prepare("SELECT 1 FROM download_job_item d JOIN download_job j ON j.id=d.job_id WHERE d.item_id=? AND d.demand_state='ACTIVE' AND j.state NOT IN ('CANCELLED','CANCELLING') LIMIT 1").get(itemId); }
   private sourceSnapshot(previewId: string, owner?: DownloadOwner) {
     const db = this.database.connection;
+    if (owner && "syncJobId" in owner) return undefined;
     if (owner && "sourceId" in owner) { const row = db.prepare("SELECT lifecycle_revision FROM source_rule WHERE id=?").get(owner.sourceId) as { lifecycle_revision: number } | undefined; return { source_id: owner.sourceId, source_version: owner.sourceVersion, source_lifecycle: row?.lifecycle_revision ?? 0 }; }
     if (owner) return db.prepare("SELECT id AS source_id,version AS source_version,lifecycle_revision AS source_lifecycle FROM source_rule WHERE subscription_id=?").get(owner.subscriptionId) as { source_id: string; source_version: number; source_lifecycle: number } | undefined;
     const preview = db.prepare("SELECT source_id,version+1 AS source_version,state FROM source_rule_preview WHERE download_preview_id=?").get(previewId) as { source_id: string; source_version: number; state: string } | undefined;
@@ -151,16 +152,20 @@ export class CloudDownloads {
   async confirm(input: CloudInput<"cloud.downloads.confirm">, owner?: DownloadOwner) {
     if (this.closed) throw new CloudError("INTERRUPTED");
     const subscriptionOwner = owner && "subscriptionId" in owner ? owner : undefined;
+    const syncOwner = owner && "syncJobId" in owner ? owner : undefined;
+    const assertSync = () => { if (syncOwner && !this.database.connection.prepare("SELECT 1 FROM sync_job j JOIN sync_source_rule r ON r.id=j.source_id WHERE j.id=? AND j.source_id=? AND j.source_version=? AND j.preview_id=? AND j.state IN ('PENDING','RUNNING') AND r.paused=0 AND r.deleted_at IS NULL").get(syncOwner.syncJobId, syncOwner.syncSourceId, syncOwner.syncSourceVersion, input.previewId)) throw new CloudError("INTERRUPTED"); };
     const db = this.database.connection, prior = db.prepare("SELECT id,preview_id FROM download_job WHERE request_key=?").get(input.requestKey) as { id: string; preview_id: string } | undefined;
     if (prior) { if (prior.preview_id !== input.previewId) throw new CloudError("CONFLICT"); return { jobId: prior.id }; }
     const preview = this.previews.row(input.previewId);
     if (!preview) throw new CloudError("REMOTE_NOT_FOUND");
     if (!owner && db.prepare("SELECT 1 FROM source_rule_execution_preview WHERE download_preview_id=?").get(preview.id)) throw new CloudError("CONFLICT");
+    if (!owner && db.prepare("SELECT 1 FROM sync_configuration_preview WHERE download_preview_id=?").get(preview.id)) throw new CloudError("CONFLICT");
     const existing = db.prepare("SELECT id FROM download_job WHERE preview_id=?").get(preview.id) as { id: string } | undefined;
     if (existing) return { jobId: existing.id };
     const snapshot: PreviewSnapshot = JSON.parse(preview.snapshot_json);
     const source = this.sourceSnapshot(preview.id, owner); this.assertSourceSnapshot(source);
-    if (!(preview.state === "READY" || (owner && preview.state === "CONFIRMED")) || !snapshot.complete || snapshot.failure || preview.expires_at <= new Date(this.now()).toISOString()) throw new CloudError("CONFLICT");
+    assertSync();
+    if (!(preview.state === "READY" || (owner && preview.state === "CONFIRMED")) || !snapshot.complete || snapshot.failure || !syncOwner && preview.expires_at <= new Date(this.now()).toISOString()) throw new CloudError("CONFLICT");
     if (!owner && db.prepare("SELECT 1 FROM cloud_subscription WHERE confirmed_preview_id=?").get(preview.id)) throw new CloudError("CONFLICT");
     if (this.catalog.source(preview.account_id, preview.remote_root_ref).binding.generation !== snapshot.binding.generation) throw new CloudError("REMOTE_CHANGED");
     const root = this.roots.files.get(preview.target_root_id); root.assertMappings(snapshot.items.map((item) => item.targetSegments));
@@ -169,16 +174,21 @@ export class CloudDownloads {
     const jobId = db.transaction(() => {
       const repeated = db.prepare("SELECT id,preview_id FROM download_job WHERE request_key=? OR preview_id=?").get(input.requestKey, preview.id) as { id: string; preview_id: string } | undefined;
       if (repeated) { if (repeated.preview_id !== preview.id) throw new CloudError("CONFLICT"); return repeated.id; }
-      if (this.closed || preview.expires_at <= new Date(this.now()).toISOString()) throw new CloudError("CONFLICT");
+      if (this.closed || !syncOwner && preview.expires_at <= new Date(this.now()).toISOString()) throw new CloudError("CONFLICT");
+      assertSync();
       this.assertSourceSnapshot(source);
       if (owner && "subscriptionId" in owner && !db.prepare("SELECT 1 FROM cloud_subscription s JOIN cloud_scan c ON c.subscription_id=s.id JOIN cloud_scan_plan p ON p.scan_id=c.id WHERE s.id=? AND s.enabled=1 AND s.configuration_version=? AND c.id=? AND c.configuration_version=s.configuration_version AND c.state='SCANNING' AND p.execution_preview_id=?").get(owner.subscriptionId, owner.configurationVersion, owner.scanId, preview.id)) throw new CloudError("INTERRUPTED");
       if (owner && "runId" in owner && !db.prepare("SELECT 1 FROM source_rule_run WHERE id=? AND source_id=? AND source_version=? AND state='SCANNING' AND preview_id=?").get(owner.runId, owner.sourceId, owner.sourceVersion, preview.id)) throw new CloudError("INTERRUPTED");
       db.prepare("INSERT INTO download_job(id,account_id,subscription_id,preview_id,request_key,state,configuration_version,created_at,updated_at) VALUES(?,?,?,?,?,'QUEUED',?,?,?)").run(id, preview.account_id, subscriptionOwner?.subscriptionId ?? null, preview.id, input.requestKey, subscriptionOwner?.configurationVersion ?? source?.source_version ?? 1, now, now);
       if (source) db.prepare("INSERT INTO download_source_demand(job_id,source_id,source_version) VALUES(?,?,?)").run(id, source.source_id, source.source_version);
+      if (syncOwner) {
+        db.prepare("INSERT INTO sync_cloud_demand VALUES(?,?,?,?)").run(id, syncOwner.syncJobId, syncOwner.syncSourceId, syncOwner.syncSourceVersion);
+        db.prepare("UPDATE sync_job SET download_job_id=?,state='RUNNING',updated_at=? WHERE id=?").run(id, now, syncOwner.syncJobId);
+      }
       for (const item of snapshot.items) {
         if (item.receiptId && !item.issue) {
           if (snapshot.variant || !item.source.expectedVersion) throw new CloudError("CONFLICT");
-          const receipts = new SyncReceipts(this.database), receipt = receipts.find("cloud", preview.account_id, item.source.remoteRef, item.source.expectedVersion, preview.target_root_id, item.targetPathKey);
+          const receipts = new SyncReceipts(this.database), receipt = receipts.findCloud(preview.account_id, item.source.remoteRef, item.source.expectedVersion, preview.target_root_id, item.targetPathKey, snapshot.binding.bindingId);
           if (!receipt || receipt.id !== item.receiptId) throw new CloudError("CONFLICT");
           const existingResult = db.prepare("SELECT id FROM download_item WHERE id=? AND account_id=? AND target_root_id=?").get(receipt.result_id, preview.account_id, preview.target_root_id);
           if (existingResult) {
@@ -274,9 +284,10 @@ export class CloudDownloads {
       if (job.state !== next) db.prepare("UPDATE download_job SET state=?,updated_at=? WHERE id=?").run(next, new Date(this.now()).toISOString(), job.id);
     }
   }
-  list(input: CloudInput<"cloud.downloads.list">) {
-    this.aggregate(); const db = this.database.connection;
-    const rows = db.prepare("SELECT j.*,p.snapshot_json FROM download_job j JOIN cloud_preview p ON p.id=j.preview_id ORDER BY j.created_at DESC,j.id LIMIT ? OFFSET ?").all(input.pageSize ?? 25, ((input.page ?? 1) - 1) * (input.pageSize ?? 25)) as { id: string; account_id: string; state: DownloadState; updated_at: string; snapshot_json: string }[];
+  get(id: string) { return this.list({ page: 1, pageSize: 1 }, id).items[0] ?? null; }
+  list(input: CloudInput<"cloud.downloads.list">, id?: string) {
+    if (!id) this.aggregate(); const db = this.database.connection;
+    const rows = db.prepare("SELECT j.*,p.snapshot_json,p.target_root_id FROM download_job j JOIN cloud_preview p ON p.id=j.preview_id WHERE ? IS NULL OR j.id=? ORDER BY j.created_at DESC,j.id LIMIT ? OFFSET ?").all(id ?? null, id ?? null, input.pageSize ?? 25, ((input.page ?? 1) - 1) * (input.pageSize ?? 25)) as { id: string; account_id: string; state: DownloadState; updated_at: string; snapshot_json: string; target_root_id: string }[];
     const items: DownloadJob[] = rows.map((job) => {
       const values = db.prepare("SELECT i.state,i.expected_size,i.failure_code,r.bytes,r.speed,r.total_bytes FROM download_job_item d JOIN download_item i ON i.id=d.item_id JOIN download_item_runtime r ON r.item_id=i.id WHERE d.job_id=?").all(job.id) as { state: DownloadState; expected_size: number; failure_code: CloudFailure["code"] | null; bytes: number; speed: number; total_bytes: number | null }[];
       const historical = db.prepare("SELECT r.size FROM download_job_receipt j JOIN sync_receipt r ON r.id=j.receipt_id WHERE j.job_id=?").all(job.id) as { size: number }[];
@@ -284,12 +295,17 @@ export class CloudDownloads {
       const localRemovedFiles = (db.prepare("SELECT count(*) AS n FROM sync_receipt_local_state s WHERE s.state='REMOVED' AND s.receipt_id IN (SELECT r.id FROM sync_receipt r JOIN download_job_item j ON r.result_kind='download-item' AND r.result_id=j.item_id WHERE j.job_id=? UNION SELECT receipt_id FROM download_job_receipt WHERE job_id=?)").get(job.id, job.id) as { n: number }).n;
       const total = values.reduce((sum, item) => sum + item.expected_size, historicalBytes), bytes = values.reduce((sum, item) => sum + (item.state === "COMPLETED" ? item.expected_size : ["RUNNING", "VERIFYING", "COMMITTING"].includes(item.state) ? item.bytes : 0), historicalBytes), failed = values.find((item) => item.failure_code);
       const totalUnknown = bytes > total || values.some((item) => item.state === "RUNNING" && item.total_bytes === null);
-      const stages = db.prepare("SELECT o.state AS outbox_state,c.state AS candidate_state,t.status,t.delivery_status FROM download_job_item d JOIN download_item i ON i.id=d.item_id LEFT JOIN ingestion_outbox o ON o.item_id=i.id AND o.version_key=i.version_key LEFT JOIN ingestion_candidate c ON c.managed_item_id=i.id AND c.managed_version_key=i.version_key LEFT JOIN media_task t ON t.id=c.task_id WHERE d.job_id=? AND i.state='COMPLETED'").all(job.id) as { outbox_state: string | null; candidate_state: string | null; status: string | null; delivery_status: string | null }[];
+      let stages = db.prepare("SELECT o.state AS outbox_state,c.state AS candidate_state,t.status,t.delivery_status FROM download_job_item d JOIN download_item i ON i.id=d.item_id LEFT JOIN ingestion_outbox o ON o.item_id=i.id AND o.version_key=i.version_key LEFT JOIN ingestion_candidate c ON c.managed_item_id=i.id AND c.managed_version_key=i.version_key LEFT JOIN media_task t ON t.id=c.task_id WHERE d.job_id=? AND i.state='COMPLETED'").all(job.id) as { outbox_state: string | null; candidate_state: string | null; status: string | null; delivery_status: string | null }[];
       const owner = db.prepare("SELECT d.source_id,d.source_version,d.review_required,s.review_required AS source_review,json_extract(v.configuration_json,'$.organization') AS organization FROM download_source_demand d JOIN source_rule_version v ON v.source_id=d.source_id AND v.version=d.source_version JOIN source_rule s ON s.id=d.source_id WHERE d.job_id=?").get(job.id) as { source_id: string; source_version: number; review_required: number; source_review: number; organization: string | null } | undefined;
-      const organization = !owner ? "UNASSIGNED" : owner.review_required || owner.source_review ? "REVIEW_REQUIRED" : owner.organization ? "ENABLED" : "NOT_ENABLED";
-      const visible = organization === "NOT_ENABLED" ? [] : stages;
-      const ingestion = { organization, pending: visible.filter((row) => row.outbox_state !== "ACKNOWLEDGED").length, candidates: visible.filter((row) => row.candidate_state !== null).length, organized: visible.filter((row) => row.status === "DONE").length, collected: visible.filter((row) => row.delivery_status === "COLLECTED").length, needsAttention: visible.filter((row) => row.status === "FAILED" || row.delivery_status === "NEEDS_ATTENTION").length } as NonNullable<DownloadJob["ingestion"]>;
-      return { id: job.id, accountId: job.account_id, sourceId: owner?.source_id ?? null, sourceVersion: owner?.source_version ?? null, name: (JSON.parse(job.snapshot_json) as PreviewSnapshot).name, state: job.state, updatedAt: job.updated_at, failure: failed ? cloudFailure(new CloudError(failed.failure_code!)) : null, ingestion, ...(localRemovedFiles ? { localRemovedFiles } : {}), progress: { bytes, totalBytes: totalUnknown ? null : total, bytesPerSecond: values.reduce((sum, item) => sum + (item.state === "RUNNING" ? item.speed : 0), 0), completedItems: values.filter((item) => item.state === "COMPLETED").length + historical.length, totalItems: values.length + historical.length } };
+      const syncOwner = db.prepare("SELECT source_id,source_version FROM sync_cloud_demand WHERE job_id=?").get(job.id) as { source_id: string; source_version: number } | undefined;
+      const independent = db.prepare("SELECT 1 FROM recognition_input i JOIN recognition_rule r ON r.id=i.rule_id WHERE i.directory_id=? AND i.mode='managed-completed' AND i.active=1 AND r.deleted_at IS NULL").get(job.target_root_id);
+      const independentStages = db.prepare("WITH receipts AS (SELECT r.id FROM sync_receipt r JOIN download_job_item j ON r.result_kind='download-item' AND r.result_id=j.item_id WHERE j.job_id=? UNION SELECT receipt_id FROM download_job_receipt WHERE job_id=?) SELECT CASE WHEN p.state='ACCEPTED' THEN 'ACKNOWLEDGED' ELSE 'PENDING' END AS outbox_state,c.state AS candidate_state,t.status,t.delivery_status,p.state AS receipt_state FROM receipts r LEFT JOIN recognition_receipt p ON p.receipt_id=r.id LEFT JOIN ingestion_candidate c ON c.id=p.candidate_id LEFT JOIN media_task t ON t.id=c.task_id").all(job.id, job.id) as ((typeof stages)[number] & { receipt_state: string | null })[];
+      const independentHistory = !!independent || independentStages.some((stage) => stage.receipt_state !== null);
+      if (independentHistory) stages = independentStages;
+      const organization = independent ? "ENABLED" : syncOwner ? "NOT_ENABLED" : !owner ? "UNASSIGNED" : owner.review_required || owner.source_review ? "REVIEW_REQUIRED" : owner.organization ? "ENABLED" : "NOT_ENABLED";
+      const visible = organization === "NOT_ENABLED" && !independentHistory ? [] : stages;
+      const ingestion = { organization, pending: visible.filter((row) => row.outbox_state !== "ACKNOWLEDGED").length, candidates: visible.filter((row) => row.candidate_state !== null).length, organized: visible.filter((row) => row.status === "DONE").length, collected: visible.filter((row) => row.delivery_status === "COLLECTED").length, needsAttention: visible.filter((row) => row.status === "FAILED" || row.delivery_status === "NEEDS_ATTENTION" || ("receipt_state" in row && row.receipt_state === "UNAVAILABLE")).length } as NonNullable<DownloadJob["ingestion"]>;
+      return { id: job.id, accountId: job.account_id, sourceId: syncOwner?.source_id ?? owner?.source_id ?? null, sourceVersion: syncOwner?.source_version ?? owner?.source_version ?? null, name: (JSON.parse(job.snapshot_json) as PreviewSnapshot).name, state: job.state, updatedAt: job.updated_at, failure: failed ? cloudFailure(new CloudError(failed.failure_code!)) : null, ingestion, ...(localRemovedFiles ? { localRemovedFiles } : {}), progress: { bytes, totalBytes: totalUnknown ? null : total, bytesPerSecond: values.reduce((sum, item) => sum + (item.state === "RUNNING" ? item.speed : 0), 0), completedItems: values.filter((item) => item.state === "COMPLETED").length + historical.length, totalItems: values.length + historical.length } };
     });
     return { items, total: (db.prepare("SELECT count(*) AS n FROM download_job").get() as { n: number }).n };
   }

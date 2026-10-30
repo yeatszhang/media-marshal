@@ -13,7 +13,7 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 async function mount() {
   const task: Recognition = { taskId: crypto.randomUUID(), candidateId: crypto.randomUUID(), revision: 0, matchesStale: false, state: "AWAITING_CONFIRMATION", parsed: { title: "原作品", year: 2026, type: "TV_SHOW", season: 1, episode: 2, episodeEnd: null }, matches: [], failure: null };
   const api = {
-    getIngestionTask: vi.fn(async () => task), previewRecognitionEdit: vi.fn(async (input: CoreInput<"ingestion.preview-recognition-edit">): Promise<RecognitionEditPreview> => ({ fingerprint: "a".repeat(64), canApply: true, warnings: [], items: [{ taskId: task.taskId, revision: 0, sourcePath: "/中文来源/Show.S01E02.mp4", before: task.parsed!, after: { ...task.parsed!, ...input.patch }, blockers: [] }] })),
+    getRecognitionTaskTargets: vi.fn(async () => ({ ruleId: null, targets: [] })), getIngestionTask: vi.fn(async () => task), previewRecognitionEdit: vi.fn(async (input: CoreInput<"ingestion.preview-recognition-edit">): Promise<RecognitionEditPreview> => ({ fingerprint: "a".repeat(64), canApply: true, warnings: [], items: [{ taskId: task.taskId, revision: 0, sourcePath: "/中文来源/Show.S01E02.mp4", before: task.parsed!, after: { ...task.parsed!, ...input.patch }, blockers: [] }] })),
     saveRecognitionEdit: vi.fn(async () => ({ updated: 1, rematchQueued: 0, items: [{ taskId: task.taskId, revision: 1 }] })), confirmOrganize: vi.fn(), previewOrganize: vi.fn(), recognizeIngestion: vi.fn(),
   };
   const app = createRendererApplication(api as unknown as DesktopApi); await app.start(); const element = document.createElement("div"); document.body.append(element); const root = createRoot(element), onSaved = vi.fn(), onClose = vi.fn();

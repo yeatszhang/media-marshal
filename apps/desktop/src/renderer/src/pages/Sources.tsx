@@ -1,3 +1,4 @@
+import { EditorSurface } from "../components/EditorSurface";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Plus, Folder, RefreshCw } from "lucide-react";
@@ -12,14 +13,14 @@ import { LocalSourceHealthPanel } from "../components/LocalSourceHealth";
 import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 
-export function Sources() {
+export function Sources({ legacyOnly = false }: { legacyOnly?: boolean }) {
   const { model, state } = useSourceRules(), [query, setQuery] = useSearchParams();
   const [page, setPage] = useState(1), addRef = useRef<HTMLButtonElement>(null), sourceId = query.get("source"), legacyJob = query.get("legacyJob"), busy = state.hasPending;
   const [archivedPage, setArchivedPage] = useState(1), [lifecycle, setLifecycle] = useState<{ row: SourceRule; operation: "remove" | "restore" } | null>(null);
   useEffect(() => model.watch(), [model]);
   useEffect(() => { if (sourceId) void model.openSource(sourceId); }, [model, sourceId]);
   useEffect(() => { if (!sourceId && legacyJob) void model.openLegacy("download-job", legacyJob); }, [model, sourceId, legacyJob]);
-  const close = () => { model.closeEditor(); setQuery({}); requestAnimationFrame(() => { if (!document.querySelector("dialog[open]")) addRef.current?.focus(); }); };
+  const close = () => { model.closeEditor(); setQuery({}); };
   const open = (row: SourceRule) => { if (sourceId === row.id) void model.openSource(row.id); else setQuery({ source: row.id }); };
   const pages = Math.max(1, Math.ceil(state.sourceCount / 25)), visiblePage = Math.min(page, pages);
   const archivePages = Math.max(1, Math.ceil(state.archivedCount / 25)), visibleArchivePage = Math.min(archivedPage, archivePages);
@@ -30,14 +31,14 @@ export function Sources() {
     <Header title="来源配置" description="把网盘内容下载到本地，或整理已有本地文件。每个来源独立设置下载方式和媒体库目标。">
       <Button variant="outline" disabled={busy} onClick={() => { void model.toggleOrganizePause(); }}>{state.organizePaused ? "恢复全部整理" : "暂停全部整理"}</Button>
       <Button variant="outline" onClick={() => { void model.reload(); }} aria-label="刷新来源"><RefreshCw size={15} /></Button>
-      <Button ref={addRef} data-source-add disabled={busy} onClick={() => { setQuery({}); model.newSource(); }}><Plus size={16} />添加来源</Button>
+      {!legacyOnly && <Button ref={addRef} data-source-add disabled={busy} onClick={() => { setQuery({}); model.newSource(); }}><Plus size={16} />添加来源</Button>}
     </Header>
-    <ErrorNotice message={state.error} retry={() => { void model.reload(); }} />
+    <ErrorNotice message={state.editor ? null : state.error} retry={() => { void model.reload(); }} />
     <ErrorNotice message={state.healthError ? `本地目录检查：${state.healthError}` : null} retry={() => { void model.checkVisibleLocalHealth(true); }} />
     {state.legacyNotice && <p className="notice" role="status">{state.legacyNotice} <Link to="/downloads">查看下载历史</Link></p>}
     {state.notice && <p className="notice" role="status">{state.notice}</p>}
     {state.organizePaused && <p className="notice">全部整理已暂停。恢复来源不会解除此暂停；云端下载与已提交文件的 Emby 交付仍独立处理。</p>}
-    {state.editor && <SourceEditorForm onClose={close} />}
+    {state.editor && <EditorSurface key={state.editor.id} title="来源配置" dirty={state.dirty} busy={busy} onClose={close}>{(requestClose) => <><ErrorNotice message={state.error} /><SourceEditorForm onClose={requestClose} /></>}</EditorSurface>}
     {state.picker && <SourceRemotePicker />}
     {state.executionPreview && <SourceExecutionPreview />}
     {!state.items.length && !state.editor && <section className="panel"><Empty icon={<Folder size={28} />} title="还没有来源" description="添加网盘来源下载到本地，或接入现有本地目录进行识别与整理。" /></section>}

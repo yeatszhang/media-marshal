@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { extname, join } from "node:path";
-import { DesktopError } from "@media-marshal/contracts";
+import { DesktopError, type EmbyTargetBinding } from "@media-marshal/contracts";
 import { localFileEvidenceSchema, type LocalFileEvidence, type ManagedRootGrant } from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { ParsedMedia } from "../domain/media.js";
@@ -12,7 +12,7 @@ import type { PreparationProgress } from "./correction-preparations.js";
 
 export const correctionHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export interface CorrectionAsset { id: string; kind: "MAIN" | "ACCESSORY"; from: { grant: ManagedRootGrant; segments: string[] }; to: { grant: ManagedRootGrant; segments: string[] }; expected: LocalFileEvidence | null; action: "NONE" | "MOVE" | "COPY" | "KEEP"; reason: string | null }
-export interface CorrectionPlan { taskId: string; originalContext: string; connectionVersion: number; previewGeneration: string; target: ManagedRootGrant; targetSegments: string[]; template?: string; selection: MediaSelection; metadata: MetadataWork; parsed: ParsedMedia; files: CorrectionAsset[]; warnings: string[]; includeAccessories: boolean }
+export interface CorrectionPlan { logicalTargetId?: string; embyBinding?: EmbyTargetBinding | null; taskId: string; originalContext: string; connectionVersion: number; previewGeneration: string; target: ManagedRootGrant; targetSegments: string[]; template?: string; selection: MediaSelection; metadata: MetadataWork; parsed: ParsedMedia; files: CorrectionAsset[]; warnings: string[]; includeAccessories: boolean }
 interface Task { id: string; source_id: string; source_path: string; status: string; target_path: string | null; title: string | null; parsed_json: string | null; metadata_json: string | null; confirmed_json: string | null; corrected_from_id: string | null; corrected_to_id: string | null; updated_at: string }
 interface StoredAsset { plan_json: string; evidence_json: string | null; phase: string }
 export const correctionConflict = (message: string) => new DesktopError("CONFLICT", message);
@@ -29,7 +29,7 @@ export function correctionReceipt(database: CoreDatabase, roots: ManagedRoots, t
   const original = db.prepare("SELECT id,target_root_id,plan_json,evidence_json,phase FROM ingestion_operation WHERE task_id=? AND phase='RECORDED'").get(taskId) as (StoredAsset & { id: string; target_root_id: string }) | undefined;
   const corrected = db.prepare("SELECT id,target_root_id,plan_json,evidence_json,phase FROM media_correction_operation WHERE new_task_id=? AND phase='RECORDED'").get(taskId) as (StoredAsset & { id: string; target_root_id: string }) | undefined;
   const receipt = corrected ?? original; if (!receipt?.evidence_json) throw correctionConflict("此任务缺少已整理文件的可信收据，不能仅按目标路径认领文件；请核对原任务");
-  const plan = JSON.parse(receipt.plan_json) as { target: ManagedRootGrant; targetSegments: string[]; parsed: ParsedMedia; selection: MediaSelection };
+  const plan = JSON.parse(receipt.plan_json) as { logicalTargetId?: string; target: ManagedRootGrant; targetSegments: string[]; parsed: ParsedMedia; selection: MediaSelection };
   if (!plan.parsed || !plan.target || !plan.targetSegments?.length || !/\.(?:mkv|mp4|avi|mov|m4v|ts|m2ts|wmv|flv|webm|mpg|mpeg|rmvb)$/i.test(plan.parsed.originalFilename) || join(plan.target.path, ...plan.targetSegments) !== task.target_path) throw correctionConflict("原任务的普通视频收据或目标路径不完整，不能自动认领其他文件");
   const root = roots.get(receipt.target_root_id); if (root.grant.path !== plan.target.path || !sameVolumeRoot(root.grant.volume, plan.target.volume)) throw new DesktopError("LOCAL_UNAVAILABLE", "原媒体目标目录或磁盘身份不符，请恢复原目标授权", true);
   root.segments(plan.targetSegments);

@@ -16,6 +16,7 @@ async function fixture() {
   await i18nReady;
   let settings: DesktopSettings = { language: "zh-CN", embyUrl: "http://localhost:8096", tmdbProxy: "", embyKeyConfigured: false, tmdbKeyConfigured: false };
   const api = {
+    listConfigurationDirectories: vi.fn(async () => []), getDefaultDownloadDirectory: vi.fn(async () => ({ version: 0, directory: null })),
     getSettings: vi.fn(async () => structuredClone(settings)),
     saveSettings: vi.fn(async (input: SettingsDraft) => { settings = { ...settings, ...input }; return input; }),
     saveCredential: vi.fn(async () => { settings = { ...settings, tmdbKeyConfigured: true }; }),

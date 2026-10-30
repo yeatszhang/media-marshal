@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { syncGlobIssue } from "./sync-glob.js";
 
 const id = z.uuid();
 const revision = z.number().int().nonnegative().safe();
@@ -19,7 +20,10 @@ export const defaultDownloadDirectorySchema = z.strictObject({ version: revision
 export type DefaultDownloadDirectory = z.infer<typeof defaultDownloadDirectorySchema>;
 export const defaultDownloadDirectoryWriteSchema = z.strictObject({ expectedVersion: revision, directoryId: id.nullable(), requestKey: id });
 
-export const syncFilterSchema = z.strictObject({ action: z.enum(["include", "exclude"]), pattern: z.string().min(1).max(4096).refine((value) => !/[\0\r\n]/.test(value), "过滤表达式必须为单行"), caseSensitive: z.boolean().default(true) });
+export const syncFilterSchema = z.strictObject({ action: z.enum(["include", "exclude"]), pattern: z.string().min(1).max(4096).refine((value) => !/[\0\r\n]/.test(value), "过滤表达式必须为单行"), caseSensitive: z.boolean().default(true) }).superRefine((value, context) => {
+  const issue = syncGlobIssue(value.pattern, value.action);
+  if (issue) context.addIssue({ code: "custom", path: ["pattern"], message: issue });
+});
 export type SyncFilter = z.infer<typeof syncFilterSchema>;
 const periodic = z.strictObject({ enabled: z.boolean().default(false), intervalSeconds: z.number().int().min(60).max(604800).default(900) }).default({ enabled: false, intervalSeconds: 900 });
 const syncFields = {
@@ -37,7 +41,7 @@ export const syncSourceConfigurationSchema = z.discriminatedUnion("type", [
 export type SyncSourceConfiguration = z.infer<typeof syncSourceConfigurationSchema>;
 
 const edit = { id, expectedVersion: revision, expectedDraftRevision: revision, expectedLifecycleRevision: revision, requestKey: id };
-export const syncSourceWriteSchema = z.strictObject({ ...edit, configuration: syncSourceConfigurationSchema });
+export const syncSourceWriteSchema = z.strictObject({ ...edit, configuration: syncSourceConfigurationSchema }).refine((value) => value.configuration.target.kind === "default", "来源统一使用设置中的本地下载目录，请前往设置修改");
 export const syncSourceSnapshotSchema = z.strictObject({
   sourceId: id, sourceVersion: version, configuration: syncSourceConfigurationSchema,
   inputDirectory: directoryBindingSchema.nullable(), targetDirectory: directoryBindingSchema,
@@ -60,7 +64,7 @@ export const recognitionRuleConfigurationSchema = z.strictObject({
   operation: z.literal("COPY").default("COPY"), automatic: z.boolean().default(false),
 });
 export type RecognitionRuleConfiguration = z.infer<typeof recognitionRuleConfigurationSchema>;
-export const recognitionRuleWriteSchema = z.strictObject({ ...edit, configuration: recognitionRuleConfigurationSchema });
+export const recognitionRuleWriteSchema = z.strictObject({ ...edit, configuration: recognitionRuleConfigurationSchema }).refine((value) => value.configuration.input.kind === "default" && value.configuration.client === "custom", "识别统一使用设置中的本地下载目录，无需指定输入目录或客户端");
 
 /** 绑定具体库根，不能只保存库名或库内第一条路径。 */
 export const embyTargetBindingSchema = z.strictObject({
@@ -97,9 +101,9 @@ const ruleFields = {
   reviewReasons: z.array(z.enum(["LEGACY_AUTHORIZATION_MISSING", "LEGACY_POLICY_CONFLICT", "AUTOMATIC_REAUTHORIZATION_REQUIRED", "LEGACY_SCOPE_REVIEW_REQUIRED"])).max(4),
   createdAt: z.string(), updatedAt: z.string(),
 };
-export const syncSourceRuleSchema = z.strictObject({ ...ruleFields, draft: syncSourceConfigurationSchema, snapshot: syncSourceSnapshotSchema.nullable() });
+export const syncSourceRuleSchema = z.strictObject({ ...ruleFields, draft: syncSourceConfigurationSchema, snapshot: syncSourceSnapshotSchema.nullable(), runtime: z.strictObject({ claimed: z.boolean(), nextScanAt: z.number().int().nullable(), failure: z.string().max(500).nullable() }).optional() });
 export type SyncSourceRule = z.infer<typeof syncSourceRuleSchema>;
-export const recognitionRuleSchema = z.strictObject({ ...ruleFields, draft: recognitionRuleConfigurationSchema, snapshot: recognitionRuleSnapshotSchema.nullable() });
+export const recognitionRuleSchema = z.strictObject({ ...ruleFields, draft: recognitionRuleConfigurationSchema, snapshot: recognitionRuleSnapshotSchema.nullable(), runtime: z.strictObject({ claimed: z.boolean(), sourceId: id.nullable(), failure: z.string().max(500).nullable(), unavailableInputs: revision, automaticAuthorized: z.boolean() }).optional() });
 export type RecognitionRule = z.infer<typeof recognitionRuleSchema>;
 
 export const embyPathConversionWriteSchema = z.strictObject({

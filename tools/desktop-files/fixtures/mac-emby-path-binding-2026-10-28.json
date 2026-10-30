@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-28",
+  "scope": "隔离目录、本地 HTTP 夹具、Electron 开发构建；不含个人媒体、真实服务器或安装发行验收",
+  "schemaVersion": 31,
+  "verification": {
+    "fullUnit": "944 passed, 13 skipped（最终迁移和反馈补充前）",
+    "finalTargeted": "76 passed",
+    "typecheck": "passed",
+    "boundaries": "passed",
+    "docs": "passed",
+    "openspec": "8 passed",
+    "desktop": "3 passed：现有电影目标重启复核、显式转换与多库根、任务分页与重载"
+  },
+  "sha256": {
+    "packages/contracts/src/emby.ts": "1755920d22c8ddddf79a8280495c19330f3ccd5587c4bb72d396b58dc055a72c",
+    "packages/contracts/src/internal/core.ts": "17349a2dbeae698b230b5d70566b8ac3a680af9d784643ad38202785f1bc4c3c",
+    "packages/media-core/src/infrastructure/emby-binding-migration.ts": "2853e8bc224863fa0db800407f056f0a27953e5dc165f36645ee19b08f208959",
+    "packages/media-core/src/ingestion/emby-paths.ts": "06602689a4201dec5cf39214dbd7702dd8f8a19b137b15526c3c54169e358212",
+    "packages/media-core/src/ingestion/emby-delivery.ts": "e804e50d89234b0a3937e8bbde31e8ecf8bd2211b88e99aa0af4594c8b44dc18",
+    "packages/media-core/src/ingestion/emby-failure.ts": "07b73a8032628d81501731a6b59e73cb100e02455b25fee8c36e0045d8f1c157",
+    "packages/media-core/src/application/core-service.ts": "c3f3f9dab074d1388ab41413cc21132825714aed29cc852c5d5b95817964efcd",
+    "apps/desktop/src/renderer/src/pages/LibrarySetup.tsx": "dcf8c8fa162a1a97de1f0d96f8fe5f565064c4b1b32b4f819c9949e6b8c40e10",
+    "apps/desktop/src/renderer/src/pages/Tasks.tsx": "1f0c580fcd3b7f69d228eb52ab53a2586f218042bf5389bc4ef445d7b4296423",
+    "apps/desktop/src/renderer/src/pages/settings.css": "31235117f5b58b39bfe069364d5a7bc0939bc7c2c7ff66aca7f339794c7d6866",
+    "apps/desktop/src/renderer/src/ingestion-i18n.ts": "0881eb64d89e58ff096d9a4534418fae376e597a977b15ba0ef685a1bfa32c5e",
+    "apps/desktop/src/renderer/src/services.ts": "c8213a532410d71a4fb1ab2688cfe3cbcf18134261195201b4c7b6d2415a242e",
+    "apps/desktop/src/preload/index.ts": "ce88e9b69273fdf02f903d077632da8adb4f39b227b6cc597067d56867aeeeff",
+    "apps/desktop/tests/desktop.spec.ts": "fd19d7f867af8911621366788c9764c79b6a39ac93189c70c5522c269b443612",
+    "apps/desktop/out/main/worker.js": "ab4c56548f8a112c60df443f17240c754965826648203a7c56d346b0cce3b00c",
+    "apps/desktop/out/main/index.js": "cc7b784283d11e0899d9c2bc47f4867d6de33d473009eed67b5e06da216038b7",
+    "apps/desktop/out/preload/index.js": "962f9f20527811540e5176855f7f00c98d5610fd4cd593885115afdb40457cff",
+    "apps/desktop/out/renderer/index.html": "6544f1579b8a5c94f9523629c7277173787138465da3ac965b7004024adc9184",
+    "test-results/desktop/emby-path-conversion-minimum.png": "6cd9128d0933ef2f27de21e2d29296029bb408c287fe6417f9a32b1d06b8c267",
+    "test-results/desktop/emby-binding-revalidation.png": "ca2b4e3aa6cb2ad23a6d2f5536a35c4281feabc891623c493f83666c65ff0346",
+    "apps/desktop/out/renderer/assets/index-BDDzRbmB.css": "d4cee369fa0e9a07ad0b7d5d71419f20dd69565d2d45bd65b9de573041a7ad23",
+    "apps/desktop/out/renderer/assets/index-CgSSLmez.js": "99ce37494795413b724a2434f655bd9e5b4e88adc33972efd61922cb168588d9"
+  }
+}

@@ -9,6 +9,7 @@ import { CloudDrives } from "./pages/CloudDrives";
 import { i18nReady } from "./i18n";
 import { MemoryRouter } from "react-router-dom";
 
+Object.assign(HTMLDialogElement.prototype, { showModal() { this.setAttribute("open", ""); }, close() { this.removeAttribute("open"); } });
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const disposed: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const dispose of disposed.splice(0)) await dispose(); document.body.innerHTML = ""; vi.useRealTimers(); });
@@ -30,7 +31,7 @@ describe("云端页面的凭据与浏览状态", () => {
   it("取消清除输入且不提交授权，重新打开不回显 Cookie", async () => {
     const f = await mount(); await click("连接夸克账号");
     await click("手动 Cookie");
-    await fill('input[type="password"]', "fixture-private-cookie"); await click("取消");
+    await fill('input[type="password"]', "fixture-private-cookie"); await click("取消"); await click("放弃修改");
     expect(document.querySelector('input[type="password"]')).toBeNull(); expect(f.api.authorizeCloudAccount).not.toHaveBeenCalled();
     await click("连接夸克账号"); await click("手动 Cookie"); expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("");
   });

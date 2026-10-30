@@ -19,6 +19,7 @@ async function mount() {
     listMediaLibraries: vi.fn(async () => [target]), getEmbyConfiguration: vi.fn(async () => configuration),
     chooseMediaTarget: vi.fn(async () => [target]),
     listEmbyLibraries: vi.fn(async () => ({ serverId: "server-fixture", version: "4.9-fixture", libraries: [{ id: "library-tv", name: "原有剧集库", type: "tvshows", paths: [target.path] }] })),
+    discoverEmbyTargets: vi.fn(async () => ({ serverId: "server-fixture", targets: [{ targetId: target.targetId, state: "MATCHED", matches: [{ libraryId: "library-tv", libraryPath: target.path, serverPath: target.path }], incompatible: [], reason: null }] })),
     connectEmby: vi.fn(async () => { configuration = { ...configuration!, verified: true }; return configuration; }),
   };
   const app = createRendererApplication(api as unknown as DesktopApi); await app.start();
@@ -32,6 +33,30 @@ async function mount() {
     verified() { configuration = { ...configuration!, verified: true }; } };
 }
 describe("已有 Emby 媒体目标与验证状态", () => {
+  it("唯一发现自动选择，修改转换使旧选择失效；无匹配保留修复原因且不提交", async () => {
+    const f = await mount(); await act(async () => f.button("读取 Emby 媒体库").click());
+    expect(f.element.querySelector<HTMLSelectElement>("select")?.value).toBe(JSON.stringify(["library-tv", f.target.path]));
+    const checkbox = f.element.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => checkbox.click());
+    expect(f.element.textContent).toContain("路径配置已变化"); expect(f.button("验证并保存（触发扫描）").disabled).toBe(true);
+    expect(f.api.connectEmby).not.toHaveBeenCalled();
+    const serverRoot = f.element.querySelector<HTMLInputElement>(`input[aria-label="服务端根 · ${f.target.path}"]`)!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(serverRoot, "/container/tv"); serverRoot.dispatchEvent(new Event("input", { bubbles: true })); });
+    f.api.discoverEmbyTargets.mockResolvedValueOnce({ serverId: "server-fixture", targets: [{ targetId: f.target.targetId, state: "UNMATCHED", matches: [], incompatible: [], reason: null }] });
+    await act(async () => f.button("重新发现关联").click());
+    expect(f.element.textContent).toContain("没有匹配库根"); expect(f.button("验证并保存（触发扫描）").disabled).toBe(true);
+    expect(f.api.discoverEmbyTargets).toHaveBeenLastCalledWith({ conversions: [{ targetId: f.target.targetId, conversion: { localRoot: f.target.path, serverRoot: "/container/tv", serverPathStyle: "posix" } }] });
+    await act(async () => f.button("读取 Emby 媒体库").click());
+    expect(f.element.textContent).toContain("发现唯一兼容库根");
+  });
+  it("验证响应丢失后沿原请求重试，轮询和 StrictMode 不重放写入", async () => {
+    const f = await mount(); await act(async () => f.button("读取 Emby 媒体库").click());
+    f.api.connectEmby.mockRejectedValueOnce(new Error("保存回执暂不可用，请重试查询"));
+    await act(async () => f.button("验证并保存（触发扫描）").click()); const first = f.api.connectEmby.mock.calls[0];
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); }); expect(f.api.connectEmby).toHaveBeenCalledTimes(1);
+    await act(async () => f.button("验证并保存（触发扫描）").click()); expect(f.api.connectEmby.mock.calls[1]).toEqual(first);
+    expect(f.element.textContent).toContain("连接已验证"); expect(f.element.textContent).not.toContain("保存回执暂不可用");
+  });
   it("StrictMode 只保留一条查询轮询，重启后的复核结果自动显示，卸载不停止应用", async () => {
     const f = await mount(); expect(f.element.textContent).toContain("连接尚未验证"); expect(f.api.getEmbyConfiguration).toHaveBeenCalledTimes(1);
     f.verified(); await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
@@ -45,7 +70,7 @@ describe("已有 Emby 媒体目标与验证状态", () => {
     const select = f.element.querySelector<HTMLSelectElement>("select")!;
     await act(async () => { select.value = JSON.stringify(["library-tv", f.target.path]); select.dispatchEvent(new Event("change", { bubbles: true })); });
     await act(async () => f.button("验证并保存（触发扫描）").click());
-    expect(f.api.connectEmby).toHaveBeenCalledExactlyOnceWith({ serverId: "server-fixture", libraries: [{ targetId: f.target.targetId, libraryId: "library-tv", libraryPath: f.target.path }] });
+    expect(f.api.connectEmby).toHaveBeenCalledExactlyOnceWith({ serverId: "server-fixture", libraries: [{ targetId: f.target.targetId, libraryId: "library-tv", libraryPath: f.target.path }], requestKey: expect.any(String), expectedVersion: 3 });
     await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
     expect(f.api.connectEmby).toHaveBeenCalledTimes(1); expect(f.api.chooseMediaTarget).not.toHaveBeenCalled();
   });

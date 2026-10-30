@@ -34,6 +34,20 @@ describe("成功同步事实与本地现状分离", () => {
     expect(lookup({ ...f.version, size: 6 })).toBeUndefined(); expect(lookup(f.version, "另一个槽位")).toBeUndefined();
     expect(f.receipts.find("local", f.input.source_namespace, f.input.source_object_key, { kind: "revision", revisionKey: "new-version" }, f.root.grant.id, f.input.target_slot)).toBeUndefined();
   });
+  it("路径历史只提供同账号同目标的待确认线索，不自动变成授权关联，旧引用清理不删除线索", async () => {
+    const f = await fixture(), db = f.db.connection, stamp = new Date().toISOString(), account = randomUUID(), otherAccount = randomUUID();
+    const makeBinding = (accountId: string) => { const id = randomUUID(); db.prepare("INSERT INTO provider_binding(id,account_id,implementation_id,configuration_version,generation,state,created_at) VALUES(?,?,'test.fixture',1,?,'ACTIVE',?)").run(id, accountId, randomUUID(), stamp); return id; };
+    const makeRef = (binding: string, accountId: string) => { const id = randomUUID(), locator = JSON.stringify({ kind: "path", segments: ["文件.mkv"] }); db.prepare("INSERT INTO remote_entry(id,account_id,name,type,size,observed_at) VALUES(?,?,'文件.mkv','file',5,?)").run(id, accountId, stamp); db.prepare("INSERT INTO remote_binding(remote_ref,binding_id,account_id,locator_json,locator_key,updated_at) VALUES(?,?,?,?,?,?)").run(id, binding, accountId, locator, hash(JSON.parse(locator)), stamp); return id; };
+    for (const id of [account, otherAccount]) db.prepare("INSERT INTO cloud_account(id,name,provider_kind,status,created_at,updated_at) VALUES(?,'隔离账号','quark','READY',?,?)").run(id, stamp, stamp);
+    const binding = makeBinding(account), oldRef = makeRef(binding, account), receipt = f.receipts.record({ ...f.input, source_kind: "cloud", source_namespace: account, source_object_key: oldRef }, f.evidence);
+    db.prepare("UPDATE provider_binding SET state='RETIRED' WHERE id=?").run(binding);
+    const nextBinding = makeBinding(account), nextRef = makeRef(nextBinding, account), otherBinding = makeBinding(otherAccount), otherRef = makeRef(otherBinding, otherAccount);
+    const lookup = (accountId = account, ref = nextRef, bindingId = nextBinding, target = f.root.grant.id, slot = f.input.target_slot, version = f.version) => f.receipts.pendingCloudHistory(accountId, ref, version, target, slot, bindingId);
+    expect(lookup()?.id).toBe(receipt.id); expect(f.receipts.findCloud(account, nextRef, f.version, f.root.grant.id, f.input.target_slot, nextBinding)).toBeUndefined();
+    expect(lookup(otherAccount, otherRef, otherBinding)).toBeUndefined(); expect(lookup(account, nextRef, nextBinding, randomUUID())).toBeUndefined(); expect(lookup(account, nextRef, nextBinding, f.root.grant.id, "其他槽位")).toBeUndefined(); expect(lookup(account, nextRef, nextBinding, f.root.grant.id, f.input.target_slot, { ...f.version, size: 6 })).toBeUndefined();
+    db.prepare("DELETE FROM remote_binding WHERE binding_id=?").run(binding); expect(lookup()?.id).toBe(receipt.id);
+    expect(db.prepare("SELECT count(*) AS n FROM sync_history_confirmation").get()).toEqual({ n: 0 }); expect(db.prepare("SELECT count(*) AS n FROM sync_receipt_reference").get()).toEqual({ n: 0 });
+  });
   it("原根暂时离线不记删除，恢复原根后重新核对，本地改动或同内容替换均冲突", async () => {
     const f = await fixture(), receipt = f.receipts.record(f.input, f.evidence); await rename(f.rootPath, f.rootPath + "-offline");
     expect(await f.receipts.observe(receipt, f.root)).toBe("UNAVAILABLE"); await rename(f.rootPath + "-offline", f.rootPath); expect(await f.receipts.observe(receipt, f.root)).toBe("PRESENT");

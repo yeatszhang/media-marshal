@@ -37,6 +37,7 @@ import { nativeFilesLaunch } from "./native-files";
 import { Credentials } from "./credentials";
 import { APP_ORIGIN, assetPath, requireEmbyItemUrl, requireTrustedRequest } from "./security";
 import { trayIcon } from "./tray-icon";
+import { windowPresentation } from "./window-presentation";
 import { HostPreferencesController } from "./host-preferences";
 import { DesktopAboutController } from "./desktop-about";
 import { RendererReloadController } from "./renderer-reload";
@@ -69,6 +70,8 @@ const dataArgument = process.argv.find((value) =>
 );
 if (dataArgument)
   app.setPath("userData", dataArgument.slice("--user-data-dir=".length));
+windowPresentation.prepare(app);
+windowPresentation.guardNativeUi(dialog, shell);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
 else void app.whenReady().then(bootstrap);
@@ -130,8 +133,7 @@ async function bootstrap() {
   const rememberGrant = (path: string, purpose: "source" | "target") => { const purposes = grants.get(path) ?? new Set<"source" | "target">(); purposes.add(purpose); grants.set(path, purposes); };
   const show = () => {
     if (window && !window.isDestroyed()) {
-      window.show();
-      window.focus();
+      windowPresentation.show(window);
     }
   };
   const showWindow = async () => {
@@ -146,9 +148,11 @@ async function bootstrap() {
       minWidth: 920,
       minHeight: 640,
       show: false,
+      ...windowPresentation.windowOptions,
       title: "Media Marshal",
       backgroundColor: "#f7f8fa",
       webPreferences: {
+        ...windowPresentation.webPreferences,
         preload: join(__dirname, "../preload/index.js"),
         sandbox: true,
         contextIsolation: true,
@@ -281,10 +285,16 @@ async function bootstrap() {
       const quarkLogin = new QuarkLoginController((input) => accounts.authorize(input), (requestKey) => supervisor.request("cloud.authorizations.get", { requestKey }));
       ctx.container.bind(quarkLoginToken).toConstantValue(quarkLogin);
       ctx.container.bind(downloadRootsToken).toConstantValue(roots);
-      let recovering: Promise<void> | undefined;
-      const recover = () => recovering ??= (async () => {
+      let recovering: Promise<void> | undefined, recoverAgain = false;
+      const recover = (fresh = false): Promise<void> => {
+        if (recovering) { if (fresh) recoverAgain = true; return recovering; }
+        return recovering = (async () => {
         if (exiting || supervisor.state !== "ready") return;
         await roots.restore();
+        for (const previous of await supervisor.requestPrivate("configuration.bootstrap", {})) {
+          try { const path = await roots.validateDirectory(previous.grant.path), grant = await (previous.kind === "ordinary" ? probeReadOnlyVolume(path, previous.grant.id) : probeManagedVolume(path, previous.grant.id)); await supervisor.requestPrivate("configuration.authorize", { kind: previous.kind, grant }); }
+          catch { /* 保留原目录身份和不可用状态，等待用户恢复原磁盘。 */ }
+        }
         for (const previous of await supervisor.requestPrivate("media.targets.bootstrap", {})) {
           try { const target = await probeManagedVolume(await roots.validateDirectory(previous.path), previous.id); await supervisor.requestPrivate("media.targets.authorize", target); }
           catch { /* 每个媒体目标独立恢复；单个目标缺盘不阻断同下载根的其他策略。 */ }
@@ -301,10 +311,16 @@ async function bootstrap() {
             await supervisor.requestPrivate("media.sources.authorize", { ...previous, source, target });
           } catch { /* 原卷或授权未恢复时保持未验证，不重新绑定相同路径的新硬盘。 */ }
         }
+        await supervisor.requestPrivate("recognition.restore", {});
         if (await backups.reconciliationNeeded()) { await supervisor.requestPrivate("desktop.state.reconcile-restored", {}); await backups.acknowledgeReconciliation(); }
         await accounts.restore();
         await supervisor.requestPrivate("cloud.runtime.wake", { hostGeneration: ctx.get(sidecarToken).generation });
-      })().finally(() => { recovering = undefined; });
+        })().finally(() => {
+          recovering = undefined;
+          // 唤醒时目录可能刚恢复；不能把这次新探测合并进先前看到缺盘的恢复轮次。
+          if (recoverAgain) { recoverAgain = false; void recover().catch(() => {}); }
+        });
+      };
       supervisor.onReady = async () => {
         // ready 已证明 Core 完成数据库迁移；服务或账号恢复失败不能留下旧 Schema 元数据。
         await backups.recordVersion(await runtimeVersion());
@@ -328,7 +344,7 @@ async function bootstrap() {
         if (exiting || supervisor.state !== "ready") return;
         void ctx.effects.run(async () => {
           await supervisor.requestPrivate("media.observations.reset", {});
-          if (!exiting && !ctx.signal.aborted) await recover();
+          if (!exiting && !ctx.signal.aborted) await recover(true);
         }, "唤醒后恢复媒体观察").catch(() => {});
       };
       powerMonitor.on("resume", resume);
@@ -454,6 +470,24 @@ async function bootstrap() {
                 return { ok: true, result: canonical };
               }
               return { ok: true, result: null };
+            }
+            if (action === "desktop.configuration.choose-directory") {
+              const { kind } = nativeActions["desktop.configuration.choose-directory"].parse(parsed.data);
+              const selected = await dialog.showOpenDialog(window!, { title: kind === "managed" ? "选择本地下载目录" : kind === "media" ? "选择识别映射媒体目标" : "选择本机输入目录", properties: ["openDirectory", "createDirectory"] });
+              if (selected.canceled || !selected.filePaths[0]) return { ok: true, result: null };
+              const controller = ctx.get(downloadRootsToken), path = await controller.validateDirectory(selected.filePaths[0]);
+              const known = (await supervisor.request("configuration.directories", {})).find((row) => row.path === path);
+              const managed = (await supervisor.request("cloud.roots.list", {})).find((row) => row.path === path);
+              if (kind === "media" && (managed || known?.kind === "managed")) throw new DesktopError("UNSAFE_PATH", "受管下载根不能同时作为媒体目标，请选择独立媒体目录");
+              if (kind === "managed" || managed || known?.kind === "managed") {
+                const root = await controller.choose(path), grant = (await supervisor.requestPrivate("cloud.roots.bootstrap", {})).find((row) => row.id === root.id)!;
+                await supervisor.requestPrivate("configuration.authorize", { kind: "managed", grant });
+                return { ok: true, result: (await supervisor.request("configuration.directories", {})).find((row) => row.id === root.id)! };
+              }
+              const previousTarget = kind === "media" ? await supervisor.requestPrivate("media.targets.find", { path }) : null;
+              const grant = await (kind === "media" ? probeManagedVolume(path, known?.id ?? previousTarget?.id) : probeReadOnlyVolume(path, known?.id));
+              await supervisor.requestPrivate("configuration.authorize", { kind, grant });
+              return { ok: true, result: (await supervisor.request("configuration.directories", {})).find((row) => row.id === grant.id)! };
             }
             if (action === "desktop.credentials.save") {
               const { kind, value } = parsed.data as {

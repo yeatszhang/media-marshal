@@ -3,17 +3,17 @@ import { DesktopError, publicError, type CoreInput, type CoreOutput, type Source
 import type { CoreDatabase } from "../infrastructure/database.js";
 export interface ScanScope { physicalId: string; name: string; context: string; waiting: string | null }
 export interface ScanResult { discovered: number; checkedPaths: string[]; issues: { relativePath: string; failure: string }[] }
-interface ScanRow { id: string; source_id: string; physical_source_id: string; source_name: string; context: string; state: SourceScan["state"]; discovered: number; failure: string | null; created_at: string; updated_at: string }
+interface ScanRow { owner_kind: "legacy" | "recognition"; id: string; source_id: string; physical_source_id: string; source_name: string; context: string; state: SourceScan["state"]; discovered: number; failure: string | null; created_at: string; updated_at: string }
 const active = "state IN ('PENDING','RUNNING','WAITING_SOURCE')";
 /** 手动扫描只保存意图并复用流水线扫描；真正的文件接入仍经过来源与就绪检查。 */
 export class SourceScans {
   private closed = false; private flight?: Promise<void>; private timer?: ReturnType<typeof setInterval>; private again = false; private closeFlight?: Promise<void>;
-  constructor(private readonly database: CoreDatabase, private readonly scope: (id: string) => ScanScope, private readonly scan: (id: string, sourceId: string) => Promise<ScanResult>, private readonly now = Date.now) {
-    database.connection.prepare("UPDATE ingestion_source_scan SET state='PENDING',failure='核心已重启，等待原目录授权恢复后重新补扫',next_attempt_at=0,updated_at=? WHERE state='RUNNING'").run(this.stamp());
+  constructor(private readonly database: CoreDatabase, private readonly scope: (id: string) => ScanScope, private readonly scan: (id: string, sourceId: string) => Promise<ScanResult>, private readonly now = Date.now, private readonly ownerKind: "legacy" | "recognition" = "legacy") {
+    database.connection.prepare("UPDATE ingestion_source_scan SET state='PENDING',failure='核心已重启，等待原目录授权恢复后重新补扫',next_attempt_at=0,updated_at=? WHERE state='RUNNING' AND owner_kind=?").run(this.stamp(), this.ownerKind);
   }
   private stamp() { return new Date(this.now()).toISOString(); }
   private row(id: string) { const row = this.database.connection.prepare("SELECT * FROM ingestion_source_scan WHERE id=?").get(id) as ScanRow | undefined; if (!row) throw new DesktopError("CONFLICT", `目录扫描作业 ${id} 不存在，请关闭旧详情并刷新扫描记录`); return row; }
-  private dto(row: ScanRow): SourceScan { const count = this.database.connection.prepare("SELECT count(*) AS n FROM ingestion_source_scan_issue WHERE scan_id=?").get(row.id) as { n: number }; return { id: row.id, sourceId: row.source_id, sourceName: row.source_name, state: row.state, discovered: row.discovered, failed: count.n, failure: row.failure, createdAt: row.created_at, updatedAt: row.updated_at }; }
+  private dto(row: ScanRow): SourceScan { const count = this.database.connection.prepare("SELECT count(*) AS n FROM ingestion_source_scan_issue WHERE scan_id=?").get(row.id) as { n: number }; return { ...(row.owner_kind === "recognition" ? { ownerKind: "recognition" as const } : {}), id: row.id, sourceId: row.source_id, sourceName: row.source_name, state: row.state, discovered: row.discovered, failed: count.n, failure: row.failure, createdAt: row.created_at, updatedAt: row.updated_at }; }
   enqueue(input: CoreInput<"ingestion.scan">): SourceScan {
     if (this.closed) throw new DesktopError("INTERRUPTED", "目录扫描正在停止", true);
     const db = this.database.connection;
@@ -21,11 +21,11 @@ export class SourceScans {
       const receipt = db.prepare("SELECT source_id,scan_id FROM ingestion_source_scan_request WHERE request_key=?").get(input.requestKey) as { source_id: string; scan_id: string } | undefined;
       if (receipt) { if (receipt.source_id !== input.sourceId) throw new DesktopError("CONFLICT", "扫描请求标识已用于其他来源，请刷新后重试"); return receipt.scan_id; }
       const scope = this.scope(input.sourceId);
-      const previous = db.prepare(`SELECT * FROM ingestion_source_scan WHERE source_id=? AND ${active}`).get(input.sourceId) as ScanRow | undefined;
+      const previous = db.prepare(`SELECT * FROM ingestion_source_scan WHERE source_id=? AND owner_kind=? AND ${active}`).get(input.sourceId, this.ownerKind) as ScanRow | undefined;
       if (previous && previous.context !== scope.context) db.prepare("UPDATE ingestion_source_scan SET state='FAILED',failure='来源配置已变化，请按当前配置重新扫描',updated_at=? WHERE id=?").run(this.stamp(), previous.id);
       const old = previous?.context === scope.context ? previous : undefined;
       const id = old?.id ?? randomUUID();
-      if (!old) db.prepare("INSERT INTO ingestion_source_scan(id,source_id,physical_source_id,source_name,context,state,failure,created_at,updated_at) VALUES(?,?,?,?,?,? ,?,?,?)").run(id, input.sourceId, scope.physicalId, scope.name, scope.context, scope.waiting ? "WAITING_SOURCE" : "PENDING", scope.waiting, this.stamp(), this.stamp());
+      if (!old) db.prepare("INSERT INTO ingestion_source_scan(id,source_id,physical_source_id,source_name,context,state,failure,created_at,updated_at,owner_kind) VALUES(?,?,?,?,?,? ,?,?,?,?)").run(id, input.sourceId, scope.physicalId, scope.name, scope.context, scope.waiting ? "WAITING_SOURCE" : "PENDING", scope.waiting, this.stamp(), this.stamp(), this.ownerKind);
       db.prepare("INSERT INTO ingestion_source_scan_request VALUES(?,?,?)").run(input.requestKey, input.sourceId, id); return id;
     })();
     const result = this.dto(this.row(id)); this.kick(); return result;
@@ -37,7 +37,7 @@ export class SourceScans {
   async idle() { while (this.flight) await this.flight; }
   private checked(job: ScanRow) { const scope = this.scope(job.source_id); if (scope.context !== job.context || scope.physicalId !== job.physical_source_id) throw new DesktopError("CONFLICT", "来源配置或删除状态已变化；原扫描不会改用新配置，请重新扫描"); return scope; }
   private async run() {
-    const db = this.database.connection, jobs = db.prepare(`SELECT * FROM ingestion_source_scan WHERE ${active} AND next_attempt_at<=? ORDER BY next_attempt_at,created_at,id LIMIT 4`).all(this.now()) as ScanRow[];
+    const db = this.database.connection, jobs = db.prepare(`SELECT * FROM ingestion_source_scan WHERE ${active} AND owner_kind=? AND next_attempt_at<=? ORDER BY next_attempt_at,created_at,id LIMIT 4`).all(this.ownerKind, this.now()) as ScanRow[];
     for (const job of jobs) {
       if (this.closed) return;
       try {
@@ -64,5 +64,5 @@ export class SourceScans {
     }
   }
   quiesce() { this.closed = true; clearInterval(this.timer); }
-  close(): Promise<void> { this.quiesce(); return this.closeFlight ??= (async () => { await this.flight?.catch(() => {}); this.database.connection.prepare("UPDATE ingestion_source_scan SET state='PENDING',failure='核心正在停止，重启并恢复授权后继续补扫',updated_at=? WHERE state='RUNNING'").run(this.stamp()); })(); }
+  close(): Promise<void> { this.quiesce(); return this.closeFlight ??= (async () => { await this.flight?.catch(() => {}); this.database.connection.prepare("UPDATE ingestion_source_scan SET state='PENDING',failure='核心正在停止，重启并恢复授权后继续补扫',updated_at=? WHERE state='RUNNING' AND owner_kind=?").run(this.stamp(), this.ownerKind); })(); }
 }

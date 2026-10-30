@@ -19,7 +19,7 @@ export const sourceConfigurationSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("cloud"), name: z.string().trim().min(1).max(100),
     accountId: id, remoteRef: id, downloadRootId: id,
-    filters: cloudFiltersSchema.transform((value) => ({ extensions: [...new Set(value.extensions)].sort(), names: [...new Set(value.names)].sort() })),
+    filters: cloudFiltersSchema.transform((value) => ({ extensions: [...new Set(value.extensions)].sort(), names: [...new Set(value.names)].sort(), ...(value.rules ? { rules: value.rules } : {}) })),
     periodic: z.strictObject({ enabled: z.boolean().default(false), intervalSeconds: z.number().int().min(60).max(604800).default(900) }).default({ enabled: false, intervalSeconds: 900 }),
     organization: organization.nullable().default(null),
   }),
@@ -64,7 +64,7 @@ export const sourceRulePreviewSchema = z.strictObject({
   organizationConflicts: z.array(z.strictObject({ sourceId: id, name: z.string().max(100) })).max(1000),
 });
 export type SourceRulePreview = z.output<typeof sourceRulePreviewSchema>;
-export const sourceRuleApplySchema = z.strictObject({ previewId: id, requestKey: id, runOnce: z.boolean().default(false), automaticConsent: z.strictObject({ previewId: id, accepted: z.literal(true) }).optional() });
+export const sourceRuleApplySchema = z.strictObject({ previewId: id, requestKey: id, runOnce: z.boolean().default(false), automaticConsent: z.strictObject({ previewId: id, accepted: z.literal(true) }).optional(), historyConsent: z.strictObject({ accepted: z.literal(true) }).optional() });
 export const sourceLegacyReferenceSchema = z.strictObject({
   kind: z.enum(["local-source", "subscription", "managed-binding", "download-job"]), id, sourceId: id.nullable(),
   status: z.enum(["MAPPED", "REVIEW_REQUIRED", "HISTORICAL"]),

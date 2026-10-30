@@ -1,0 +1,75 @@
+{
+  "date": "2026-10-28",
+  "platform": "darwin-arm64",
+  "sourceCommit": "d1c1cecd9bbe46041b10cae546dfb30edcd8e895",
+  "schemaVersion": 33,
+  "build": "Electron 44.9.0 arm64 未签名目录包",
+  "scope": "三变更独立闭环：本地同步正式成果、独立识别电影与剧集、按逻辑 target COPY、Emby 显式路径转换与收录核对、重载和 Core 重启。窗口两段就绪观察使用生产连续 120 秒。",
+  "checks": {
+    "full": "1004 passed / 13 条件 skipped（102 文件通过、3 文件跳过）",
+    "afterLastAccountReturnChange": "35 renderer passed",
+    "typecheck": "passed",
+    "boundaries": "passed",
+    "docs": "passed",
+    "openspec": "8 passed；三个目标变更 all_done",
+    "framework": "固定 npm 包 74 文件逐字节通过",
+    "artifact": "9534 条目，原生库、框架来源及许可检查通过",
+    "packagedWindow": "6 passed（最终目录包，实际运行 6.0 分钟）"
+  },
+  "commands": [
+    "npm test",
+    "npm run typecheck",
+    "npm run check:boundaries",
+    "npm run docs:build",
+    "openspec validate --all --strict",
+    "CSC_IDENTITY_AUTO_DISCOVERY=false npm run desktop:pack",
+    "node scripts/check-desktop-artifact.mjs",
+    "MARSHAL_APP_PATH=<当前 arm64 目录包可执行文件> MARSHAL_EXECUTABLE=1 npm run test:desktop -- --grep '三者闭环|独立普通目录|Emby 显式路径转换|独立目录授权|本地来源健康|旧 schema 来源'"
+  ],
+  "failureRecovery": [
+    "旧任务的手动重试改用冻结输入和目标，并连续重新观察；规则换输入不替换原计划。",
+    "实际 SIGKILL 覆盖本地同步 planned/copying/verified/published/recorded 五阶段；恢复保持操作 ID、冻结计划、唯一成功收据，已发布文件 inode 保持，校验后的恢复允许输入离线。",
+    "原生窗口发现唤醒与既有恢复轮次重叠会丢失新目录探测，Main 追加一轮恢复，原目录恢复后不需再次重启 Core。"
+  ],
+  "limits": [
+    "隔离临时目录；未访问个人网盘、个人媒体或真实凭据。",
+    "TMDB 仅准备合法成功缓存，不预置候选、COPY 操作或完成收据；未命中经不可达本地代理失败。",
+    "Emby 是本地 HTTP 固定响应，未安装、修改或实测真实服务器扫描。",
+    "目录对话框返回受控，实际目录身份和文件操作使用生产实现。",
+    "Core 强杀夹具使用注入时钟准备检查点，不代替窗口生产观察或真实下载客户端行为。",
+    "不作为正式签名、公证、只读 DMG、Intel、其他 OS 或真实客户端完整矩阵的验收。"
+  ],
+  "sha256": {
+    "apps/desktop/out/main/index.js": "3816168448865a29488e12385cae1be1e921e9b9ebff0b8e617d89aee4b66cd9",
+    "apps/desktop/out/main/worker.js": "bee1e086f0b2bc21e279aa50b8d64542e930a52ea892bdac53a7242994f3909e",
+    "apps/desktop/out/preload/index.js": "253e5c31b47ce72bfec269b039909a566c9537f7b1c7fa64f627e13d8eb0024d",
+    "apps/desktop/release/mac-arm64/Media Marshal.app/Contents/Resources/app.asar": "604e0edf24b44827adc266d6b338e71c3a3d955abd0f390dc44aaefdacd3f5bc",
+    "packages/media-core/src/ingestion/pipeline.ts": "dc1d88daa11ca352f0587558be759ebe6ec4b6d1f04218f2553f66782c83304e",
+    "packages/media-core/src/sources/recognition-rules.ts": "2cce91b4342a136173e697c11c99f421c434c79318a0aef214bed105b1ff11c0",
+    "packages/media-core/src/sources/local-sync.ts": "036adb80a6b6a5243280a369952210260df60f78e5b329ad0563bf452acff123",
+    "packages/media-core/src/sources/sync-rules.ts": "8877fc4688626b58ee40a200a400e1846ed510e25ecf41a8b29e53a3bfa3130a",
+    "apps/desktop/src/main/index.ts": "d37ff5127c9d890f8ca6ed1cccf72c62777cf42f697466362334fdc8f57e498c",
+    "apps/desktop/src/renderer/src/pages/Recognition.tsx": "5cde97a8a856cc2d527214909208834f5eab0878b826e7b91271b58611b097b4",
+    "apps/desktop/src/renderer/src/pages/Ingestion.tsx": "b29a08fe4f76a50f4497291b36875a91a7b207ea50669745ba737c4419ccdfe5",
+    "apps/desktop/src/renderer/src/pages/SourceConfigurationRedirect.tsx": "039d8e6dc773abc3148b6b7b62d0f60dff20858c18ffefea783fc8184fbde72c",
+    "apps/desktop/tests/desktop.spec.ts": "b3e9ffccf562df6d93dd3c21294e92af964f32c975a25bee45ae613283edae96",
+    "tools/desktop-files/seed-independent-recognition.mjs": "14cd1102ca490fab7268efc1964a4d0c2ab32e914e8d286f863a3e8e0fcb454b",
+    "tools/desktop-files/local-sync-crash-child.mjs": "7a7a181aa83e835f7c312e4d82e261f474d3be6e3bfe7aaf942d55c09553b532",
+    "apps/desktop/out/renderer/assets/index-D8ETlyzj.css": "03f9095aa7c3132a83f42cdf0b047a3fc1b38c0a2d9263268f9e974efab8945a",
+    "apps/desktop/out/renderer/assets/index-VwrfvIMu.js": "4094124a622259c2853c7e371deaf2cb68e102254295c1247e8a7c890b1849c8",
+    "test-results/desktop/independent-recognition-config-minimum.png": "0a46d6715f1bfe2f591f89997abef9bcdae4b2611d11de9996d0141ea995f5c7",
+    "test-results/desktop/independent-three-change-collected.png": "d69b7f0e144b9d2a5e9e55b2181ef3d94846b68ffef5fae56c5e6c331cb3895b",
+    "test-results/desktop/independent-recognition-paused-minimum.png": "84680d227fb65bcf88601af4fddfc7a7968731c5ffca936b4563c4e4ebe22563"
+  },
+  "os": {
+    "name": "macOS",
+    "version": "26.5.2",
+    "build": "25F84"
+  },
+  "verifiedAt": "2026-10-28 03:30:26 Asia/Shanghai",
+  "reviewedScreenshots": [
+    "test-results/desktop/independent-recognition-config-minimum.png",
+    "test-results/desktop/independent-three-change-collected.png",
+    "test-results/desktop/independent-recognition-paused-minimum.png"
+  ]
+}

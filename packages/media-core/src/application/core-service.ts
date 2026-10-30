@@ -16,6 +16,7 @@ import {
   type DesktopJob,
 } from "@media-marshal/contracts";
 import { CoreDatabase } from "../infrastructure/database.js";
+import { embyFailureMessage } from "../ingestion/emby-failure.js";
 import { pathsOverlap } from "../files/index.js";
 import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
 
@@ -94,9 +95,10 @@ export class CoreService {
       ).count;
     return {
       schemaVersion: this.database.schemaVersion,
-      sourceCount: count("source_rule"),
+      sourceCount: (this.database.connection.prepare("SELECT count(*) AS n FROM (SELECT id FROM sync_source_rule WHERE deleted_at IS NULL UNION SELECT s.id FROM source_rule s WHERE s.deleted_at IS NULL AND (s.type='cloud' OR NOT EXISTS(SELECT 1 FROM legacy_configuration_owner o WHERE o.source_id=s.id AND o.recognition_claimed=1)))").get() as { n: number }).n,
+      recognitionCount: (this.database.connection.prepare("SELECT count(*) AS n FROM recognition_rule WHERE deleted_at IS NULL").get() as { n: number }).n,
       taskCount: count("media_task"),
-      mode: this.database.connection.prepare("SELECT 1 FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.deleted_at IS NULL AND s.review_required=0 AND json_extract(v.configuration_json,'$.organization.automatic')=1 LIMIT 1").get() ? "automatic-enabled" : "manual-only",
+      mode: this.database.connection.prepare("SELECT 1 FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.deleted_at IS NULL AND s.review_required=0 AND json_extract(v.configuration_json,'$.organization.automatic')=1 AND NOT EXISTS(SELECT 1 FROM legacy_configuration_owner o WHERE o.source_id=s.id AND o.recognition_claimed=1) UNION ALL SELECT 1 FROM recognition_rule r JOIN recognition_runtime t ON t.rule_id=r.id JOIN recognition_rule_version v ON v.rule_id=r.id AND v.version=r.version JOIN recognition_automatic_consent c ON c.rule_id=r.id AND c.rule_version=r.version WHERE r.deleted_at IS NULL AND t.claimed=1 AND json_extract(v.snapshot_json,'$.configuration.automatic')=1 LIMIT 1").get() ? "automatic-enabled" : "manual-only",
       parser: this.components.parserReady() ? "ready" : "unavailable",
       correctionFiles: this.components.correctionFilesReady?.() ? "ready" : "unavailable",
     };
@@ -105,7 +107,7 @@ export class CoreService {
     return (
       this.database.connection
         .prepare(
-          "SELECT s.*,i.mode,i.download_root_id,EXISTS(SELECT 1 FROM source_rule r JOIN source_rule_version v ON v.source_id=r.id AND v.version=r.version WHERE r.deleted_at IS NULL AND r.review_required=0 AND (r.local_source_id=s.id OR r.ingestion_source_id=s.id) AND json_extract(v.configuration_json,'$.organization.automatic')=1) AS effective_automatic FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id WHERE NOT EXISTS(SELECT 1 FROM source_rule r WHERE r.local_source_id=s.id AND r.deleted_at IS NOT NULL) ORDER BY s.created_at,s.id LIMIT 1000",
+          "SELECT s.*,i.mode,i.download_root_id,EXISTS(SELECT 1 FROM source_rule r JOIN source_rule_version v ON v.source_id=r.id AND v.version=r.version WHERE r.deleted_at IS NULL AND r.review_required=0 AND (r.local_source_id=s.id OR r.ingestion_source_id=s.id) AND json_extract(v.configuration_json,'$.organization.automatic')=1) AS effective_automatic FROM desktop_source s LEFT JOIN ingestion_source i ON i.source_id=s.id WHERE NOT EXISTS(SELECT 1 FROM recognition_input ri WHERE ri.source_id=s.id) AND NOT EXISTS(SELECT 1 FROM source_rule r WHERE r.local_source_id=s.id AND r.deleted_at IS NOT NULL) ORDER BY s.created_at,s.id LIMIT 1000",
         )
         .all() as SourceRow[]
     ).map(sourceDto);
@@ -275,14 +277,15 @@ export class CoreService {
     ).count;
     const items = this.database.connection
       .prepare(
-        `SELECT id,source_id AS sourceId,source_path AS sourcePath,title,status,delivery_status AS deliveryStatus,target_path AS targetPath,corrected_from_id AS correctedFromId,corrected_to_id AS correctedToId,(SELECT o.id FROM media_correction_operation o WHERE (o.original_task_id=media_task.id OR o.new_task_id=media_task.id) AND (o.phase!='RECORDED' OR EXISTS(SELECT 1 FROM app_setting s WHERE s.key='correction.restore.audit.'||o.id)) ORDER BY o.created_at DESC LIMIT 1) AS activeCorrectionId,updated_at AS updatedAt FROM media_task${where} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`,
+        `SELECT id,source_id AS sourceId,coalesce((SELECT json_extract(o.plan_json,'$.recognitionSnapshot.ruleId') FROM ingestion_operation o WHERE o.task_id=media_task.id),(SELECT x.rule_id FROM media_correction_operation o JOIN recognition_target_identity x ON x.id=json_extract(o.plan_json,'$.logicalTargetId') WHERE o.new_task_id=media_task.id),(SELECT ri.rule_id FROM recognition_input ri WHERE ri.source_id=media_task.source_id)) AS recognitionRuleId,source_path AS sourcePath,title,status,delivery_status AS deliveryStatus,target_path AS targetPath,corrected_from_id AS correctedFromId,corrected_to_id AS correctedToId,(SELECT o.id FROM media_correction_operation o WHERE (o.original_task_id=media_task.id OR o.new_task_id=media_task.id) AND (o.phase!='RECORDED' OR EXISTS(SELECT 1 FROM app_setting s WHERE s.key='correction.restore.audit.'||o.id)) ORDER BY o.created_at DESC LIMIT 1) AS activeCorrectionId,updated_at AS updatedAt FROM media_task${where} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`,
       )
       .all(
         ...params,
         input.pageSize,
         (input.page - 1) * input.pageSize,
       ) as TaskPage["items"];
-    return { items, total, page: input.page, pageSize: input.pageSize };
+    const delivery = this.database.connection.prepare("SELECT last_failure FROM emby_delivery WHERE task_id=?");
+    return { items: items.map((item) => { const failure = delivery.get(item.id) as { last_failure: string | null } | undefined; return failure?.last_failure ? { ...item, deliveryFailure: embyFailureMessage(failure.last_failure) } : item; }), total, page: input.page, pageSize: input.pageSize };
   }
   listJobs(): DesktopJob[] {
     return this.database.connection

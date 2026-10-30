@@ -201,13 +201,14 @@ export class SourceRulesViewModel extends StatefulService<SourceRemoteState, Sou
     const preview = await this.client.previewSourceRule({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, ...(row.lifecycleRevision ? { expectedLifecycleRevision: row.lifecycleRevision } : {}), requestKey: this.previewIntent.key });
     if (!this.stopped) this.updateView({ preview, notice: null }); return preview;
   }); }
-  confirm(runOnce = false, automaticAccepted = false) { return this.mutate("apply", async () => {
+  confirm(runOnce = false, automaticAccepted = false, historyAccepted = false) { return this.mutate("apply", async () => {
     const preview = this.view.preview; if (!preview || preview.state !== "READY" || this.view.dirty) throw new Error("请等待完整预览或重新预览当前草稿");
     if (preview.configuration.organization?.automatic && (!automaticAccepted || !preview.automaticSample)) throw new Error("请核对首次 COPY 预览并勾选自动整理说明");
+    if (preview.download?.historyRestore && !preview.download.historyRestore.confirmed && !historyAccepted) throw new Error("请核对重新登录的账号与目录，并确认沿用原同步历史");
     const automaticConsent = preview.configuration.organization?.automatic ? { previewId: preview.automaticSample!.previewId, accepted: true as const } : undefined;
     let requestKey = this.confirmations.get(preview.id); if (!requestKey) { requestKey = crypto.randomUUID(); this.confirmations.set(preview.id, requestKey); }
     let row: SourceRule;
-    try { row = await this.client.applySourceRule({ previewId: preview.id, requestKey, runOnce, ...(automaticConsent ? { automaticConsent } : {}) }); }
+    try { row = await this.client.applySourceRule({ previewId: preview.id, requestKey, runOnce, ...(automaticConsent ? { automaticConsent } : {}), ...(preview.download?.historyRestore && historyAccepted ? { historyConsent: { accepted: true as const } } : {}) }); }
     catch (error) {
       const [saved, checked] = await Promise.all([this.client.getSourceRule(preview.sourceId).catch(() => null), this.client.getSourceRulePreview(preview.id).catch(() => null)]);
       if (!saved || saved.deletedAt || (saved.lifecycleRevision ?? 0) !== (preview.lifecycleRevision ?? 0) || checked?.state !== "APPLIED" || saved.version !== preview.version + 1 || JSON.stringify(saved.configuration) !== JSON.stringify(preview.configuration)) throw error;
