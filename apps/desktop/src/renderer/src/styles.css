@@ -158,6 +158,8 @@
 .source-lifecycle-dialog::backdrop { background: rgb(20 30 45 / 45%); }
 .sync-panel { display: grid; gap: 12px; padding: 24px; margin-bottom: 20px; min-width: 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .sync-panel > .button { justify-self: start; }
+.sync-preview-loading { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--primary); font-weight: 550; }
+.sync-preview-loading > svg { flex-shrink: 0; }
 .sync-panel > .cloud-hint, .sync-panel > .notice, .sync-panel > .download-controls { margin: 0; }
 .source-list > .sync-panel { margin-bottom: 0; }
 .sync-check { display: flex; align-items: start; gap: 10px; margin: 14px 0; line-height: 1.6; }

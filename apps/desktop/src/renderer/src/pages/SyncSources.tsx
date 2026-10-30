@@ -1,4 +1,5 @@
 import { EditorSurface } from "../components/EditorSurface";
+import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useService, useServiceState } from "@yeatz/app-framework/react";
@@ -21,6 +22,7 @@ function SyncPreview({ id, onClose, onApplied }: { id: string; onClose(): void; 
   useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const [p, f] = await Promise.all([model.client.getSyncPreview(id), model.client.listSyncPreviewFiles({ id, page })]); if (live) { setPreview(p); setFiles(f); setError(null); } } catch (error) { if (live) setError(errorMessage(error)); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, id, page]);
   const local = preview?.snapshot.configuration.type === "local", executes = preview?.mode === "execution" || once, requiresHistory = !!preview?.download?.historyRestore && !preview.download.historyRestore.confirmed;
   return <section ref={ref} tabIndex={-1} className="panel sync-panel" aria-label="同步预览"><div className="cloud-browser-toolbar"><h2>{preview?.force ? "显式重新同步预览" : preview?.mode === "execution" ? "执行一次预览" : "配置范围预览"}</h2><Button variant="ghost" disabled={busy} onClick={onClose}>关闭预览</Button></div><ErrorNotice message={error ?? preview?.failure ?? null} />
+    {(!preview && !error || preview?.state === "BUILDING") && <p className="sync-preview-loading" role="status"><LoaderCircle className="spin" size={20} aria-hidden="true" /><span>{preview ? "正在扫描范围，文件数量和大小仍在更新…" : "正在加载范围预览…"}</span></p>}
     {preview && <><p role="status">{status[preview.state]} · {preview.complete ? "完整范围" : "范围尚未完整"} · {preview.files} 项 · {sourceSize(preview.bytes)} · 复用 {preview.reused} · 已移除 {preview.removed} · 观察中 {preview.observing} · 冲突 {preview.conflicts}</p><p className="settings-mapping-path">本次实际完成目录：{preview.snapshot.targetDirectory.path}/completed</p>
       {preview.force && <p className="notice">本次将重新传输到独立 resync 目录，保留旧文件和成功历史；重复确认只受理同一作业。</p>}
       {preview.observing > 0 && <p className="notice">源文件须连续观察至少 120 秒，重启或观察中断会重新计时。可先确认配置范围，执行前仍须核对完整性。</p>}
