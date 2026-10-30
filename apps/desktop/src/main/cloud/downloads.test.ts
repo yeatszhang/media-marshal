@@ -1029,6 +1029,34 @@ describe.skipIf(process.platform !== "darwin")("Core 下载调度、文件校验
     f.downloads.control({ jobId: job.jobId, operation: "cancel", requestKey: randomUUID() }); expect(f.state(job.jobId).state).toBe("COMPLETED");
     expect(await readFile(join(f.rootPath, "completed", "电影.txt"))).toEqual(f.input.get("电影.txt"));
   });
+  it("多次暂停恢复只清除未完成文件进度，保留成功字节且不累计旧 attempt", async () => {
+    const f = await fixture(new Map([["目录/one.mp4", Buffer.alloc(1024)], ["目录/two.mp4", Buffer.alloc(2048)], ["目录/three.mp4", Buffer.alloc(4096)]]));
+    const job = await f.confirm(f.entries[0]!.ref);
+    f.fileEngine.afterWrite = () => { f.fileEngine.holding = true; };
+    f.downloads.start();
+    await expect.poll(() => f.state(job.jobId).progress.completedItems).toBe(1);
+    const completedBytes = f.state(job.jobId).progress.bytes;
+    expect(completedBytes).toBeGreaterThan(0);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await expect.poll(() => f.fileEngine.starts).toBe(cycle + 2);
+      await expect.poll(() => f.db.connection.prepare("SELECT count(*) AS n FROM download_attempt WHERE state='RUNNING'").get()).toEqual({ n: 1 });
+      const row = f.db.connection.prepare("SELECT * FROM download_attempt WHERE state='RUNNING'").get() as { id: string; core_generation: string; host_generation: string; binding_generation: string; execution_id: string };
+      const event: HostEvent = { kind: "host.event", protocolVersion: 1, sequence: 100, context: { attemptId: row.id, coreGeneration: row.core_generation, hostGeneration: row.host_generation, bindingGeneration: row.binding_generation }, executionId: row.execution_id, event: { type: "progress", bytes: 512, totalBytes: null, bytesPerSecond: 128 } };
+      for (const listener of f.listeners) listener(event);
+      expect(f.state(job.jobId).progress.bytes).toBe(completedBytes + 512);
+      f.downloads.control({ jobId: job.jobId, operation: "pause", requestKey: randomUUID() });
+      await expect.poll(() => f.state(job.jobId).state).toBe("PAUSED");
+      expect(f.state(job.jobId).progress).toMatchObject({ bytes: completedBytes, bytesPerSecond: 0, completedItems: 1, totalItems: 3, totalBytes: 7168 });
+      f.downloads.control({ jobId: job.jobId, operation: "resume", requestKey: randomUUID() });
+      for (const listener of f.listeners) listener({ ...event, sequence: 101 });
+      expect(f.state(job.jobId).progress.bytes).toBe(completedBytes);
+    }
+    f.fileEngine.afterWrite = undefined; f.fileEngine.release();
+    await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
+    expect(f.state(job.jobId).progress).toMatchObject({ bytes: 7168, totalBytes: 7168, completedItems: 3, totalItems: 3 });
+    expect(f.fileEngine.starts).toBe(5); expect(f.fileEngine.maximumWriters).toBe(1);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 3 });
+  });
   it("重叠作业共享下载项，取消一个需求不停止另一个需求的写入者", async () => {
     const f = await fixture(), first = await f.confirm(), second = await f.confirm(); f.fileEngine.holding = true; f.downloads.start();
     await expect.poll(() => f.fileEngine.starts).toBe(1);

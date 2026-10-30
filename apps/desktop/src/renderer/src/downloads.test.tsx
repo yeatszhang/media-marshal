@@ -32,6 +32,16 @@ describe("下载队列交互与观测边界", () => {
     await act(async () => pause.click()); expect(f.api.controlDownload).toHaveBeenCalledTimes(1); expect(f.element.textContent).toContain("已暂停");
     expect(f.api.previewDownload).not.toHaveBeenCalled(); expect(f.api.confirmDownload).not.toHaveBeenCalled();
   });
+  it("暂停后的有效进度说明回退原因，部分完成不能宣称整项下载完成", async () => {
+    const paused = job("PAUSED"), f = await mount([{ ...paused, progress: { bytes: 1072898, totalBytes: 85969558511, bytesPerSecond: 0, completedItems: 6, totalItems: 95 }, ingestion: { organization: "NOT_ENABLED", pending: 0, candidates: 0, organized: 0, collected: 0, needsAttention: 0 } }]);
+    expect(f.element.textContent).toContain("有效进度 1.0 MiB / 80.07 GiB · <0.1%");
+    expect(f.element.textContent).toContain("已完成 6 / 95 项");
+    expect(f.element.textContent).toContain("临时进度不再计入");
+    expect(f.element.textContent).toContain("已完成的文件可在完成目录查看");
+    expect(f.element.textContent).not.toContain("下载完成，");
+    expect(f.element.querySelector("progress")?.value).toBe(1072898);
+    expect(f.element.querySelector("progress")?.max).toBe(85969558511);
+  });
   it("迟到查询不能覆盖新完成状态，完成成果独立显示待整理", async () => {
     const current = job(), f = await mount([current]); let resolve!: (value: unknown) => void;
     vi.mocked(f.api.listDownloads).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
