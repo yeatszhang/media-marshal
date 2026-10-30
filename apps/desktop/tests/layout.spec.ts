@@ -157,6 +157,14 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click();
   await page.getByRole("button", { name: "确认识别配置范围", exact: true }).click();
   const updatedCard = page.getByRole("article", { name: "识别规则 已编辑的识别规则", exact: true });
+  const scans = page.getByRole("region", { name: "手动目录扫描", exact: true });
+  await scans.getByRole("button", { name: "重新扫描 · 已编辑的识别规则", exact: true }).click();
+  await expect(scans.getByText("扫描完成", { exact: true })).toBeVisible();
+  await expect(scans).toContainText("本次核对媒体项 0");
+  await scans.getByRole("button", { name: "重新扫描", exact: true }).click();
+  await expect.poll(async () => (await page.evaluate(() => window.desktopApi.listIngestionScans({}))).total).toBe(2);
+  await scans.screenshot({ path: "test-results/desktop/recognition-rescan-panel-920.png" });
+
   await updatedCard.getByRole("button", { name: "编辑并预览识别规则", exact: true }).click();
   await expect(page.getByLabel("识别规则名称")).toBeFocused();
   await page.getByLabel("识别规则名称").fill("第二次编辑的识别规则");
