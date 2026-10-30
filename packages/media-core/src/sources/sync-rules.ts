@@ -232,8 +232,15 @@ export class SyncRules {
     const cloudFiles = cloudPreview ? (JSON.parse(cloudPreview.snapshot_json) as PreviewSnapshot).items : null;
     const libraryFiles = isCloud ? cloudFiles?.filter((file) => file.libraryFile).length ?? 0 : row.preview_id ? this.local.preview(row.preview_id).files.filter((file) => file.libraryFile).length : 0;
     const failed = row.download_job_id ? (db.prepare("SELECT count(*) AS n FROM download_job_item j JOIN download_item i ON i.id=j.item_id WHERE j.job_id=? AND i.failure_code IS NOT NULL AND i.state IN ('FAILED','AUTH_REQUIRED','BLOCKED_LOCAL','RECONCILING')").get(row.download_job_id) as { n: number }).n : counts.failed ?? 0;
+    const source = this.row(row.source_id), waiting: string[] = [];
+    if (row.state === "PENDING" || row.state === "RUNNING") {
+      if (!source || source.deleted_at) waiting.push("来源已删除，请先恢复来源并核对配置，再恢复来源同步");
+      else if (source.paused) waiting.push("来源同步已暂停，请在对应来源点击「恢复来源同步」");
+      if (this.downloads.pauseStatus().paused) waiting.push("全部同步下载已暂停，请点击页面顶部的「恢复全部同步下载」");
+    }
+    const waitingReason = waiting.length ? waiting.join("；") + "。恢复后继续原任务，无需重新创建。" : null;
     const destination = (JSON.parse(row.snapshot_json) as SyncSourceSnapshot).targetDirectory.id, recognition = db.prepare("SELECT r.id,r.paused FROM recognition_input i JOIN recognition_rule r ON r.id=i.rule_id WHERE i.directory_id=? AND i.mode='managed-completed' AND i.active=1 AND r.deleted_at IS NULL LIMIT 1").get(destination) as { id: string; paused: number } | undefined;
-    return { recognition: { state: !recognition ? "NOT_ENABLED" as const : recognition.paused ? "PAUSED" as const : "ENABLED" as const, ruleId: recognition?.id ?? null }, id: row.id, sourceId: row.source_id, sourceVersion: row.source_version, state: row.state, files: cloudFiles?.length ?? counts.files, inLibrary: libraryFiles, done: cloud?.progress.completedItems ?? counts.done ?? 0, reused: cloud ? 0 : Math.max(0, (counts.reused ?? 0) - libraryFiles), removed: cloud?.localRemovedFiles ?? counts.removed ?? 0, failed, failure: row.failure ?? cloud?.failure?.message ?? null, downloadJobId: row.download_job_id, createdAt: row.created_at, updatedAt: row.updated_at };
+    return { recognition: { state: !recognition ? "NOT_ENABLED" as const : recognition.paused ? "PAUSED" as const : "ENABLED" as const, ruleId: recognition?.id ?? null }, id: row.id, sourceId: row.source_id, sourceVersion: row.source_version, state: row.state, files: cloudFiles?.length ?? counts.files, inLibrary: libraryFiles, done: cloud?.progress.completedItems ?? counts.done ?? 0, reused: cloud ? 0 : Math.max(0, (counts.reused ?? 0) - libraryFiles), removed: cloud?.localRemovedFiles ?? counts.removed ?? 0, failed, waitingReason, failure: row.failure ?? cloud?.failure?.message ?? null, downloadJobId: row.download_job_id, createdAt: row.created_at, updatedAt: row.updated_at };
   }
   jobs(input: CoreInput<"sync.jobs">): CoreOutput<"sync.jobs"> {
     const db = this.database.connection, size = input.pageSize ?? 25, offset = ((input.page ?? 1) - 1) * size;

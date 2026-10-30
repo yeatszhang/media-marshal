@@ -100,8 +100,31 @@ test("同步优先复核 Emby 目录已有文件，窗口标记已在媒体库�
     await preview.screenshot({ path: "test-results/desktop/sync-existing-library-preview.png" });
     await preview.getByLabel("确认配置时执行一次", { exact: false }).check();
     await preview.getByLabel("我已确认本次本地文件完整，允许复制此精确清单", { exact: true }).check();
+    await page.evaluate(() => window.desktopApi.setCloudDownloadPause({ paused: true, requestKey: crypto.randomUUID() }));
     await preview.getByRole("button", { name: "确认配置范围", exact: true }).click();
-    await expect.poll(() => page.evaluate(() => window.desktopApi.listSyncJobs({}))).toMatchObject({ items: [{ state: "DONE", files: 1, inLibrary: 1, done: 0 }] });
+    const waitingDetail = page.getByRole("dialog", { name: "同步任务详情", exact: true });
+    await expect(waitingDetail).toContainText("全部同步下载已暂停");
+    await page.evaluate(async () => {
+      const source = (await window.desktopApi.listSyncSources({}))[0]!;
+      await window.desktopApi.controlSyncSource({ id: source.id, expectedVersion: source.version, expectedDraftRevision: source.draftRevision, expectedLifecycleRevision: source.lifecycleRevision, operation: "pause", requestKey: crypto.randomUUID() });
+    });
+    await expect(waitingDetail).toContainText("来源同步已暂停");
+    await expect(waitingDetail).toContainText("全部同步下载已暂停");
+    await waitingDetail.screenshot({ path: "test-results/desktop/sync-job-paused-detail.png" });
+    await waitingDetail.getByRole("button", { name: "关闭任务详情", exact: true }).click();
+    const jobs = page.locator("section").filter({ has: page.getByRole("heading", { name: "同步任务", exact: true }) });
+    await expect(jobs).toContainText("恢复来源同步"); await expect(jobs).toContainText("恢复全部同步下载");
+    for (const width of [1240, 920]) {
+      await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await jobs.screenshot({ path: `test-results/desktop/sync-job-paused-${width}.png` });
+    }
+    await page.getByRole("button", { name: "恢复来源同步", exact: true }).click();
+    await expect(jobs).not.toContainText("来源同步已暂停"); await expect(jobs).toContainText("全部同步下载已暂停");
+    await page.getByRole("button", { name: "恢复全部同步下载", exact: true }).click();
+    await expect(jobs).not.toContainText("全部同步下载已暂停");
+    await page.getByRole("button", { name: "查看任务明细", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.desktopApi.listSyncJobs({}))).toMatchObject({ items: [{ state: "DONE", files: 1, inLibrary: 1, done: 0, waitingReason: null }] });
     const detail = page.getByRole("dialog", { name: "同步任务详情", exact: true }); await expect(detail).toContainText("已在媒体库 1");
     await page.reload(); await expect(detail).toContainText("已在媒体库 1"); await expect(detail.locator(".sync-files")).toContainText(join(media, name));
     for (const width of [1240, 920]) {

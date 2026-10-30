@@ -139,7 +139,7 @@ it("删除失败在弹窗内定位来源与原因，重试期间明确反馈并�
 
 
 it("任务明细使用弹窗，关闭不改变任务；删除失败保留原因，成功刷新列表", async () => {
-  const job = { id: crypto.randomUUID(), sourceId: crypto.randomUUID(), sourceVersion: 1, state: "DONE" as const, files: 1, done: 1, reused: 0, removed: 0, failed: 0, failure: null, downloadJobId: null, createdAt: "2026-10-30", updatedAt: "2026-10-30" };
+  const job = { id: crypto.randomUUID(), sourceId: crypto.randomUUID(), sourceVersion: 1, state: "DONE" as const, files: 1, done: 1, reused: 0, removed: 0, failed: 0, failure: null, waitingReason: null, downloadJobId: null, createdAt: "2026-10-30", updatedAt: "2026-10-30" };
   const f = await mount("/sources", (f) => {
     f.api.listSyncJobs.mockResolvedValue({ items: [job], total: 1 } as never);
     f.api.getSyncJob.mockResolvedValue(job); f.api.listSyncJobFiles.mockResolvedValue({ items: [], total: 0 });
@@ -152,4 +152,21 @@ it("任务明细使用弹窗，关闭不改变任务；删除失败保留原因�
   await click("删除任务…"); await click("取消"); expect(f.api.removeSyncJob).not.toHaveBeenCalled();
   await click("删除任务…"); await click("确认删除同步任务"); expect(document.querySelector('dialog[aria-label="删除同步任务"] [role="alert"]')?.textContent).toContain("在途同步停止");
   await click("确认删除同步任务"); expect(document.querySelector('dialog[aria-label="删除同步任务"]')).toBeNull(); expect(document.body.textContent).toContain("暂无同步任务");
+});
+
+
+it("同步任务列表与详情展示等待原因，恢复后清除提示", async () => {
+  const waitingReason = "来源同步已暂停，请在对应来源点击「恢复来源同步」；全部同步下载已暂停，请点击页面顶部的「恢复全部同步下载」。恢复后继续原任务，无需重新创建。";
+  const job = { id: crypto.randomUUID(), sourceId: crypto.randomUUID(), sourceVersion: 1, state: "PENDING" as const, files: 95, done: 0, reused: 0, removed: 0, failed: 0, failure: null, waitingReason, downloadJobId: null, createdAt: "2026-10-30", updatedAt: "2026-10-30" };
+  const f = await mount("/sources", (f) => {
+    f.api.listSyncJobs.mockResolvedValue({ items: [job], total: 1 });
+    f.api.getSyncJob.mockResolvedValue(job); f.api.listSyncJobFiles.mockResolvedValue({ items: [], total: 0 });
+  });
+  expect(f.element.textContent).toContain(waitingReason);
+  await click("查看任务明细");
+  expect(document.querySelector('dialog[aria-label="同步任务详情"]')?.textContent).toContain(waitingReason);
+  await click("关闭任务详情");
+  f.api.listSyncJobs.mockResolvedValue({ items: [{ ...job, state: "RUNNING", waitingReason: null }], total: 1 });
+  await act(async () => { await f.app.container.get(SyncViewModel).refresh(); });
+  expect(f.element.textContent).not.toContain(waitingReason); expect(f.element.textContent).toContain("执行中");
 });

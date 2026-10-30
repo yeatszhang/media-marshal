@@ -65,6 +65,24 @@ describe("同步优先检查 Emby 已有文件", () => {
     for (let attempt = 0; preview.state === "BUILDING" && attempt < 100; attempt++) { await new Promise((resolve) => setTimeout(resolve, 5)); preview = f.rules.getPreview(preview.id); }
     expect(preview, preview.failure ?? undefined).toMatchObject({ state: "READY" }); return preview;
   }
+  it("待执行网盘任务同时说明来源与全局暂停，逐项恢复后继续原任务", async () => {
+    const f = await fixture(), preview = await cloudPreview(f);
+    f.downloads.setPaused({ paused: true, requestKey: randomUUID() });
+    const accepted = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), runOnce: true }), id = accepted.jobId!;
+    await f.rules.tick();
+    expect(f.rules.getJob(id)).toMatchObject({ state: "PENDING", downloadJobId: null, waitingReason: expect.stringContaining("恢复全部同步下载") });
+    const paused = await f.rules.control({ ...f.version(accepted.rule), requestKey: randomUUID(), operation: "pause" });
+    const waiting = f.rules.jobs({}).items.find((job) => job.id === id)!;
+    expect(waiting.waitingReason).toContain("恢复来源同步"); expect(waiting.waitingReason).toContain("恢复全部同步下载");
+    await f.rules.control({ ...f.version(paused), requestKey: randomUUID(), operation: "resume" });
+    expect(f.rules.getJob(id).waitingReason).not.toContain("恢复来源同步");
+    expect(f.rules.getJob(id).waitingReason).toContain("恢复全部同步下载");
+    f.downloads.setPaused({ paused: false, requestKey: randomUUID() }); await f.rules.tick();
+    expect(f.rules.getJob(id)).toMatchObject({ state: "RUNNING", waitingReason: null, downloadJobId: expect.any(String) });
+    expect(f.rules.jobs({}).total).toBe(1);
+    await f.rules.control({ ...f.version(f.rules.get(accepted.rule.id)), requestKey: randomUUID(), operation: "pause" });
+    expect(f.rules.getJob(id).waitingReason).toContain("恢复来源同步");
+  });
   it("网盘命中媒体文件时全跳过作业完成且不生成下载项；重新读取任务仍显示媒体库路径", async () => {
     const f = await fixture(), library = await libraryFixture(f), preview = await cloudPreview(f);
     expect(preview).toMatchObject({ files: 1, inLibrary: 1, download: { weakComparison: true } });
