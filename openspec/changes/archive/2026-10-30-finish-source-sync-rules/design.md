@@ -1,13 +1,13 @@
 # 完成来源单向同步与成功历史设计
 
-2026-10-28 产品决策更新：逐规则下载目标／识别输入覆盖及识别客户端选择由后续变更 [unify-local-download-directory](../unify-local-download-directory/proposal.md) 收敛到设置页唯一目录。以下为本变更已完成时的设计记录。
+2026-10-28 产品决策更新：逐规则下载目标／识别输入覆盖及识别客户端选择由后续变更 [unify-local-download-directory](../../unify-local-download-directory/proposal.md) 收敛到设置页唯一目录。以下为本变更已完成时的设计记录。
 
 
 ## 上下文
 
 以已完成的原 21.1／21.2 契约和 schema v28／v29 为基础，可首先实施。
 
-当前基线为提交 87f2ac6：sync-recognition.ts 契约、schema v28 配置迁移及 v29 网盘成功收据已存在，主页面与调度仍有兼容模型。原完成项不重做，未完成项的局部证据不能代表整项通过。详见[归档设计](../archive/2026-10-27-add-local-desktop-emby-ingestion/design.md)与[任务证据](../archive/2026-10-27-add-local-desktop-emby-ingestion/tasks.md)。
+当前基线为提交 87f2ac6：sync-recognition.ts 契约、schema v28 配置迁移及 v29 网盘成功收据已存在，主页面与调度仍有兼容模型。原完成项不重做，未完成项的局部证据不能代表整项通过。详见[归档设计](../2026-10-27-add-local-desktop-emby-ingestion/design.md)与[任务证据](../2026-10-27-add-local-desktop-emby-ingestion/tasks.md)。
 
 ## 目标与非目标
 
