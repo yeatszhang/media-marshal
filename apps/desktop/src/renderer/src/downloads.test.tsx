@@ -54,7 +54,20 @@ describe("下载队列交互与观测边界", () => {
   it("分页查询带页码，恢复与旧执行核对期间不提供第二个恢复入口", async () => {
     const f = await mount([job("RECONCILING")]);
     expect(f.element.textContent).toContain("等待旧执行停止或核对文件"); expect([...f.element.querySelectorAll("button")].some((button) => button.textContent === "恢复下载")).toBe(false);
-    await act(async () => { await f.model.refresh(2); }); expect(f.api.listDownloads).toHaveBeenLastCalledWith({ page: 2, pageSize: 25 });
+    await act(async () => { await f.model.refresh(2); }); expect(f.api.listDownloads).toHaveBeenCalledWith({ page: 2, pageSize: 25 });
+    expect(f.api.listDownloads).toHaveBeenLastCalledWith({ page: 1, pageSize: 25 });
+  });
+  it("末页任务取消后自动回到最后有效页，全部取消后显示空列表", async () => {
+    const f = await mount([job()]);
+    vi.mocked(f.api.listDownloads).mockResolvedValueOnce({ items: [job()], total: 26 });
+    await act(async () => { await f.model.refresh(2); });
+    vi.mocked(f.api.listDownloads).mockResolvedValueOnce({ items: [], total: 25 }).mockResolvedValueOnce({ items: [job()], total: 25 });
+    await act(async () => { await f.model.control(f.model.state.items[0]!.id, "cancel"); });
+    expect(f.model.state.page).toBe(1); expect(f.model.state.total).toBe(25); expect(f.model.state.items).toHaveLength(1);
+    expect(f.api.listDownloads).toHaveBeenLastCalledWith({ page: 1, pageSize: 25 });
+    vi.mocked(f.api.listDownloads).mockResolvedValueOnce({ items: [], total: 0 });
+    await act(async () => { await f.model.control(f.model.state.items[0]!.id, "cancel"); });
+    expect(f.model.state.total).toBe(0); expect(f.element.querySelector(".download-job")).toBeNull();
   });
   it("只下载与归属待核对分别说明，不把未启用的整理显示为待入库", async () => {
     const completed = job("COMPLETED"), progress = { ...completed.progress, completedItems: 1, totalItems: 1 }, counts = { pending: 0, candidates: 0, organized: 0, collected: 0, needsAttention: 0 };

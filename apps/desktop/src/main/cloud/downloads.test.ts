@@ -96,7 +96,7 @@ async function fixture(input = new Map([["电影.txt", Buffer.from("完整测试
     expect(initial.state).toBe("BUILDING"); await expect.poll(() => downloads.previews.get(requestKey)?.state).toBe("READY"); return downloads.previews.get(requestKey)!;
   };
   const confirm = async (ref?: string) => { const p = await preview(ref); return downloads.confirm({ previewId: p.id, requestKey: randomUUID() }); };
-  const state = (jobId: string) => downloads.list({}).items.find((item) => item.id === jobId)!;
+  const state = (jobId: string) => { downloads.list({}); return downloads.get(jobId)!; };
   return { accounts, path, db, roots, grant, rootPath, provider, fileEngine, sidecar, host, downloads, catalog, account, entries, preview, confirm, state, input, server, listeners, subscriptions };
 }
 describe.skipIf(process.platform !== "darwin")("独立来源同步与既有网盘传输", () => {
@@ -899,7 +899,8 @@ describe.skipIf(process.platform !== "darwin")("订阅扫描与配置快照", ()
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 1 });
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_claim").get()).toEqual({ n: 1 });
     f.subscriptions.control({ subscriptionId: first.id, operation: "cancel", requestKey: randomUUID() });
-    await expect.poll(() => f.downloads.list({}).items.filter((job) => job.state === "CANCELLED").length).toBe(1);
+    await expect.poll(() => f.downloads.list({}).total).toBe(1);
+    expect(f.downloads.list({}).items.every((job) => job.state !== "CANCELLED")).toBe(true);
     expect(f.fileEngine.stops).toBe(0); f.fileEngine.release();
     await expect.poll(() => f.downloads.list({}).items.filter((job) => job.state === "COMPLETED").length).toBe(1);
     expect(f.subscriptions.list({}).items.find((sub) => sub.id === second.id)?.enabled).toBe(true); expect(f.fileEngine.maximumWriters).toBe(1);
@@ -1149,6 +1150,16 @@ describe.skipIf(process.platform !== "darwin")("Core 下载调度、文件校验
     await f.sidecar.quiesceAccount(f.account.id); f.downloads.writersReaped(randomUUID()); f.host.request = request; f.fileEngine.release();
     await expect.poll(() => f.state(job.jobId).state).toBe("PAUSED"); f.downloads.control({ jobId: job.jobId, operation: "resume", requestKey: randomUUID() });
     await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED"); expect(f.fileEngine.maximumWriters).toBe(1); expect(f.fileEngine.starts).toBe(2);
+  });
+  it("已取消作业不占列表和分页，按 ID 查询仍保留取消事实", async () => {
+    const f = await fixture(), first = await f.confirm(), second = await f.confirm();
+    f.downloads.control({ jobId: first.jobId, operation: "cancel", requestKey: randomUUID() });
+    expect(f.downloads.list({ page: 1, pageSize: 1 })).toMatchObject({ total: 1, items: [{ id: second.jobId, state: "QUEUED" }] });
+    expect(f.downloads.list({ page: 2, pageSize: 1 })).toEqual({ total: 1, items: [] });
+    expect(f.downloads.get(first.jobId)?.state).toBe("CANCELLED");
+    f.downloads.control({ jobId: second.jobId, operation: "cancel", requestKey: randomUUID() });
+    expect(f.downloads.list({})).toEqual({ items: [], total: 0 });
+    expect(f.downloads.get(second.jobId)?.state).toBe("CANCELLED");
   });
   it("取消后的同范围可重新预览确认，复用条目而非永久停留在 CANCELLED", async () => {
     const f = await fixture(), first = await f.confirm(); f.fileEngine.holding = true; f.downloads.start(); await expect.poll(() => f.fileEngine.starts).toBe(1);

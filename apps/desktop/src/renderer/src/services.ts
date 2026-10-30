@@ -265,7 +265,13 @@ export class DownloadsViewModel extends StatefulService<{ paused: boolean; pausi
   }
   async refresh(page = this.state.page) {
     const request = ++this.request; this.setState({ page, loading: true });
-    try { const [data, pause] = await Promise.all([this.client.listDownloads({ page, pageSize: 25 }), this.client.getCloudDownloadPause()]); if (!this.stopped && request === this.request) this.setState({ ...data, ...pause, error: null }); }
+    try {
+      const [data, pause] = await Promise.all([this.client.listDownloads({ page, pageSize: 25 }), this.client.getCloudDownloadPause()]);
+      if (this.stopped || request !== this.request) return;
+      const lastPage = Math.max(1, Math.ceil(data.total / 25));
+      if (page > lastPage) { await this.refresh(lastPage); return; }
+      this.setState({ ...data, ...pause, error: null });
+    }
     catch (error) { if (!this.stopped && request === this.request) this.setState({ error: message(error) }); }
     finally { if (!this.stopped && request === this.request) this.setState({ loading: false }); }
   }

@@ -18,6 +18,8 @@ import modelUrl from "./cloud-downloads.c4?url"
 
 公开命令只接受应用 UUID 和业务选项。远端定位、组件路径、临时 URL 与授权不作为公开命令参数。`CloudDriveProvider` 管理认证、目录、元数据和传输租约；`TransferEngine` 消费租约并提供执行观测。当前租约仅定义只读回环 WebDAV，新增传输方式需扩展内部联合类型和双方能力，不改用任意 URL 兜底。
 
+云端下载列表在 Core 查询时排除 `CANCELLED` 作业，分页总数使用相同筛选；`CANCELLING` 作业仍显示，直到停止与提交核对完成。取消后只隐藏列表条目，保留按 ID 查询、幂等控制、成功收据和已完成文件。当前页因取消而超出末页时，Renderer 自动查询最后一个有效页；全部取消后显示第一页空列表。
+
 Core 是业务状态所有者，Main 是权限及生命周期入口，Host 执行基础设施动作。反向通道由 `RestrictedHostClient → RestrictedHostRelay → RestrictedHostServer` 组成，使用两个私有端口。按需宿主、资源预检和受管 OpenList 保留原三目标验收；新增生产 Provider、Rclone 调度与下载界面以 Mac 为当前验证范围。
 
 每个请求携带核心、Host、绑定三种代际，以及 attempt UUID 和幂等键。Main 和 Host 都核对当前授权；输入中的绑定与 attempt 必须匹配上下文。长传输的 start 返回执行句柄，执行状态独立查询。进度序号只在同一个执行和同一代际中递增，重复、乱序与旧代际事件被丢弃。进程退出只提供核对证据，不能直接发布文件或写入业务完成状态。

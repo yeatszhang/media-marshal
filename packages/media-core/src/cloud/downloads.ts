@@ -293,7 +293,7 @@ export class CloudDownloads {
   get(id: string) { return this.list({ page: 1, pageSize: 1 }, id).items[0] ?? null; }
   list(input: CloudInput<"cloud.downloads.list">, id?: string) {
     if (!id) this.aggregate(); const db = this.database.connection;
-    const rows = db.prepare("SELECT j.*,p.snapshot_json,p.target_root_id FROM download_job j JOIN cloud_preview p ON p.id=j.preview_id WHERE ? IS NULL OR j.id=? ORDER BY j.created_at DESC,j.id LIMIT ? OFFSET ?").all(id ?? null, id ?? null, input.pageSize ?? 25, ((input.page ?? 1) - 1) * (input.pageSize ?? 25)) as { id: string; account_id: string; state: DownloadState; updated_at: string; snapshot_json: string; target_root_id: string }[];
+    const rows = db.prepare("SELECT j.*,p.snapshot_json,p.target_root_id FROM download_job j JOIN cloud_preview p ON p.id=j.preview_id WHERE (? IS NULL AND j.state!='CANCELLED') OR j.id=? ORDER BY j.created_at DESC,j.id LIMIT ? OFFSET ?").all(id ?? null, id ?? null, input.pageSize ?? 25, ((input.page ?? 1) - 1) * (input.pageSize ?? 25)) as { id: string; account_id: string; state: DownloadState; updated_at: string; snapshot_json: string; target_root_id: string }[];
     const items: DownloadJob[] = rows.map((job) => {
       const values = db.prepare("SELECT i.state,i.expected_size,i.failure_code,r.bytes,r.speed,r.total_bytes FROM download_job_item d JOIN download_item i ON i.id=d.item_id JOIN download_item_runtime r ON r.item_id=i.id WHERE d.job_id=?").all(job.id) as { state: DownloadState; expected_size: number; failure_code: CloudFailure["code"] | null; bytes: number; speed: number; total_bytes: number | null }[];
       const historical = db.prepare("SELECT r.size FROM download_job_receipt j JOIN sync_receipt r ON r.id=j.receipt_id WHERE j.job_id=?").all(job.id) as { size: number }[];
@@ -313,7 +313,7 @@ export class CloudDownloads {
       const ingestion = { organization, pending: visible.filter((row) => row.outbox_state !== "ACKNOWLEDGED").length, candidates: visible.filter((row) => row.candidate_state !== null).length, organized: visible.filter((row) => row.status === "DONE").length, collected: visible.filter((row) => row.delivery_status === "COLLECTED").length, needsAttention: visible.filter((row) => row.status === "FAILED" || row.delivery_status === "NEEDS_ATTENTION" || ("receipt_state" in row && row.receipt_state === "UNAVAILABLE")).length } as NonNullable<DownloadJob["ingestion"]>;
       return { id: job.id, accountId: job.account_id, sourceId: syncOwner?.source_id ?? owner?.source_id ?? null, sourceVersion: syncOwner?.source_version ?? owner?.source_version ?? null, name: (JSON.parse(job.snapshot_json) as PreviewSnapshot).name, state: job.state, updatedAt: job.updated_at, failure: failed ? cloudFailure(new CloudError(failed.failure_code!)) : null, ingestion, ...(localRemovedFiles ? { localRemovedFiles } : {}), progress: { bytes, totalBytes: totalUnknown ? null : total, bytesPerSecond: values.reduce((sum, item) => sum + (item.state === "RUNNING" ? item.speed : 0), 0), completedItems: values.filter((item) => item.state === "COMPLETED").length + historical.length, totalItems: values.length + historical.length } };
     });
-    return { items, total: (db.prepare("SELECT count(*) AS n FROM download_job").get() as { n: number }).n };
+    return { items, total: (db.prepare("SELECT count(*) AS n FROM download_job WHERE (? IS NULL AND state!='CANCELLED') OR id=?").get(id ?? null, id ?? null) as { n: number }).n };
   }
   private async tick() {
     if (this.ticking || this.closed) return; this.ticking = true;
