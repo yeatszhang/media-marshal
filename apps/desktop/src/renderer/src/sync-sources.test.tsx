@@ -32,7 +32,7 @@ function fixture() {
     saveSyncSource: vi.fn<DesktopApi["saveSyncSource"]>(async (value) => { const configuration = syncSourceConfigurationSchema.parse(value.configuration), old = rows.get(value.id); const row: SyncSourceRule = { id: value.id, version: old?.version ?? 0, draftRevision: value.expectedDraftRevision + 1, lifecycleRevision: 0, draft: configuration, snapshot: old?.snapshot ?? null, paused: true, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: false, nextScanAt: null, failure: null } }; rows.set(row.id, row); return structuredClone(row); }),
     previewSyncSource: vi.fn<DesktopApi["previewSyncSource"]>(async (value) => { const row = rows.get(value.id)!; if (!(await api.getDefaultDownloadDirectory()).directory) throw new Error("尚未设置默认下载目录，请选择具体目录"); const preview: CoreOutput<"sync.preview"> = { id: crypto.randomUUID(), sourceId: row.id, mode: value.mode ?? "configuration", state: "READY", snapshot: { sourceId: row.id, sourceVersion: row.version + 1, configuration: row.draft, inputDirectory: row.draft.type === "local" ? binding(input) : null, targetDirectory: binding(target), defaultDirectoryVersion: 1 }, expiresAt: Date.now() + 900000, files: 1, bytes: 100, complete: true, observing: 0, conflicts: 0, reused: 0, removed: 0, force: false, failure: null, download: null, jobId: null }; previews.set(preview.id, preview); return structuredClone(preview); }),
     getSyncPreview: vi.fn<DesktopApi["getSyncPreview"]>(async (id) => structuredClone(previews.get(id)!)), listSyncPreviewFiles: vi.fn<DesktopApi["listSyncPreviewFiles"]>(async () => ({ items: [{ relativePath: "原片.mp4", targetPath: target.path + "/completed/原片.mp4", size: 100, state: "READY" as const, reason: null }], total: 1 })),
-    confirmSyncSource: vi.fn<DesktopApi["confirmSyncSource"]>(async (value) => { const preview = previews.get(value.previewId)!, row = rows.get(preview.sourceId)!; row.snapshot = preview.snapshot; row.version = preview.snapshot.sourceVersion; row.paused = false; row.runtime!.claimed = true; preview.state = "APPLIED"; return { rule: structuredClone(row), jobId: null }; }), controlSyncSource: vi.fn(), setCloudDownloadPause: vi.fn(), retrySyncJob: vi.fn(), recheckSyncJobLibrary: vi.fn<DesktopApi["recheckSyncJobLibrary"]>(), removeSyncJob: vi.fn(), getSyncJob: vi.fn(), listSyncJobFiles: vi.fn(),
+    confirmSyncSource: vi.fn<DesktopApi["confirmSyncSource"]>(async (value) => { const preview = previews.get(value.previewId)!, row = rows.get(preview.sourceId)!; row.snapshot = preview.snapshot; row.version = preview.snapshot.sourceVersion; row.paused = false; row.runtime!.claimed = true; preview.state = "APPLIED"; return { rule: structuredClone(row), jobId: null }; }), controlSyncSource: vi.fn(), setCloudDownloadPause: vi.fn(), retrySyncJob: vi.fn(), resolveSyncLibraryReview: vi.fn<DesktopApi["resolveSyncLibraryReview"]>(), recheckSyncJobLibrary: vi.fn<DesktopApi["recheckSyncJobLibrary"]>(), removeSyncJob: vi.fn(), getSyncJob: vi.fn(), listSyncJobFiles: vi.fn(),
     listRemote: vi.fn(async () => ({ items: [directory], nextCursor: null, total: 1, complete: true })), statRemote: vi.fn(async () => directory),
   };
   return { api, input, target, rows, previews, account, directory };
@@ -194,4 +194,26 @@ it("复核失败在任务和文件行可见，受理失败不会被查询成功�
   await click("查看任务明细"); const detail = document.querySelector('dialog[aria-label="同步任务详情"]')!;
   expect(detail.querySelector('[role="alert"]')?.textContent).toContain("作品身份冲突"); expect(detail.querySelector('.sync-file-blocked')?.textContent).toContain("长片名 S01E04");
   await click("重新核对媒体库已有文件"); expect(detail.querySelector('[role="alert"]')?.textContent).toContain("暂停安全点"); expect(f.api.recheckSyncJobLibrary).toHaveBeenCalledTimes(1);
+});
+
+
+it("重复待核对逐项选择候选跳过，查询和重载不会隐式提交", async () => {
+  const f = await mount(); await click("添加同步来源"); await fill("来源名称", "人工核对"); await fill("本地输入目录", f.input.id);
+  const original = f.api.previewSyncSource.getMockImplementation()!, candidateId = "a".repeat(64);
+  f.api.previewSyncSource.mockImplementation(async (input) => { const preview = await original(input); preview.state = "BLOCKED"; preview.libraryReviews = 1; f.previews.set(preview.id, preview); return preview; });
+  const file = { relativePath: "视频电影/不明目录/12.mp4", targetPath: "/下载/completed/12.mp4", size: 934191261, state: "LIBRARY_REVIEW" as const, reason: "疑似重复，作品信息不足，请选择候选或仍需同步", libraryReview: { totalCandidates: 1, candidates: [{ id: candidateId, path: "/媒体库/小城日常 (2025)/Season 01/小城日常 - S01E12.mp4", size: 934191261 }] } };
+  f.api.listSyncPreviewFiles.mockResolvedValue({ items: [file], total: 1 });
+  f.api.resolveSyncLibraryReview.mockImplementation(async (input) => { const preview = f.previews.get(input.previewId)!; preview.state = "READY"; preview.libraryReviews = 0; preview.inLibrary = 1; f.api.listSyncPreviewFiles.mockResolvedValue({ items: [{ ...file, state: "IN_LIBRARY", reason: "已由用户核对并确认跳过", libraryReview: undefined }], total: 1 }); return structuredClone(preview); });
+  await click("保存草稿并预览"); expect(document.body.textContent).toContain("重复待核对 1"); expect(document.body.textContent).not.toContain("目标冲突"); expect(button("确认所选文件已在库，跳过").disabled).toBe(true); expect(f.api.resolveSyncLibraryReview).not.toHaveBeenCalled();
+  const radio = document.querySelector<HTMLInputElement>('input[type="radio"]')!; await act(async () => radio.click()); await click("确认所选文件已在库，跳过");
+  expect(f.api.resolveSyncLibraryReview).toHaveBeenCalledWith(expect.objectContaining({ decision: "USE_LIBRARY", candidateId, relativePath: file.relativePath })); expect(document.body.textContent).toContain("已由用户核对并确认跳过"); expect(button("确认配置范围").disabled).toBe(false);
+});
+
+it("仍需同步与候选保存错误在原文件行可见，失败后可以重试", async () => {
+  const f = await mount(); await click("添加同步来源"); await fill("来源名称", "继续同步核对"); await fill("本地输入目录", f.input.id);
+  const original = f.api.previewSyncSource.getMockImplementation()!;
+  f.api.previewSyncSource.mockImplementation(async (input) => { const preview = await original(input); preview.state = "BLOCKED"; preview.libraryReviews = 1; f.previews.set(preview.id, preview); return preview; });
+  f.api.listSyncPreviewFiles.mockResolvedValue({ items: [{ relativePath: "视频/12.mp4", targetPath: "/下载/12.mp4", size: 100, state: "LIBRARY_REVIEW", reason: "疑似重复", libraryReview: { totalCandidates: 1, candidates: [{ id: "a".repeat(64), path: "/库内/12.mp4", size: 100 }] } }], total: 1 });
+  f.api.resolveSyncLibraryReview.mockRejectedValueOnce(new Error("原候选已变化，请重新预览"));
+  await click("保存草稿并预览"); await click("仍需同步此文件"); expect(document.querySelector('.sync-file-blocked [role="alert"]')?.textContent).toContain("原候选已变化"); expect(f.api.resolveSyncLibraryReview).toHaveBeenCalledWith(expect.objectContaining({ decision: "DOWNLOAD" })); expect(button("仍需同步此文件").disabled).toBe(false);
 });

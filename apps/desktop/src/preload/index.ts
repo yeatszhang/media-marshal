@@ -45,6 +45,7 @@ const api: DesktopApi = {
   listSyncJobs: (input = {}) => invoke("sync.jobs", input),
   getSyncJob: (id) => invoke("sync.job", { id }),
   listSyncJobFiles: (input) => invoke("sync.job-files", input),
+  resolveSyncLibraryReview: (input) => invoke("sync.resolve-library-review", input),
   recheckSyncJobLibrary: (input) => invoke("sync.recheck-library", input),
   removeSyncJob: (input) => invoke("sync.remove-job", input),
   retrySyncJob: (input) => invoke("sync.retry", input),

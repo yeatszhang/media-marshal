@@ -127,3 +127,11 @@ it("同步复核只接受任务 ID 和幂等键，不接受本机路径或跳过
   for (const extra of [{ path: "/Volumes/个人媒体" }, { grant: {} }, { inLibrary: true }, { files: ["a.mp4"] }]) expect(action.input.safeParse({ ...input, ...extra }).success).toBe(false);
   expect(action.input.safeParse({ id: input.id }).success).toBe(false);
 });
+
+
+it("人工核对只接受当前预览文件与候选 ID，拒绝任意路径授权和混合决定", () => {
+  const action = coreActions["sync.resolve-library-review"], base = { previewId: randomUUID(), relativePath: "视频/S1/12.mp4", requestKey: randomUUID() };
+  expect(action.input.safeParse({ ...base, decision: "USE_LIBRARY", candidateId: "a".repeat(64) }).success).toBe(true);
+  expect(action.input.safeParse({ ...base, decision: "DOWNLOAD" }).success).toBe(true);
+  for (const extra of [{ decision: "USE_LIBRARY" }, { decision: "DOWNLOAD", candidateId: "a".repeat(64) }, { decision: "USE_LIBRARY", candidateId: "a".repeat(64), path: "/任意媒体" }, { decision: "DOWNLOAD", grant: {} }]) expect(action.input.safeParse({ ...base, ...extra }).success).toBe(false);
+});

@@ -214,3 +214,42 @@ test("暂停网盘任务显式复核改名视频，失败可见且重载保留�
     await expect(readFile(join(target, "completed", "视频电影", "X 喜鹊+猫头鹰+翠鸟谋杀案", "猫头鹰谋杀案 (2024)", "第 1 季 - 2160p WEB-DL H265 10bit AAC", "Moonflower Murders S01E04 - 第 4 集 - 2160p WEB-DL H265 10bit AAC.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally { await app.close(); server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done())); await rm(directory, { recursive: true, force: true }); }
 });
+
+for (const decision of ["USE_LIBRARY", "DOWNLOAD"] as const) test(`疑似重复窗口逐项核对 ${decision}，决定重载后保留`, async () => {
+  test.setTimeout(90000);
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "marshal-library-review-"))), target = join(directory, "下载 中文"), media = join(directory, "媒体库 中文"), folder = join(media, "小城日常 (2025) [tmdbid=272118]", "Season 01");
+  const name = "小城日常 (2025) - S01E12.mp4", content = "隔离窗口的原有剧集内容", path = join(folder, name);
+  await mkdir(target); await mkdir(folder, { recursive: true }); await writeFile(path, content); const inode = (await stat(path)).ino;
+  const server = createServer((req, res) => {
+    res.setHeader("Content-Type", "application/json"); const url = new URL(req.url!, "http://localhost");
+    if (url.pathname === "/System/Info") res.end(JSON.stringify({ Id: "review-server", Version: "4.9-fixture" }));
+    else if (url.pathname === "/Library/VirtualFolders/Query") res.end(JSON.stringify({ Items: [{ ItemId: "movies", Name: "隔离核对库", Locations: [media], CollectionType: "movies" }], TotalRecordCount: 1 }));
+    else if (url.pathname === "/Items") res.end(JSON.stringify({ Items: [], TotalRecordCount: 0 })); else res.writeHead(204).end();
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); const address = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+  const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")); delete env.ELECTRON_RUN_AS_NODE;
+  const launch = () => _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`], env }); let app = await launch();
+  try {
+    let page = await app.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+    await app.evaluate(({ dialog }, paths) => { let i = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[i++]!] })) as typeof dialog.showOpenDialog; }, [target, media]);
+    const rootId = await page.evaluate(async ({ media, address }) => {
+      const target = await window.desktopApi.chooseConfigurationDirectory("managed"); await window.desktopApi.setDefaultDownloadDirectory({ expectedVersion: 0, directoryId: target!.id, requestKey: crypto.randomUUID() });
+      const libraries = await window.desktopApi.chooseMediaTarget("MOVIE"); await window.desktopApi.saveSettings({ language: "zh-CN", embyUrl: address, tmdbProxy: "" }); await window.desktopApi.saveCredential("emby", "isolated-review-test");
+      await window.desktopApi.connectEmby({ serverId: "review-server", libraries: [{ targetId: libraries[0]!.targetId, libraryId: "movies", libraryPath: media }] }); return target!.id;
+    }, { media, address });
+    await app.close(); const config = join(directory, "seed-review.json"); await writeFile(config, JSON.stringify({ database: join(directory, "data/desktop.sqlite3"), rootId, size: Buffer.byteLength(content), reviewPreview: true, segments: ["视频电影", "未知资源", "12.mp4"] }));
+    const seeded = await new Promise<string>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [resolve("tools/desktop-files/seed-sync-library-recheck.mjs"), config], { cwd: resolve("."), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 20000 }, (error, stdout) => error ? fail(error) : done(stdout))), fixture = JSON.parse(seeded.trim()) as { previewId: string };
+    app = await launch(); page = await app.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible(); await page.evaluate(({ previewId }) => { location.hash = "/sources?preview=" + previewId; }, fixture);
+    const preview = page.getByRole("region", { name: "同步预览", exact: true }); await expect(preview).toContainText("重复待核对 1"); await expect(preview).not.toContainText("目标冲突"); await expect(preview.getByRole("button", { name: "确认执行一次", exact: true })).toBeDisabled();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+    await preview.screenshot({ path: `test-results/desktop/sync-library-review-${decision}-before.png` }); expect(await preview.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (decision === "USE_LIBRARY") {
+      const skip = preview.getByRole("button", { name: "确认所选文件已在库，跳过", exact: true }); await expect(skip).toBeDisabled(); await preview.getByRole("radio").check();
+      await import("node:fs/promises").then(({ rename }) => rename(media, media + "-离线")); await skip.click(); await expect(preview.locator('.sync-file-blocked [role="alert"]')).toContainText("媒体库检查未完成");
+      await import("node:fs/promises").then(({ rename }) => rename(media + "-离线", media)); await skip.click(); await expect(preview).toContainText("已由用户核对候选并确认跳过"); await expect(preview).toContainText("已在媒体库 1");
+    } else { await preview.getByRole("button", { name: "仍需同步此文件", exact: true }).click(); await expect(preview).toContainText("重复待核对 0"); await expect(preview).toContainText("已在媒体库 0"); }
+    await expect(preview.getByRole("button", { name: "确认执行一次", exact: true })).toBeEnabled(); await page.reload(); await expect(preview).toContainText("重复待核对 0");
+    await expect(preview.getByRole("button", { name: "确认执行一次", exact: true })).toBeEnabled(); await preview.screenshot({ path: `test-results/desktop/sync-library-review-${decision}-after.png` });
+    expect(await page.evaluate(() => window.desktopApi.listDownloads({}))).toMatchObject({ total: 0 }); expect((await stat(path)).ino).toBe(inode); expect(await readFile(path, "utf8")).toBe(content);
+  } finally { await app.close(); server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done())); await rm(directory, { recursive: true, force: true }); }
+});

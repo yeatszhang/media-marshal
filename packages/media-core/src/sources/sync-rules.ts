@@ -5,7 +5,7 @@ import type { CoreDatabase } from "../infrastructure/database.js";
 import type { CloudDownloads } from "../cloud/downloads.js";
 import type { ConfigurationDirectories } from "./configuration-directories.js";
 import { SyncLibraryRechecks } from "./sync-library-rechecks.js";
-import { EmbyLibraryFiles, libraryFilePath, libraryFileReason, type LibraryFileEvidence } from "./emby-library-files.js";
+import { EmbyLibraryFiles, libraryFilePath, libraryFileReason, publicLibraryReview, type LibraryFileEvidence } from "./emby-library-files.js";
 import type { PreviewSnapshot } from "../cloud/previews.js";
 import { LocalSync } from "./local-sync.js";
 import { SyncReceipts } from "./sync-receipts.js";
@@ -121,18 +121,36 @@ export class SyncRules {
     const files = row.local_preview_id ? this.local.preview(row.local_preview_id).files : [];
     let failure: string | null = download?.failure?.message ?? null;
     if (snapshot.configuration.periodic.enabled && cloudRow && JSON.parse(cloudRow.snapshot_json).rootType === "file") failure = "文件范围不能启用周期扫描，请改为目录或关闭周期后重新预览";
-    const observing = files.filter((file) => file.state === "OBSERVING").length, conflicts = download?.conflicts ?? files.filter((file) => ["CONFLICT", "UNAVAILABLE"].includes(file.state)).length;
+    const libraryReviews = cloudRow ? (JSON.parse(cloudRow.snapshot_json) as PreviewSnapshot).items.filter((file) => file.libraryReview).length : 0;
+    const observing = files.filter((file) => file.state === "OBSERVING").length, conflicts = download ? Math.max(0, download.conflicts - libraryReviews) : files.filter((file) => ["CONFLICT", "UNAVAILABLE"].includes(file.state)).length;
     const expired = !current || !!current.deleted_at || current.version !== row.version || current.draft_revision !== row.draft_revision || current.lifecycle_revision !== row.lifecycle_revision || row.expires_at <= this.now() || row.state === "EXPIRED" || !!row.default_dependency && snapshot.defaultDirectoryVersion !== this.directories.defaults().version;
     const complete = download ? download.complete : !!row.local_preview_id;
-    const state = row.state === "APPLIED" ? "APPLIED" : expired || download?.state === "EXPIRED" ? "EXPIRED" : download?.state === "BUILDING" ? "BUILDING" : failure || conflicts || !complete || row.mode === "execution" && observing ? "BLOCKED" : "READY";
+    const state = row.state === "APPLIED" ? "APPLIED" : expired || download?.state === "EXPIRED" ? "EXPIRED" : download?.state === "BUILDING" ? "BUILDING" : failure || conflicts || libraryReviews || !complete || row.mode === "execution" && observing ? "BLOCKED" : "READY";
     const job = this.database.connection.prepare("SELECT id FROM sync_job WHERE preview_id IN (?,?) ORDER BY created_at LIMIT 1").get(row.local_preview_id, row.download_preview_id) as { id: string } | undefined;
-    return { id, sourceId: row.source_id, mode: row.mode, state, snapshot, expiresAt: row.expires_at, files: download?.files ?? files.length, bytes: download?.bytes ?? files.reduce((sum, file) => sum + file.size, 0), complete, observing, conflicts, inLibrary: cloudRow ? (JSON.parse(cloudRow.snapshot_json) as PreviewSnapshot).items.filter((file) => file.libraryFile).length : files.filter((file) => file.libraryFile).length, reused: download?.reuseFiles ?? files.filter((file) => file.state === "REUSED").length, removed: download?.localRemovedFiles ?? files.filter((file) => file.state === "REMOVED").length, force: !!row.force, failure, download, jobId: job?.id ?? null };
+    return { id, sourceId: row.source_id, mode: row.mode, state, snapshot, expiresAt: row.expires_at, files: download?.files ?? files.length, bytes: download?.bytes ?? files.reduce((sum, file) => sum + file.size, 0), complete, observing, conflicts, libraryReviews, inLibrary: cloudRow ? (JSON.parse(cloudRow.snapshot_json) as PreviewSnapshot).items.filter((file) => file.libraryFile).length : files.filter((file) => file.libraryFile).length, reused: download?.reuseFiles ?? files.filter((file) => file.state === "REUSED").length, removed: download?.localRemovedFiles ?? files.filter((file) => file.state === "REMOVED").length, force: !!row.force, failure, download, jobId: job?.id ?? null };
   }
   previewFiles(input: CoreInput<"sync.preview-files">): CoreOutput<"sync.preview-files"> {
     const row = this.previewRow(input.id), snapshot = JSON.parse(row.snapshot_json) as SyncSourceSnapshot, size = input.pageSize ?? 25, start = ((input.page ?? 1) - 1) * size;
     if (row.local_preview_id) { const files = this.local.preview(row.local_preview_id).files; return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.segments.join("/"), targetPath: file.libraryFile ? libraryFilePath(file.libraryFile) : join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.size, state: file.state, reason: file.reason })) }; }
-    const cloud = row.download_preview_id ? this.downloads.previews.row(row.download_preview_id) : null, files: { targetSegments: string[]; expectedSize: number; localRemoved?: boolean; libraryFile?: LibraryFileEvidence; receiptId?: string; reuseItemId?: string; libraryIssue?: string; issue?: { message: string } }[] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
-    return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.targetSegments.join("/"), targetPath: file.libraryFile ? libraryFilePath(file.libraryFile) : join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state: file.libraryFile ? "IN_LIBRARY" : file.issue ? "CONFLICT" : file.localRemoved ? "REMOVED" : file.receiptId || file.reuseItemId ? "REUSED" : "READY", reason: file.libraryFile ? libraryFileReason(file.libraryFile) : file.libraryIssue ?? file.issue?.message ?? (file.localRemoved ? "已同步，本地已移除；普通执行不会补回" : null) })) };
+    const cloud = row.download_preview_id ? this.downloads.previews.row(row.download_preview_id) : null, files: PreviewSnapshot["items"] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
+    return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.targetSegments.join("/"), targetPath: file.libraryFile ? libraryFilePath(file.libraryFile) : join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state: file.libraryFile ? "IN_LIBRARY" : file.libraryReview ? "LIBRARY_REVIEW" : file.issue ? "CONFLICT" : file.localRemoved ? "REMOVED" : file.receiptId || file.reuseItemId ? "REUSED" : "READY", reason: file.libraryFile ? libraryFileReason(file.libraryFile) : file.libraryIssue ?? file.issue?.message ?? (file.localRemoved ? "已同步，本地已移除；普通执行不会补回" : null), ...(file.libraryReview ? { libraryReview: publicLibraryReview(file.libraryReview) } : {}) })) };
+  }
+  resolveLibraryReview(input: CoreInput<"sync.resolve-library-review">): Promise<CoreOutput<"sync.resolve-library-review">> {
+    const work = this.queue.catch(() => {}).then(async () => {
+      this.writable(); const signature = hash({ operation: "sync.resolve-library-review", input });
+      const old = this.previous<CoreOutput<"sync.resolve-library-review">>(input.requestKey, signature); if (old) return this.getPreview(input.previewId);
+      const preview = this.getPreview(input.previewId), row = this.previewRow(input.previewId);
+      if (!["READY", "BLOCKED"].includes(preview.state) || !row.download_preview_id || row.force) throw conflict("该预览已确认、过期或不支持重复核对，请重新预览");
+      if (this.libraryRechecks.busyForSource(row.source_id)) throw conflict("该来源正在复核原任务，请等待完成后重新预览");
+      await this.checkSnapshot(preview.snapshot);
+      const commit = await this.downloads.previews.resolveLibraryReview(row.download_preview_id, input.relativePath, input.decision, input.decision === "USE_LIBRARY" ? input.candidateId : undefined);
+      return this.database.connection.transaction(() => {
+        this.writable(); const repeated = this.previous<CoreOutput<"sync.resolve-library-review">>(input.requestKey, signature); if (repeated) return this.getPreview(input.previewId);
+        if (!["READY", "BLOCKED"].includes(this.getPreview(input.previewId).state)) throw conflict("核对期间配置或预览已变化，请重新预览");
+        commit(); const result = this.getPreview(input.previewId); this.receipt(input.requestKey, signature, result); return result;
+      })();
+    });
+    this.queue = work; return work;
   }
   confirm(input: CoreInput<"sync.confirm">): Promise<CoreOutput<"sync.confirm">> {
     const work = this.queue.catch(() => {}).then(() => this.confirmOnce(input)); this.queue = work; return work;

@@ -98,6 +98,7 @@ declare module "@yeatz/app-framework/command" {
     "media.sync.jobs": (input: CoreInput<"sync.jobs">) => CoreOutput<"sync.jobs">;
     "media.sync.job": (input: CoreInput<"sync.job">) => CoreOutput<"sync.job">;
     "media.sync.job-files": (input: CoreInput<"sync.job-files">) => CoreOutput<"sync.job-files">;
+    "media.sync.resolve-library-review": (input: CoreInput<"sync.resolve-library-review">) => Promise<CoreOutput<"sync.resolve-library-review">>;
     "media.sync.recheck-library": (input: CoreInput<"sync.recheck-library">) => CoreOutput<"sync.recheck-library">;
     "media.sync.remove-job": (input: CoreInput<"sync.remove-job">) => CoreOutput<"sync.remove-job">;
     "media.sync.retry": (input: CoreInput<"sync.retry">) => CoreOutput<"sync.retry">;
@@ -302,6 +303,7 @@ export function createMediaApplication(
       add(registry.register("media.sync.jobs", (_, input) => syncRules.jobs(input)));
       add(registry.register("media.sync.job", (_, input) => syncRules.getJob(input.id)));
       add(registry.register("media.sync.job-files", (_, input) => syncRules.jobFiles(input)));
+      add(registry.register("media.sync.resolve-library-review", (_, input) => syncRules.resolveLibraryReview(input)));
       add(registry.register("media.sync.recheck-library", (_, input) => syncRules.recheckLibrary(input)));
       add(registry.register("media.sync.remove-job", (_, input) => syncRules.removeJob(input)));
       add(registry.register("media.sync.retry", (_, input) => syncRules.retry(input)));

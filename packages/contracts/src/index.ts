@@ -298,6 +298,7 @@ export interface DesktopApi {
   listSyncJobs(input?: CoreInput<"sync.jobs">): Promise<CoreOutput<"sync.jobs">>;
   getSyncJob(id: string): Promise<CoreOutput<"sync.job">>;
   listSyncJobFiles(input: CoreInput<"sync.job-files">): Promise<CoreOutput<"sync.job-files">>;
+  resolveSyncLibraryReview(input: CoreInput<"sync.resolve-library-review">): Promise<CoreOutput<"sync.resolve-library-review">>;
   recheckSyncJobLibrary(input: CoreInput<"sync.recheck-library">): Promise<CoreOutput<"sync.recheck-library">>;
   removeSyncJob(input: CoreInput<"sync.remove-job">): Promise<CoreOutput<"sync.remove-job">>;
   retrySyncJob(input: CoreInput<"sync.retry">): Promise<CoreOutput<"sync.retry">>;

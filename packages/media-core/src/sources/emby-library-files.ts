@@ -10,14 +10,19 @@ import { conflictingMediaIdentity, libraryMediaIdentity, sameMediaIdentity, type
 export interface LibraryFileEvidence {
   targetId: string; binding: string; connectionId: string; connectionVersion: number;
   grant: ManagedRootGrant; segments: string[]; snapshot: SourceSnapshot; sha256: string | null;
-  comparison: "CONTENT" | "NAME_SIZE" | "MEDIA_SIZE"; checkedAt?: string;
+  comparison: "CONTENT" | "NAME_SIZE" | "MEDIA_SIZE" | "USER_CONFIRMED"; checkedAt?: string;
   algorithm?: "sha256" | "sha1" | "md5"; digest?: string; identity?: LibraryMediaIdentity;
 }
 type Candidate = Omit<LibraryFileEvidence, "sha256" | "comparison">;
+export interface LibraryReview { candidates: { id: string; file: LibraryFileEvidence }[]; totalCandidates: number }
+export class LibraryReviewRequired extends DesktopError {
+  constructor(message: string, readonly review: LibraryReview) { super("CONFLICT", message); }
+}
+export const publicLibraryReview = (review: LibraryReview) => ({ totalCandidates: review.totalCandidates, candidates: review.candidates.map(({ id, file }) => ({ id, path: libraryFilePath(file), size: file.snapshot.size })) });
 interface Target { target_root_id: string; binding_json: string; connection_id: string; version: number; grant_json: string; available: number; valid: number }
 export const isLibraryVideo = (name: string) => /\.(?:mkv|mp4|avi|mov|wmv|m4v|ts|m2ts|mpg|mpeg|webm|iso)$/i.test(name);
 const changed = () => new DesktopError("CONFLICT", "预览中的媒体库文件或 Emby 目录关联已变化，请重新预览同步范围");
-export const libraryFileReason = (file: LibraryFileEvidence) => file.comparison === "CONTENT"
+export const libraryFileReason = (file: LibraryFileEvidence) => file.comparison === "USER_CONFIRMED" ? "已在媒体库，已由用户核对候选并确认跳过；人工确认属于弱证据，未验证远端内容指纹" : file.comparison === "CONTENT"
   ? `已在媒体库，${(file.algorithm ?? "sha256").toUpperCase()} 内容摘要一致，跳过同步`
   : `已在媒体库，${file.comparison === "MEDIA_SIZE" ? "作品、季集、格式和字节大小一致" : "完整文件名和字节大小一致"}；远端无内容摘要，弱比较无法检测同尺寸内容替换`;
 export const libraryFilePath = (file: LibraryFileEvidence) => join(file.grant.path, ...file.segments);
@@ -26,6 +31,7 @@ const unavailable = (path: string, error?: unknown) => new DesktopError("LOCAL_U
 /** 会话内只扫描一次；候选按字节大小索引，文件名不阻断内容比较。 */
 export class EmbyLibraryFiles {
   private index?: Promise<Map<number, Candidate[]>>;
+  private workYears?: Map<string, number>;
   private digests = new Map<string, Promise<{ sha256: string; digest: string }>>();
   private readonly controller = new AbortController();
   private readonly signal: AbortSignal;
@@ -53,13 +59,25 @@ export class EmbyLibraryFiles {
           this.check(); if (!isLibraryVideo(segments.at(-1)!)) continue;
           const snapshot = await root.inspect(segments); if (!snapshot.size) continue;
           const key = JSON.stringify([grant.volume.volumeId, snapshot.inode, snapshot.birthtimeNs]); if (seen.has(key)) continue; seen.add(key);
-          const file = { targetId: target.target_root_id, binding: target.binding_json, connectionId: target.connection_id, connectionVersion: target.version, grant, segments, snapshot };
+          const file = { targetId: target.target_root_id, binding: target.binding_json, connectionId: target.connection_id, connectionVersion: target.version, grant, segments, snapshot, identity: libraryMediaIdentity(segments) };
           const bucket = result.get(snapshot.size) ?? []; bucket.push(file); result.set(snapshot.size, bucket);
         }
       } catch (error) { this.check(); throw unavailable(path, error); }
       finally { await root?.close(); }
     }
     return result;
+  }
+  private uniqueWorkYears(index: Map<number, Candidate[]>) {
+    if (this.workYears) return this.workYears;
+    const works = new Map<string, { years: Set<number | undefined>; ids: Set<string>; conflict: boolean }>();
+    for (const files of index.values()) for (const file of files) {
+      const identity = file.identity!; if (!identity.title) continue;
+      const work = works.get(identity.title) ?? { years: new Set(), ids: new Set(), conflict: false };
+      work.years.add(identity.year); if (identity.tmdbId) work.ids.add(identity.tmdbId); work.conflict ||= identity.conflict; works.set(identity.title, work);
+    }
+    this.workYears = new Map();
+    for (const [title, work] of works) { const year = [...work.years][0]; if (work.years.size === 1 && year !== undefined && work.ids.size <= 1 && !work.conflict) this.workYears.set(title, year); }
+    return this.workYears;
   }
   private async openCandidate(candidate: Candidate) {
     try { this.check(); return await SourceRoot.open(candidate.grant); }
@@ -87,7 +105,7 @@ export class EmbyLibraryFiles {
   }
   async find(name: string, size: number, source?: { root: SourceRoot; segments: string[]; snapshot: SourceSnapshot }, version?: VersionEvidence, segments: readonly string[] = source?.segments ?? [name]): Promise<LibraryFileEvidence | undefined> {
     this.check(); if (!isLibraryVideo(name) || size <= 0) return;
-    const candidates = (await (this.index ??= this.scan())).get(size) ?? [];
+    const index = await (this.index ??= this.scan()), candidates = index.get(size) ?? [];
     if (!candidates.length) return;
     if (source || version?.kind === "hash") {
       const algorithm = version?.kind === "hash" ? version.algorithm : "sha256";
@@ -104,11 +122,18 @@ export class EmbyLibraryFiles {
       return;
     }
     const identity = libraryMediaIdentity(segments), extension = extname(name).toLowerCase();
+    if (identity.title && identity.year === undefined && !identity.conflict) {
+      // 年份不能从单个同大小文件猜测；只有全库同名作品年份唯一时才补全。
+      identity.year = this.uniqueWorkYears(index).get(identity.title);
+    }
     const eligible = candidates.filter((file) => extname(file.segments.at(-1)!).toLowerCase() === extension && !conflictingMediaIdentity(identity, libraryMediaIdentity(file.segments)));
     const named = eligible.filter((file) => file.segments.at(-1)!.normalize("NFC") === name.normalize("NFC"));
     const matching = eligible.filter((file) => sameMediaIdentity(identity, libraryMediaIdentity(file.segments)));
     const choices = matching.length ? matching : named;
-    if (choices.length !== 1) throw new DesktopError("CONFLICT", `疑似重复，需核对：${segments.join("/").slice(-180)}；媒体库有 ${candidates.length} 个同字节大小候选，但作品、季集、格式无法唯一对应。候选：${join(candidates[0]!.grant.path, ...candidates[0]!.segments).slice(-180)}。请核对身份或显式重新同步`.slice(0, 500));
+    if (choices.length !== 1) {
+      const review: LibraryReview = { totalCandidates: candidates.length, candidates: candidates.slice(0, 25).map((candidate) => ({ id: createHash("sha256").update(JSON.stringify([candidate.targetId, candidate.binding, candidate.segments, candidate.snapshot])).digest("hex"), file: { ...candidate, sha256: null, comparison: "MEDIA_SIZE" } })) };
+      throw new LibraryReviewRequired(`疑似重复，需核对：${segments.join("/").slice(-180)}；有 ${candidates.length} 个同字节大小候选，作品、季集或格式无法唯一对应。请选择库内候选并确认跳过，或选择仍需同步。`, review);
+    }
     const candidate = choices[0]!, root = await this.openCandidate(candidate);
     try { if (!sameSnapshot(candidate.snapshot, await root.inspect(candidate.segments))) throw changed(); }
     catch (error) { this.check(); if (error instanceof DesktopError) throw error; throw unavailable(join(candidate.grant.path, ...candidate.segments), error); }

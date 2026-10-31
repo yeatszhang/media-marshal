@@ -11,24 +11,42 @@ import { Header, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 import { sourceSize } from "../source-format";
 
-const status = { READY: "可确认", BUILDING: "正在扫描", BLOCKED: "需要核对", EXPIRED: "已过期", APPLIED: "已确认", PENDING: "等待执行", RUNNING: "执行中", DONE: "完成", NEEDS_ATTENTION: "需要处理", CANCELED: "已取消", OBSERVING: "正在观察", IN_LIBRARY: "已在媒体库", REUSED: "复用成功历史", REMOVED: "已同步，本地已移除", CONFLICT: "目标冲突", UNAVAILABLE: "目录不可用" };
+const status = { READY: "可确认", BUILDING: "正在扫描", BLOCKED: "需要核对", EXPIRED: "已过期", APPLIED: "已确认", PENDING: "等待执行", RUNNING: "执行中", DONE: "完成", NEEDS_ATTENTION: "需要处理", CANCELED: "已取消", OBSERVING: "正在观察", IN_LIBRARY: "已在媒体库", LIBRARY_REVIEW: "重复待核对", REUSED: "复用成功历史", REMOVED: "已同步，本地已移除", CONFLICT: "目标冲突", UNAVAILABLE: "目录不可用" };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "查询未完成，请核对连接后重试";
 function Pager({ page, total, onChange }: { page: number; total: number; onChange(page: number): void }) { return total > 25 ? <div className="download-pagination"><Button variant="outline" disabled={page <= 1} onClick={() => onChange(page - 1)}>上一页</Button><span>{page} / {Math.ceil(total / 25)}</span><Button variant="outline" disabled={page * 25 >= total} onClick={() => onChange(page + 1)}>下一页</Button></div> : null; }
-function FileList({ data }: { data: CoreOutput<"sync.preview-files"> | null }) { return <div className="sync-files">{data?.items.map((file) => {
-  const blocked = file.state === "CONFLICT" || file.state === "UNAVAILABLE" || file.state === "NEEDS_ATTENTION";
-  return <article key={file.relativePath} className={blocked ? "sync-file-blocked" : undefined}><strong className="settings-mapping-path">{file.relativePath}</strong><span>{sourceSize(file.size)} · <strong className={blocked ? "sync-conflict" : undefined}>{status[file.state]}</strong></span><p className="settings-mapping-path">→ {file.targetPath}</p>{file.reason && <p className={blocked ? "sync-conflict" : undefined}>{file.reason}</p>}{blocked && <p className="sync-conflict">请核对该文件的目标路径和上述原因，处理后重新预览。</p>}</article>;
+type ReviewChoice = { relativePath: string; decision: "USE_LIBRARY"; candidateId: string } | { relativePath: string; decision: "DOWNLOAD" };
+function LibraryReviewControls({ file, busy, onResolve }: { file: CoreOutput<"sync.preview-files">["items"][number]; busy: boolean; onResolve(input: ReviewChoice): Promise<void> }) {
+  const [selected, setSelected] = useState(""), [error, setError] = useState<string | null>(null), group = useId();
+  const candidate = file.libraryReview?.candidates.find((value) => value.id === selected);
+  const submit = async (decision: ReviewChoice) => { setError(null); try { await onResolve(decision); } catch (error) { setError(errorMessage(error)); } };
+  return <div className="sync-library-review">
+    <fieldset disabled={busy}><legend>核对媒体库候选</legend>
+      {file.libraryReview?.candidates.map((value) => <label key={value.id} className="sync-library-candidate"><input type="radio" name={group} checked={selected === value.id} onChange={() => { setSelected(value.id); setError(null); }} /><span className="settings-mapping-path">{value.path}<small>{sourceSize(value.size)} · {value.size.toLocaleString()} 字节</small></span></label>)}
+    </fieldset>
+    {file.libraryReview && file.libraryReview.totalCandidates > file.libraryReview.candidates.length && <p className="cloud-hint">共 {file.libraryReview.totalCandidates} 个候选，仅展示前 {file.libraryReview.candidates.length} 个；可缩小来源范围后重新预览。</p>}
+    <p className="cloud-hint" id={group + "-help"}>{busy ? "正在保存核对结果，请等待。" : candidate ? "确认所选文件就是此视频后再跳过；人工确认未验证远端内容指纹。" : "先选择库内候选，再确认跳过；若不是同一视频，可选择仍需同步。"}</p>
+    <div className="form-actions"><Button variant="outline" disabled={busy || !candidate} aria-describedby={group + "-help"} onClick={() => { if (candidate) void submit({ relativePath: file.relativePath, decision: "USE_LIBRARY", candidateId: candidate.id }); }}>确认所选文件已在库，跳过</Button><Button variant="outline" disabled={busy} onClick={() => { void submit({ relativePath: file.relativePath, decision: "DOWNLOAD" }); }}>仍需同步此文件</Button></div>
+    <ErrorNotice message={error} />
+  </div>;
+}
+function FileList({ data, busy = false, onResolve }: { data: CoreOutput<"sync.preview-files"> | null; busy?: boolean; onResolve?(input: ReviewChoice): Promise<void> }) { return <div className="sync-files">{data?.items.map((file) => {
+  const review = file.state === "LIBRARY_REVIEW", blocked = review || file.state === "CONFLICT" || file.state === "UNAVAILABLE" || file.state === "NEEDS_ATTENTION";
+  return <article key={file.relativePath} className={blocked ? "sync-file-blocked" : undefined}><strong className="settings-mapping-path">{file.relativePath}</strong><span>{sourceSize(file.size)} · <strong className={blocked ? "sync-conflict" : undefined}>{status[file.state]}</strong></span><p className="settings-mapping-path">→ {file.targetPath}</p>{file.reason && <p className={blocked ? "sync-conflict" : undefined}>{file.reason}</p>}
+    {review && file.libraryReview && onResolve ? <LibraryReviewControls file={file} busy={busy} onResolve={onResolve} /> : blocked && <p className="sync-conflict">{file.state === "CONFLICT" ? "下载目标已占用或已有成果校验不通过。请保留双方文件，核对上方路径及原因；处理后重新预览，或从来源使用「显式重新同步」下载到独立目录。" : "请恢复原目录、授权或处理上述问题后重新预览。"}</p>}
+  </article>;
 })}</div>; }
 
 function SyncPreview({ id, onClose, onApplied }: { id: string; onClose(): void; onApplied(jobId: string | null): void }) {
-  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy), [preview, setPreview] = useState<CoreOutput<"sync.get-preview"> | null>(null), [files, setFiles] = useState<CoreOutput<"sync.preview-files"> | null>(null), [page, setPage] = useState(1), [error, setError] = useState<string | null>(null), [complete, setComplete] = useState(false), [history, setHistory] = useState(false), [once, setOnce] = useState(false), ref = useRef<HTMLElement>(null);
-  useEffect(() => { ref.current?.focus(); setComplete(false); setHistory(false); setOnce(false); }, [id]);
-  useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const [p, f] = await Promise.all([model.client.getSyncPreview(id), model.client.listSyncPreviewFiles({ id, page })]); if (live) { setPreview(p); setFiles(f); setError(null); } } catch (error) { if (live) setError(errorMessage(error)); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, id, page]);
+  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy), [preview, setPreview] = useState<CoreOutput<"sync.get-preview"> | null>(null), [files, setFiles] = useState<CoreOutput<"sync.preview-files"> | null>(null), [page, setPage] = useState(1), [error, setError] = useState<string | null>(null), [complete, setComplete] = useState(false), [history, setHistory] = useState(false), [once, setOnce] = useState(false), ref = useRef<HTMLElement>(null), previewEpoch = useRef(0);
+  useEffect(() => { previewEpoch.current++; ref.current?.focus(); setComplete(false); setHistory(false); setOnce(false); return () => { previewEpoch.current++; }; }, [id]);
+  useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { const epoch = previewEpoch.current; try { const [p, f] = await Promise.all([model.client.getSyncPreview(id), model.client.listSyncPreviewFiles({ id, page })]); if (live && epoch === previewEpoch.current) { setPreview(p); setFiles(f); setError(null); } } catch (error) { if (live && epoch === previewEpoch.current) setError(errorMessage(error)); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, id, page]);
   const local = preview?.snapshot.configuration.type === "local", executes = preview?.mode === "execution" || once, requiresHistory = !!preview?.download?.historyRestore && !preview.download.historyRestore.confirmed;
   const reasonId = useId();
   const blockedReason = !preview || preview.state === "APPLIED" ? null
     : busy ? "正在处理同步操作，请等待完成后再确认。"
     : preview.state === "EXPIRED" ? "预览已过期或配置已变化，请关闭预览并重新保存草稿、生成预览。"
     : preview.state === "BUILDING" ? "正在扫描文件范围，扫描完成后才能确认。"
+    : (preview.libraryReviews ?? 0) > 0 ? `有 ${preview.libraryReviews} 项疑似重复，请在各文件行选择已有候选并确认跳过，或选择仍需同步。`
     : preview.conflicts > 0 ? `有 ${preview.conflicts} 项冲突或目录不可用，暂时无法确认。请在各页中查看高亮项，核对目标路径与原因，处理后重新预览。`
     : preview.failure ? `暂时无法确认：${preview.failure}`
     : !preview.complete ? "文件范围尚未完整，请核对来源连接后重新预览。"
@@ -38,10 +56,18 @@ function SyncPreview({ id, onClose, onApplied }: { id: string; onClose(): void; 
     : requiresHistory && !history ? "请先勾选上方的原账号、目录及同步历史确认。" : null;
   return <section ref={ref} tabIndex={-1} className="panel sync-panel" aria-label="同步预览"><div className="cloud-browser-toolbar"><h2>{preview?.force ? "显式重新同步预览" : preview?.mode === "execution" ? "执行一次预览" : "配置范围预览"}</h2><Button variant="ghost" disabled={busy} onClick={onClose}>关闭预览</Button></div><ErrorNotice message={error ?? preview?.failure ?? null} />
     {(!preview && !error || preview?.state === "BUILDING") && <p className="sync-preview-loading" role="status"><LoaderCircle className="spin" size={20} aria-hidden="true" /><span>{preview ? "正在扫描范围，文件数量和大小仍在更新…" : "正在加载范围预览…"}</span></p>}
-    {preview && <><p role="status">{status[preview.state]} · {preview.complete ? "完整范围" : "范围尚未完整"} · {preview.files} 项 · {sourceSize(preview.bytes)} · 已在媒体库 {preview.inLibrary ?? 0} · 复用 {preview.reused} · 已移除 {preview.removed} · 观察中 {preview.observing} · <strong className={preview.conflicts > 0 ? "sync-conflict-count" : undefined}>冲突 {preview.conflicts}</strong></p><p className="settings-mapping-path">本次实际完成目录：{preview.snapshot.targetDirectory.path}/completed</p>
+    {preview && <><p role="status">{status[preview.state]} · {preview.complete ? "完整范围" : "范围尚未完整"} · {preview.files} 项 · {sourceSize(preview.bytes)} · 已在媒体库 {preview.inLibrary ?? 0} · 复用 {preview.reused} · 已移除 {preview.removed} · 观察中 {preview.observing} · <strong className={preview.conflicts > 0 ? "sync-conflict-count" : undefined}>冲突 {preview.conflicts}</strong> · <strong className={(preview.libraryReviews ?? 0) > 0 ? "sync-conflict-count" : undefined}>重复待核对 {preview.libraryReviews ?? 0}</strong></p><p className="settings-mapping-path">本次实际完成目录：{preview.snapshot.targetDirectory.path}/completed</p>
       {preview.force && <p className="notice">本次将重新传输到独立 resync 目录，保留旧文件和成功历史；重复确认只受理同一作业。</p>}
       {preview.observing > 0 && <p className="notice">源文件须连续观察至少 120 秒，重启或观察中断会重新计时。可先确认配置范围，执行前仍须核对完整性。</p>}
-      <FileList data={files} /><Pager page={page} total={files?.total ?? 0} onChange={setPage} />
+      <FileList data={files} busy={busy} onResolve={preview.state !== "APPLIED" && preview.state !== "EXPIRED" ? async (choice) => {
+        const epoch = ++previewEpoch.current;
+        const input = { ...choice, previewId: id };
+        const result = await model.command("library-review:" + JSON.stringify(input), (requestKey) => model.client.resolveSyncLibraryReview({ ...input, requestKey }));
+        if (!result) throw new Error(model.state.error ?? "核对决定未保存，请刷新预览后重试");
+        if (epoch !== previewEpoch.current) return;
+        const nextEpoch = ++previewEpoch.current, refreshed = await model.client.listSyncPreviewFiles({ id, page });
+        if (nextEpoch === previewEpoch.current) { setPreview(result); setFiles(refreshed); }
+      } : undefined} /><Pager page={page} total={files?.total ?? 0} onChange={setPage} />
       {preview.state === "APPLIED" ? <p role="status">范围已确认，查询和重载不会再次执行。{preview.jobId && <Button variant="ghost" onClick={() => onApplied(preview.jobId)}>查看原作业</Button>}</p> : <>
         {preview.mode === "configuration" && <label className="sync-check"><input type="checkbox" checked={once} disabled={busy || !!preview.observing || !!preview.snapshot.configuration.periodic.enabled && !local} onChange={(event) => setOnce(event.target.checked)} />确认配置时执行一次{preview.snapshot.configuration.periodic.enabled && !local && "（网盘周期规则确认后会执行首轮）"}</label>}
         {local && executes && <label className="sync-check"><input type="checkbox" checked={complete} disabled={busy} onChange={(event) => setComplete(event.target.checked)} />我已确认本次本地文件完整，允许复制此精确清单</label>}
