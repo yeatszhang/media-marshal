@@ -6,7 +6,7 @@ const levelNames: Record<number, Level> = { 10: "trace", 20: "debug", 30: "info"
 const fields = [
   "scope", "event", "action", "requestId", "durationMs", "error", "errorCode", "exitCode",
   "jobId", "downloadJobId", "itemId", "sourceId", "ruleId", "previewId", "attemptId", "taskId",
-  "candidateId", "operationId", "scanId", "version", "state", "fromState", "toState", "operation",
+  "candidateId", "operationId", "scanId", "relativePath", "version", "state", "fromState", "toState", "operation",
   "mode", "inputKind", "fileCount", "readyCount", "matchCount", "failedCount", "discoveredCount",
   "bytes", "paused", "force", "blocked", "reusedCount", "removedCount", "targetCount", "targetId", "mediaType",
 ];

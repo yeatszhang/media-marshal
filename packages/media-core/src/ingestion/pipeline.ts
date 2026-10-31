@@ -34,6 +34,7 @@ import { OrganizeBatches, type BatchManifest } from "./organize-batches.js";
 import { assertMediaCoordinates } from "./coordinates.js";
 import { assertCorrectionTarget } from "./correction-assets.js";
 import { previewFailure } from "./preview-errors.js";
+import { sourceFileFailure } from "./source-file-failure.js";
 import { AutomaticIngestion } from "./automatic.js";
 import { AutomaticPolicies } from "./automatic-policy.js";
 import { validateMediaSelection } from "./selection-validation.js";
@@ -823,7 +824,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       else if (!["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(this.candidate(result.candidateId).state)) await this.observe(this.candidate(result.candidateId), check);
       return result;
     } catch (error) {
-      check?.(); const reason = error instanceof DesktopError ? error.message.slice(0, 500) : "正式成果不可读取，请恢复原输入卷、目录和文件后补扫；识别不会要求重新下载";
+      check?.(); const reason = sourceFileFailure(error, true);
       db.transaction(() => { db.prepare("INSERT INTO recognition_receipt VALUES(?,?,?,'UNAVAILABLE',?,?) ON CONFLICT(receipt_id) DO UPDATE SET state='UNAVAILABLE',failure=excluded.failure,updated_at=excluded.updated_at").run(receiptId, sourceId, previous?.candidate_id ?? null, reason, timestamp(this.now)); if (previous?.candidate_id) db.prepare("UPDATE ingestion_candidate SET state='UNAVAILABLE',reason=? WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(reason, previous.candidate_id); })();
       throw error;
     }
@@ -889,7 +890,11 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const row = this.source(sourceId), root = this.sources.get(sourceId), issues = new Map<string, string>(), checkedPaths: string[] = []; let discovered = 0;
     const check = () => { if (this.closed || signal.aborted) throw new DesktopError("INTERRUPTED", "扫描已中断，已发现候选保留；恢复后重新补扫", true); const latest = this.source(sourceId); if (latest.version !== row.version || this.sources.get(sourceId) !== root) throw conflict("来源配置或授权已变化，请按当前配置重新扫描"); };
     const checkRoot = async () => { check(); await root!.check(); await access(root!.grant.path, constants.R_OK | constants.X_OK); check(); };
-    const failed = async (relative: string[], error: unknown) => { await checkRoot(); const reason = error instanceof DesktopError ? error.message.slice(0, 500) : "文件暂不可读，请检查原文件、磁盘和读取权限后重新扫描"; issues.set(relative.join("/"), reason); };
+    const failed = async (relative: string[], error: unknown) => {
+      await checkRoot(); const relativePath = relative.join("/"), reason = sourceFileFailure(error, recognitionOwner(this.database, sourceId)?.mode === "managed-completed" || row.mode === "managed");
+      issues.set(relativePath, reason);
+      this.logger.warn({ event: "recognition.scan.file-failed", sourceId, relativePath, error }, "扫描文件核对失败，已保留逐项原因");
+    };
     try {
       const independent = recognitionOwner(this.database, sourceId);
       if (independent && !independent.active) return { discovered: 0, checkedPaths: [], issues: [] };

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, lstat, statfs, realpath, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, lstat, statfs, realpath, rm, writeFile, readFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recognitionRuleConfigurationSchema, type RecognitionRule, type SyncSourceRule } from "@media-marshal/contracts";
@@ -103,6 +103,29 @@ it("本地同步的暂存回收失败单独记账，成功收据与同步状态�
   expect(row).toBeDefined(); expect(row.retained_bytes).toBe(Buffer.byteLength(f.bytes)); expect(f.sync.jobs({}).items[0]!.state).toBe("DONE");
   expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 2 }); await new OwnedAttemptCleanup(f.db).run("local_sync_operation", row.owner_id, root);
   expect(f.db.connection.prepare("SELECT state FROM owned_attempt_cleanup WHERE owner_kind='local_sync_operation' AND owner_id=?").get(row.owner_id)).toEqual({ state: "DONE" }); expect(await readFile(join(f.input.path, "测试电影.2026.mp4"), "utf8")).toBe(f.bytes);
+});
+it("受管图片父目录缺失时逐项说明原因，恢复后重新补扫成功且不重复接入", async () => {
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const f = await fixture(logger), names = ["logo.png", "thumb.jpg", "banner.jpg", "fanart.jpg", "poster.jpg"];
+  await mkdir(join(f.input.path, "附属图片"));
+  for (const name of names) await writeFile(join(f.input.path, "附属图片", name), `真实附属文件：${name}`);
+  await f.synchronize(); await f.advance();
+  const original = join(f.download.path, "completed", "附属图片"), retained = join(f.folder, "暂时移开的图片");
+  await rename(original, retained);
+  const rule = await f.enable(f.save(undefined, { input: { kind: "default" }, targets: [f.movieTarget, f.tvTarget] })), sourceId = rule.runtime!.sourceId!;
+  const job = f.recognition.scan({ ...versions(rule), requestKey: randomUUID() }); await f.recognition.scans.idle();
+  const details = f.recognition.scans.get({ id: job.id });
+  expect(details.job).toMatchObject({ state: "PARTIAL_FAILED", discovered: 2, failed: 5 });
+  expect(details.issues).toEqual(names.slice().sort().map((name) => ({ relativePath: `completed/附属图片/${name}`, failure: expect.stringMatching(/文件或其父目录已不存在.*不会自动重新下载/) })));
+  expect(f.db.connection.prepare("SELECT count(*) AS n FROM recognition_receipt WHERE state='UNAVAILABLE' AND failure LIKE '%父目录已不存在%'").get()).toEqual({ n: 5 });
+  expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: "recognition.scan.file-failed", sourceId, relativePath: "completed/附属图片/logo.png", error: expect.objectContaining({ code: "ENOENT" }) }), expect.any(String));
+  await rename(retained, original);
+  for (let pass = 0; pass < 2; pass++) {
+    const retry = f.recognition.scan({ ...versions(rule), requestKey: randomUUID() }); await f.recognition.scans.idle();
+    expect(f.recognition.scans.get({ id: retry.id })).toMatchObject({ job: { state: "COMPLETED", discovered: 7, failed: 0 }, issues: [] });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM recognition_receipt WHERE state='ACCEPTED'").get()).toEqual({ n: 7 });
+    expect(f.pipeline.list({ sourceId }).total).toBe(7);
+  }
 });
 it("受管原件主动清理后补扫保留已交付候选，普通再次同步沿用成功收据而不补回", async () => {
   const f = await fixture(), sync = await f.synchronize(), rule = await f.enable(f.save(undefined, { input: { kind: "default" }, targets: [f.movieTarget, f.tvTarget] })), sourceId = rule.runtime!.sourceId!;
