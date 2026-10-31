@@ -1,0 +1,723 @@
+{
+  "说明": "verification为空表示待迁移，不作为覆盖证明；现有桌面安全收紧须另记。",
+  "sources": [
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/parser/EpisodeSeasonResolverTest.java",
+      "sha256": "02517c2773b27dc82db03e8676e997868db7dd93207d361a277ba62aefcfc162",
+      "cases": [
+        {
+          "name": "defaultsToFirstSeasonAndPreservesExplicitSeasons",
+          "verification": null
+        },
+        {
+          "name": "explicitPathMarkersOverrideModelAndDefault",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/parser/CodexRecognitionServiceTest.java",
+      "sha256": "98fa40f508759f3fa756ae0767446f00adf067286280b4b63e2ea4aedbe43a86",
+      "cases": [
+        {
+          "name": "reliableResultsNoLongerReadLegacyForcedApprovalSetting",
+          "verification": null
+        },
+        {
+          "name": "disabledDoesNotCallBridge",
+          "verification": null
+        },
+        {
+          "name": "movieRulesAndMissingTokenNeverRequestClusterBridge",
+          "verification": null
+        },
+        {
+          "name": "explicitSeasonAndEpisodeOverrideModelGuess",
+          "verification": null
+        },
+        {
+          "name": "missingSeasonDefaultsToFirstWithoutInventingEpisode",
+          "verification": null
+        },
+        {
+          "name": "rejectsUnknownWeakOrInvalidResults",
+          "verification": null
+        },
+        {
+          "name": "respectsExplicitRuleMediaType",
+          "verification": null
+        },
+        {
+          "name": "directoryPreservesEachFileCoordinatesAndEpisodeRange",
+          "verification": null
+        },
+        {
+          "name": "directoryRejectsMissingDuplicateForeignOrInvalidFiles",
+          "verification": null
+        },
+        {
+          "name": "contextIsBoundedToWatchedRoot",
+          "verification": null
+        },
+        {
+          "name": "clusterScopeSharesSeriesAcrossSeasonsButNotOtherPathsOrRules",
+          "verification": null
+        },
+        {
+          "name": "clusterContextMarksTruncatedSiblings",
+          "verification": null
+        },
+        {
+          "name": "clusterBridgePreservesExplicitCoordinatesAndReturnsHandledUnknown",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbInMemoryCacheTest.java",
+      "sha256": "0f9904c50e36f5220ecf5abbaab489f995c6e6b76877976102d0d2103bb4b95a",
+      "cases": [
+        {
+          "name": "cachesLoadedValueByKey",
+          "verification": null
+        },
+        {
+          "name": "deduplicatesInFlightLoadsForSameKey",
+          "verification": null
+        },
+        {
+          "name": "failedRequestCanBeRetriedWithoutRetainingFailedFuture",
+          "verification": null
+        },
+        {
+          "name": "reusesSuccessfulPersistentValueAfterMemoryCacheRestart",
+          "verification": null
+        },
+        {
+          "name": "persistsOnlySuccessfulLoads",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbMetadataMatcherTest.java",
+      "sha256": "0c86a017734f9ebfd4cccf28b7361eecdc33e0b174e1cdd8d8ff1a988d0cc91e",
+      "cases": [
+        {
+          "name": "fetchesTmdbSeasonStructureAndKeepsCachedDetailsIsolated",
+          "verification": null
+        },
+        {
+          "name": "fetchesAndCachesSeasonEpisodesIncludingMissingTitles",
+          "verification": null
+        },
+        {
+          "name": "rejectsWrongSeasonInTmdbResponse",
+          "verification": null
+        },
+        {
+          "name": "tmdb404CannotBecomeAnEmptySuccessfulSeason",
+          "verification": null
+        },
+        {
+          "name": "omitsSearchYearForLaterSeasonTv",
+          "verification": null
+        },
+        {
+          "name": "reportsRateLimitAndRetryDelay",
+          "verification": null
+        },
+        {
+          "name": "readsLargeSeasonResponseAndSharesItAcrossEpisodeRequests",
+          "verification": null
+        },
+        {
+          "name": "keepsSearchYearForFirstSeasonTv",
+          "verification": null
+        },
+        {
+          "name": "keepsSearchYearForMovies",
+          "verification": null
+        },
+        {
+          "name": "searchesCleanAnimeTitleWhenGuessitDidNotReturnTitle",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java",
+      "sha256": "acdabdb048fe8d638975fc50761069d85ecfc433ad97877cddd805b66df03a60",
+      "cases": [
+        {
+          "name": "jujutsuKaisenRetainsEpisode48WhenSourceSeasonThreeMapsToSingleMetadataSeason",
+          "verification": null
+        },
+        {
+          "name": "blueBoxUsesTmdbSeasonOneAndRetainsAbsoluteEpisodeNumber",
+          "verification": null
+        },
+        {
+          "name": "validSeasonIsNotChangedEvenWhenOtherSeasonsHaveSameEpisode",
+          "verification": null
+        },
+        {
+          "name": "missingTitleDoesNotMeanEpisodeDoesNotExist",
+          "verification": null
+        },
+        {
+          "name": "doesNotGuessOffsetsForMultiSeasonSeries",
+          "verification": null
+        },
+        {
+          "name": "missingSeasonInMultiSeasonSeriesIsAmbiguous",
+          "verification": null
+        },
+        {
+          "name": "existingPathSeasonWithoutEpisodeIsCorrectedUsingActualEpisodeLists",
+          "verification": null
+        },
+        {
+          "name": "multipleSeasonsContainingTheEpisodeRemainAmbiguous",
+          "verification": null
+        },
+        {
+          "name": "seasonEpisodeCountAloneCannotProveTheEpisodeExists",
+          "verification": null
+        },
+        {
+          "name": "anotherSeasonMustBeAvailableToProveTheMappingIsUnique",
+          "verification": null
+        },
+        {
+          "name": "specialsAreNeverMappedToRegularSeason",
+          "verification": null
+        },
+        {
+          "name": "validatesEveryEpisodeInMergedRangeBeforeChangingSeason",
+          "verification": null
+        },
+        {
+          "name": "mapsMergedRangeWhenEveryEpisodeExists",
+          "verification": null
+        },
+        {
+          "name": "missingTmdbSeasonListCannotBypassValidation",
+          "verification": null
+        },
+        {
+          "name": "networkFailureDoesNotFallBackToFilename",
+          "verification": null
+        },
+        {
+          "name": "seasonZeroCanBeValidatedNormally",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbPersistentCacheTest.java",
+      "sha256": "bc43f7f54df9cba3bad25d2fe225fa1836106530d222f2306e70cd3433b29b39",
+      "cases": [
+        {
+          "name": "restoresTypedMetadataAcrossInstancesAndDiscardsExpiredOrCorruptEntries",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/ParentFolderContextExtractorTest.java",
+      "sha256": "e5fedae5db021193737347f5b7af711840cfb65e0b1cfd818f5b5b3978c15eb5",
+      "cases": [
+        {
+          "name": "extractsBilingualReleaseFolderContext",
+          "verification": null
+        },
+        {
+          "name": "ignoresGenericParentFolder",
+          "verification": null
+        },
+        {
+          "name": "ignoresPlainTitleFolderWithoutReleaseMarkers",
+          "verification": null
+        },
+        {
+          "name": "ignoresFolderWhenSeasonConflictsWithFilename",
+          "verification": null
+        },
+        {
+          "name": "ignoresNonVideoAssets",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java",
+      "sha256": "96e91bc34c87b9355797955daf886d1370e3eb8fda65076dcea0c9ffbbeea12f",
+      "cases": [
+        {
+          "name": "buildsChineseAndEnglishQueriesForBilingualMovieTitle",
+          "verification": null
+        },
+        {
+          "name": "buildsChineseAndEnglishQueriesForBilingualSeriesTitle",
+          "verification": null
+        },
+        {
+          "name": "extractsBracketedChineseAndEnglishTitle",
+          "verification": null
+        },
+        {
+          "name": "extractsBracketedChineseAndEnglishTitleWithShortChineseName",
+          "verification": null
+        },
+        {
+          "name": "buildsChineseAndEnglishQueriesForEightHundredSeriesTitle",
+          "verification": null
+        },
+        {
+          "name": "doesNotUseEpisodeTitleAsSeriesQuery",
+          "verification": null
+        },
+        {
+          "name": "extractsAnimeTitleWhenGuessitReturnsNoTitle",
+          "verification": null
+        },
+        {
+          "name": "recognizesExplicitSubtitleGroupWithoutGuessitReleaseGroup",
+          "verification": null
+        },
+        {
+          "name": "removesKnownReleaseGroupWithoutAssumingEveryLeadingBracketIsAGroup",
+          "verification": null
+        },
+        {
+          "name": "extractsSeparateBilingualBracketedTitles",
+          "verification": null
+        },
+        {
+          "name": "preservesBracketedTitleWithoutReleaseGroup",
+          "verification": null
+        },
+        {
+          "name": "preservesNumericTitleAndTitleNumbers",
+          "verification": null
+        },
+        {
+          "name": "doesNotDiscardUnknownBracketedTextAsReleaseGroup",
+          "verification": null
+        },
+        {
+          "name": "preservesUnmarkedParentheticalTitle",
+          "verification": null
+        },
+        {
+          "name": "keepsGuessitTitleAsFallbackAndDeduplicatesIt",
+          "verification": null
+        },
+        {
+          "name": "doesNotGenerateQueriesFromMetadataOnlyFilename",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java",
+      "sha256": "7b5768104a486b0d9ee9411eea7468f428d9120759c565268f804480fc6e178d",
+      "cases": [
+        {
+          "name": "scoresExactTitleYearAndTypeHighly",
+          "verification": null
+        },
+        {
+          "name": "filtersStrongMediaTypeMismatch",
+          "verification": null
+        },
+        {
+          "name": "givesPartialCreditForAdjacentYear",
+          "verification": null
+        },
+        {
+          "name": "treatsLaterSeasonTvYearAsSeasonAirYear",
+          "verification": null
+        },
+        {
+          "name": "keepsFirstSeasonTvYearStrict",
+          "verification": null
+        },
+        {
+          "name": "boostsAliasEvidenceForLaterSeasonTvWhenSeriesStartedEarlier",
+          "verification": null
+        },
+        {
+          "name": "awardsStructureBonusOnlyWhenLocalizedAndOriginalQueriesHitSameCandidate",
+          "verification": null
+        },
+        {
+          "name": "doesNotAwardStructureBonusForSeriesStructureAlone",
+          "verification": null
+        },
+        {
+          "name": "boostsConfidenceWhenEnglishAliasUniquelyFindsChineseMovieCandidate",
+          "verification": null
+        },
+        {
+          "name": "boostsConfidenceWhenEnglishAliasUniquelyFindsChineseSeriesCandidate",
+          "verification": null
+        },
+        {
+          "name": "penalizesAliasEvidenceWhenYearIsMissing",
+          "verification": null
+        },
+        {
+          "name": "penalizesAliasEvidenceWhenYearDoesNotMatch",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/ParentFolderMatchEnhancerTest.java",
+      "sha256": "5bf777460836faad62a0e7fa4e3eb8bf027446edb109cb905c3691ebc3776af3",
+      "cases": [
+        {
+          "name": "skipsParentSearchWhenFilenameCandidateAlreadyMeetsThreshold",
+          "verification": null
+        },
+        {
+          "name": "boostsCandidateOnlyWhenFilenameAndParentFolderAgreeOnSameTmdbId",
+          "verification": null
+        },
+        {
+          "name": "capsParentOnlyCandidatesBelowAutoThreshold",
+          "verification": null
+        },
+        {
+          "name": "keepsConflictingParentCandidateBelowAutoThreshold",
+          "verification": null
+        },
+        {
+          "name": "leavesCandidatesUntouchedWhenParentFolderContextIsDisabled",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/pipeline/MediaProcessPipelineRecognitionTest.java",
+      "sha256": "1d19b2ea5ed1818a9af8c5abcb72cd636e94d1746bd234bf9e53bc6bc34fd4e8",
+      "cases": [
+        {
+          "name": "clusterIdentityIsAppliedBeforeFilenameSearchWithoutPerFileCodex",
+          "verification": null
+        },
+        {
+          "name": "unknownClusterDoesNotFallBackToRepeatedIndividualModelCalls",
+          "verification": null
+        },
+        {
+          "name": "identifiedClusterStillRequiresTmdbCandidateBeforeOrganizing",
+          "verification": null
+        },
+        {
+          "name": "codexSuggestionRequiresTmdbAndConfirmationBeforeMoving",
+          "verification": null
+        },
+        {
+          "name": "updateRecognitionSavesMovieFieldsAndClearsEpisodeFields",
+          "verification": null
+        },
+        {
+          "name": "codexCannotChangeUnknownTaskOrMoveFiles",
+          "verification": null
+        },
+        {
+          "name": "manualCodexRetryKeepsEvidenceAndWaitsForConfirmation",
+          "verification": null
+        },
+        {
+          "name": "directoryRecognizesOnceAndSharesCandidatesWithoutMoving",
+          "verification": null
+        },
+        {
+          "name": "directorySkipsTaskConfirmedWhileModelIsRunning",
+          "verification": null
+        },
+        {
+          "name": "directoryTmdbMissLeavesOriginalTaskAndCandidates",
+          "verification": null
+        },
+        {
+          "name": "bothConfirmationModesRejectMissingEpisodeBeforeAnySideEffects",
+          "verification": null
+        },
+        {
+          "name": "rematchUsesUpdatedRecognitionAndReplacesCandidateConfidence",
+          "verification": null
+        },
+        {
+          "name": "confirmEnrichesSelectedCandidateWithTmdbDetail",
+          "verification": null
+        },
+        {
+          "name": "updateRecognitionRejectsNonAwaitingTask",
+          "verification": null
+        },
+        {
+          "name": "confirmationPausesOnConflictAndUsesTmdbCoordinatesAfterReview",
+          "verification": null
+        },
+        {
+          "name": "highConfidenceCannotBypassInvalidTmdbEpisode",
+          "verification": null
+        },
+        {
+          "name": "updateRecognitionRejectsEpisodeRangeEndBeforeStart",
+          "verification": null
+        },
+        {
+          "name": "recordFailureMergesSameSourceRuleAndErrorCode",
+          "verification": null
+        },
+        {
+          "name": "newHighConfidenceClusterOrganizesWithoutManualApproval",
+          "verification": null
+        },
+        {
+          "name": "reliableDirectoryAutomaticallyOrganizesWithoutOpeningApproval",
+          "verification": null
+        },
+        {
+          "name": "duplicatePairStaysForReviewWhileOtherEpisodesAutomaticallyOrganize",
+          "verification": null
+        },
+        {
+          "name": "targetConflictOnlyBlocksTheAffectedFile",
+          "verification": null
+        },
+        {
+          "name": "collidingTemplateBlocksAllFilesBeforeAnyMove",
+          "verification": null
+        },
+        {
+          "name": "lowModelConfidenceStaysForReviewWithSpecificReason",
+          "verification": null
+        },
+        {
+          "name": "lowTmdbConfidenceDoesNotBecomeAutomaticJustBecauseModelIsCertain",
+          "verification": null
+        },
+        {
+          "name": "verifiedSeasonRemappingCanAutomaticallyOrganize",
+          "verification": null
+        },
+        {
+          "name": "jujutsuKaisenDirectoryUsesVerifiedSeasonAndRetainsAbsoluteEpisodeNumbers",
+          "verification": null
+        },
+        {
+          "name": "seasonMappingStillBlocksUnqueuedHashDuplicate",
+          "verification": null
+        },
+        {
+          "name": "retryOfPreviouslyMappedTaskStillDetectsSourceSeasonDuplicate",
+          "verification": null
+        },
+        {
+          "name": "singleCodexRetryAutomaticallyResumesWhenChecksPass",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/pipeline/AutomaticOrganizationGuardTest.java",
+      "sha256": "f2da4cdcb703607378a678e2c30cb48b2b0071544f3a33a2723dd8b6d5a4fd5e",
+      "cases": [
+        {
+          "name": "detectsUnqueuedAnimeHashCopyBeforeTheFirstCopyMoves",
+          "verification": null
+        },
+        {
+          "name": "detectsUnqueuedMergedEpisodeRangeButAllowsDifferentSeason",
+          "verification": null
+        },
+        {
+          "name": "directoryInspectionFailureIsActionableAndCannotPassSilently",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/queue/QueueBatchRecognitionServiceTest.java",
+      "sha256": "5c029b5208477180ec100d7e48e44f4d21b95141cc1a80430fba44237df0e6f4",
+      "cases": [
+        {
+          "name": "previewAssignsSequentialEpisodesByNaturalFilenameOrder",
+          "verification": null
+        },
+        {
+          "name": "previewBlocksPreserveModeWhenTvEpisodeIsMissing",
+          "verification": null
+        },
+        {
+          "name": "previewBlocksSequentialModeForEpisodeRanges",
+          "verification": null
+        },
+        {
+          "name": "saveCanChangeTvTaskToMovieAndClearsEpisodeFieldsWithoutTouchingCandidates",
+          "verification": null
+        },
+        {
+          "name": "rematchKeepsSavedRecognitionWhenOneTaskSearchFails",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/model/dto/ParseResultTest.java",
+      "sha256": "8ba8b922cecef1d7fd2297e19a35eba438aa5c8155b298d0df1aa772695a4135",
+      "cases": [
+        {
+          "name": "deserializesSingleEpisodeNumber",
+          "verification": null
+        },
+        {
+          "name": "deserializesContiguousEpisodeArrayAsRange",
+          "verification": null
+        },
+        {
+          "name": "deserializesLongContiguousEpisodeArrayAsRange",
+          "verification": null
+        },
+        {
+          "name": "rejectsNonContiguousEpisodeArray",
+          "verification": null
+        }
+      ]
+    },
+    {
+      "source": "legacy/scripts/test_codex_bridge.py",
+      "sha256": "7e1a53e20eadde184a2dac80c2b9e2c87c75af180c02f9c18d16b3cb6295d695",
+      "cases": [
+        {
+          "name": "test_rejects_invalid_numeric_fields",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_rejects_invalid_numeric_fields"
+        },
+        {
+          "name": "test_cli_uses_official_chatgpt_login_and_ignores_third_party_config_and_secrets",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cli_uses_official_chatgpt_login_and_ignores_third_party_config_and_secrets"
+        },
+        {
+          "name": "test_cli_failure_never_exposes_process_output_and_cleans_request_files",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cli_failure_never_exposes_process_output_and_cleans_request_files"
+        },
+        {
+          "name": "test_daily_budget_is_atomic_persistent_and_resets_on_shanghai_day",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_daily_budget_is_atomic_persistent_and_resets_on_shanghai_day"
+        },
+        {
+          "name": "test_failed_cli_calls_consume_budget_and_usage_records_only_token_counts",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_failed_cli_calls_consume_budget_and_usage_records_only_token_counts"
+        },
+        {
+          "name": "test_usage_endpoint_requires_authentication",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_usage_endpoint_requires_authentication"
+        },
+        {
+          "name": "test_rejects_unbounded_context",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_rejects_unbounded_context"
+        },
+        {
+          "name": "test_cache_avoids_repeated_calls_including_unknown",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cache_avoids_repeated_calls_including_unknown"
+        },
+        {
+          "name": "test_unknown_expires_and_manual_retry_bypasses_it",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_unknown_expires_and_manual_retry_bypasses_it"
+        },
+        {
+          "name": "test_policy_change_invalidates_cache",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_policy_change_invalidates_cache"
+        },
+        {
+          "name": "test_series_reuses_identity_but_preserves_each_episode",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_series_reuses_identity_but_preserves_each_episode"
+        },
+        {
+          "name": "test_mixed_folders_and_unknown_or_weak_identity_are_not_shared",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_mixed_folders_and_unknown_or_weak_identity_are_not_shared"
+        },
+        {
+          "name": "test_cached_identity_does_not_cross_parent_directories",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cached_identity_does_not_cross_parent_directories"
+        },
+        {
+          "name": "test_series_cache_survives_a_completed_episode_leaving_folder",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_series_cache_survives_a_completed_episode_leaving_folder"
+        },
+        {
+          "name": "test_directory_uses_one_model_call_and_caches_complete_result",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_directory_uses_one_model_call_and_caches_complete_result"
+        },
+        {
+          "name": "test_directory_rejects_incomplete_duplicate_and_invented_files",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_directory_rejects_incomplete_duplicate_and_invented_files"
+        },
+        {
+          "name": "test_directory_refuses_shared_movie_and_preserves_unknown",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_directory_refuses_shared_movie_and_preserves_unknown"
+        },
+        {
+          "name": "test_directory_http_dispatch",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_directory_http_dispatch"
+        },
+        {
+          "name": "test_cluster_features_keep_hash_duplicates_ranges_and_release_names",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cluster_features_keep_hash_duplicates_ranges_and_release_names"
+        },
+        {
+          "name": "test_nineteen_files_are_one_cluster_call_and_new_episodes_reuse_identity",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_nineteen_files_are_one_cluster_call_and_new_episodes_reuse_identity"
+        },
+        {
+          "name": "test_cluster_budget_exhaustion_does_not_poison_identity_cache",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cluster_budget_exhaustion_does_not_poison_identity_cache"
+        },
+        {
+          "name": "test_cluster_separates_named_shows_and_isolates_rules_and_years",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cluster_separates_named_shows_and_isolates_rules_and_years"
+        },
+        {
+          "name": "test_ambiguous_truncated_or_conflicting_context_never_triggers_cluster_model",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_ambiguous_truncated_or_conflicting_context_never_triggers_cluster_model"
+        },
+        {
+          "name": "test_cluster_coordinates_use_filename_and_nearest_season_instead_of_model",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cluster_coordinates_use_filename_and_nearest_season_instead_of_model"
+        },
+        {
+          "name": "test_cluster_rejects_weak_movie_and_incomplete_model_identity",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cluster_rejects_weak_movie_and_incomplete_model_identity"
+        },
+        {
+          "name": "test_cluster_success_expires_and_corrupt_cache_is_rebuilt",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cluster_success_expires_and_corrupt_cache_is_rebuilt"
+        },
+        {
+          "name": "test_cluster_unknown_and_invalid_results_are_shared_briefly_not_retried_per_file",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cluster_unknown_and_invalid_results_are_shared_briefly_not_retried_per_file"
+        },
+        {
+          "name": "test_manual_directory_review_reuses_cluster_identity_without_another_model_call",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_manual_directory_review_reuses_cluster_identity_without_another_model_call"
+        },
+        {
+          "name": "test_cluster_http_dispatch_and_authentication",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_cluster_http_dispatch_and_authentication"
+        },
+        {
+          "name": "test_http_requires_token_and_never_exposes_cli_error",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::BridgeTest::test_http_requires_token_and_never_exposes_cli_error"
+        }
+      ]
+    }
+  ]
+}
