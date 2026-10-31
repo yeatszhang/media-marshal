@@ -8,6 +8,7 @@
 | 忽略规则 | `service/discovery/DiscoveryIgnoreService.java`、`SampleVideoDetector.java` | `service/discovery/DiscoveryIgnoreServiceTest.java`、`SampleVideoDetectorTest.java` | 迁移默认规则、显式空列表及样片语义；不从规则名称猜网盘完成状态 |
 | 事件与补扫 | `service/discovery/FileDiscoveryService.java`、`IncrementalDirectoryScanner.java` | `service/discovery/FileDiscoveryIncrementalTest.java`、`FileDiscoveryMissingSourceTest.java`、`IncrementalDirectoryScannerTest.java` | 重做持久化候选和统一就绪入口；监听、启动、手动、周期扫描不得绕过观察；根不可访问不等于删除 |
 | 名称解析 | `service/parser/GuessitParserClient.java`、`model/dto/ParseResult.java`；`legacy/parser/main.py` | `model/dto/ParseResultTest.java`；原 parser 响应 | 保留 guessit 3.8 结果语义，HTTP 包装替换为冻结 stdio；仅名称数据、有界 JSON Lines、超时/EOF 清理 |
+| Codex 辅助识别 | `service/parser/CodexRecognitionService.java`、`legacy/scripts/codex-bridge.py` | 原 Java 13 项、Python 30 项及流水线／目录回归 | 冻结独立 stdio；保留聚类先行、单文件兜底、整目录、缓存和预算，移除 HTTP／JPA 依赖；默认关闭，使用本机已登录 CLI |
 | 季号解析 | `service/parser/EpisodeSeasonResolver.java` | `service/parser/EpisodeSeasonResolverTest.java` | 迁移季号及绝对集映射，特殊集和歧义不自动通过 |
 | 查询计划 | `service/matcher/TitleSearchPlanBuilder.java`、`ParentFolderContextExtractor.java` | `service/matcher/TitleSearchPlanBuilderTest.java`、`ParentFolderContextExtractorTest.java` | 提取确定性夹具，保留原名称、guessit、清洗、去年份重试及父目录证据上限 |
 | 匹配与评分 | `service/matcher/TmdbMetadataMatcher.java`、`TmdbConfidenceScorer.java`、`ParentFolderMatchEnhancer.java` | `service/matcher/TmdbMetadataMatcherTest.java`、`TmdbConfidenceScorerTest.java`、`ParentFolderMatchEnhancerTest.java` | 保留候选合并和可解释评分，不用简单标题搜索替代；低置信度留待确认 |
@@ -29,7 +30,7 @@
 ## 一期明确排除
 
 - Spring Controller、JPA/Hibernate、STOMP 与服务端部署配置：保留旧工程，桌面以受限 IPC 替换，不追求 REST 兼容。
-- `service/parser/CodexRecognitionService.java`、Codex CLI bridge、SMTP：保留旧部署能力，不进入桌面安装包。
+- SMTP：保留旧部署能力，不进入桌面安装包。Codex 识别引擎已由 `migrate-complete-recognition-strategies` 纳入桌面冻结资源；CLI 由用户自行安装并登录。
 - `MoveRenameStrategy`、`HardLinkRenameStrategy`、`SymbolicLinkRenameStrategy`：不作为来源入库模式。修正已整理目标的安全改名是独立业务。
 - `service/discovery/asset/BluRayDirectoryAssetDetector.java`、`IsoImageAssetDetector.java` 及对应整理器：首版明确跳过；音乐、新 Web、NAS、网盘云端 API、旧库导入另立变更。
 
@@ -44,3 +45,7 @@
 独立运行 `npm run test:rules`，由仓库 Electron Node 运行器执行生产领域函数及固定期望。2026-10-25 设置无效 `JAVA_HOME` 后 124 项领域检查通过，未运行或依赖旧 Maven 测试。原异常消息和网络请求次序不作为协议兼容承诺；真实分集必要请求集合与失败类别仍核对。
 
 已知差异是拒绝 Java 对小数集号的静默截断，以及收紧仅同 TMDB ID 的弱文件名／强父目录加分；新期望依据当前识别规格。修正范围将旧规则归属映射为物理来源与整理策略，并绑定资产版本，不兼容旧库或分隔符哈希。范围计算本身不执行文件、授权整组或实现修正作业；单条／批量修正和自动入口继续按 3.4、5.6、5.7 等未完成任务验收。
+
+## 完整识别迁移
+
+`migrate-complete-recognition-strategies` 补齐原一期排除的 Codex 和完整编排，将 Java 识别、Python 引擎、Vue 目录交互的 175 项旧用例关联到当前可执行测试或独立夹具。源码、输入与期望对照、桌面授权和故障持久化差异、验证命令见[完整识别迁移对照](../development/recognition-strategy-parity.md)。范围为识别规则及其交互，未恢复 Java 服务、旧数据库、MOVE／硬链接或 SMTP。

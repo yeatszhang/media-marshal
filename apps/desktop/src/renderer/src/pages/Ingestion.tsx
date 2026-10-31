@@ -14,6 +14,7 @@ import { OrganizeBatchEditor, OrganizeBatchPanel, type CommonWork } from "../com
 import { SourceScansPanel } from "../components/SourceScansPanel";
 import { ContentReviewsPanel } from "../components/ContentReviewsPanel";
 import { FileRecognitionQueue } from "../components/FileRecognitionQueue";
+import { CodexRecognitionActions, CodexRecognitionPanel } from "../components/CodexRecognitionPanel";
 import { DirectoriesViewModel } from "../directories-model";
 import { RecognitionViewModel } from "../recognition-model";
 import { SourceScansViewModel } from "../source-scans-model";
@@ -64,6 +65,7 @@ export function Ingestion() {
       {editingTasks && <RecognitionEditor key={editingTasks.join(",")} taskIds={editingTasks} onClose={() => setEditingTasks(null)} onSaved={() => { setSelectedTasks([]); model.clearPreview(); setComplete(false); void model.refresh(); }} />}
       {organizing && <OrganizeBatchEditor key={JSON.stringify(organizing)} {...organizing} onClose={() => setOrganizing(null)} onPreviewed={() => { setOrganizing(null); setView("history"); }} />}
     </div>}
+    <CodexRecognitionPanel onInspect={inspect} />
     <div hidden={!!editingTasks || !!organizing}>
     {view === "directories" ? <DirectoryQueuePanel onInspect={(id) => { setDirectoryScope(true); inspect(id); }} onEdit={setEditingTasks} onOrganize={openOrganize} /> : view === "seasons" ? <SeasonQueuePanel onInspect={inspect} onEdit={setEditingTasks} onOrganize={openOrganize} /> : <div className="recognition-file-workspace">
     <FileRecognitionQueue directoryScope={directoryScope} onClearScope={() => { setDirectoryScope(false); setSelectedTasks([]); }} selectedTasks={selectedTasks} onSelection={setSelectedTasks} onInspect={inspect} onEdit={setEditingTasks} onOrganize={openOrganize} />
@@ -74,7 +76,7 @@ export function Ingestion() {
       {state.task.state === "PENDING" || state.task.state === "PROCESSING" ? <p>{t("ingestion.waiting")}</p> : null}
       {state.task.state === "FAILED" || (state.task.state === "AWAITING_CONFIRMATION" && !state.task.parsed) ? <Button variant="outline" disabled={state.busy} onClick={() => { void model.retry(state.task!.taskId); }}>{t("ingestion.retry")}</Button> : null}
       {!!state.task.accessories?.length && <div className="organize-preview"><h3>{t("ingestion.accessories")}</h3>{state.task.accessories.map((asset) => <div key={asset.id}><p className="path">{asset.targetPath}</p><span>{t(`ingestion.${asset.state}`)}</span>{asset.failure && <small> · {asset.failure}</small>}</div>)}{state.task.state === "DONE" && state.task.accessories.some((asset) => asset.state === "NEEDS_ATTENTION") && <Button variant="outline" disabled={state.busy} onClick={() => { void model.retry(state.task!.taskId); }}>{t("ingestion.retryAccessories")}</Button>}</div>}
-      {state.task.state === "AWAITING_CONFIRMATION" && <Button variant="outline" disabled={state.busy} onClick={() => setEditingTasks([state.task!.taskId])}>编辑此项识别信息</Button>}
+      {state.task.state === "AWAITING_CONFIRMATION" && <><Button variant="outline" disabled={state.busy} onClick={() => setEditingTasks([state.task!.taskId])}>编辑此项识别信息</Button><CodexRecognitionActions taskId={state.task.taskId} compact /></>}
       {state.task.matchesStale && <p className="notice">这些 TMDB 候选来自编辑前的识别信息，请重新匹配或逐项核对后再预览整理。</p>}
       {state.task.state === "AWAITING_CONFIRMATION" && state.task.parsed && <>
         <section className="recognition-decision"><h3>{t("ingestion.workCandidates")}</h3><p className="cloud-hint">{t("ingestion.candidateHelp")}</p><div className="recognition-matches">{state.task.matches.map((match) => <article className={`recognition-match${id === String(match.tmdbId) && type === match.mediaType ? " is-selected" : ""}`} key={`${match.mediaType}:${match.tmdbId}`}><strong>{match.title} {match.year ?? ""}</strong><span>{Math.round(match.confidence * 100)}% · {t(`ingestion.${match.evidence}`)}</span><small>{match.explanation}</small>{match.mediaType === "TV_SHOW" && <small>{match.episodeCheck?.state === "VALID" ? `季集预检：S${match.episodeCheck.season} E${match.episodeCheck.episode}${match.episodeCheck.episodeEnd !== null ? `–${match.episodeCheck.episodeEnd}` : ""}${match.episodeCheck.seasonChanged ? "（按真实分集唯一换季）" : ""}。整理预览仍会重新校验。` : match.episodeCheck?.state === "NEEDS_REVIEW" ? `季集待核对：${match.episodeCheck.reason}` : "季集尚未预检，整理预览时核对真实分集。"}</small>}<Button variant="outline" size="sm" aria-pressed={id === String(match.tmdbId) && type === match.mediaType} disabled={state.busy} onClick={() => change(() => { setId(String(match.tmdbId)); setType(match.mediaType); })}>{t("ingestion.selected")}</Button></article>)}</div></section>

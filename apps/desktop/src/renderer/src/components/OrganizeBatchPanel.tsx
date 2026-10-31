@@ -5,6 +5,7 @@ import type { CoreInput } from "@media-marshal/contracts";
 import { OrganizeBatchesViewModel } from "../organize-batches-model";
 import { Button } from "./ui/button";
 import { ErrorNotice } from "./shared";
+import { directoryEpisodeIssues, resolveEpisodeSeason } from "../recognition-directory-rules";
 export interface CommonWork { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW" }
 const labels = { PREVIEWING: "正在逐文件预览", READY: "计划已就绪，等待确认", BLOCKED: "有文件被阻断", EXPIRED: "预览已过期", CONFIRMING: "正在逐项提交", SUBMITTED: "COPY 已提交", DONE: "本批文件已整理", PARTIAL_FAILED: "部分文件需处理", CANCELLED: "已停止后续处理" };
 const operationLabels: Record<string, string> = { PLANNED: "等待复制", COPYING: "正在复制", VERIFIED: "已核验，等待发布", FILE_COMMITTED: "已发布，等待记账", RECORDED: "文件已完成", NEEDS_ATTENTION: "需要处理" };
@@ -12,7 +13,7 @@ export function OrganizeBatchEditor({ taskIds, work, onClose, onPreviewed = onCl
   const model = useService(OrganizeBatchesViewModel), state = useServiceState(model, (value) => value), key = taskIds.join(","), heading = useRef<HTMLHeadingElement>(null), initialized = useRef(false), alive = useRef(true);
   const [id, setId] = useState(work ? String(work.tmdbId) : ""), [type, setType] = useState<"MOVIE" | "TV_SHOW">(work?.mediaType ?? "TV_SHOW"), [rows, setRows] = useState<Record<string, { checked: boolean; season: string; episode: string; end: string; targetId: string }>>({}), [template, setTemplate] = useState(""), [accessories, setAccessories] = useState(true), [error, setError] = useState<string | null>(null);
   useEffect(() => { alive.current = true; void model.loadTasks(taskIds); heading.current?.focus(); return () => { alive.current = false; model.closeDraft(); }; }, [model, key]);
-  useEffect(() => { if (!state.tasks.length || initialized.current) return; initialized.current = true; setRows(Object.fromEntries(state.tasks.map((task) => [task.taskId, { checked: true, targetId: "", season: task.parsed?.season == null ? "" : String(task.parsed.season), episode: task.parsed?.episode == null ? "" : String(task.parsed.episode), end: task.parsed?.episodeEnd == null ? "" : String(task.parsed.episodeEnd) }]))); if (!work) setType(state.tasks[0]!.parsed?.type ?? "TV_SHOW"); }, [state.tasks, work]);
+  useEffect(() => { if (!state.tasks.length || initialized.current) return; initialized.current = true; setRows(Object.fromEntries(state.tasks.map((task) => [task.taskId, { checked: true, targetId: "", season: String(resolveEpisodeSeason({ parsedSeason: task.parsed?.season, sourcePath: task.sourcePath ?? "" })), episode: task.parsed?.episode == null ? "" : String(task.parsed.episode), end: task.parsed?.episodeEnd == null ? "" : String(task.parsed.episodeEnd) }]))); if (!work) setType(state.tasks[0]!.parsed?.type ?? "TV_SHOW"); }, [state.tasks, work]);
   const change = (taskId: string, patch: Partial<(typeof rows)[string]>) => { setError(null); setRows({ ...rows, [taskId]: { ...rows[taskId]!, ...patch } }); };
   const preview = async () => {
     try {
@@ -23,6 +24,11 @@ export function OrganizeBatchEditor({ taskIds, work, onClose, onPreviewed = onCl
         if (state.routing[task.taskId]?.ruleId && (options.length !== 1 && !options.some((target) => target.id === row.targetId))) throw new Error(`${task.sourcePath ?? task.taskId}：请为此文件选择匹配类型的目标，缺目标时先配置识别规则`);
         return { taskId: task.taskId, expectedRevision: task.revision ?? 0, selection: { ...(row.targetId ? { targetId: row.targetId } : {}), tmdbId: Number(id), mediaType: type, season: type === "TV_SHOW" ? integer(row.season, 0, 999, "季号") : null, episode: type === "TV_SHOW" ? integer(row.episode, 1, 10000, "起始集号") : null, episodeEnd: type === "TV_SHOW" ? integer(row.end, 1, 10000, "结束集号") : null } };
       }); if (!items.length) throw new Error("请至少保留一个文件，取消重复文件后可重新生成预览");
+      const issues = directoryEpisodeIssues(items.map((item) => ({ taskId: item.taskId, season: item.selection.season, episode: item.selection.episode, episodeEnd: item.selection.episodeEnd })), type);
+      if (issues.length) {
+        const labels = (ids: (string | number)[]) => ids.map((id) => `「${state.tasks.find((task) => task.taskId === id)?.sourcePath ?? id}」`).join("与");
+        throw new Error(issues.map((issue) => issue.kind === "duplicate" ? `${labels(issue.taskIds)}重复或重叠：S${issue.season} E${issue.episode}${issue.episodeEnd > issue.episode ? `–${issue.episodeEnd}` : ""}；请修正季集或取消勾选重复文件` : `${labels(issue.taskIds)}${issue.kind === "missing" ? "缺少季集号" : "季集范围无效"}，请修正后重新预览`).join("；"));
+      }
       if ((await model.preview({ items, includeAccessories: accessories, ...(template.trim() ? { template } : {}) })) && alive.current) onPreviewed();
     } catch (failure) { setError((failure as Error).message); }
   };

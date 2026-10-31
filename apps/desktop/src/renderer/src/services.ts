@@ -28,6 +28,7 @@ import { SourceRulesViewModel } from "./source-rules-model";
 import { OrganizeBatchesViewModel } from "./organize-batches-model";
 import { SeasonsViewModel } from "./seasons-model";
 import { DirectoriesViewModel } from "./directories-model";
+import { CodexRecognitionViewModel } from "./codex-recognition-model";
 import { RecognitionEditsViewModel } from "./recognition-edits-model";
 import { SourceScansViewModel } from "./source-scans-model";
 import { ContentReviewsViewModel } from "./content-reviews-model";
@@ -237,7 +238,7 @@ export class SettingsViewModel extends StatefulService<{
   }
   save(input: SettingsDraft) {
     return this.write(async () => {
-      const parsed = settingsDraftSchema.safeParse(input);
+      const parsed = settingsDraftSchema.safeParse({ ...input, ...(input.recognition === undefined && this.state.settings?.recognition ? { recognition: this.state.settings.recognition } : {}) });
       if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("；"));
       await this.client.saveSettings(parsed.data);
     });
@@ -356,7 +357,7 @@ export function createRendererApplication(client: DesktopApi) {
     },
   };
   const modules: ApplicationModule[] = [
-    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ConfigurationViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(SourceScansViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); bind(DirectoriesViewModel).toSelf().inSingletonScope(); bind(SeasonsViewModel).toSelf().inSingletonScope(); bind(OrganizeBatchesViewModel).toSelf().inSingletonScope(); } },
+    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ConfigurationViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(SourceScansViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); bind(DirectoriesViewModel).toSelf().inSingletonScope(); bind(CodexRecognitionViewModel).toSelf().inSingletonScope(); bind(SeasonsViewModel).toSelf().inSingletonScope(); bind(OrganizeBatchesViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.corrections", dependencies: [connection.id], register(bind) { bind(CorrectionViewModel).toSelf().inSingletonScope(); bind(CorrectionJobsViewModel).toSelf().inSingletonScope(); bind(CorrectionBatchDraftModel).toSelf().inSingletonScope(); bind(CorrectionBatchViewModel).toSelf().inSingletonScope(); bind(CorrectionBatchJobsModel).toSelf().inSingletonScope(); } },
     { id: "renderer.downloads", dependencies: [connection.id], register(bind) { bind(DownloadsViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.cloud", dependencies: [connection.id], register(bind) { bind(CloudAccountsViewModel).toSelf().inSingletonScope(); } },

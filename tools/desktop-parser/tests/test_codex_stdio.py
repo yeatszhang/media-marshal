@@ -49,6 +49,32 @@ class CodexStdioTests(unittest.TestCase):
             rows = self.execute([request("initialize", self.config(root)), request("usage", {})])
             self.assertEqual(rows[1]["result"]["calls"], 1)
 
+    @unittest.skipIf(sys.platform == "win32", "假CLI使用POSIX可执行脚本")
+    def test_successful_cli_result_cache_and_usage_cross_process(self):
+        with tempfile.TemporaryDirectory() as root:
+            cli = Path(root) / "fake-codex"
+            result = dict(status="identified", title="隔离作品", year=2026, type="movie",
+                          season=None, episode=None, confidence=0.97, reason="隔离官网依据")
+            cli.write_text(f'''#!{sys.executable}
+import json,sys
+from pathlib import Path
+sys.stdin.read()
+Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text({json.dumps(result, ensure_ascii=False)!r})
+print(json.dumps({{"type":"turn.completed","usage":{{"input_tokens":31,"output_tokens":7,"cached_input_tokens":4}}}}))
+''')
+            cli.chmod(0o700)
+            context = dict(filename="Movie.2026.mkv", parents=["电影"], siblings=["Movie.2026.mkv"])
+            rows = self.execute([request("initialize", self.config(root, str(cli))),
+                                 request("recognize", context), request("usage", {})])
+            self.assertEqual(rows[1]["result"], result)
+            self.assertEqual(rows[2]["result"]["calls"], 1)
+            self.assertEqual(rows[2]["result"]["input_tokens"], 31)
+            cli.unlink()
+            cached = self.execute([request("initialize", self.config(root, str(cli))),
+                                   request("recognize", context), request("usage", {})])
+            self.assertEqual(cached[1]["result"], result)
+            self.assertEqual(cached[2]["result"]["calls"], 1)
+
     @unittest.skipIf(sys.platform == "win32", "进程组检查使用POSIX信号")
     def test_stop_terminates_active_model_process(self):
         with tempfile.TemporaryDirectory() as root:

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ContainerProvider } from "@yeatz/app-framework/react";
+import { MemoryRouter } from "react-router-dom";
 import type { DesktopApi, CoreOutput, RecognitionBatch } from "@media-marshal/contracts";
 import { createRendererApplication } from "./services";
 import { DirectoryQueuePanel } from "./components/DirectoryQueuePanel";
@@ -15,9 +16,9 @@ async function mount() {
   const directory = { id: "a".repeat(64), sourceId, sourceName: "来源一", relativePath: "中文剧集目录", total: 101, ready: 1, awaiting: 100, bytes: 1010 };
   const detail: CoreOutput<"ingestion.directory"> = { directory, items: [{ candidate: { id: candidateId, sourceId, relativePath: "中文剧集目录/01.mp4", size: 10, state: "READY", taskId: null, reason: null, requiresConfirmation: true, updatedAt: stamp }, task: null }, { candidate: { id: crypto.randomUUID(), sourceId, relativePath: "中文剧集目录/02.mp4", size: 10, state: "QUEUED", taskId, reason: null, requiresConfirmation: true, updatedAt: stamp }, task: { taskId, candidateId: crypto.randomUUID(), state: "AWAITING_CONFIRMATION", parsed: null, matches: [], failure: null } }], options: [{ tmdbId: 7, mediaType: "TV_SHOW", title: "目录作品", originalTitle: null, year: 2026, confidence: 0.8, evidence: "filename", explanation: "2/101 个文件有此候选，仍须逐项检查", supportedFiles: 2, common: false }] };
   const job: RecognitionBatch = { id: crypto.randomUUID(), state: "PENDING", total: 1, submitted: 0, failed: 0, recognitionFailed: 0, pending: 1, createdAt: stamp, updatedAt: stamp };
-  const api = { listIngestionDirectories: vi.fn(async () => ({ items: [directory], total: 1 })), getIngestionDirectory: vi.fn(async () => detail), listRecognitionBatches: vi.fn(async () => ({ items: [job], total: 1 })), listRecognitionBatchItems: vi.fn(async () => ({ items: [{ candidateId, relativePath: "01.mp4", state: "PENDING", taskId: null, taskState: null, failure: null, waitingReason: "等待原磁盘恢复" }], total: 1 })), recognizeIngestionBatch: vi.fn(async () => job), cancelRecognitionBatch: vi.fn(async () => ({ ...job, state: "CANCELLED" })), confirmOrganize: vi.fn() };
+  const api = { listCodexJobs: vi.fn(async () => ({ items: [], total: 0 })), getSettings: vi.fn(async () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" })), listIngestionDirectories: vi.fn(async () => ({ items: [directory], total: 1 })), getIngestionDirectory: vi.fn(async () => detail), listRecognitionBatches: vi.fn(async () => ({ items: [job], total: 1 })), listRecognitionBatchItems: vi.fn(async () => ({ items: [{ candidateId, relativePath: "01.mp4", state: "PENDING", taskId: null, taskState: null, failure: null, waitingReason: "等待原磁盘恢复" }], total: 1 })), recognizeIngestionBatch: vi.fn(async () => job), cancelRecognitionBatch: vi.fn(async () => ({ ...job, state: "CANCELLED" })), confirmOrganize: vi.fn() };
   const app = createRendererApplication(api as unknown as DesktopApi); await app.start(); const element = document.createElement("div"); document.body.append(element); const root = createRoot(element), inspect = vi.fn(), edit = vi.fn(), organize = vi.fn();
-  await act(async () => root.render(<StrictMode><ContainerProvider value={app.container}><DirectoryQueuePanel onInspect={inspect} onEdit={edit} onOrganize={organize} /></ContainerProvider></StrictMode>));
+  await act(async () => root.render(<StrictMode><ContainerProvider value={app.container}><MemoryRouter><DirectoryQueuePanel onInspect={inspect} onEdit={edit} onOrganize={organize} /></MemoryRouter></ContainerProvider></StrictMode>));
   let mounted = true; const unmount = async () => { if (mounted) { mounted = false; await act(async () => root.unmount()); } }; cleanup.push(async () => { await unmount(); await app.stop(); });
   return { app, api, directory, candidateId, taskId, element, edit, organize, inspect, unmount };
 }
