@@ -31,7 +31,11 @@ async function openApplication(runtime: Runtime) {
   const directory = runHome(root, session.runId);
   const dataDir = join(runHome(root, session.profileRunId), "data");
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const app = await launchDesktop(root, { ...session.options, dataDir });
+  const app = await launchDesktop(root, {
+    ...session.options,
+    dataDir,
+    diagnostics: { sessionId: session.sessionId, runId: session.runId, buildId: build.buildId },
+  });
   runtime.app = app;
   session.application = identify(app.process().pid!);
   if (!session.application || !session.application.command.includes(`--user-data-dir=${dataDir}`))

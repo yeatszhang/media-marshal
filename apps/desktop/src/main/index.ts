@@ -2,7 +2,6 @@ import {
   app,
   BrowserWindow,
   dialog,
-  ipcMain,
   Menu,
   net,
   protocol,
@@ -52,6 +51,7 @@ import { createHash } from "node:crypto";
 import { probeManagedVolume, probeReadOnlyVolume } from "./cloud/volume-probe";
 import { configureMainLogging } from "../logging/main";
 import { getLogger } from "../logging/node";
+import { ipcMain } from "../logging/ipc";
 import { createLogReceiver } from "../logging/receiver";
 import { logLevel } from "../logging/shared";
 

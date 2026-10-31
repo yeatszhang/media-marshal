@@ -5,6 +5,7 @@ export interface LaunchOptions {
   dataDir: string;
   mode: "background" | "foreground";
   target: "development" | "packaged";
+  diagnostics?: { sessionId: string; runId: string; buildId: string };
 }
 /** CLI 与 E2E 共用启动方式；调用者负责独立目录与构建身份。 */
 export async function launchDesktop(
@@ -18,6 +19,16 @@ export async function launchDesktop(
   );
   delete env.ELECTRON_RUN_AS_NODE;
   env.MARSHAL_E2E_MODE = options.mode;
+  if (options.diagnostics) {
+    env.MARSHAL_LOG_LEVEL = "debug";
+    env.MARSHAL_AGENT_SESSION_ID = options.diagnostics.sessionId;
+    env.MARSHAL_AGENT_RUN_ID = options.diagnostics.runId;
+    env.MARSHAL_AGENT_BUILD_ID = options.diagnostics.buildId;
+  } else {
+    delete env.MARSHAL_AGENT_SESSION_ID;
+    delete env.MARSHAL_AGENT_RUN_ID;
+    delete env.MARSHAL_AGENT_BUILD_ID;
+  }
   const executablePath =
     options.target === "packaged"
       ? process.platform === "darwin"

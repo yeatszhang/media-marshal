@@ -3514,7 +3514,7 @@
       "file": "packages/media-core/src/sources/local-sync.ts",
       "rule": "file-lines",
       "symbol": "文件",
-      "value": 753,
+      "value": 732,
       "maximum": 600,
       "reason": "现有职责集中，按对应任务拆分",
       "owner": "桌面维护者",

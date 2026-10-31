@@ -1,29 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { rendererReloadBridge } from "./renderer-lifecycle";
-import {
-  DESKTOP_CHANNEL,
-  PROTOCOL_VERSION,
-  DesktopError,
-  type DesktopApi,
-} from "@media-marshal/contracts";
+import { DesktopError, type DesktopApi } from "@media-marshal/contracts";
+import { invoke } from "./invoke";
 
-async function invoke(action: string, payload: unknown): Promise<any> {
-  const reply = await ipcRenderer.invoke(DESKTOP_CHANNEL, {
-    protocolVersion: PROTOCOL_VERSION,
-    requestId: crypto.randomUUID(),
-    action,
-    payload,
-  });
-  if (!reply.ok)
-    throw new DesktopError(
-      reply.error.code,
-      reply.error.message,
-      reply.error.retryable,
-      reply.error.retryAfterSeconds,
-      reply.error.directoryIssue,
-    );
-  return reply.result;
-}
 // 此对象仅暴露具体动作，不暴露 invoke、通道名或 Electron 对象。
 const api: DesktopApi = {
   listRecognitionRules: (input = {}) => invoke("recognition.list", input),

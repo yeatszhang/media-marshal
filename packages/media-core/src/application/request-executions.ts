@@ -1,3 +1,5 @@
+import { withCoreRequest, businessReferences } from "./diagnostic-context.js";
+import { scopedLogger, type CoreLogger } from "./logger.js";
 import { DesktopError } from "@media-marshal/contracts";
 
 interface Execution {
@@ -11,6 +13,7 @@ export class RequestExecutions {
   constructor(
     private readonly timeoutMs = 15000,
     private readonly limit = 64,
+    private readonly logger?: CoreLogger,
   ) {}
   run<T>(id: string, execute: () => Promise<T> | T): Promise<T> {
     if (!this.accepting)
@@ -47,7 +50,35 @@ export class RequestExecutions {
         ),
       });
     const timer = setTimeout(() => endWait("TIMEOUT"), this.timeoutMs);
-    const task = Promise.resolve().then(execute);
+    const task = Promise.resolve().then(() =>
+      withCoreRequest(id, async () => {
+        const log = scopedLogger(this.logger, "requests"),
+          started = performance.now();
+        log.debug({ event: "core.command.started" }, "业务请求开始执行");
+        try {
+          const result = await execute();
+          log.debug(
+            {
+              event: "core.command.returned",
+              ...businessReferences(result),
+              durationMs: Math.round(performance.now() - started),
+            },
+            "业务请求已返回，后台完成须核对作业",
+          );
+          return result;
+        } catch (error) {
+          log.warn(
+            {
+              event: "core.command.failed",
+              error,
+              durationMs: Math.round(performance.now() - started),
+            },
+            "业务请求执行失败",
+          );
+          throw error;
+        }
+      }),
+    );
     const entry = { task, endWait };
     this.executions.set(id, entry);
     void task

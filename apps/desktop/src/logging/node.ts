@@ -1,4 +1,5 @@
 import pino, { type Bindings, type DestinationStream, type Logger, type LogFn } from "pino";
+import { processContext, requestContext } from "./context";
 import { logLevel, sanitizeLogValue } from "./shared";
 
 export function createProcessLogger(
@@ -10,6 +11,7 @@ export function createProcessLogger(
     {
       level,
       base: { process: processName, pid: process.pid },
+      mixin: () => ({ ...processContext(), ...requestContext() }),
       timestamp: pino.stdTimeFunctions.isoTime,
       formatters: { bindings: (bindings) => sanitizeLogValue(bindings) as Record<string, unknown> },
       hooks: {

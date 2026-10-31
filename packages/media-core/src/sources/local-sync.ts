@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { reconcileLocalSyncJobs } from "./persistence/local-sync-state.js";
+import type { Plan, Operation } from "./local-sync-types.js";
 import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { open } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
@@ -50,29 +52,6 @@ interface Preview {
   expires_at: number;
   job_id: string | null;
 }
-interface Plan {
-  source: ManagedRootGrant;
-  snapshot: SourceSnapshot;
-  sourceSegments: string[];
-  targetSegments: string[];
-  target: ManagedRootGrant;
-  variant: string;
-}
-interface Operation {
-  id: string;
-  identity_key: string;
-  source_namespace: string;
-  source_object_key: string;
-  source_version_key: string;
-  version_json: string;
-  target_directory_id: string;
-  target_slot: string;
-  plan_json: string;
-  attempt_id: string;
-  phase: string;
-  evidence_json: string | null;
-}
-
 /** 本地同步与媒体 COPY 分开记账；唯一操作和不可变收据跨来源合并同一文件版本。 */
 export class LocalSync {
   private observations = new Map<
@@ -523,9 +502,8 @@ export class LocalSync {
         this.active.delete(row.id);
       }
     }
-    db.prepare(
-      "UPDATE sync_job SET state=CASE WHEN EXISTS(SELECT 1 FROM local_sync_member m WHERE m.job_id=sync_job.id AND m.state='NEEDS_ATTENTION') THEN 'NEEDS_ATTENTION' ELSE 'DONE' END,updated_at=? WHERE EXISTS(SELECT 1 FROM local_sync_preview p WHERE p.job_id=sync_job.id) AND state IN ('PENDING','RUNNING','NEEDS_ATTENTION') AND NOT EXISTS(SELECT 1 FROM local_sync_member m WHERE m.job_id=sync_job.id AND m.state='PENDING')",
-    ).run(new Date(this.now()).toISOString());
+    for (const change of reconcileLocalSyncJobs(this.database, new Date(this.now()).toISOString()))
+      this.logger.info({ event: "sync.job.state", ...change }, "本地同步作业状态已更新");
   }
   private async observeInputs() {
     const rows = this.database.connection

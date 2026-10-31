@@ -32,6 +32,8 @@ npm run desktop:pack
 
 ### 开发与本地日志
 
+隔离开发会话的请求因果、业务身份和关键事件见[桌面日志与请求关联](../development/desktop-logging.md)。
+
 需要读取普通页面控制台、未捕获异常或真正的 webview 日志时，使用[开发态 CDP 日志工具](../development/desktop-cdp-logs.md)：`npm run desktop:dev:debug` 启动，`npm run desktop:logs` 读取。
 
 桌面使用 Pino，默认将 JSON Lines 同时输出到启动终端和 `<userData>/logs/desktop.log`，启动时打印实际路径。`userData` 是 Electron 的应用数据目录；macOS 通常在 `~/Library/Application Support/<应用名>/` 下，传入 `--user-data-dir` 时日志跟随该隔离目录。文件采用异步写入，达到 10 MiB 后轮转，保留当前文件及五份历史；普通退出会在 Core、Sidecar 和桌面资源停止后等待日志落盘，强杀不保证最后几条日志已写入。

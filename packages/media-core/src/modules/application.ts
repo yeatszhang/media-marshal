@@ -1058,7 +1058,7 @@ export function createMediaApplication(
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],
   });
-  const requests = new RequestExecutions();
+  const requests = new RequestExecutions(15000, 64, options.logger);
   function quiesceOwners() {
     if (quiescence) return quiescence;
     accepting = false;

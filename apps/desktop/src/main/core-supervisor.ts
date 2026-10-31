@@ -29,6 +29,7 @@ import {
 import { CloudError, cloudErrorCodeSchema } from "@media-marshal/contracts";
 import type { NativeFileLaunch, ParserLaunch } from "@media-marshal/contracts/internal";
 import { getLogger } from "../logging/node";
+import { traceCoreRequest } from "../logging/request";
 import { createLogReceiver } from "../logging/receiver";
 
 interface Pending {
@@ -291,6 +292,12 @@ export class CoreSupervisor {
     return coreActions[action].output.parse(result) as CoreOutput<K>;
   }
   private waitForResponse(
+    message: { kind: string; requestId: string },
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return traceCoreRequest(message, () => this.waitForUnloggedResponse(message, signal));
+  }
+  private waitForUnloggedResponse(
     message: { kind: string; requestId: string },
     signal?: AbortSignal,
   ): Promise<unknown> {

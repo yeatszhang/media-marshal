@@ -1,5 +1,6 @@
 import { StringDecoder } from "node:string_decoder";
 import type { Logger, Level } from "pino";
+import { validIdentity } from "./context";
 import { RENDERER_LOG_PREFIX } from "./shared";
 
 const levelNames: Record<number, Level> = {
@@ -10,11 +11,20 @@ const levelNames: Record<number, Level> = {
   50: "error",
   60: "fatal",
 };
+const correlationIds = new Set(["traceId", "parentRequestId", "actionId", "processGeneration"]);
 const fields = [
   "scope",
   "event",
   "action",
   "requestId",
+  "traceId",
+  "parentRequestId",
+  "actionId",
+  "entityId",
+  "processGeneration",
+  "sequence",
+  "phase",
+  "requestKind",
   "durationMs",
   "error",
   "errorCode",
@@ -29,6 +39,8 @@ const fields = [
   "taskId",
   "candidateId",
   "operationId",
+  "operationIds",
+  "operationsTruncated",
   "scanId",
   "relativePath",
   "version",
@@ -73,6 +85,19 @@ export function createLogReceiver(logger: Logger, source: "core" | "sidecar" | "
       const data = Object.fromEntries(
         fields
           .filter((field) => Object.hasOwn(record, field))
+          .filter((field) => !correlationIds.has(field) || validIdentity(record[field]))
+          .filter(
+            (field) =>
+              field !== "operationIds" ||
+              (Array.isArray(record[field]) &&
+                record[field].length <= 20 &&
+                record[field].every(validIdentity)),
+          )
+          .filter((field) => field !== "operationsTruncated" || typeof record[field] === "boolean")
+          .filter(
+            (field) =>
+              field !== "sequence" || (Number.isSafeInteger(record[field]) && record[field] > 0),
+          )
           .map((field) => [field, record[field]]),
       );
       if (source !== "renderer" && Number.isSafeInteger(record.pid) && record.pid > 0)

@@ -737,6 +737,56 @@ describe("独立本地单向同步、成功历史和阶段控制", () => {
       n: 1,
     });
   });
+  it("本地目标冲突只在状态事务提交后发出业务与物理关联事件，失败回滚及重试不重复记账", async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const f = await fixture(logger),
+      source = await f.enable();
+    const preview = await f.preview(source, "execution");
+    await f.advance();
+    await mkdir(join(f.target.path, "completed"), { recursive: true });
+    const target = join(f.target.path, "completed/原片.mp4");
+    await writeFile(target, "必须保留的原目标");
+    const result = await f.rules.confirm({
+      previewId: preview.id,
+      requestKey: randomUUID(),
+      filesComplete: true,
+    });
+    f.db.connection.exec(
+      "CREATE TEMP TRIGGER block_sync_state BEFORE UPDATE ON sync_job WHEN NEW.state='NEEDS_ATTENTION' BEGIN SELECT RAISE(ABORT,'隔离事务故障'); END",
+    );
+    await expect(f.rules.tick()).rejects.toThrow("隔离事务故障");
+    expect(f.rules.getJob(result.jobId!).state).toBe("PENDING");
+    expect(
+      logger.info.mock.calls.filter(([fields]) => fields.event === "sync.job.state"),
+    ).toHaveLength(0);
+    f.db.connection.exec("DROP TRIGGER block_sync_state");
+    await f.rules.tick();
+    expect(f.rules.getJob(result.jobId!)).toMatchObject({ state: "NEEDS_ATTENTION", failed: 1 });
+    const physical = logger.warn.mock.calls.find(
+      ([fields]) => fields.event === "sync.local.failed",
+    )![0].operationId;
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "sync.job.state",
+        jobId: result.jobId,
+        sourceId: source.id,
+        fromState: "PENDING",
+        toState: "NEEDS_ATTENTION",
+        operationIds: [physical],
+        operationsTruncated: false,
+      }),
+      expect.any(String),
+    );
+    await f.rules.tick();
+    expect(
+      logger.info.mock.calls.filter(([fields]) => fields.event === "sync.job.state"),
+    ).toHaveLength(1);
+    expect(await readFile(target, "utf8")).toBe("必须保留的原目标");
+    expect(await readFile(join(f.input.path, "原片.mp4"), "utf8")).toBe(f.content);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({
+      n: 0,
+    });
+  });
   it("无账号和 Go 组件仍可预览、明确确认及 COPY，重复确认只产生一个操作和成功收据", async () => {
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const f = await fixture(logger),

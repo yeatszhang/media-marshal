@@ -30,3 +30,5 @@ macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其�
 本地控制进程跨 CLI 调用存活，随机凭证仅留在权限受限的会话记录，本机 socket 权限为 0600，不开放网络监听。会话记录在 `test-results/agent/sessions/`；每次启动或重启创建新的 `test-results/agent/<runId>/`。重启保留初始 run 的 data 目录并提升 generation，旧证据不覆盖。共享 Electron 启动夹具位于 `apps/desktop/tests/support/electron.ts`，呈现 E2E 已使用同一入口。
 
 停止只通过原应用连接请求正常退出，等待应用自身 drain；不强制结束业务进程。PID、创建时间或命令不符、控制连接丢失或停机超时均保持 unknown，不接管替代进程。停止回收控制连接和自有应用进程，隔离数据及证据继续保留，过期证据回收按任务 2.15 接入。单元检查使用 `npm run test:desktop-agent`；真实会话回归需先完成当前 build，再运行 `node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tools/desktop-agent/session.integration.ts`。
+
+开发会话的启动身份与请求关联沿用统一日志，详见[日志因果、事件目录及完整性边界](../../docs/development/desktop-logging.md)。控制器注入实际 buildId／sessionId／runId；每个进程有独立代际和序号。界面请求只记录动作和受限业务 ID，后台轮询不冒用上一次点击，普通发行的高频只读调用使用 debug 级别。logs／diagnose 命令在任务 2.6 接入前仍明确受阻。
