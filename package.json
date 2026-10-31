@@ -20,7 +20,7 @@
     "desktop:prepare-parser": "node tools/desktop-parser/prepare.mjs",
     "desktop:pack": "npm run check:framework -- --verify-contents && npm run desktop:build && npm run pack -w @media-marshal/desktop",
     "desktop:rebuild": "npm run rebuild -w @media-marshal/desktop",
-    "typecheck": "npm run build -w @media-marshal/contracts && npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run build -w @media-marshal/contracts && npm run typecheck --workspaces --if-present && npm run typecheck:desktop-agent",
     "test": "node scripts/test-electron-node.mjs",
     "test:rules": "node scripts/test-electron-node.mjs packages/media-core/src/domain",
     "test:electron-node": "node scripts/test-electron-node.mjs",
@@ -34,11 +34,14 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "format": "prettier --write --ignore-unknown apps/desktop packages scripts package.json tsconfig.base.json vitest.config.ts .prettierrc.json",
-    "format:check": "prettier --check --ignore-unknown apps/desktop packages scripts package.json tsconfig.base.json vitest.config.ts .prettierrc.json",
+    "format": "prettier --write --ignore-unknown apps/desktop packages scripts tools/desktop-agent package.json tsconfig.base.json vitest.config.ts .prettierrc.json",
+    "format:check": "prettier --check --ignore-unknown apps/desktop packages scripts tools/desktop-agent package.json tsconfig.base.json vitest.config.ts .prettierrc.json",
     "test:architecture": "node --test scripts/architecture/*.test.mjs",
     "check:structure": "node scripts/architecture/run.mjs structure",
-    "check:architecture": "npm run format:check && npm run test:architecture && node scripts/architecture/run.mjs"
+    "check:architecture": "npm run format:check && npm run test:architecture && node scripts/architecture/run.mjs",
+    "desktop:agent": "node --disable-warning=ExperimentalWarning --experimental-strip-types tools/desktop-agent/cli.ts",
+    "test:desktop-agent": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tools/desktop-agent/*.test.ts",
+    "typecheck:desktop-agent": "tsc -p tools/desktop-agent/tsconfig.json"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
@@ -54,6 +57,7 @@
     "typescript": "5.9.3",
     "vite": "8.3.4",
     "vitepress": "1.6.4",
-    "vitest": "4.1.12"
+    "vitest": "4.1.12",
+    "zod": "4.6.7"
   }
 }
