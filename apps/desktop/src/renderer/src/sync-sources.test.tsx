@@ -33,7 +33,7 @@ function fixture() {
     previewSyncSource: vi.fn<DesktopApi["previewSyncSource"]>(async (value) => { const row = rows.get(value.id)!; if (!(await api.getDefaultDownloadDirectory()).directory) throw new Error("尚未设置默认下载目录，请选择具体目录"); const preview: CoreOutput<"sync.preview"> = { id: crypto.randomUUID(), sourceId: row.id, mode: value.mode ?? "configuration", state: "READY", snapshot: { sourceId: row.id, sourceVersion: row.version + 1, configuration: row.draft, inputDirectory: row.draft.type === "local" ? binding(input) : null, targetDirectory: binding(target), defaultDirectoryVersion: 1 }, expiresAt: Date.now() + 900000, files: 1, bytes: 100, complete: true, observing: 0, conflicts: 0, reused: 0, removed: 0, force: false, failure: null, download: null, jobId: null }; previews.set(preview.id, preview); return structuredClone(preview); }),
     getSyncPreview: vi.fn<DesktopApi["getSyncPreview"]>(async (id) => structuredClone(previews.get(id)!)), listSyncPreviewFiles: vi.fn<DesktopApi["listSyncPreviewFiles"]>(async () => ({ items: [{ relativePath: "原片.mp4", targetPath: target.path + "/completed/原片.mp4", size: 100, state: "READY" as const, reason: null }], total: 1 })),
     confirmSyncSource: vi.fn<DesktopApi["confirmSyncSource"]>(async (value) => { const preview = previews.get(value.previewId)!, row = rows.get(preview.sourceId)!; row.snapshot = preview.snapshot; row.version = preview.snapshot.sourceVersion; row.paused = false; row.runtime!.claimed = true; preview.state = "APPLIED"; return { rule: structuredClone(row), jobId: null }; }), controlSyncSource: vi.fn(), setCloudDownloadPause: vi.fn(), retrySyncJob: vi.fn(), resolveSyncLibraryReview: vi.fn<DesktopApi["resolveSyncLibraryReview"]>(), recheckSyncJobLibrary: vi.fn<DesktopApi["recheckSyncJobLibrary"]>(), removeSyncJob: vi.fn(), getSyncJob: vi.fn(), listSyncJobFiles: vi.fn(),
-    listRemote: vi.fn(async () => ({ items: [directory], nextCursor: null, total: 1, complete: true })), statRemote: vi.fn(async () => directory),
+    listRemote: vi.fn<DesktopApi["listRemote"]>(async () => ({ items: [directory], nextCursor: null, total: 1, complete: true })), statRemote: vi.fn(async () => directory),
   };
   return { api, input, target, rows, previews, account, directory };
 }
@@ -100,6 +100,52 @@ it("登录往返保留 React 草稿；账号根变化要求重新选范围，模
   await act(async () => document.querySelector<HTMLAnchorElement>('a[href="/cloud?returnTo=sources"]')!.click()); f.account.rootRef = crypto.randomUUID(); await act(async () => document.querySelector<HTMLAnchorElement>('a[href="/sources"]')!.click());
   expect(field("来源名称").value).toBe("登录往返保留"); expect(document.body.textContent).toContain("账号授权已变化"); await click("保存草稿并预览"); expect(f.api.saveSyncSource).not.toHaveBeenCalled();
   await click("选择远端范围"); await click("取消选择远端范围"); expect(document.querySelector("dialog.sync-remote-dialog")).toBeNull(); expect(document.body.textContent).toContain("中文 目录");
+});
+it("远端选择器在 StrictMode 重建时复用在途读取，成功结果仍显示", async () => {
+  let finish!: (value: Awaited<ReturnType<DesktopApi["listRemote"]>>) => void;
+  const f = await mount("/sources", (f) => {
+    f.api.listRemote.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    f.api.listRemote.mockRejectedValue(new Error("操作存在冲突，请查询当前状态"));
+  });
+  await click("添加同步来源"); await fill("来源类型", "cloud"); await fill("网盘账号", f.account.id); await click("选择远端范围");
+  expect(f.api.listRemote).toHaveBeenCalledTimes(1);
+  expect(document.querySelector("dialog.sync-remote-dialog")?.textContent).toContain("正在核对");
+  await act(async () => finish({ items: [f.directory], nextCursor: null, complete: true, total: 1 }));
+  expect(document.querySelector("dialog.sync-remote-dialog")?.textContent).toContain("中文 目录");
+  expect(document.querySelector("dialog.sync-remote-dialog [role=alert]")).toBeNull();
+});
+it("远端读取失败定位账号和目录，重试成功清除错误；关闭后迟到结果不替换范围", async () => {
+  const f = await mount("/sources", (f) => { f.api.listRemote.mockRejectedValueOnce(new Error("网络暂不可用")); });
+  await click("添加同步来源"); await fill("来源类型", "cloud"); await fill("网盘账号", f.account.id); await click("选择远端范围");
+  const message = document.querySelector("dialog.sync-remote-dialog [role=alert]")?.textContent;
+  expect(message).toContain("隔离账号"); expect(message).toContain("网盘根目录"); expect(message).toContain("网络暂不可用");
+  await click("重试");
+  expect(document.querySelector("dialog.sync-remote-dialog [role=alert]")).toBeNull();
+  expect(document.querySelector("dialog.sync-remote-dialog")?.textContent).toContain("中文 目录");
+  await click("取消选择远端范围");
+  let finish!: (value: Awaited<ReturnType<DesktopApi["listRemote"]>>) => void;
+  f.api.listRemote.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  await click("选择远端范围"); await click("取消选择远端范围");
+  await act(async () => finish({ items: [f.directory], nextCursor: null, complete: true, total: 1 }));
+  expect(document.querySelector("dialog.sync-remote-dialog")).toBeNull();
+  expect(f.api.statRemote).not.toHaveBeenCalled(); expect(f.api.saveSyncSource).not.toHaveBeenCalled();
+});
+it("远端翻页追加条目，打开子目录重新读取而不复用已完成页面", async () => {
+  const f = await mount("/sources", (f) => {
+    f.api.listRemote.mockResolvedValueOnce({ items: [f.directory], nextCursor: "next-page", complete: false, total: 2 });
+  });
+  await click("添加同步来源"); await fill("来源类型", "cloud"); await fill("网盘账号", f.account.id); await click("选择远端范围");
+  const file = { ...f.directory, ref: crypto.randomUUID(), name: "第二页文件.mp4", type: "file" as const };
+  f.api.listRemote.mockResolvedValueOnce({ items: [file], nextCursor: null, complete: true, total: 2 });
+  await click("加载更多");
+  expect(f.api.listRemote).toHaveBeenLastCalledWith(expect.objectContaining({ parentRef: f.account.rootRef, cursor: "next-page", refresh: false }));
+  expect(document.querySelector("dialog.sync-remote-dialog")?.textContent).toContain("已显示 2 项");
+  f.api.listRemote.mockResolvedValueOnce({ items: [], nextCursor: null, complete: true, total: 0 });
+  await click("打开");
+  expect(f.api.listRemote).toHaveBeenLastCalledWith(expect.objectContaining({ parentRef: f.directory.ref, cursor: null, refresh: true }));
+  expect(document.querySelector("dialog.sync-remote-dialog")?.textContent).toContain("已显示 0 项");
+  expect(document.querySelector("dialog.sync-remote-dialog")?.textContent).not.toContain("第二页文件.mp4");
+  await click("网盘根目录"); expect(f.api.listRemote).toHaveBeenCalledTimes(4);
 });
 it("离页不续发查询，StrictMode 只查询不重放命令；迟到读取不覆盖新一代", async () => {
   const f = await mount(); expect(f.api.saveSyncSource).not.toHaveBeenCalled(); expect(f.api.previewSyncSource).not.toHaveBeenCalled(); expect(f.api.confirmSyncSource).not.toHaveBeenCalled();
