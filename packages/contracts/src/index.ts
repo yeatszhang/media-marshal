@@ -4,6 +4,8 @@ export * from "./renderer-lifecycle.js";
 export * from "./download-cleanup.js";
 import { downloadCleanupActions } from "./download-cleanup.js";
 import { z } from "zod";
+import { recognitionSettingsSchema, codexActions } from "./codex-recognition.js";
+export * from "./codex-recognition.js";
 import { directoryIssueSchema, type DirectoryIssue } from "./directory-issues.js";
 export * from "./directory-issues.js";
 import { cloudActions, cloudCredentialDraftSchema, cloudLoginDraftSchema, cloudDiagnosticCountsSchema, CloudError, cloudFailure, type CloudAccount, type CloudAuthorization, type CloudCredentialDraft, type CloudLoginDraft, type RemotePage, type RemoteEntry, type ManagedDownloadRoot, type CloudInput, type DownloadPreview, type CloudOutput, type CloudSubscription } from "./cloud/index.js";
@@ -97,6 +99,7 @@ export const settingsDraftSchema = z.strictObject({
   language: z.enum(["zh-CN", "en"]).default("zh-CN"),
   embyUrl: serviceAddressSchema(false),
   tmdbProxy: serviceAddressSchema(true),
+  recognition: recognitionSettingsSchema.optional(),
 });
 export type SettingsDraft = z.infer<typeof settingsDraftSchema>;
 export const settingsSchema = settingsDraftSchema.extend({
@@ -185,6 +188,7 @@ export const coreActions = {
   ...correctionActions,
   ...sourceRuleActions,
   ...ingestionActions,
+  ...codexActions,
   ...embyActions,
   "cloud.downloads.pause-status": cloudActions["cloud.downloads.pause-status"],
   "cloud.downloads.set-paused": cloudActions["cloud.downloads.set-paused"],
@@ -387,6 +391,12 @@ export interface DesktopApi {
   getIngestionDirectory(input: CoreInput<"ingestion.directory">): Promise<CoreOutput<"ingestion.directory">>;
   recognizeIngestionBatch(input: CoreInput<"ingestion.recognize-batch">): Promise<CoreOutput<"ingestion.recognize-batch">>;
   listRecognitionBatches(input: CoreInput<"ingestion.recognition-batches">): Promise<CoreOutput<"ingestion.recognition-batches">>;
+  rematchWithCodex(input: CoreInput<"codex.rematch">): Promise<CoreOutput<"codex.rematch">>;
+  recognizeDirectoryWithCodex(input: CoreInput<"codex.prepare-directory">): Promise<CoreOutput<"codex.prepare-directory">>;
+  getCodexUsage(): Promise<CoreOutput<"codex.usage">>;
+  listCodexJobs(input: CoreInput<"codex.jobs">): Promise<CoreOutput<"codex.jobs">>;
+  getCodexJob(id: string): Promise<CoreOutput<"codex.job">>;
+  cancelCodexJob(id: string): Promise<CoreOutput<"codex.cancel">>;
   listRecognitionBatchItems(input: CoreInput<"ingestion.recognition-batch-items">): Promise<CoreOutput<"ingestion.recognition-batch-items">>;
   cancelRecognitionBatch(id: string): Promise<CoreOutput<"ingestion.cancel-recognition-batch">>;
   recognizeIngestion(input: CoreInput<"ingestion.recognize">): Promise<CoreOutput<"ingestion.recognize">>;

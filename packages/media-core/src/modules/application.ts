@@ -29,6 +29,9 @@ import { CloudSubscriptions } from "../cloud/subscriptions.js";
 import { IngestionOutbox, type ManagedIngestionSink } from "../cloud/outbox.js";
 import type { ParserLaunch } from "@media-marshal/contracts/internal";
 import { ParserProcess } from "../infrastructure/parser-process.js";
+import { dirname, join } from "node:path";
+import { CodexProcess } from "../infrastructure/codex-process.js";
+import { CodexRecognition } from "../ingestion/codex-recognition.js";
 import { verifyParserResources } from "../infrastructure/parser-resources.js";
 import { MediaConnections, MediaConnectionsToken } from "../application/media-connections.js";
 import { IngestionPipeline } from "../ingestion/pipeline.js";
@@ -76,6 +79,12 @@ declare module "@yeatz/app-framework/command" {
     "media.source-rules.run-once": (input: CoreInput<"source-rules.run-once">) => CoreOutput<"source-rules.run-once">;
     "media.source-rules.runs": (input: CoreInput<"source-rules.runs">) => CoreOutput<"source-rules.runs">;
     "media.ingestion.pause-status": () => CoreOutput<"ingestion.pause-status">;
+    "media.codex.rematch": (input: CoreInput<"codex.rematch">) => CoreOutput<"codex.rematch">;
+    "media.codex.prepare-directory": (input: CoreInput<"codex.prepare-directory">) => Promise<CoreOutput<"codex.prepare-directory">>;
+    "media.codex.usage": () => Promise<CoreOutput<"codex.usage">>;
+    "media.codex.jobs": (input: CoreInput<"codex.jobs">) => CoreOutput<"codex.jobs">;
+    "media.codex.job": (input: CoreInput<"codex.job">) => CoreOutput<"codex.job">;
+    "media.codex.cancel": (input: CoreInput<"codex.cancel">) => CoreOutput<"codex.cancel">;
     "media.ingestion.set-paused": (input: CoreInput<"ingestion.set-paused">) => CoreOutput<"ingestion.set-paused">;
     "media.source-rules.legacy": (input: CoreInput<"source-rules.legacy">) => CoreOutput<"source-rules.legacy">;
     "media.source-rules.configure": (input: CoreInput<"source-rules.configure">) => CoreOutput<"source-rules.configure">;
@@ -239,7 +248,16 @@ export function createMediaApplication(
       connections = new MediaConnections(ctx.get(DatabaseToken), () => service.getSettings());
       ctx.container.bind(MediaConnectionsToken).toConstantValue(connections);
       ctx.disposables.add(() => connections.close());
-      ingestion = new IngestionPipeline(ctx.get(DatabaseToken), () => parser, connections, Date.now, undefined, undefined, scopedLogger(options.logger, "recognition"));
+      let codex: CodexRecognition | undefined;
+      if (options.parser) {
+        const launch = options.parser, gateway = new CodexProcess(() => {
+          const settings = connections.recognitionSettings;
+          return { executable: codexExecutable!, runtimeDirectory: join(dirname(databasePath), "recognition-codex"), cliPath: settings.cliPath, model: settings.model, dailyCalls: settings.dailyCalls };
+        });
+        try { codexExecutable = await verifyParserResources(launch); codexGateway = gateway; codex = new CodexRecognition(gateway, () => connections.recognitionSettings); ctx.disposables.add(() => gateway.close()); }
+        catch { /* 普通解析及人工核对保持可用，主动 Codex 请求会提示资源不可用。 */ }
+      }
+      ingestion = new IngestionPipeline(ctx.get(DatabaseToken), () => parser, connections, Date.now, undefined, undefined, scopedLogger(options.logger, "recognition"), codex);
       ctx.disposables.add(() => ingestion.close());
       sourceRules = new SourceRules(ctx.get(DatabaseToken), downloads, subscriptions, ingestion);
       configurationDirectories = new ConfigurationDirectories(ctx.get(DatabaseToken), roots);
@@ -402,6 +420,15 @@ export function createMediaApplication(
       );
       add(registry.register("media.jobs.list", () => service.listJobs()));
       add(registry.register("media.settings.get", () => service.getSettings()));
+      add(registry.register("media.codex.rematch", (_, input) => ingestion.codexJobs.enqueue(coreActions["codex.rematch"].input.parse(input))));
+      add(registry.register("media.codex.prepare-directory", (_, input) => ingestion.prepareCodexDirectory(coreActions["codex.prepare-directory"].input.parse(input))));
+      add(registry.register("media.codex.jobs", (_, input) => ingestion.codexJobs.list(coreActions["codex.jobs"].input.parse(input).page)));
+      add(registry.register("media.codex.job", (_, input) => ingestion.codexJobs.get(coreActions["codex.job"].input.parse(input).id)));
+      add(registry.register("media.codex.cancel", (_, input) => ingestion.codexJobs.cancel(coreActions["codex.cancel"].input.parse(input).id)));
+      add(registry.register("media.codex.usage", async () => {
+        if (!codexGateway) throw new DesktopError("COMPONENT_UNAVAILABLE", "Codex 识别资源不可用，请检查安装资源后重启核心");
+        return coreActions["codex.usage"].output.parse(await codexGateway.request("usage", {}));
+      }));
       add(
         registry.register("media.settings.save", (_, input) =>
           { const previous = service.getSettings(), saved = service.saveSettings(coreActions["settings.save"].input.parse(input)); connections.reconfigure(); if (previous.embyUrl !== saved.embyUrl) delivery.invalidate(); return saved; },
@@ -410,6 +437,7 @@ export function createMediaApplication(
     },
   };
   const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); recognitionRules.start(); syncRules.start(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); cleanup.start(); } };
+  let codexExecutable: string | undefined, codexGateway: CodexProcess | undefined;
   let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories, syncRules: SyncRules, recognitionRules: RecognitionRules, cleanup: DownloadCleanupService;
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],

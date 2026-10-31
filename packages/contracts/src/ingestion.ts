@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { codexEvidenceSchema } from "./codex-recognition.js";
 const id = z.uuid(), empty = z.strictObject({});
 export const ingestionConfigureSchema = z.strictObject({ downloadRootId: id, name: z.string().trim().min(1).max(100), targetPath: z.string().min(1).max(4096), mediaType: z.enum(["AUTO", "MOVIE", "TV_SHOW"]).default("AUTO") });
 export const automaticStatusSchema = z.strictObject({ id, state: z.enum(["PENDING", "RECOGNIZING", "PREVIEWING", "CONFIRMING", "SUBMITTED", "NEEDS_REVIEW"]), reason: z.string().max(500).nullable(), operationId: id.nullable() });
@@ -10,7 +11,7 @@ export const episodeCheckSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("NEEDS_REVIEW"), reason: z.string().min(1).max(500) }),
 ]);
 export type EpisodeCheck = z.infer<typeof episodeCheckSchema>;
-export const matchSchema = z.strictObject({ tmdbId: z.number().int().positive(), mediaType: z.enum(["MOVIE", "TV_SHOW"]), title: z.string().max(500), originalTitle: z.string().max(500).nullable(), year: z.number().int().nullable(), confidence: z.number().min(0).max(1), evidence: z.enum(["filename", "parent", "both", "manual"]), explanation: z.string().max(500), episodeCheck: episodeCheckSchema.optional() });
+export const matchSchema = z.strictObject({ tmdbId: z.number().int().positive(), mediaType: z.enum(["MOVIE", "TV_SHOW"]), title: z.string().max(500), originalTitle: z.string().max(500).nullable(), year: z.number().int().nullable(), confidence: z.number().min(0).max(1), evidence: z.enum(["filename", "parent", "both", "manual", "codex"]), codex: codexEvidenceSchema.optional(), explanation: z.string().max(500), episodeCheck: episodeCheckSchema.optional() });
 export const accessorySchema = z.strictObject({ id, sourcePath: z.string().max(16384), targetPath: z.string().max(16384), state: z.enum(["PLANNED","COPYING","VERIFIED","FILE_COMMITTED","RECORDED","NEEDS_ATTENTION"]), failure: z.string().max(100).nullable() });
 export const recognitionSchema = z.strictObject({ taskId: id, candidateId: id, sourcePath: z.string().max(16384).optional(), revision: z.number().int().nonnegative().optional(), matchesStale: z.boolean().optional(), state: z.string().max(64), parsed: z.strictObject({ title: z.string().nullable(), year: z.number().nullable(), season: z.number().nullable(), episode: z.number().nullable(), episodeEnd: z.number().nullable(), type: z.enum(["MOVIE", "TV_SHOW"]).nullable() }).nullable(), matches: z.array(matchSchema).max(100), failure: z.string().max(500).nullable(), accessories: z.array(accessorySchema).max(100).optional() });
 export type Recognition = z.infer<typeof recognitionSchema>;

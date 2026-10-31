@@ -12,12 +12,13 @@ export class CodexProcess implements CodexGateway {
   private queue: Promise<unknown> = Promise.resolve();
   private flights = new Set<ChildProcessWithoutNullStreams>();
   private count = 0;
+  private pending = new Set<Promise<unknown>>();
   constructor(private readonly configuration: () => CodexProcessConfiguration, private readonly timeoutMs = 160000) {}
   request(action: CodexAction, input: unknown, signal?: AbortSignal): Promise<unknown> {
     if (this.closed || this.count >= 32) return Promise.reject(new DesktopError("COMPONENT_UNAVAILABLE", "Codex 识别服务不可用或队列已满，请稍后重试", true));
     this.count++;
-    const work = this.queue.catch(() => {}).then(() => this.run(action, input, signal)).finally(() => { this.count--; });
-    this.queue = work; return work;
+    const work = (action === "usage" ? this.run(action, input, signal) : this.queue.catch(() => {}).then(() => this.run(action, input, signal))).finally(() => { this.count--; this.pending.delete(work); });
+    this.pending.add(work); if (action !== "usage") this.queue = work; return work;
   }
   private async run(action: CodexAction, input: unknown, signal?: AbortSignal) {
     if (this.closed || signal?.aborted) throw new DesktopError("INTERRUPTED", "Codex 识别已取消，原任务保留", true);
@@ -76,5 +77,5 @@ export class CodexProcess implements CodexGateway {
       });
     } finally { stop(); await ended; }
   }
-  async close() { this.closed = true; for (const child of this.flights) child.kill("SIGTERM"); await this.queue.catch(() => {}); }
+  async close() { this.closed = true; for (const child of this.flights) child.kill("SIGTERM"); await Promise.allSettled([...this.pending]); }
 }

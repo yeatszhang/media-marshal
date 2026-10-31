@@ -111,3 +111,9 @@ describe("自动识别选择", () => {
     expect(selectAutomaticWork({ ...tv, matches: [{ ...tv.matches[0]!, episodeCheck: { state: "VALID", season: 0, episode: 26, episodeEnd: 28, seasonChanged: false } }] })).toEqual({ selection: { tmdbId: 7, mediaType: "TV_SHOW", season: 0, episode: 26, episodeEnd: 28 } });
   });
 });
+
+it("旧 reliableResultsNoLongerReadLegacyForcedApprovalSetting：模型达到90%直接遵循当前自动策略", () => {
+  const task = recognized();
+  expect(selectAutomaticWork({ ...task, matches: [{ ...task.matches[0]!, evidence: "codex", codex: { mode: "file", confidence: 0.97, reason: "官网核实" } }] })).toHaveProperty("selection");
+  expect(selectAutomaticWork({ ...task, matches: [{ ...task.matches[0]!, evidence: "codex", codex: { mode: "file", confidence: 0.89, reason: "线索不足" } }] })).toMatchObject({ reason: expect.stringContaining("90%") });
+});

@@ -36,7 +36,9 @@ it("取消长调用后排空自有进程，后续请求仍可执行", async () =
   const gateway = await fixture(), controller = new AbortController();
   const pending = gateway.request("recognize", { mode: "slow" }, controller.signal);
   const assertion = expect(pending).rejects.toMatchObject({ code: "INTERRUPTED" });
-  await new Promise((resolve) => setTimeout(resolve, 100)); controller.abort(); await assertion;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(await gateway.request("usage", {})).toMatchObject({ action: "usage" });
+  controller.abort(); await assertion;
   expect(await gateway.request("usage", {})).toMatchObject({ action: "usage" });
 });
 

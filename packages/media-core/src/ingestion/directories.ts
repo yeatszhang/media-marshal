@@ -31,7 +31,7 @@ export class IngestionDirectories {
     const options = db.prepare(`SELECT tc.metadata_json,count(DISTINCT t.id) AS supported${from} JOIN task_candidate tc ON tc.task_id=t.id LEFT JOIN ingestion_recognition_edit e ON e.task_id=t.id WHERE ${where} AND t.status='AWAITING_CONFIRMATION' AND (e.revision IS NULL OR e.revision=e.matched_revision) GROUP BY json_extract(tc.metadata_json,'$.mediaType'),json_extract(tc.metadata_json,'$.tmdbId') ORDER BY supported DESC,avg(tc.confidence) DESC LIMIT 100`).all(...args) as { metadata_json: string; supported: number }[];
     return { directory: this.dto(row), items: members.map((member) => ({ candidate: this.candidate(member.id), task: member.task_id ? this.task(member.task_id) : null })), options: options.map((entry) => {
       const match = JSON.parse(entry.metadata_json) as MediaMatch;
-      return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, explanation: `${entry.supported}/${row.total} 个文件有此候选；仍须逐文件核对季集、来源与整理目标`, supportedFiles: entry.supported, common: entry.supported === row.total && row.awaiting === row.total };
+      return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, codex: match.codex, explanation: `${entry.supported}/${row.total} 个文件有此候选；${match.codex ? `Codex 依据：${match.codex.reason}；` : ""}仍须逐文件核对季集、来源与整理目标`.slice(0, 500), supportedFiles: entry.supported, common: entry.supported === row.total && row.awaiting === row.total };
     }) };
   }
 }
