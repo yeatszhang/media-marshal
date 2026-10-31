@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, lstat, statfs, realpath, rm, writeFile, readFile, rename } from "node:fs/promises";
+import { mkdtemp, mkdir, lstat, statfs, realpath, rm, writeFile, readFile, rename, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -15,6 +15,8 @@ import { CloudAccounts } from "../cloud/accounts.js";
 import { RemoteCatalog } from "../cloud/catalog.js";
 import { unavailableHost } from "../cloud/host-gateway.js";
 import { ConfigurationDirectories } from "./configuration-directories.js";
+import { SourceRoot } from "../files/source-root.js";
+import { libraryMediaIdentity } from "./library-media-identity.js";
 import { EmbyLibraryFiles } from "./emby-library-files.js";
 import { LocalSync } from "./local-sync.js";
 import { SyncRules } from "./sync-rules.js";
@@ -126,11 +128,11 @@ describe("同步优先检查 Emby 已有文件", () => {
     expect(await readFile(join(f.target.path, "completed/新片.mp4"), "utf8")).toBe("需要复制的新视频");
     await expect(readFile(join(f.target.path, "completed/原片.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
   });
-  it("同名同大小但内容不同的本地文件继续同步；不同名称或大小也不命中", async () => {
+  it("同名同大小但内容不同的本地文件继续同步；弱比较仅大小相同须核对", async () => {
     const f = await fixture(), library = await libraryFixture(f, "x".repeat(Buffer.byteLength(f.content)));
     const source = await f.enable(); expect(await f.preview(source, "execution")).toMatchObject({ inLibrary: 0, observing: 1 });
     const index = new EmbyLibraryFiles(f.db);
-    expect(await index.find("其他片.mp4", Buffer.byteLength(f.content))).toBeUndefined(); expect(await index.find("原片.mp4", 1)).toBeUndefined();
+    await expect(index.find("其他片.mp4", Buffer.byteLength(f.content))).rejects.toThrow(/疑似重复/); expect(await index.find("原片.mp4", 1)).toBeUndefined();
     await rm(library.path); expect(await new EmbyLibraryFiles(f.db).find("原片.mp4", Buffer.byteLength(f.content))).toBeUndefined();
   });
   it.each(["删除", "替换", "关联变化", "卷离线"])("预览后%s不允许沿用已在媒体库的证据", async (action) => {
@@ -142,7 +144,7 @@ describe("同步优先检查 Emby 已有文件", () => {
     await expect(f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), filesComplete: true })).rejects.toThrow(/媒体库|来源文件|原卷/);
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_job").get()).toEqual({ n: 0 });
   });
-  it("远端提供摘要时必须一致；无摘要时只接受完整同名同大小；显式重同步仍执行", async () => {
+  it("远端提供摘要时必须一致；显式重同步仍执行", async () => {
     const f = await fixture(); await libraryFixture(f); const index = new EmbyLibraryFiles(f.db), size = Buffer.byteLength(f.content);
     expect(await index.find("原片.mp4", size, undefined, { kind: "hash", algorithm: "sha256", value: "0".repeat(64) })).toBeUndefined();
     const sha256 = createHash("sha256").update(f.content).digest("hex");
@@ -304,5 +306,73 @@ describe("删除同步任务保留文件与成功历史", () => {
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
     const next = await f.preview(source, "execution"); expect(next.reused).toBe(1);
     expect(f.rules.jobFiles({ id: result.jobId! }).total).toBe(1);
+  });
+});
+
+
+describe("改名视频的证据比较与会话成本", () => {
+  it("22 个真实大小的改名视频全部弱命中，不全读视频，附属文件独立", async () => {
+    const f = await fixture(), library = await libraryFixture(f); await rm(library.path);
+    const groups = [
+      { title: "喜鹊谋杀案 (2022)", id: "130766", ext: "mkv", sizes: [3089077793,2939657051,2793337122,2927107496,3108339946,2661929243] },
+      { title: "猫头鹰谋杀案 (2024)", id: "241548", ext: "mp4", sizes: [5075701444,5182181063,5245158756,5082064527,5340880841,5287502372] },
+      { title: "翠鸟谋杀案 (2026)", id: "283319", ext: "mp4", sizes: [2159612358,2038069916,2100821064,1005846347,990595961,1098595542] },
+      { title: "翠鸟谋杀案 (2026)", id: "283319", ext: "mkv", sizes: [3940623422,3844999465,3718652682,3590012781] },
+    ];
+    for (const group of groups) {
+      const root = join(library.grant.path, `${group.title} [tmdbid=${group.id}]`, "Season 01"); await mkdir(root, { recursive: true });
+      for (const [index, size] of group.sizes.entries()) { const path = join(root, `${group.title} - S01E${String(index + 1).padStart(2, "0")} - 1080p.${group.ext}`); await writeFile(path, ""); await truncate(path, size); }
+    }
+    const read = vi.spyOn(SourceRoot.prototype, "digest"), discover = vi.spyOn(SourceRoot.prototype, "discover"), libraryIndex = new EmbyLibraryFiles(f.db); let count = 0, bytes = 0;
+    for (const group of groups) for (const [index, size] of group.sizes.entries()) {
+      const name = `English Title S01E${String(index + 1).padStart(2, "0")} - 第 ${index + 1} 集 - WEB-DL.${group.ext}`;
+      const proof = await libraryIndex.find(name, size, undefined, { kind: "weak", size, modifiedAt: null }, ["视频电影", "X 喜鹊+猫头鹰+翠鸟谋杀案", group.title, "第 1 季 - WEB-DL", name]);
+      expect(proof).toMatchObject({ comparison: "MEDIA_SIZE", sha256: null, identity: { title: group.title.split(" (")[0], season: 1, episode: String(index + 1) } });
+      await libraryIndex.verify(proof!); count++; bytes += size;
+    }
+    expect(count).toBe(22); expect(bytes).toBe(73220767192); expect(read).not.toHaveBeenCalled(); expect(discover).toHaveBeenCalledTimes(1);
+    expect(await libraryIndex.find("English Title S01E01.nfo", 1788)).toBeUndefined();
+    expect(await libraryIndex.find("English Title S01E01.jpg", 133324)).toBeUndefined();
+  });
+  it.each(["sha256", "sha1", "md5"] as const)("改名视频按 %s 强比较，重复调用只读一次", async (algorithm) => {
+    const f = await fixture(), library = await libraryFixture(f), size = Buffer.byteLength(f.content), digest = createHash(algorithm).update(f.content).digest("hex");
+    const read = vi.spyOn(SourceRoot.prototype, "digest"), index = new EmbyLibraryFiles(f.db);
+    const proofs = await Promise.all([1,2].map(() => index.find("改名文件.mkv", size, undefined, { kind: "hash", algorithm, value: digest })));
+    expect(proofs[0]).toMatchObject({ comparison: "CONTENT", algorithm, digest, segments: ["影片", "原片.mp4"] }); expect(read).toHaveBeenCalledTimes(1);
+    await new EmbyLibraryFiles(f.db).verify(proofs[0]!); expect(read).toHaveBeenCalledTimes(2);
+    expect(await index.find("改名.mp4", size, undefined, { kind: "hash", algorithm, value: "0".repeat(digest.length) })).toBeUndefined();
+    expect(await readFile(library.path, "utf8")).toBe(f.content);
+  });
+  it("本地来源文件改名仍按内容命中", async () => {
+    const f = await fixture(), library = await libraryFixture(f); await rename(library.path, join(library.grant.path, "影片/另一个名字.mkv"));
+    const source = await f.enable(), preview = await f.preview(source, "execution"); expect(preview).toMatchObject({ inLibrary: 1, observing: 0 });
+    expect(f.rules.previewFiles({ id: preview.id }).items[0]?.reason).toContain("SHA256 内容摘要一致");
+  });
+  it("相同大小的弱候选身份矛盾或多路径不取第一个", async () => {
+    const f = await fixture(), library = await libraryFixture(f), size = Buffer.byteLength(f.content), name = "Moonflower Murders S01E04.mp4";
+    const folder = join(library.grant.path, "猫头鹰谋杀案 (2024) [tmdbid=241548]", "Season 01"); await mkdir(folder, { recursive: true });
+    const first = join(folder, "猫头鹰谋杀案 (2024) - S01E04 - 2160p.mp4"); await writeFile(first, f.content);
+    await expect(new EmbyLibraryFiles(f.db).find(name, size, undefined, undefined, ["猫头鹰谋杀案 (2024)", "第 2 季", name])).rejects.toThrow(/疑似重复/);
+    await writeFile(join(folder, "猫头鹰谋杀案 (2024) - S01E04 - 1080p.mp4"), f.content);
+    await expect(new EmbyLibraryFiles(f.db).find(name, size, undefined, undefined, ["猫头鹰谋杀案 (2024)", name])).rejects.toThrow(/无法唯一对应/);
+    await expect(new EmbyLibraryFiles(f.db).find(name, size, undefined, undefined, ["猫头鹰谋杀案 (2024) [tmdbid=999]", name])).rejects.toThrow(/疑似重复/);
+  });
+  it("解析矛盾的季集、作品和年份不产生明确身份", () => {
+    expect(libraryMediaIdentity(["作品 (2024)", "Season 02", "作品 (2024) - S01E01.mp4"]).conflict).toBe(true);
+    expect(libraryMediaIdentity(["作品 (2024)", "另一作品 (2025) - S01E01.mp4"]).conflict).toBe(true);
+    expect(libraryMediaIdentity(["作品 (2024)", "S01E01-E02.mp4"])).toMatchObject({ episode: "1-2", season: 1, conflict: false });
+  });
+  it("关联目录失联或扫描不完整时阻断并持久展示原因", async () => {
+    const f = await fixture(), library = await libraryFixture(f), source = await f.enable(); await rename(library.grant.path, library.grant.path + "-离线");
+    const preview = await f.preview(source, "execution"); expect(preview).toMatchObject({ state: "BLOCKED", conflicts: 1 });
+    expect(f.rules.previewFiles({ id: preview.id }).items[0]).toMatchObject({ state: "UNAVAILABLE", reason: expect.stringContaining("媒体库检查未完成") });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 0 });
+  });
+  it("扫描超限和取消不能解释成无候选", async () => {
+    const f = await fixture(); await libraryFixture(f);
+    vi.spyOn(SourceRoot.prototype, "discover").mockRejectedValueOnce(new Error("超过一万项"));
+    await expect(new EmbyLibraryFiles(f.db).find("原片.mp4", Buffer.byteLength(f.content))).rejects.toThrow(/媒体库检查未完成/);
+    const controller = new AbortController(), index = new EmbyLibraryFiles(f.db, controller.signal); controller.abort();
+    await expect(index.find("原片.mp4", Buffer.byteLength(f.content))).rejects.toThrow(/核对已中断/);
   });
 });

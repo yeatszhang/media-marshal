@@ -8,7 +8,7 @@ import type { CloudRoots } from "../cloud/roots.js";
 import { assertSpaceBudget, sameVolumeRoot } from "../files/index.js";
 import { sourceVersion, sameSnapshot, type SourceSnapshot } from "../files/source-root.js";
 import { SyncReceipts } from "./sync-receipts.js";
-import { EmbyLibraryFiles, type LibraryFileEvidence } from "./emby-library-files.js";
+import { EmbyLibraryFiles, libraryFileReason, type LibraryFileEvidence } from "./emby-library-files.js";
 import type { ConfigurationDirectories } from "./configuration-directories.js";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -24,6 +24,7 @@ export class LocalSync {
   private active = new Map<string, AbortController>();
   private flight?: Promise<void>;
   private closed = false;
+  private readonly libraryAbort = new AbortController();
   private observedAt = -Infinity;
   private globallyPaused = false;
   constructor(private readonly database: CoreDatabase, private readonly directories: ConfigurationDirectories, private readonly roots: CloudRoots, private readonly now = Date.now, private readonly monotonic = () => performance.now()) {}
@@ -51,7 +52,7 @@ export class LocalSync {
     await source.check(); await target.check();
     const files = await source.discover([], 10000), id = randomUUID(), result: LocalSyncFile[] = [];
     const namespace = hash([source.grant.volume.volumeId, source.grant.volume.rootInode, source.grant.volume.rootBirthtimeNs]);
-    const receipts = new SyncReceipts(this.database, this.now), library = new EmbyLibraryFiles(this.database);
+    const receipts = new SyncReceipts(this.database, this.now), library = new EmbyLibraryFiles(this.database, this.libraryAbort.signal);
     for (const segments of files) {
       if (this.closed) throw new DesktopError("INTERRUPTED", "本地同步预览已停止", true);
       if (!includes(segments.join("/")) || /(?:\.(?:part|tmp|temp|aria2|download|downloading|qkdownloading|crdownload)|\.!qB)$/i.test(segments.at(-1)!)) continue;
@@ -61,9 +62,14 @@ export class LocalSync {
       const targetSegments = force ? ["resync-" + id, ...segments] : segments, slot = target.slotKey(targetSegments);
       const receipt = !force ? receipts.find("local", namespace, JSON.stringify(segments), version, target.grant.id, slot) : undefined;
       const file: LocalSyncFile = { segments, size: proof.size, snapshot: proof, namespace, version, versionKey, targetSegments, slot, receiptId: receipt?.id ?? null, state: "OBSERVING", reason: "等待文件连续稳定至少 120 秒；稳定后仍需确认文件完整" };
-      const libraryFile = !force ? await library.find(segments.at(-1)!, proof.size, { root: source, segments, snapshot: proof }) : undefined;
+      let libraryFile: LibraryFileEvidence | undefined;
+      try { libraryFile = !force ? await library.find(segments.at(-1)!, proof.size, { root: source, segments, snapshot: proof }) : undefined; }
+      catch (error) {
+        if (!(error instanceof DesktopError) || error.code === "INTERRUPTED") throw error;
+        file.state = error.code === "LOCAL_UNAVAILABLE" ? "UNAVAILABLE" : "CONFLICT"; file.reason = error.message; result.push(file); continue;
+      }
       if (libraryFile) {
-        file.libraryFile = libraryFile; file.receiptId = null; file.state = "IN_LIBRARY"; file.reason = "已在媒体库，跳过同步";
+        file.libraryFile = libraryFile; file.receiptId = null; file.state = "IN_LIBRARY"; file.reason = libraryFileReason(libraryFile);
       } else if (receipt) {
         const state = await receipts.observe(receipt, target);
         file.state = state === "PRESENT" ? "REUSED" : state === "REMOVED" ? "REMOVED" : state === "CONFLICT" ? "CONFLICT" : "UNAVAILABLE";
@@ -91,7 +97,7 @@ export class LocalSync {
       let actual: SourceSnapshot;
       try { actual = await source.inspect(file.segments); } catch { throw new DesktopError("LOCAL_UNAVAILABLE", `来源「${file.segments.join("/").slice(-180)}」无法读取，请恢复原文件、原磁盘和权限后重新预览`, true); }
       if (!sameSnapshot(file.snapshot, actual)) throw conflict(`来源 ${file.segments.join("/").slice(-180)} 已变化，请重新预览`);
-      if (file.libraryFile) await new EmbyLibraryFiles(this.database).verify(file.libraryFile);
+      if (file.libraryFile) await new EmbyLibraryFiles(this.database, this.libraryAbort.signal).verify(file.libraryFile);
       else if (file.receiptId) { const receipt = receipts.get(file.receiptId); if (!receipt || !["PRESENT", "REMOVED"].includes(await receipts.observe(receipt, target))) throw conflict(`已同步目标 ${file.targetSegments.join("/")} 已变化，请核对后重新预览`); }
       else if (!this.stable(file.namespace + JSON.stringify(file.segments), file.snapshot)) throw conflict(`来源 ${file.segments.join("/")} 需要重新连续观察至少 120 秒`);
     }
@@ -206,5 +212,5 @@ export class LocalSync {
     db.transaction(() => { db.prepare("UPDATE local_sync_operation SET phase=CASE WHEN evidence_json IS NOT NULL THEN 'VERIFIED' WHEN phase='NEEDS_ATTENTION' THEN 'COPYING' ELSE phase END,failure=NULL WHERE id IN (SELECT operation_id FROM local_sync_member WHERE job_id=?) AND phase='NEEDS_ATTENTION'").run(id); db.prepare("UPDATE local_sync_member SET state='PENDING',failure=NULL WHERE job_id=? AND state='NEEDS_ATTENTION'").run(id); db.prepare("UPDATE sync_job SET state='RUNNING',failure=NULL WHERE id=? AND state='NEEDS_ATTENTION'").run(id); })();
   }
   hasActive(sourceId: string) { return (this.database.connection.prepare("SELECT m.operation_id FROM local_sync_member m JOIN sync_job j ON j.id=m.job_id WHERE j.source_id=? AND m.operation_id IS NOT NULL").all(sourceId) as { operation_id: string }[]).some((row) => this.active.has(row.operation_id)); }
-  async close() { this.closed = true; for (const controller of this.active.values()) controller.abort(); await this.flight; }
+  async close() { this.closed = true; this.libraryAbort.abort(); for (const controller of this.active.values()) controller.abort(); await this.flight; }
 }
