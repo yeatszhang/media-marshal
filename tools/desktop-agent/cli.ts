@@ -1,5 +1,7 @@
 import { parseArgs } from "node:util";
 import { z } from "zod";
+import { doctor } from "./doctor.ts";
+import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -57,6 +59,8 @@ export async function requestFromArgs(args: string[]): Promise<Request> {
   });
 }
 export async function dispatch(request: Request): Promise<unknown> {
+  if (request.command === "doctor")
+    return doctor(resolve(import.meta.dirname, "../.."), request.payload as Input<"doctor">);
   if (request.command === "help")
     return {
       commands: Object.fromEntries(
@@ -65,7 +69,7 @@ export async function dispatch(request: Request): Promise<unknown> {
       usage:
         "npm run --silent desktop:agent -- <command> --json [--session UUID] [--request UUID] [--input JSON文件]",
       protocol: 1,
-      implemented: ["help"],
+      implemented: ["help", "doctor"],
     };
   throw new ToolError(
     "CAPABILITY_UNAVAILABLE",
@@ -78,7 +82,13 @@ export async function main(args: string[]) {
   let request: Request | undefined;
   try {
     request = await requestFromArgs(args);
-    process.stdout.write(JSON.stringify(result(request, await dispatch(request))) + "\n");
+    const value = await dispatch(request);
+    const response = result(request, value);
+    if (request.command === "doctor" && (value as { status: string }).status !== "ready") {
+      response.status = "blocked";
+      process.exitCode = 2;
+    }
+    process.stdout.write(JSON.stringify(response) + "\n");
   } catch (error) {
     process.stdout.write(JSON.stringify(failure(error, request)) + "\n");
     process.exitCode = 1;

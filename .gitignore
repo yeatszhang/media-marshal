@@ -75,3 +75,5 @@ logs/
 .agents/skills/impeccable/scripts/bin/
 .impeccable/config.local.json
 .impeccable/cache/
+
+tools/desktop-agent/.build/

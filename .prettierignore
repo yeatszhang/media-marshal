@@ -10,3 +10,5 @@ test-results/
 legacy/
 package-lock.json
 packages/media-core/src/domain/pinyin-initials.ts
+
+tools/desktop-agent/.build/
