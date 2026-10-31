@@ -545,6 +545,7 @@ export class CloudDownloads {
     this.recovering.set(item.id, work);
   }
   private async reconcile() {
+    this.releaseCancelledClaims();
     const db = this.database.connection, items = db.prepare("SELECT i.id FROM download_item i JOIN download_claim d ON d.item_id=i.id JOIN download_attempt a ON a.id=d.attempt_id WHERE a.state IN ('STOPPED','EXITED') AND i.state IN ('RECONCILING','COMMITTING','BLOCKED_LOCAL') ORDER BY i.updated_at,i.id LIMIT 100").all() as { id: string }[];
     for (const { id } of items) {
       if (this.closed || this.recovering.size >= 4) break;
@@ -564,6 +565,19 @@ export class CloudDownloads {
         const cleanup = new OwnedAttemptCleanup(this.database); cleanup.record("download_attempt", attempt.id, attempt.id, root.grant); await cleanup.run("download_attempt", attempt.id, root);
         if (db.prepare("SELECT 1 FROM owned_attempt_cleanup WHERE owner_kind='download_attempt' AND owner_id=? AND state='DONE'").get(attempt.id)) db.prepare("UPDATE download_attempt SET stop_evidence_json=json_set(stop_evidence_json,'$.stagingCleaned',1) WHERE id=?").run(attempt.id);
       } catch { /* 目录尚未恢复或标记不匹配时不删除任何文件。 */ }
+    }
+  }
+  private releaseCancelledClaims() {
+    const db = this.database.connection;
+    const items = db.prepare("SELECT i.id,i.account_id,i.target_root_id,d.attempt_id FROM download_item i JOIN download_claim d ON d.item_id=i.id JOIN download_attempt a ON a.id=d.attempt_id WHERE i.state!='COMPLETED' AND a.state IN ('STOPPED','EXITED') AND a.stop_evidence_json IS NOT NULL AND NOT EXISTS(SELECT 1 FROM download_commit_intent c WHERE c.item_id=i.id)").all() as { id: string; account_id: string; target_root_id: string; attempt_id: string }[];
+    for (const item of items) {
+      if (this.active.get(item.account_id)?.item.id === item.id || this.recovering.has(item.id) || this.retainedDemand(item.id)) continue;
+      // 无提交、无保留需求且写入者已停止时，取消不再依赖原卷；暂存回收仍等待原授权。
+      db.transaction(() => {
+        new OwnedAttemptCleanup(this.database).recordDownload(item.attempt_id, item.target_root_id);
+        db.prepare("DELETE FROM download_claim WHERE item_id=? AND attempt_id=?").run(item.id, item.attempt_id);
+        this.state(item.id, "CANCELLED");
+      })();
     }
   }
   async close() {

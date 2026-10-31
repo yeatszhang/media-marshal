@@ -348,11 +348,12 @@ export class SyncRules {
     await this.libraryRechecks.tick();
     if (this.closed) return;
     await this.local.tick();
-    const jobs = db.prepare("SELECT j.* FROM sync_job j JOIN sync_source_rule r ON r.id=j.source_id WHERE (j.state IN ('PENDING','RUNNING') OR j.state='NEEDS_ATTENTION' AND j.download_job_id IS NOT NULL) AND r.paused=0 AND r.deleted_at IS NULL AND json_extract(j.snapshot_json,'$.configuration.type')='cloud' ORDER BY j.updated_at,j.id LIMIT 16").all() as Job[];
+    const jobs = db.prepare("SELECT j.* FROM sync_job j JOIN sync_source_rule r ON r.id=j.source_id WHERE (j.state IN ('PENDING','RUNNING') OR j.state='NEEDS_ATTENTION' AND j.download_job_id IS NOT NULL) AND (j.download_job_id IS NOT NULL OR r.paused=0 AND r.deleted_at IS NULL) AND json_extract(j.snapshot_json,'$.configuration.type')='cloud' ORDER BY j.updated_at,j.id LIMIT 16").all() as Job[];
     for (const row of jobs) {
       if (this.closed) return;
       const snapshot = JSON.parse(row.snapshot_json) as SyncSourceSnapshot; if (snapshot.configuration.type !== "cloud") continue;
-      const source = this.row(row.source_id); if (!source || source.paused || source.deleted_at) continue;
+      // 暂停只阻止新执行，已交给下载队列的作业仍须读取停止与完成结果。
+      const source = this.row(row.source_id); if (!row.download_job_id && (!source || source.paused || source.deleted_at)) continue;
       try {
         if (!row.download_job_id) {
           if (this.downloads.pauseStatus().paused) continue;

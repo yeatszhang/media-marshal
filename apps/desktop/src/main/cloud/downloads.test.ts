@@ -146,6 +146,41 @@ describe.skipIf(process.platform !== "darwin")("独立来源同步与既有网�
     f.sync.removeJob({ id: b.result.jobId!, requestKey: randomUUID() }); expect(f.sync.jobs({}).total).toBe(0);
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
   });
+  it("中断下载确认停止后，原卷未恢复也能结束取消并删除同步任务，暂存延后回收", async () => {
+    const f = await setup(), source = await f.enable(), { result } = await f.execute(source);
+    const jobId = f.sync.getJob(result.jobId!).downloadJobId!, request = f.host.request.bind(f.host);
+    f.fileEngine.holding = true;
+    f.host.request = async (action, payload, context, key) => {
+      const response = await request(action, payload, context, key);
+      if (action === "transfer.start") throw new CloudError("TIMEOUT");
+      return response;
+    };
+    f.downloads.start();
+    await expect.poll(() => f.state(jobId).state).toBe("RECONCILING");
+    await expect.poll(() => f.fileEngine.starts).toBe(1);
+    await expect.poll(() => (Reflect.get(f.downloads, "active") as Map<string, unknown>).size).toBe(0);
+    await f.sync.control({ ...f.versions(source), operation: "pause", requestKey: randomUUID() });
+    f.downloads.control({ jobId, operation: "cancel", requestKey: randomUUID() });
+    const attempt = f.db.connection.prepare("SELECT id FROM download_attempt").get() as { id: string };
+    await f.sidecar.quiesceAccount(f.account.id);
+    const stage = join(f.rootPath, ".media-marshal/staging", attempt.id);
+    await writeFile(join(stage, "未完成片段"), "等待原卷恢复后回收");
+    await f.roots.files.close(); f.roots.unavailable(f.grant.id);
+    expect(f.state(jobId).state).toBe("CANCELLING");
+    expect(f.db.connection.prepare("SELECT state FROM download_attempt WHERE id=?").get(attempt.id)).toEqual({ state: "UNCERTAIN" });
+    // 停止证据仍由宿主提供，取消不能把超时当成已经停止。
+    f.downloads.writersReaped(randomUUID());
+    await expect.poll(() => f.state(jobId).state).toBe("CANCELLED");
+    expect(f.downloads.list({})).toEqual({ items: [], total: 0 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_claim").get()).toEqual({ n: 0 });
+    expect(f.db.connection.prepare("SELECT state FROM owned_attempt_cleanup WHERE owner_id=?").get(attempt.id)).toEqual({ state: "PENDING" });
+    expect(await readdir(join(f.rootPath, ".media-marshal/staging"))).toContain(attempt.id);
+    await f.sync.tick();
+    expect(f.sync.getJob(result.jobId!).state).toBe("CANCELED");
+    const remove = { id: result.jobId!, requestKey: randomUUID() };
+    expect(f.sync.removeJob(remove)).toEqual({ id: result.jobId }); expect(f.sync.removeJob(remove)).toEqual({ id: result.jobId });
+    expect(f.sync.jobs({})).toEqual({ items: [], total: 0 }); expect(f.fileEngine.starts).toBe(1);
+  });
   it("重新登录须明确确认原账号目录，历史别名与新来源版本原子提交", async () => {
     const f = await setup(), source = await f.enable(), first = await f.execute(source); f.downloads.start(); await f.done(first.result.jobId!); await rm(join(f.rootPath, "completed/目录/电影.mp4"));
     const login = f.accounts.dispatch("cloud.authorization.begin", { accountId: f.account.id, name: "重新连接", requestKey: randomUUID(), implementationId: f.provider.implementationId });
@@ -1180,6 +1215,27 @@ describe.skipIf(process.platform !== "darwin")("Core 下载调度、文件校验
     expect(f.downloads.list({})).toEqual({ items: [], total: 0 });
     expect(f.downloads.get(second.jobId)?.state).toBe("CANCELLED");
   });
+  it("原卷未恢复时取消一项需求仍保留另一个暂停任务的 claim 和暂存", async () => {
+    const f = await fixture(), first = await f.confirm(), second = await f.confirm(), request = f.host.request.bind(f.host);
+    f.fileEngine.holding = true;
+    f.host.request = async (action, payload, context, key) => {
+      const response = await request(action, payload, context, key);
+      if (action === "transfer.start") throw new CloudError("TIMEOUT");
+      return response;
+    };
+    f.downloads.start(); await expect.poll(() => f.state(first.jobId).state).toBe("RECONCILING");
+    await expect.poll(() => f.fileEngine.starts).toBe(1);
+    await expect.poll(() => (Reflect.get(f.downloads, "active") as Map<string, unknown>).size).toBe(0);
+    f.downloads.control({ jobId: second.jobId, operation: "pause", requestKey: randomUUID() });
+    f.downloads.control({ jobId: first.jobId, operation: "cancel", requestKey: randomUUID() });
+    await f.sidecar.quiesceAccount(f.account.id); await f.roots.files.close(); f.roots.unavailable(f.grant.id);
+    f.downloads.writersReaped(randomUUID());
+    await new Promise((done) => setTimeout(done, 550));
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_claim").get()).toEqual({ n: 1 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM owned_attempt_cleanup").get()).toEqual({ n: 0 });
+    expect(f.db.connection.prepare("SELECT demand_state FROM download_job_item WHERE job_id=?").get(second.jobId)).toEqual({ demand_state: "ACTIVE" });
+    expect(f.fileEngine.starts).toBe(1);
+  });
   it("取消后的同范围可重新预览确认，复用条目而非永久停留在 CANCELLED", async () => {
     const f = await fixture(), first = await f.confirm(); f.fileEngine.holding = true; f.downloads.start(); await expect.poll(() => f.fileEngine.starts).toBe(1);
     f.downloads.control({ jobId: first.jobId, operation: "cancel", requestKey: randomUUID() }); await expect.poll(() => f.state(first.jobId).state).toBe("CANCELLED");
@@ -1303,6 +1359,9 @@ describe.skipIf(process.platform !== "darwin")("逐文件提交异常与安全�
   });
   it("取消作业仍核对原提交，完成事实和文件保留且不恢复下载需求", async () => {
     const f = await interrupted(); f.downloads.control({ jobId: f.job.jobId, operation: "cancel", requestKey: randomUUID() });
+    await new Promise((done) => setTimeout(done, 550));
+    expect(f.downloads.get(f.job.jobId)?.state).toBe("CANCELLING");
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_claim WHERE item_id=?").get(f.row.id)).toEqual({ n: 1 });
     f.repair(); f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
     await expect.poll(() => f.downloads.get(f.job.jobId)?.state).toBe("CANCELLED");
     expect(f.db.connection.prepare("SELECT state FROM download_item WHERE id=?").get(f.row.id)).toEqual({ state: "COMPLETED" });
