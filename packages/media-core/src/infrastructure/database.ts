@@ -30,6 +30,7 @@ import { independentRecognitionMigrationSql, migrateIndependentRecognition } fro
 import { independentSyncMigrationSql, migrateIndependentSync } from "./independent-sync-migration.js";
 import { syncReceiptMigrationSql, migrateSyncReceiptEvidence } from "./sync-receipt-migration.js";
 import { syncHistoryMigrationSql, migrateSyncHistory } from "./sync-history-migration.js";
+import { downloadCleanupMigrationSql } from "./download-cleanup-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
@@ -100,6 +101,7 @@ export const migrations: readonly Migration[] = [
   { version: 31, sql: embyBindingMigrationSql },
   { version: 32, sql: independentSyncMigrationSql, apply: migrateIndependentSync },
   { version: 33, sql: independentRecognitionMigrationSql, apply: migrateIndependentRecognition, rebuildsReferencedTables: true },
+  { version: 34, sql: downloadCleanupMigrationSql },
 ];
 
 export class CoreDatabase {
