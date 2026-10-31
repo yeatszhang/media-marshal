@@ -16,9 +16,11 @@ import { pathToFileURL } from "node:url";
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 const { identify, matches, stopVerified, children } = createRequire(resolve("package.json"))(resolve("tools/desktop-sidecars/process-identity.cjs"));
 const occupied: Server[] = [];
+const occupiedSockets = new Set<import("node:net").Socket>();
 test.beforeAll(async () => {
   for (const port of [8000, 8080]) {
     const server = createServer();
+    server.on("connection", (socket) => { occupiedSockets.add(socket); socket.once("close", () => occupiedSockets.delete(socket)); });
     await new Promise<void>((resolve, reject) => {
       server.once("error", (error: NodeJS.ErrnoException) => {
         if (error.code === "EADDRINUSE") resolve();
@@ -32,6 +34,8 @@ test.beforeAll(async () => {
   }
 });
 test.afterAll(async () => {
+  // 预留端口可能收到探测连接；先关闭测试持有的连接，避免等待端口释放时挂起。
+  for (const socket of occupiedSockets) socket.destroy();
   await Promise.all(
     occupied.map(
       (server) => new Promise<void>((resolve) => server.close(() => resolve())),
@@ -273,7 +277,7 @@ test("目录批量识别经真实稳定窗口与 IPC 提交，重启保留逐项
   }, { source, target });
   // 使用真实单调时钟等待生产稳定窗口，不注入 READY 或替换观察结果。
   await expect.poll(async () => { const result = await window.evaluate(() => window.desktopApi.listIngestionCandidates({})); return result.items.length === 2 && result.items.every((item) => item.state === "READY"); }, { timeout: 160000, intervals: [1000, 5000] }).toBe(true);
-  expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 }); await window.getByRole("link", { name: "待处理", exact: true }).click(); await window.getByRole("button", { name: "按目录查看", exact: true }).click(); await window.getByRole("button", { name: "查看目录文件", exact: true }).click();
+  expect(await window.evaluate(() => window.desktopApi.listTasks({}))).toMatchObject({ total: 0 }); await window.getByRole("link", { name: "待处理", exact: true }).click(); await window.getByRole("button", { name: "目录批量", exact: true }).click();
   const panel = window.getByRole("region", { name: "目录文件与候选摘要", exact: true }); await expect(panel).toContainText("整组 2 项"); await panel.getByRole("button", { name: "选择本页可处理文件", exact: true }).click(); await panel.getByRole("button", { name: "提交所选文件识别（2）", exact: true }).click();
   await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listRecognitionBatches({}))).items[0]?.submitted, { timeout: 20000 }).toBe(2);
   await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listRecognitionBatches({}))).items[0]?.recognitionFailed, { timeout: 30000 }).toBe(2);
@@ -1077,7 +1081,7 @@ db.close();
 `);
   await new Promise<void>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [seed, profile], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (error) => error ? fail(error) : done()));
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; application = await _electron.launch({ executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined, args: [...(process.env.MARSHAL_EXECUTABLE ? [] : [process.env.MARSHAL_APP_PATH ?? resolve("apps/desktop")]), `--user-data-dir=${profile}`], env }); window = await application.firstWindow(); await expect(window.getByText("核心已连接", { exact: true })).toBeVisible(); await window.getByRole("link", { name: "待处理", exact: true }).click();
-  await window.getByRole("button", { name: "按季集查看", exact: true }).click();
+  await window.getByRole("button", { name: "季集辅助", exact: true }).click();
   const groups = window.getByRole("region", { name: "待确认季集候选组", exact: true }); await expect(groups).toContainText("共 2 项待确认"); await groups.getByRole("button", { name: "查看本季候选文件", exact: true }).click();
   const members = window.getByRole("region", { name: "季集候选文件与确认范围", exact: true }); await expect(members).toContainText("上半季/作品.S01E01.mkv"); await expect(members).toContainText("下半季/作品.S01E02.mkv");
   await members.getByRole("checkbox", { name: "季集选择 上半季/作品.S01E01.mkv", exact: true }).check(); await members.getByRole("button", { name: "预览本季所选文件（1）", exact: true }).click();
@@ -1090,6 +1094,7 @@ db.close();
   await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listOrganizeBatches({}))).items[0]?.state, { timeout: 165000, intervals: [1000, 5000] }).toBe("BLOCKED");
   const history = window.getByRole("region", { name: "批量整理预览与提交记录", exact: true }); await expect(history).toContainText("S1 E1"); await expect(history).toContainText("作品.S01E01.mkv"); await expect(history).toContainText("作品.S01E02.mkv"); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await expect.poll(() => window.evaluate(() => innerWidth)).toBe(920); expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await history.screenshot({ path: "test-results/desktop/organize-batch-conflict.png" });
+  await window.getByRole("button", { name: "季集辅助", exact: true }).click(); await groups.getByRole("button", { name: "查看本季候选文件", exact: true }).click(); await members.getByRole("button", { name: "选择本页待确认文件", exact: true }).click();
   await members.getByRole("button", { name: "预览本季所选文件（2）", exact: true }).click(); editor = window.getByRole("region", { name: "共同作品与逐文件整理草稿", exact: true }); await expect(editor.getByLabel("共同 TMDB 作品 ID", { exact: true })).toHaveValue("7"); await editor.getByLabel("本批命名模板", { exact: true }).fill("季集验收/{title}-S{season:02d}E{episode:02d}.{ext}"); await editor.getByRole("button", { name: "生成所选文件的整理预览", exact: true }).click();
   await expect.poll(async () => (await window.evaluate(() => window.desktopApi.listOrganizeBatches({}))).items[0]?.state).toBe("READY"); const ready = (await window.evaluate(() => window.desktopApi.listOrganizeBatches({}))).items[0]!;
   const submit = history.getByRole("button", { name: "确认提交本批 COPY（2）", exact: true }); await expect(submit).toBeDisabled(); expect(await window.evaluate(() => window.desktopApi.listJobs())).toEqual([]); await history.screenshot({ path: "test-results/desktop/organize-batch-ready.png" });

@@ -24,18 +24,18 @@ async function mount() {
 async function click(name: string) { const node = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === name); expect(node, name).toBeTruthy(); await act(async () => node!.click()); }
 describe("目录摘要与持久识别批次界面", () => {
   it("目录摘要覆盖整组但只提交明确选择的本页未识别文件，摘要和字段选择不执行 COPY", async () => {
-    const f = await mount(); expect(f.api.recognizeIngestionBatch).not.toHaveBeenCalled(); await click("查看目录文件"); expect(f.element.textContent).toContain("整组 101 项"); expect(f.element.textContent).toContain("部分文件支持"); expect(f.element.textContent).not.toContain("全部文件的共同候选");
+    const f = await mount(); expect(f.api.recognizeIngestionBatch).not.toHaveBeenCalled(); expect(f.api.getIngestionDirectory).toHaveBeenCalled(); expect(f.element.textContent).toContain("整组 101 项"); expect(f.element.textContent).toContain("部分文件支持"); expect(f.element.textContent).not.toContain("全部文件的共同候选");
     await click("选择本页可处理文件"); await click("编辑所选识别信息（1）"); expect(f.edit).toHaveBeenCalledWith([f.taskId]); expect(f.api.recognizeIngestionBatch).not.toHaveBeenCalled();
     await click("用于所选文件生成计划（1）"); expect(f.organize).toHaveBeenCalledWith([f.taskId], { tmdbId: 7, mediaType: "TV_SHOW" }); expect(f.api.confirmOrganize).not.toHaveBeenCalled();
     await click("提交所选文件识别（1）"); expect(f.api.recognizeIngestionBatch).toHaveBeenCalledWith({ candidateIds: [f.candidateId], requestKey: expect.any(String) }); expect(f.element.textContent).toContain("等待原磁盘恢复"); expect(f.api.confirmOrganize).not.toHaveBeenCalled();
     const count = f.api.recognizeIngestionBatch.mock.calls.length; await act(async () => { await vi.advanceTimersByTimeAsync(4000); }); expect(f.api.recognizeIngestionBatch).toHaveBeenCalledTimes(count);
   });
   it("响应丢失重试同一请求键，轮询不清除操作错误，不重放旧批次", async () => {
-    const f = await mount(); await click("查看目录文件"); await click("选择本页可处理文件"); f.api.recognizeIngestionBatch.mockRejectedValueOnce(new Error("提交响应丢失，请重试原请求")); await click("提交所选文件识别（1）"); await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); expect(f.element.textContent).toContain("提交响应丢失");
+    const f = await mount(); expect(f.api.getIngestionDirectory).toHaveBeenCalled(); await click("选择本页可处理文件"); f.api.recognizeIngestionBatch.mockRejectedValueOnce(new Error("提交响应丢失，请重试原请求")); await click("提交所选文件识别（1）"); await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); expect(f.element.textContent).toContain("提交响应丢失");
     await click("提交所选文件识别（1）"); expect(f.api.recognizeIngestionBatch.mock.calls[0]).toEqual(f.api.recognizeIngestionBatch.mock.calls[1]); expect(f.api.recognizeIngestionBatch).toHaveBeenCalledTimes(2);
   });
   it("取消只停止后续提交，切页清理本页选择，卸载释放轮询而不停止共享应用", async () => {
-    const f = await mount(); await click("查看目录文件"); await click("选择本页可处理文件"); await click("下一页文件"); expect(f.element.textContent).toContain("提交所选文件识别（0）"); await click("停止后续识别提交"); expect(f.api.cancelRecognitionBatch).toHaveBeenCalledTimes(1); expect(f.element.textContent).toContain("已经提交的识别任务保留");
+    const f = await mount(); expect(f.api.getIngestionDirectory).toHaveBeenCalled(); await click("选择本页可处理文件"); await click("下一页文件"); expect(f.element.textContent).toContain("提交所选文件识别（0）"); await click("停止后续识别提交"); expect(f.api.cancelRecognitionBatch).toHaveBeenCalledTimes(1); expect(f.element.textContent).toContain("已经提交的识别任务保留");
     await f.unmount(); const count = f.api.listRecognitionBatches.mock.calls.length; await vi.advanceTimersByTimeAsync(10000); expect(f.api.listRecognitionBatches).toHaveBeenCalledTimes(count); expect(f.app.state).toBe("running");
   });
 });

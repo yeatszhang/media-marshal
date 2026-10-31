@@ -53,7 +53,7 @@ test("全部主导航与账号、设置在常用和最小窗口保持布局与�
   await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "主导航" });
   const links = await nav.getByRole("link").allTextContents();
-  const headings: Record<string, string> = { 总览: "让好内容，回到你的媒体库。", 来源: "来源同步", 待处理: "候选文件与识别确认" };
+  const headings: Record<string, string> = { 总览: "让好内容，回到你的媒体库。", 来源: "来源同步", 待处理: "识别与人工确认" };
   for (const width of [1240, 920]) {
     await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
     for (const name of links) {

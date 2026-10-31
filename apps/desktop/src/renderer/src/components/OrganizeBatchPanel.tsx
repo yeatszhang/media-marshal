@@ -8,7 +8,7 @@ import { ErrorNotice } from "./shared";
 export interface CommonWork { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW" }
 const labels = { PREVIEWING: "正在逐文件预览", READY: "计划已就绪，等待确认", BLOCKED: "有文件被阻断", EXPIRED: "预览已过期", CONFIRMING: "正在逐项提交", SUBMITTED: "COPY 已提交", DONE: "本批文件已整理", PARTIAL_FAILED: "部分文件需处理", CANCELLED: "已停止后续处理" };
 const operationLabels: Record<string, string> = { PLANNED: "等待复制", COPYING: "正在复制", VERIFIED: "已核验，等待发布", FILE_COMMITTED: "已发布，等待记账", RECORDED: "文件已完成", NEEDS_ATTENTION: "需要处理" };
-export function OrganizeBatchEditor({ taskIds, work, onClose }: { taskIds: string[]; work?: CommonWork; onClose(): void }) {
+export function OrganizeBatchEditor({ taskIds, work, onClose, onPreviewed = onClose }: { taskIds: string[]; work?: CommonWork; onClose(): void; onPreviewed?(): void }) {
   const model = useService(OrganizeBatchesViewModel), state = useServiceState(model, (value) => value), key = taskIds.join(","), heading = useRef<HTMLHeadingElement>(null), initialized = useRef(false), alive = useRef(true);
   const [id, setId] = useState(work ? String(work.tmdbId) : ""), [type, setType] = useState<"MOVIE" | "TV_SHOW">(work?.mediaType ?? "TV_SHOW"), [rows, setRows] = useState<Record<string, { checked: boolean; season: string; episode: string; end: string; targetId: string }>>({}), [template, setTemplate] = useState(""), [accessories, setAccessories] = useState(true), [error, setError] = useState<string | null>(null);
   useEffect(() => { alive.current = true; void model.loadTasks(taskIds); heading.current?.focus(); return () => { alive.current = false; model.closeDraft(); }; }, [model, key]);
@@ -23,7 +23,7 @@ export function OrganizeBatchEditor({ taskIds, work, onClose }: { taskIds: strin
         if (state.routing[task.taskId]?.ruleId && (options.length !== 1 && !options.some((target) => target.id === row.targetId))) throw new Error(`${task.sourcePath ?? task.taskId}：请为此文件选择匹配类型的目标，缺目标时先配置识别规则`);
         return { taskId: task.taskId, expectedRevision: task.revision ?? 0, selection: { ...(row.targetId ? { targetId: row.targetId } : {}), tmdbId: Number(id), mediaType: type, season: type === "TV_SHOW" ? integer(row.season, 0, 999, "季号") : null, episode: type === "TV_SHOW" ? integer(row.episode, 1, 10000, "起始集号") : null, episodeEnd: type === "TV_SHOW" ? integer(row.end, 1, 10000, "结束集号") : null } };
       }); if (!items.length) throw new Error("请至少保留一个文件，取消重复文件后可重新生成预览");
-      if ((await model.preview({ items, includeAccessories: accessories, ...(template.trim() ? { template } : {}) })) && alive.current) onClose();
+      if ((await model.preview({ items, includeAccessories: accessories, ...(template.trim() ? { template } : {}) })) && alive.current) onPreviewed();
     } catch (failure) { setError((failure as Error).message); }
   };
   return <section className="panel organize-batch-editor" aria-label="共同作品与逐文件整理草稿"><div className="cloud-browser-toolbar"><h2 ref={heading} tabIndex={-1}>共同作品与逐文件计划</h2><Button variant="ghost" disabled={state.busy} onClick={onClose}>关闭整理草稿</Button></div><p className="cloud-hint">共同作品用于本次所选文件。逐项填写季集或取消勾选；这里的编辑不保存识别字段，也不会复制文件。</p><ErrorNotice message={error ?? state.error} />
