@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { doctor } from "./doctor.ts";
 import { createBuild, buildStatus } from "./build.ts";
+import { startSession, sessionCommand } from "./session.ts";
 import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -61,6 +62,12 @@ export async function requestFromArgs(args: string[]): Promise<Request> {
 }
 export async function dispatch(request: Request): Promise<unknown> {
   const root = resolve(import.meta.dirname, "../..");
+  if (request.command === "start") return startSession(root, request);
+  if (
+    ["status", "stop", "restart"].includes(request.command) &&
+    !(request.payload as Input<"status">).jobId
+  )
+    return sessionCommand(root, request);
   if (request.command === "build") return createBuild(root, request);
   if (request.command === "status" && (request.payload as Input<"status">).jobId)
     return buildStatus(root, (request.payload as Input<"status">).jobId!);
@@ -74,7 +81,7 @@ export async function dispatch(request: Request): Promise<unknown> {
       usage:
         "npm run --silent desktop:agent -- <command> --json [--session UUID] [--request UUID] [--input JSON文件]",
       protocol: 1,
-      implemented: ["help", "doctor", "build", "status(jobId)"],
+      implemented: ["help", "doctor", "build", "status", "start(empty)", "stop", "restart"],
     };
   throw new ToolError(
     "CAPABILITY_UNAVAILABLE",
@@ -90,7 +97,7 @@ export async function main(args: string[]) {
     const value = await dispatch(request);
     const response = result(request, value);
     if (
-      ["build", "status"].includes(request.command) &&
+      ["build", "status", "start", "restart", "stop"].includes(request.command) &&
       value &&
       typeof value === "object" &&
       "status" in value
@@ -106,7 +113,7 @@ export async function main(args: string[]) {
     process.stdout.write(JSON.stringify(response) + "\n");
   } catch (error) {
     process.stdout.write(JSON.stringify(failure(error, request)) + "\n");
-    process.exitCode = 1;
+    process.exitCode = error instanceof ToolError && error.state !== "failed" ? 2 : 1;
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)

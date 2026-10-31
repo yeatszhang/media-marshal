@@ -1,24 +1,17 @@
-import { expect, test, _electron, type ElectronApplication } from "@playwright/test";
+import { expect, test, type ElectronApplication } from "@playwright/test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { launchDesktop } from "./support/electron";
+
 let application: ElectronApplication, directory: string;
 test.beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "marshal-presentation-"));
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
-  );
-  delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
-    ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}),
-    args: [
-      ...(process.env.MARSHAL_EXECUTABLE ? [] : [resolve("apps/desktop")]),
-      `--user-data-dir=${join(directory, "data")}`,
-    ],
-    env,
+  application = await launchDesktop(resolve("."), {
+    dataDir: join(directory, "data"),
+    mode: process.env.MARSHAL_E2E_MODE === "foreground" ? "foreground" : "background",
+    target: process.env.MARSHAL_EXECUTABLE ? "packaged" : "development",
   });
 });
 test.afterEach(async () => {

@@ -75,7 +75,7 @@ test("CLI stdout 只有机器结果，未知与未接入命令以非零退出", 
   const invalid = invoke("eval");
   assert.equal(invalid.status, 1);
   assert.equal(JSON.parse(invalid.stdout).error.code, "UNKNOWN_COMMAND");
-  const blocked = invoke("start");
-  assert.equal(blocked.status, 1);
+  const blocked = invoke("verify");
+  assert.equal(blocked.status, 2);
   assert.equal(JSON.parse(blocked.stdout).status, "blocked");
 });

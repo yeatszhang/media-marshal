@@ -29,6 +29,7 @@ function active(path: string) {
     return true;
   const roots = [
     "apps/desktop/src/",
+    "apps/desktop/tests/support/",
     "apps/desktop/resources/icons/",
     "packages/contracts/",
     "packages/media-core/",
