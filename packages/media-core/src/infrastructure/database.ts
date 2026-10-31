@@ -102,6 +102,7 @@ export const migrations: readonly Migration[] = [
   { version: 32, sql: independentSyncMigrationSql, apply: migrateIndependentSync },
   { version: 33, sql: independentRecognitionMigrationSql, apply: migrateIndependentRecognition, rebuildsReferencedTables: true },
   { version: 34, sql: downloadCleanupMigrationSql },
+  { version: 35, sql: "ALTER TABLE download_item ADD COLUMN failure_detail_code TEXT CHECK(failure_detail_code IS NULL OR failure_detail_code IN ('TARGET_OCCUPIED','LOCAL_FILE_CHANGED','FILE_EVIDENCE_MISMATCH','LOCAL_FILE_MISSING','RECEIPT_CONFLICT','STOP_UNCONFIRMED'));" },
 ];
 
 export class CoreDatabase {

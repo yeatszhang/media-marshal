@@ -77,7 +77,7 @@ export class LocalSync {
         file.reason = state === "REMOVED" && receipts.isCleaned(receipt.id) ? "已核验媒体库内容并主动清理受管副本；成功同步记录保留，普通执行不会补回" : state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回，可显式预览重新同步" : state === "PRESENT" ? "已同步，复用成功收据" : state === "CONFLICT" ? "已同步目标的身份或内容已变化，请保留双方文件并核对" : "原目标卷或目录不可用，不认定为删除";
       } else {
         if (this.stable(namespace + JSON.stringify(segments), proof)) { file.state = "READY"; file.reason = null; }
-        try { await target.assertVacant(targetSegments); } catch (error) { file.state = error instanceof CloudError && error.code === "CONFLICT" ? "CONFLICT" : "UNAVAILABLE"; file.reason = file.state === "CONFLICT" ? "目标已被其他内容占用，不覆盖；请处理后重新预览" : "目标目录不可用，请恢复原磁盘和授权后重试"; }
+        try { await target.assertVacant(targetSegments); } catch (error) { file.state = error instanceof CloudError && ["CONFLICT", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "RECEIPT_CONFLICT"].includes(error.code) ? "CONFLICT" : "UNAVAILABLE"; file.reason = file.state === "CONFLICT" ? "目标已被其他内容占用，不覆盖；请处理后重新预览" : "目标目录不可用，请恢复原磁盘和授权后重试"; }
       }
       result.push(file);
     }
@@ -141,7 +141,7 @@ export class LocalSync {
       try { await this.copy(row, controller.signal); }
       catch (error) {
         const paused = controller.signal.aborted || error instanceof DesktopError && error.code === "INTERRUPTED";
-        const failure = paused ? "同步已暂停，原计划和文件保留，恢复后重新核对" : error instanceof DesktopError ? error.message : error instanceof CloudError && error.code === "CONFLICT" ? "同步目标被占用或文件证据不一致，请保留双方文件，处理后重试原作业" : "原输入或目标不可用，请恢复原磁盘和目录授权后重试";
+        const failure = paused ? "同步已暂停，原计划和文件保留，恢复后重新核对" : error instanceof DesktopError ? error.message : error instanceof CloudError && ["CONFLICT", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "RECEIPT_CONFLICT"].includes(error.code) ? "同步目标被占用或文件证据不一致，请保留双方文件，处理后重试原作业" : "原输入或目标不可用，请恢复原磁盘和目录授权后重试";
         if (!paused) db.transaction(() => { db.prepare("UPDATE local_sync_operation SET phase='NEEDS_ATTENTION',failure=?,updated_at=? WHERE id=?").run(failure, new Date(this.now()).toISOString(), row.id); db.prepare("UPDATE local_sync_member SET state='NEEDS_ATTENTION',failure=? WHERE operation_id=?").run(failure, row.id); })();
       } finally { this.active.delete(row.id); }
     }

@@ -62,11 +62,11 @@ export class SyncReceipts {
     return db.transaction(() => {
       const prior = this.byResult(input.result_kind, input.result_id);
       if (prior) {
-        if (prior.source_kind !== input.source_kind || prior.source_namespace !== input.source_namespace || prior.source_object_key !== input.source_object_key || prior.source_version_key !== input.source_version_key || prior.target_directory_id !== input.target_directory_id || prior.target_slot !== input.target_slot || prior.target_segments_json !== input.target_segments_json || prior.request_variant !== input.request_variant || prior.size !== parsed.size || prior.local_sha256 !== parsed.sha256) throw new CloudError("CONFLICT");
+        if (prior.source_kind !== input.source_kind || prior.source_namespace !== input.source_namespace || prior.source_object_key !== input.source_object_key || prior.source_version_key !== input.source_version_key || prior.target_directory_id !== input.target_directory_id || prior.target_slot !== input.target_slot || prior.target_segments_json !== input.target_segments_json || prior.request_variant !== input.request_variant || prior.size !== parsed.size || prior.local_sha256 !== parsed.sha256) throw new CloudError("RECEIPT_CONFLICT");
         const stored = db.prepare("SELECT evidence_json FROM sync_receipt_evidence WHERE receipt_id=?").get(prior.id) as { evidence_json: string } | undefined;
         if (stored) {
           const before = localFileEvidenceSchema.parse(JSON.parse(stored.evidence_json));
-          if (before.volumeId !== parsed.volumeId || before.inode !== parsed.inode || before.birthtimeNs !== parsed.birthtimeNs) throw new CloudError("CONFLICT");
+          if (before.volumeId !== parsed.volumeId || before.inode !== parsed.inode || before.birthtimeNs !== parsed.birthtimeNs) throw new CloudError("RECEIPT_CONFLICT");
         } else db.prepare("INSERT INTO sync_receipt_evidence VALUES(?,?)").run(prior.id, JSON.stringify(parsed));
         if (input.source_kind === "cloud") recordCloudReceiptOrigins(db, prior.id, input.source_namespace, input.source_object_key);
         return prior;
@@ -80,7 +80,7 @@ export class SyncReceipts {
   }
   recordDownload(itemId: string, evidence: LocalFileEvidence) {
     const row = this.database.connection.prepare("SELECT * FROM download_item WHERE id=? AND state='COMPLETED'").get(itemId) as { id: string; account_id: string; remote_ref: string; version_key: string; version_json: string; target_root_id: string; target_path_key: string; target_segments_json: string; local_sha256: string; completed_size: number; updated_at: string; request_variant: string } | undefined;
-    if (!row || row.local_sha256 !== evidence.sha256 || row.completed_size !== evidence.size) throw new CloudError("CONFLICT");
+    if (!row || row.local_sha256 !== evidence.sha256 || row.completed_size !== evidence.size) throw new CloudError("RECEIPT_CONFLICT");
     return this.record({ source_kind: "cloud", source_namespace: row.account_id, source_object_key: row.remote_ref, source_version_key: row.version_key, version_json: row.version_json, target_directory_id: row.target_root_id, target_slot: row.target_path_key, target_segments_json: row.target_segments_json, completed_at: row.updated_at, result_kind: "download-item", result_id: row.id, request_variant: row.request_variant }, evidence);
   }
   async observe(receipt: SyncReceipt, root: ManagedRoot): Promise<ReceiptLocalState> {
@@ -99,7 +99,7 @@ export class SyncReceipts {
       const stored = this.database.connection.prepare("SELECT evidence_json FROM sync_receipt_evidence WHERE receipt_id=?").get(receipt.id) as { evidence_json: string } | undefined;
       const before = stored ? localFileEvidenceSchema.parse(JSON.parse(stored.evidence_json)) : null;
       state = before && before.volumeId === after.volumeId && before.inode === after.inode && before.birthtimeNs === after.birthtimeNs && receipt.local_sha256 === after.sha256 && receipt.size === after.size ? "PRESENT" : "CONFLICT";
-    } catch (error) { state = error instanceof CloudError && error.code === "CONFLICT" ? "CONFLICT" : "UNAVAILABLE"; }
+    } catch (error) { state = error instanceof CloudError && ["CONFLICT", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH"].includes(error.code) ? "CONFLICT" : "UNAVAILABLE"; }
     this.observed(receipt.id, state); return state;
   }
   private observed(id: string, state: ReceiptLocalState) {

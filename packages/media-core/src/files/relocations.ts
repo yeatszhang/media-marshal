@@ -71,7 +71,7 @@ export class FileRelocations {
     throw conflict();
   }
   private evidence(json: string | null) { if (!json) throw conflict(); return localFileEvidenceSchema.parse(JSON.parse(json)); }
-  private async checkNewTarget<T>(work: () => Promise<T>): Promise<T> { try { return await work(); } catch (error) { if ((error as { code?: string }).code === "CONFLICT") throw new NewTargetConflict(); throw error; } }
+  private async checkNewTarget<T>(work: () => Promise<T>): Promise<T> { try { return await work(); } catch (error) { if (["CONFLICT", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH"].includes((error as { code?: string }).code ?? "")) throw new NewTargetConflict(); throw error; } }
   private async confirmFinal(row: RelocationRow, plan: RelocationPlan, target: ManagedRoot, signal?: AbortSignal) {
     const expected = this.evidence(row.evidence_json);
     try { return await target.confirmRelocation(plan.to.segments, expected, signal); }

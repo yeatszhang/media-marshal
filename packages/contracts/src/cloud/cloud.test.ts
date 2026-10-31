@@ -27,6 +27,17 @@ describe("云端公开边界", () => {
       expect(() => parseCloudRequest({ action, payload: {} })).toThrow(CloudError);
     expect(() => parseCloudRequest({ action: "cloud.downloads.confirm", payload: { previewId: "http://example.com", requestKey: randomUUID() } })).toThrow();
   });
+  it("逐项核对只接受应用 UUID，异常查询有界分页且固定失败原因不携带原始响应", () => {
+    const payload = { jobId: randomUUID(), itemId: randomUUID() };
+    expect(parseCloudRequest({ action: "cloud.downloads.reconcile", payload }).payload).toEqual(payload);
+    for (const extra of [{ path: "/private/file" }, { attemptId: randomUUID() }, { overwrite: true }, { url: "http://127.0.0.1" }])
+      expect(() => parseCloudRequest({ action: "cloud.downloads.reconcile", payload: { ...payload, ...extra } })).toThrow();
+    expect(() => parseCloudRequest({ action: "cloud.downloads.issues", payload: { jobId: payload.jobId, pageSize: 101 } })).toThrow();
+    for (const code of ["TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "LOCAL_FILE_MISSING", "RECEIPT_CONFLICT", "STOP_UNCONFIRMED"] as const) {
+      expect(cloudFailureSchema.safeParse(cloudFailure(new CloudError(code))).success).toBe(true);
+      expect(cloudFailure(new CloudError(code)).retryable).toBe(false);
+    }
+  });
   it("账号查询 DTO 不能回传凭据或实现私有字段", () => {
     const account = { id: randomUUID(), name: "账号", providerKind: "quark", status: "READY", capabilities: null };
     expect(cloudAccountSchema.safeParse(account).success).toBe(true);

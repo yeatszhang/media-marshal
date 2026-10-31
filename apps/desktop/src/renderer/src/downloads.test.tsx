@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ContainerProvider } from "@yeatz/app-framework/react";
-import type { DesktopApi, DownloadJob } from "@media-marshal/contracts";
+import { cloudFailure, CloudError, type DownloadItemIssue, type DesktopApi, type DownloadJob } from "@media-marshal/contracts";
 import { createRendererApplication, DownloadsViewModel } from "./services";
 import { Downloads } from "./pages/Downloads";
 import { i18nReady } from "./i18n";
@@ -74,5 +74,50 @@ describe("下载队列交互与观测边界", () => {
     const f = await mount([{ ...completed, progress, ingestion: { ...counts, organization: "NOT_ENABLED" } }, { ...completed, id: crypto.randomUUID(), progress, ingestion: { ...counts, pending: 1, organization: "REVIEW_REQUIRED" } }]);
     expect(f.element.textContent).toContain("未启用整理"); expect(f.element.textContent).toContain("整理归属待核对"); expect(f.element.textContent).not.toContain("当前待接入");
     expect(f.api.confirmDownload).not.toHaveBeenCalled(); expect(f.api.previewDownload).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("逐文件异常反馈与核对", () => {
+  const issue = (changes: Partial<DownloadItemIssue> = {}): DownloadItemIssue => ({ itemId: crypto.randomUUID(), relativePath: "剧集/超长目录/第01集.mkv", state: "RECONCILING", stage: "COMMIT", failure: cloudFailure(new CloudError("CONFLICT")), checking: false, canReconcile: true, blockedReason: null, ...changes });
+  it("传输与部分异常分别说明，核对成功移除异常且不发重传请求", async () => {
+    const current = job(), f = await mount([{ ...current, issueCount: 1, failure: cloudFailure(new CloudError("CONFLICT")) }]), detail = issue();
+    const list = vi.fn(async () => ({ items: [detail], total: 1 })), reconcile = vi.fn(async () => ({ jobId: current.id }));
+    f.api.listDownloadIssues = list; f.api.reconcileDownload = reconcile;
+    expect(f.element.textContent).toContain("其他文件继续处理，1 项异常待处理");
+    const directory = [...f.element.querySelectorAll("button")].find((button) => button.textContent === "打开完成目录")!;
+    await act(async () => directory.click()); expect(f.api.openDownloadDirectory).toHaveBeenCalledWith(current.id);
+    const panel = f.element.querySelector<HTMLDetailsElement>(".download-issues")!;
+    await act(async () => { panel.open = true; panel.dispatchEvent(new Event("toggle")); });
+    expect(f.element.textContent).toContain(detail.relativePath); expect(f.element.textContent).toContain("历史记录未保存具体冲突条件");
+    expect(f.element.textContent).not.toContain("操作存在冲突，请查询当前状态");
+    list.mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(f.api.listDownloads).mockResolvedValue({ items: [{ ...current, state: "COMPLETED", issueCount: 0 }], total: 1 });
+    const button = [...f.element.querySelectorAll("button")].find((button) => button.textContent === "重新核对此文件")!;
+    await act(async () => button.click());
+    expect(reconcile).toHaveBeenCalledWith({ jobId: current.id, itemId: detail.itemId });
+    expect(f.element.querySelector(".download-issues")).toBeNull();
+    expect(f.api.confirmDownload).not.toHaveBeenCalled(); expect(f.api.controlDownload).not.toHaveBeenCalled();
+  });
+  it("失败定位到对应文件，刷新明细保留操作失败；停止证据不足直接说明禁用原因", async () => {
+    const f = await mount([{ ...job("RECONCILING"), issueCount: 2 }]);
+    const blocked = issue({ itemId: crypto.randomUUID(), relativePath: "另一集.mkv", canReconcile: false, blockedReason: "尚未确认原下载执行已停止，请等待停止核对。" });
+    f.api.listDownloadIssues = vi.fn(async () => ({ items: [issue({ itemId: "fda060cb-655c-4caf-9967-f27399f65d0c" }), blocked], total: 2 }));
+    f.api.reconcileDownload = vi.fn(async () => { throw new Error("目标已被其他文件占用，请移走占用文件后重新核对"); });
+    const panel = f.element.querySelector<HTMLDetailsElement>(".download-issues")!;
+    await act(async () => { panel.open = true; panel.dispatchEvent(new Event("toggle")); });
+    const buttons = [...panel.querySelectorAll("button")].filter((button) => button.textContent === "重新核对此文件");
+    expect(buttons[1]?.disabled).toBe(true); expect(panel.textContent).toContain("尚未确认原下载执行已停止");
+    await act(async () => buttons[0]!.click()); expect(buttons[0]!.closest("li")?.textContent).toContain("目标已被其他文件占用");
+    expect(buttons[1]!.closest("li")?.textContent).not.toContain("目标已被其他文件占用");
+  });
+  it("分页获取全部异常，核对中的条目显示进度并阻止重复提交", async () => {
+    const f = await mount([{ ...job(), issueCount: 11 }]);
+    const list = vi.fn(async () => ({ items: [issue({ checking: true, canReconcile: false })], total: 11 })); f.api.listDownloadIssues = list;
+    const panel = f.element.querySelector<HTMLDetailsElement>(".download-issues")!;
+    await act(async () => { panel.open = true; panel.dispatchEvent(new Event("toggle")); });
+    expect(panel.textContent).toContain("正在核对已有文件"); expect(panel.querySelector('button[aria-label^="重新核对"]')).toBeNull();
+    await act(async () => [...panel.querySelectorAll("button")].find((button) => button.textContent === "下一页异常")!.click());
+    expect(list).toHaveBeenLastCalledWith({ jobId: f.model.state.items[0]!.id, page: 2, pageSize: 10 });
   });
 });

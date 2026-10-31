@@ -1,3 +1,4 @@
+import { downloadFailureColumns } from "./download-failures.js";
 import { z } from "zod";
 import { CloudError, cloudFailure } from "@media-marshal/contracts";
 import { localFileEvidenceSchema } from "@media-marshal/contracts/internal";
@@ -45,7 +46,7 @@ export class IngestionOutbox {
         db.prepare("UPDATE ingestion_outbox SET state='ACKNOWLEDGED',candidate_id=?,failure_code=NULL,next_attempt_at=NULL,updated_at=? WHERE id=? AND state='DELIVERING'").run(candidateId, new Date(this.now()).toISOString(), row.id);
       } catch (error) {
         const failure = cloudFailure(error);
-        db.prepare("UPDATE ingestion_outbox SET state='PENDING',failure_code=?,next_attempt_at=?,updated_at=? WHERE id=? AND state!='ACKNOWLEDGED'").run(failure.code, new Date(this.now() + Math.min(30000 * 2 ** row.delivery_attempts, 3600000)).toISOString(), new Date(this.now()).toISOString(), row.id);
+        db.prepare("UPDATE ingestion_outbox SET state='PENDING',failure_code=?,next_attempt_at=?,updated_at=? WHERE id=? AND state!='ACKNOWLEDGED'").run(downloadFailureColumns(failure.code)[0], new Date(this.now() + Math.min(30000 * 2 ** row.delivery_attempts, 3600000)).toISOString(), new Date(this.now()).toISOString(), row.id);
       } finally { clearTimeout(timeout); this.abort = undefined; }
     }
   }

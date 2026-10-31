@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { CloudError, cloudFailure, type CloudFailure, type CloudInput, type DownloadJob, type DownloadState } from "@media-marshal/contracts";
+import { CloudError, DesktopError, cloudFailure, type CloudFailure, type CloudInput, type DownloadJob, type DownloadState } from "@media-marshal/contracts";
 import { transferPlanSchema, localFileEvidenceSchema, type ExecutionContext, type ExecutionHandle, type HostEvent, type TransferPlan } from "@media-marshal/contracts/internal";
 import type { CoreHostGateway } from "@media-marshal/contracts/internal/rpc";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { CloudRoots } from "./roots.js";
 import type { RemoteCatalog } from "./catalog.js";
 import { DownloadPreviews, type PreviewSnapshot } from "./previews.js";
+import { downloadFailureColumns } from "./download-failures.js";
 import { DownloadCommits } from "./commits.js";
 import { acceptExecutionEvent } from "./planning.js";
 import { EmbyLibraryFiles } from "../sources/emby-library-files.js";
@@ -14,6 +15,7 @@ import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
 
 interface Item { id: string; account_id: string; remote_ref: string; version_json: string; target_root_id: string; target_path_key: string; target_segments_json: string; expected_size: number; state: DownloadState; attempt_count: number }
 interface Attempt { id: string; host_generation: string; core_generation: string; binding_generation: string; execution_id: string | null; state: string; plan_json: string }
+interface RecoveryItem extends Item { attempt_id: string; attempt_state: string; stop_evidence_json: string | null; commit_state: string | null }
 interface Running { item: Item; context?: ExecutionContext; handle?: ExecutionHandle; stop: boolean; sequence: number; confirmedExit?: { exitCode: number; stopped: boolean }; failure?: CloudFailure; done?: Promise<void> }
 export type DownloadOwner = { subscriptionId: string; configurationVersion: number; scanId: string } | { sourceId: string; sourceVersion: number; runId: string } | { syncSourceId: string; syncSourceVersion: number; syncJobId: string };
 const activeStates = "'QUEUED','RUNNING','VERIFYING','COMMITTING','RETRY_WAIT','AUTH_REQUIRED','BLOCKED_LOCAL','RECONCILING'";
@@ -26,6 +28,8 @@ export class CloudDownloads {
   private readonly libraryAbort = new AbortController();
   readonly commits: DownloadCommits;
   private active = new Map<string, Running>();
+  private readonly recovering = new Map<string, Promise<void>>();
+  private readonly recoveryRetryAt = new Map<string, number>();
   private timer?: ReturnType<typeof setInterval>;
   private ticking = false; private closed = false; private suspended = false;
   constructor(private readonly database: CoreDatabase, private readonly host: CoreHostGateway, private readonly catalog: RemoteCatalog, private readonly roots: CloudRoots, private readonly now = Date.now) {
@@ -39,7 +43,7 @@ export class CloudDownloads {
       const items = db.prepare("SELECT id FROM download_item WHERE state='COMPLETED'").all() as { id: string }[];
       for (const item of items) {
         db.prepare("INSERT OR IGNORE INTO app_setting(key,value) VALUES(?, '')").run(`cloud.restore.audit.${item.id}`);
-        db.prepare("UPDATE download_item SET state='RECONCILING',failure_code=NULL,updated_at=? WHERE id=? AND state='COMPLETED'").run(new Date(this.now()).toISOString(), item.id);
+        db.prepare("UPDATE download_item SET state='RECONCILING',failure_code=NULL,failure_detail_code=NULL,updated_at=? WHERE id=? AND state='COMPLETED'").run(new Date(this.now()).toISOString(), item.id);
       }
     })(); this.aggregate();
   }
@@ -100,7 +104,7 @@ export class CloudDownloads {
     for (const item of rows) if (ready.has(item.account_id)) {
       try { this.catalog.source(item.account_id, item.remote_ref); await this.roots.files.get(item.target_root_id).check(); }
       catch { continue; }
-      this.database.connection.prepare("UPDATE download_item SET state='QUEUED',failure_code=NULL WHERE id=? AND state IN ('AUTH_REQUIRED','BLOCKED_LOCAL')").run(item.id);
+      this.database.connection.prepare("UPDATE download_item SET state='QUEUED',failure_code=NULL,failure_detail_code=NULL WHERE id=? AND state IN ('AUTH_REQUIRED','BLOCKED_LOCAL')").run(item.id);
     }
   }
   pauseStatus() {
@@ -209,8 +213,8 @@ export class CloudDownloads {
         const previous = db.prepare("SELECT id,state FROM download_item WHERE account_id=? AND remote_ref=? AND version_key=? AND request_variant=? AND target_root_id=? AND target_path_key=?").get(preview.account_id, item.source.remoteRef, item.versionKey, snapshot.variant ?? "", preview.target_root_id, item.targetPathKey) as { id: string; state: DownloadState } | undefined;
         const itemId = previous?.id ?? item.itemId;
         if (!previous) {
-          db.prepare("INSERT INTO download_item(id,account_id,remote_ref,version_key,version_json,request_variant,target_root_id,target_path_key,target_segments_json,expected_size,state,failure_code,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .run(itemId, preview.account_id, item.source.remoteRef, item.versionKey, JSON.stringify(item.source.expectedVersion), snapshot.variant ?? "", preview.target_root_id, item.targetPathKey, JSON.stringify(item.targetSegments), item.expectedSize, item.issue ? "FAILED" : "QUEUED", item.issue?.code ?? null, now, now);
+          db.prepare("INSERT INTO download_item(id,account_id,remote_ref,version_key,version_json,request_variant,target_root_id,target_path_key,target_segments_json,expected_size,state,failure_code,failure_detail_code,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            .run(itemId, preview.account_id, item.source.remoteRef, item.versionKey, JSON.stringify(item.source.expectedVersion), snapshot.variant ?? "", preview.target_root_id, item.targetPathKey, JSON.stringify(item.targetSegments), item.expectedSize, item.issue ? "FAILED" : "QUEUED", ...downloadFailureColumns(item.issue?.code ?? null), now, now);
           db.prepare("INSERT INTO download_item_runtime(item_id) VALUES(?)").run(itemId);
         } else if (!item.issue && previous.state !== "COMPLETED" && !this.demands(itemId) && !db.prepare("SELECT 1 FROM download_claim WHERE item_id=?").get(itemId) && !db.prepare("SELECT 1 FROM download_commit_intent WHERE item_id=?").get(itemId)) {
           this.state(itemId, "QUEUED"); db.prepare("UPDATE download_item_runtime SET attempt_count=0,retry_after=NULL WHERE item_id=?").run(itemId);
@@ -281,7 +285,7 @@ export class CloudDownloads {
     })();
     this.aggregate(); return { jobId: input.jobId };
   }
-  private state(id: string, state: DownloadState, failure: string | null = null) { this.database.connection.prepare("UPDATE download_item SET state=?,failure_code=?,updated_at=? WHERE id=? AND state!='COMPLETED'").run(state, failure, new Date(this.now()).toISOString(), id); }
+  private state(id: string, state: DownloadState, failure: CloudFailure["code"] | null = null) { this.database.connection.prepare("UPDATE download_item SET state=?,failure_code=?,failure_detail_code=?,updated_at=? WHERE id=? AND state!='COMPLETED'").run(state, ...downloadFailureColumns(failure), new Date(this.now()).toISOString(), id); }
   private policy(itemId: string) {
     const row = this.database.connection.prepare("SELECT p.snapshot_json FROM download_job_item d JOIN download_job j ON j.id=d.job_id JOIN cloud_preview p ON p.id=j.preview_id WHERE d.item_id=? ORDER BY j.created_at,j.id LIMIT 1").get(itemId) as { snapshot_json: string };
     return (JSON.parse(row.snapshot_json) as PreviewSnapshot).policy;
@@ -318,7 +322,7 @@ export class CloudDownloads {
     if (!id) this.aggregate(); const db = this.database.connection;
     const rows = db.prepare("SELECT j.*,p.snapshot_json,p.target_root_id FROM download_job j JOIN cloud_preview p ON p.id=j.preview_id WHERE (? IS NULL AND j.state!='CANCELLED') OR j.id=? ORDER BY j.created_at DESC,j.id LIMIT ? OFFSET ?").all(id ?? null, id ?? null, input.pageSize ?? 25, ((input.page ?? 1) - 1) * (input.pageSize ?? 25)) as { id: string; account_id: string; state: DownloadState; updated_at: string; snapshot_json: string; target_root_id: string }[];
     const items: DownloadJob[] = rows.map((job) => {
-      const values = db.prepare("SELECT i.state,i.expected_size,i.failure_code,r.bytes,r.speed,r.total_bytes FROM download_job_item d JOIN download_item i ON i.id=d.item_id JOIN download_item_runtime r ON r.item_id=i.id WHERE d.job_id=?").all(job.id) as { state: DownloadState; expected_size: number; failure_code: CloudFailure["code"] | null; bytes: number; speed: number; total_bytes: number | null }[];
+      const values = db.prepare("SELECT i.state,i.expected_size,coalesce(i.failure_detail_code,i.failure_code) AS failure_code,r.bytes,r.speed,r.total_bytes FROM download_job_item d JOIN download_item i ON i.id=d.item_id JOIN download_item_runtime r ON r.item_id=i.id WHERE d.job_id=?").all(job.id) as { state: DownloadState; expected_size: number; failure_code: CloudFailure["code"] | null; bytes: number; speed: number; total_bytes: number | null }[];
       const historical = db.prepare("SELECT r.size FROM download_job_receipt j JOIN sync_receipt r ON r.id=j.receipt_id WHERE j.job_id=?").all(job.id) as { size: number }[];
       const historicalBytes = historical.reduce((sum, receipt) => sum + receipt.size, 0);
       const localRemovedFiles = (db.prepare("SELECT count(*) AS n FROM sync_receipt_local_state s WHERE s.state='REMOVED' AND s.receipt_id IN (SELECT r.id FROM sync_receipt r JOIN download_job_item j ON r.result_kind='download-item' AND r.result_id=j.item_id WHERE j.job_id=? UNION SELECT receipt_id FROM download_job_receipt WHERE job_id=?)").get(job.id, job.id) as { n: number }).n;
@@ -335,7 +339,7 @@ export class CloudDownloads {
       const organization = independent ? "ENABLED" : syncOwner ? "NOT_ENABLED" : !owner ? "UNASSIGNED" : owner.review_required || owner.source_review ? "REVIEW_REQUIRED" : owner.organization ? "ENABLED" : "NOT_ENABLED";
       const visible = organization === "NOT_ENABLED" && !independentHistory ? [] : stages;
       const ingestion = { organization, pending: visible.filter((row) => row.outbox_state !== "ACKNOWLEDGED").length, candidates: visible.filter((row) => row.candidate_state !== null).length, organized: visible.filter((row) => row.status === "DONE").length, collected: visible.filter((row) => row.delivery_status === "COLLECTED").length, needsAttention: visible.filter((row) => row.status === "FAILED" || row.delivery_status === "NEEDS_ATTENTION" || ("receipt_state" in row && row.receipt_state === "UNAVAILABLE")).length } as NonNullable<DownloadJob["ingestion"]>;
-      return { id: job.id, accountId: job.account_id, sourceId: syncOwner?.source_id ?? owner?.source_id ?? null, sourceVersion: syncOwner?.source_version ?? owner?.source_version ?? null, name: (JSON.parse(job.snapshot_json) as PreviewSnapshot).name, state: job.state, updatedAt: job.updated_at, failure: failed ? cloudFailure(new CloudError(failed.failure_code!)) : null, ingestion, ...(localRemovedFiles ? { localRemovedFiles } : {}), ...(localCleanedFiles ? { localCleanedFiles } : {}), progress: { bytes, totalBytes: totalUnknown ? null : total, bytesPerSecond: values.reduce((sum, item) => sum + (item.state === "RUNNING" ? item.speed : 0), 0), completedItems: values.filter((item) => item.state === "COMPLETED").length + historical.length, totalItems: values.length + historical.length } };
+      return { id: job.id, accountId: job.account_id, sourceId: syncOwner?.source_id ?? owner?.source_id ?? null, sourceVersion: syncOwner?.source_version ?? owner?.source_version ?? null, name: (JSON.parse(job.snapshot_json) as PreviewSnapshot).name, state: job.state, updatedAt: job.updated_at, failure: failed ? cloudFailure(new CloudError(failed.failure_code!)) : null, issueCount: values.filter((item) => item.state !== "COMPLETED" && (item.failure_code || ["FAILED", "AUTH_REQUIRED", "BLOCKED_LOCAL", "RECONCILING"].includes(item.state))).length, ingestion, ...(localRemovedFiles ? { localRemovedFiles } : {}), ...(localCleanedFiles ? { localCleanedFiles } : {}), progress: { bytes, totalBytes: totalUnknown ? null : total, bytesPerSecond: values.reduce((sum, item) => sum + (item.state === "RUNNING" ? item.speed : 0), 0), completedItems: values.filter((item) => item.state === "COMPLETED").length + historical.length, totalItems: values.length + historical.length } };
     });
     return { items, total: (db.prepare("SELECT count(*) AS n FROM download_job WHERE (? IS NULL AND state!='CANCELLED') OR id=?").get(id ?? null, id ?? null) as { n: number }).n };
   }
@@ -351,6 +355,7 @@ export class CloudDownloads {
       for (const item of candidates) {
         if (this.closed || this.suspended || this.pauseStatus().paused || this.active.size >= 4) break;
         if (this.active.has(item.account_id) || !ready.has(item.account_id) || !this.demands(item.id)) continue;
+        if ([...this.recovering.keys()].some((id) => { const recovery = this.recoveryItem(id); return recovery && this.targetsOverlap(item, recovery); })) continue;
         const running: Running = { item, stop: false, sequence: 0 }; this.active.set(item.account_id, running);
         running.done = this.run(running).finally(() => { this.active.delete(item.account_id); this.aggregate(); }); void running.done.catch(() => {});
       }
@@ -438,15 +443,95 @@ export class CloudDownloads {
     if (event.event.type === "progress") this.database.connection.prepare("UPDATE download_item_runtime SET bytes=?,speed=?,total_bytes=?,sequence=? WHERE item_id=? AND EXISTS(SELECT 1 FROM download_claim c JOIN download_item i ON i.id=c.item_id WHERE c.item_id=? AND c.attempt_id=? AND i.state='RUNNING')")
       .run(event.event.bytes, event.event.bytesPerSecond, event.event.totalBytes, event.sequence, running.item.id, running.item.id, running.context.attemptId);
   }
-  private async reconcile() {
-    const db = this.database.connection, items = db.prepare("SELECT i.*,a.id AS attempt_id,a.state AS attempt_state,c.state AS commit_state FROM download_item i JOIN download_claim d ON d.item_id=i.id JOIN download_attempt a ON a.id=d.attempt_id LEFT JOIN download_commit_intent c ON c.item_id=i.id WHERE a.state IN ('STOPPED','EXITED') AND i.state IN ('RECONCILING','COMMITTING','BLOCKED_LOCAL') LIMIT 100").all() as (Item & { attempt_id: string; commit_state: string | null })[];
-    for (const item of items) {
-      if (this.closed || this.active.has(item.account_id)) continue;
+  private recoveryItem(itemId: string) {
+    return this.database.connection.prepare("SELECT i.*,a.id AS attempt_id,a.state AS attempt_state,a.stop_evidence_json,c.state AS commit_state FROM download_item i JOIN download_claim d ON d.item_id=i.id JOIN download_attempt a ON a.id=d.attempt_id LEFT JOIN download_commit_intent c ON c.item_id=i.id AND c.attempt_id=a.id WHERE i.id=?").get(itemId) as RecoveryItem | undefined;
+  }
+  private targetsOverlap(left: Item, right: Item) {
+    if (left.target_root_id !== right.target_root_id) return false;
+    const root = this.roots.files.get(left.target_root_id), a = root.mappingIdentity(JSON.parse(left.target_segments_json)), b = root.mappingIdentity(JSON.parse(right.target_segments_json));
+    return a.slice(0, Math.min(a.length, b.length)).every((part, index) => part === b[index]);
+  }
+  private recoveryBlocked(item: RecoveryItem): string | null {
+    if (!item.stop_evidence_json || !["STOPPED", "EXITED"].includes(item.attempt_state)) return "尚未确认原下载执行已停止，请等待停止核对；持续未恢复时查看诊断。";
+    if (this.active.get(item.account_id)?.item.id === item.id) return "原文件仍在执行，请等待该文件停止后重新核对。";
+    for (const running of this.active.values()) if (running.item.id !== item.id && this.targetsOverlap(item, running.item)) return "目标位置与正在执行的文件重叠，请等待对应文件停止后重新核对。";
+    const root = this.roots.files.get(item.target_root_id), parts = root.mappingIdentity(JSON.parse(item.target_segments_json));
+    const others = this.database.connection.prepare("SELECT i.id,i.target_segments_json FROM download_claim d JOIN download_item i ON i.id=d.item_id WHERE i.target_root_id=? AND i.id!=?").all(item.target_root_id, item.id) as { id: string; target_segments_json: string }[];
+    for (const other of others) {
+      const target = root.mappingIdentity(JSON.parse(other.target_segments_json));
+      if (parts.slice(0, Math.min(parts.length, target.length)).every((part, index) => part === target[index])) return "目标位置与其他未完成文件重叠，请等待对应文件完成核对后重试。";
+    }
+    return null;
+  }
+  issues(input: CloudInput<"cloud.downloads.issues">) {
+    const db = this.database.connection;
+    if (!db.prepare("SELECT 1 FROM download_job WHERE id=?").get(input.jobId)) throw new CloudError("REMOTE_NOT_FOUND");
+    const condition = "d.job_id=? AND i.state!='COMPLETED' AND (i.failure_code IS NOT NULL OR i.state IN ('FAILED','AUTH_REQUIRED','BLOCKED_LOCAL','RECONCILING'))";
+    const rows = db.prepare(`SELECT i.*,coalesce(i.failure_detail_code,i.failure_code) AS effective_failure FROM download_job_item d JOIN download_item i ON i.id=d.item_id WHERE ${condition} ORDER BY i.created_at,i.id LIMIT ? OFFSET ?`).all(input.jobId, input.pageSize ?? 10, ((input.page ?? 1) - 1) * (input.pageSize ?? 10)) as (Item & { effective_failure: CloudFailure["code"] | null })[];
+    return {
+      total: (db.prepare(`SELECT count(*) AS n FROM download_job_item d JOIN download_item i ON i.id=d.item_id WHERE ${condition}`).get(input.jobId) as { n: number }).n,
+      items: rows.map((item) => {
+        const recovery = this.recoveryItem(item.id), checking = this.recovering.has(item.id);
+        let blockedReason: string | null = "此文件没有待恢复的提交，请修复原因后重试下载，或在来源中重新预览。";
+        if (recovery?.commit_state) {
+          try { blockedReason = this.recoveryBlocked(recovery); }
+          catch { blockedReason = "原下载目录尚未恢复授权，请恢复原卷并重新授权目录后核对。"; }
+        }
+        return { itemId: item.id, relativePath: (JSON.parse(item.target_segments_json) as string[]).join("/"), state: item.state,
+          stage: recovery?.commit_state ? "COMMIT" as const : item.state === "RECONCILING" ? "RECOVERY" as const : "TRANSFER" as const,
+          failure: cloudFailure(new CloudError(item.effective_failure ?? (item.state === "RECONCILING" ? "CONFLICT" : "INTERNAL_ERROR"))),
+          checking, canReconcile: !!recovery?.commit_state && !blockedReason && !checking, blockedReason };
+      }),
+    };
+  }
+  requestReconcile(input: CloudInput<"cloud.downloads.reconcile">) {
+    if (this.closed) throw new CloudError("INTERRUPTED");
+    const item = this.database.connection.prepare("SELECT i.state FROM download_job_item d JOIN download_item i ON i.id=d.item_id WHERE d.job_id=? AND i.id=?").get(input.jobId, input.itemId) as { state: DownloadState } | undefined;
+    if (!item) throw new CloudError("REMOTE_NOT_FOUND");
+    if (item.state === "COMPLETED" || this.recovering.has(input.itemId)) return { jobId: input.jobId };
+    const recovery = this.recoveryItem(input.itemId);
+    if (!recovery?.commit_state) throw new DesktopError("CONFLICT", "该文件没有待恢复的提交，请修复原因后重试下载或在来源中重新预览");
+    const blocked = this.recoveryBlocked(recovery);
+    if (blocked) throw new DesktopError("CONFLICT", blocked);
+    if (this.recovering.size >= 4) throw new DesktopError("CONFLICT", "已有四个文件正在核对，请等待其中一项完成后再试");
+    this.launchRecovery(recovery);
+    return { jobId: input.jobId };
+  }
+  private launchRecovery(item: RecoveryItem) {
+    if (this.closed || this.recovering.has(item.id)) return;
+    const work = Promise.resolve().then(async () => {
       try {
-        await this.roots.files.get(item.target_root_id).check();
-        if (item.commit_state) await this.commits.finish(item.id);
-        else { await this.roots.files.get(item.target_root_id).cleanupAttempt(item.attempt_id).catch((error) => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }); db.prepare("DELETE FROM download_claim WHERE item_id=?").run(item.id); this.state(item.id, this.demands(item.id) ? "QUEUED" : this.retainedDemand(item.id) ? "PAUSED" : "CANCELLED"); }
-      } catch { /* 缺盘或归属证据不足时保留 claim/intent，不重传或覆盖。 */ }
+        // 异步工作开始时重新取证，不能沿用按钮点击时的停止与归属结论。
+        const current = this.recoveryItem(item.id);
+        if (!current || this.closed || this.recoveryBlocked(current)) return;
+        const root = this.roots.files.get(current.target_root_id); await root.check();
+        if (current.commit_state) await this.commits.finish(current.id);
+        else {
+          await root.cleanupAttempt(current.attempt_id).catch((error) => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
+          this.database.connection.prepare("DELETE FROM download_claim WHERE item_id=? AND attempt_id=?").run(current.id, current.attempt_id);
+          this.state(current.id, this.demands(current.id) ? "QUEUED" : this.retainedDemand(current.id) ? "PAUSED" : "CANCELLED");
+        }
+      } catch (error) {
+        const failure = cloudFailure(error instanceof CloudError ? error : (error as NodeJS.ErrnoException).code === "ENOENT" ? new CloudError("LOCAL_FILE_MISSING") : error);
+        this.state(item.id, failure.code === "LOCAL_UNAVAILABLE" ? "BLOCKED_LOCAL" : "RECONCILING", failure.code);
+      } finally {
+        if ((this.database.connection.prepare("SELECT state FROM download_item WHERE id=?").get(item.id) as { state: string } | undefined)?.state === "COMPLETED") this.recoveryRetryAt.delete(item.id);
+        else this.recoveryRetryAt.set(item.id, this.now() + 60000);
+        this.recovering.delete(item.id); this.aggregate();
+      }
+    });
+    this.recovering.set(item.id, work);
+  }
+  private async reconcile() {
+    const db = this.database.connection, items = db.prepare("SELECT i.id FROM download_item i JOIN download_claim d ON d.item_id=i.id JOIN download_attempt a ON a.id=d.attempt_id WHERE a.state IN ('STOPPED','EXITED') AND i.state IN ('RECONCILING','COMMITTING','BLOCKED_LOCAL') ORDER BY i.updated_at,i.id LIMIT 100").all() as { id: string }[];
+    for (const { id } of items) {
+      if (this.closed || this.recovering.size >= 4) break;
+      if (this.recovering.has(id) || (this.recoveryRetryAt.get(id) ?? 0) > this.now()) continue;
+      const item = this.recoveryItem(id);
+      if (item) {
+        try { if (!this.recoveryBlocked(item)) this.launchRecovery(item); }
+        catch { /* 未恢复授权时由逐项明细说明；不接管未知目录。 */ }
+      }
     }
     // 完成事务之后、暂存清理之前崩溃时，只回收带原所有权标记的已停止 attempt。
     const garbage = db.prepare("SELECT DISTINCT a.id,i.target_root_id FROM download_attempt a JOIN download_attempt_item m ON m.attempt_id=a.id JOIN download_item i ON i.id=m.item_id WHERE a.state IN ('STOPPED','EXITED') AND coalesce(json_extract(a.stop_evidence_json,'$.stagingCleaned'),0)=0 AND NOT EXISTS(SELECT 1 FROM download_claim c WHERE c.attempt_id=a.id) AND NOT EXISTS(SELECT 1 FROM download_attempt_item x JOIN download_commit_intent c ON c.item_id=x.item_id WHERE x.attempt_id=a.id AND c.state!='RECORDED') LIMIT 100").all() as { id: string; target_root_id: string }[];
@@ -464,5 +549,6 @@ export class CloudDownloads {
     for (const running of this.active.values()) running.stop = true;
     await this.previews.close(); await Promise.allSettled([...this.active.values()].map((run) => run.done));
     while (this.ticking) await delay(10);
+    await Promise.allSettled([...this.recovering.values()]);
   }
 }

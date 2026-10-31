@@ -39,6 +39,7 @@ export const errorCodeSchema = z.enum([
   "CONFLICT",
   "UNSAFE_PATH",
   "STORAGE_ERROR",
+  "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "LOCAL_FILE_MISSING", "RECEIPT_CONFLICT", "STOP_UNCONFIRMED",
   "INTERNAL_ERROR",
   "AUTH_REQUIRED", "RATE_LIMITED", "NETWORK_UNAVAILABLE", "REMOTE_CHANGED", "REMOTE_NOT_FOUND", "LOCAL_UNAVAILABLE", "UNSUPPORTED_CAPABILITY", "COMPONENT_UNAVAILABLE",
 ]);
@@ -196,6 +197,8 @@ export const coreActions = {
   "cloud.downloads.confirm": cloudActions["cloud.downloads.confirm"],
   "cloud.downloads.list": cloudActions["cloud.downloads.list"],
   "cloud.downloads.control": cloudActions["cloud.downloads.control"],
+  "cloud.downloads.issues": cloudActions["cloud.downloads.issues"],
+  "cloud.downloads.reconcile": cloudActions["cloud.downloads.reconcile"],
   "cloud.accounts.list": cloudActions["cloud.accounts.list"],
   "cloud.authorizations.get": cloudActions["cloud.authorizations.get"],
   "cloud.remote.list": cloudActions["cloud.remote.list"],
@@ -404,6 +407,8 @@ export interface DesktopApi {
   getDownloadPreview(requestKey: string): Promise<DownloadPreview | null>;
   confirmDownload(input: CloudInput<"cloud.downloads.confirm">): Promise<{ jobId: string }>;
   listDownloads(input: CloudInput<"cloud.downloads.list">): Promise<CloudOutput<"cloud.downloads.list">>;
+  listDownloadIssues(input: CloudInput<"cloud.downloads.issues">): Promise<CloudOutput<"cloud.downloads.issues">>;
+  reconcileDownload(input: CloudInput<"cloud.downloads.reconcile">): Promise<{ jobId: string }>;
   controlDownload(input: CloudInput<"cloud.downloads.control">): Promise<{ jobId: string }>;
   openDownloadDirectory(jobId: string): Promise<void>;
   listCloudAccounts(): Promise<CloudAccount[]>;

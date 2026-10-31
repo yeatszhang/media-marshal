@@ -11,7 +11,8 @@ export const cloudErrorCodeSchema = z.enum([
   "AUTH_REQUIRED", "RATE_LIMITED", "NETWORK_UNAVAILABLE", "REMOTE_CHANGED",
   "REMOTE_NOT_FOUND", "LOCAL_UNAVAILABLE", "UNSUPPORTED_CAPABILITY",
   "COMPONENT_UNAVAILABLE", "CONFLICT", "INVALID_REQUEST", "INTERRUPTED",
-  "TIMEOUT", "INTERNAL_ERROR",
+  "TIMEOUT", "INTERNAL_ERROR", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED",
+  "FILE_EVIDENCE_MISMATCH", "LOCAL_FILE_MISSING", "RECEIPT_CONFLICT", "STOP_UNCONFIRMED",
 ]);
 export type CloudErrorCode = z.infer<typeof cloudErrorCodeSchema>;
 const messages: Record<CloudErrorCode, string> = {
@@ -24,6 +25,12 @@ const messages: Record<CloudErrorCode, string> = {
   UNSUPPORTED_CAPABILITY: "接入方式与传输能力不兼容",
   COMPONENT_UNAVAILABLE: "下载组件不可用",
   CONFLICT: "操作存在冲突，请查询当前状态",
+  TARGET_OCCUPIED: "完成位置被其他文件占用，请打开完成目录核对并移走占用文件，再重新核对；也可在来源中预览新的下载位置",
+  LOCAL_FILE_CHANGED: "文件在校验期间发生变化，请停止其他程序对该文件的写入，再重新核对",
+  FILE_EVIDENCE_MISMATCH: "文件与原提交记录的大小、时间或摘要不一致，请保留现有文件并核对；需要重新获取时在来源中预览新的下载位置",
+  LOCAL_FILE_MISSING: "原提交文件缺失，请恢复原暂存文件或完成文件后重新核对；需要重新获取时在来源中预览新的下载位置",
+  RECEIPT_CONFLICT: "文件与已有同步收据不一致，请保留现有文件并查看诊断，不要重复下载或覆盖",
+  STOP_UNCONFIRMED: "尚未取得原下载执行已停止的证据，请等待停止核对；持续未恢复时查看诊断",
   INVALID_REQUEST: "云端请求无效",
   INTERRUPTED: "执行已中断，请查询当前状态",
   TIMEOUT: "等待超时，请查询状态后重试",
@@ -123,10 +130,17 @@ export const cloudDiagnosticCountsSchema = z.strictObject({
   pausedItems: count, authenticationRequiredAccounts: count, authenticationRequiredItems: count, componentFailedItems: count,
 });
 export type CloudDiagnosticCounts = z.infer<typeof cloudDiagnosticCountsSchema>;
+export const downloadItemIssueSchema = z.strictObject({
+  itemId: id, relativePath: z.string().min(1).max(32768), state: downloadStateSchema,
+  stage: z.enum(["TRANSFER", "COMMIT", "RECOVERY"]), failure: cloudFailureSchema,
+  checking: z.boolean(), canReconcile: z.boolean(), blockedReason: z.string().max(200).nullable(),
+});
+export type DownloadItemIssue = z.infer<typeof downloadItemIssueSchema>;
 export const downloadJobSchema = z.strictObject({
   id, accountId: id, name: z.string().max(1024), state: downloadStateSchema, progress: downloadProgressSchema,
   localRemovedFiles: count.optional(),
   localCleanedFiles: count.optional(),
+  issueCount: count.optional(),
   sourceId: id.nullable().optional(), sourceVersion: count.nullable().optional(),
   ingestion: z.strictObject({ pending: count, candidates: count, organized: count, collected: count, needsAttention: count, organization: z.enum(["ENABLED", "NOT_ENABLED", "REVIEW_REQUIRED", "UNASSIGNED"]).optional() }).optional(),
   failure: cloudFailureSchema.nullable(), updatedAt: timestamp,
@@ -186,6 +200,13 @@ export const cloudActions = {
   "cloud.downloads.list": {
     input: z.strictObject({ page: z.number().int().min(1).max(1_000_000).default(1), pageSize: z.number().int().min(1).max(100).default(25) }),
     output: z.strictObject({ items: z.array(downloadJobSchema).max(100), total: count }),
+  },
+  "cloud.downloads.issues": {
+    input: z.strictObject({ jobId: id, page: z.number().int().min(1).max(1_000_000).default(1), pageSize: z.number().int().min(1).max(100).default(10) }),
+    output: z.strictObject({ items: z.array(downloadItemIssueSchema).max(100), total: count }),
+  },
+  "cloud.downloads.reconcile": {
+    input: z.strictObject({ jobId: id, itemId: id }), output: z.strictObject({ jobId: id }),
   },
   "cloud.downloads.control": {
     input: z.strictObject({ jobId: id, operation: z.enum(["pause", "resume", "cancel", "retry"]), requestKey: id }),

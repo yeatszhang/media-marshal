@@ -61,6 +61,7 @@ function recognitionFailure(error: unknown): string {
   if (error instanceof DesktopError) {
     if (error.code === "COMPONENT_UNAVAILABLE") return "离线名称解析器不可用，请重启核心后重试识别";
     if (error.code === "TIMEOUT") return "离线名称解析器超时，请重启核心后重试识别";
+    if (["TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "LOCAL_FILE_MISSING", "RECEIPT_CONFLICT"].includes(error.code)) return error.message;
     if (error.code === "CONFLICT") return "文件或连接配置已变化，请刷新后重试识别";
   }
   return "识别未完成，请检查解析器、TMDB 配置或网络后重试";

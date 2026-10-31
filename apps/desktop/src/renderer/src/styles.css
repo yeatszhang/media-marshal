@@ -1119,3 +1119,11 @@ main:focus { outline: none; }
 .download-cleanup-history > summary { cursor: pointer; font-weight: 600; margin-bottom: 12px; }
 .download-cleanup-history .download-controls { flex-wrap: wrap; }
 .download-cleanup-preview { margin-top: 24px; }
+
+.download-issues { margin-top: 16px; min-width: 0; }
+.download-issues > summary { cursor: pointer; color: var(--primary); padding: 8px 0; font-weight: 550; }
+.download-issue-list { list-style: none; padding: 0; margin: 0; }
+.download-issue-list > li { padding: 16px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.download-issue-path, .download-issue-reason { overflow-wrap: anywhere; white-space: normal; margin: 0 0 8px; }
+.download-issue-path { font-weight: 550; }
+.download-issue-list .cloud-hint { margin: 0 0 8px; }

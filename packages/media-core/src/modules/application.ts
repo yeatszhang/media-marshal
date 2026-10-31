@@ -156,6 +156,8 @@ declare module "@yeatz/app-framework/command" {
     "media.cloud.downloads.get-preview": (input: CoreInput<"cloud.downloads.get-preview">) => CoreOutput<"cloud.downloads.get-preview">;
     "media.cloud.downloads.confirm": (input: CoreInput<"cloud.downloads.confirm">) => Promise<CoreOutput<"cloud.downloads.confirm">>;
     "media.cloud.downloads.list": (input: CoreInput<"cloud.downloads.list">) => CoreOutput<"cloud.downloads.list">;
+    "media.cloud.downloads.issues": (input: CoreInput<"cloud.downloads.issues">) => CoreOutput<"cloud.downloads.issues">;
+    "media.cloud.downloads.reconcile": (input: CoreInput<"cloud.downloads.reconcile">) => CoreOutput<"cloud.downloads.reconcile">;
     "media.cloud.downloads.control": (input: CoreInput<"cloud.downloads.control">) => CoreOutput<"cloud.downloads.control">;
     "media.cloud.accounts.list": () => CoreOutput<"cloud.accounts.list">;
     "media.cloud.authorizations.get": (input: CoreInput<"cloud.authorizations.get">) => CoreOutput<"cloud.authorizations.get">;
@@ -372,6 +374,8 @@ export function createMediaApplication(
       add(registry.register("media.cloud.downloads.get-preview", (_, input) => downloads.previews.get(input.requestKey)));
       add(registry.register("media.cloud.downloads.confirm", (_, input) => downloads.confirm(input)));
       add(registry.register("media.cloud.downloads.list", (_, input) => downloads.list(input)));
+      add(registry.register("media.cloud.downloads.issues", (_, input) => downloads.issues(input)));
+      add(registry.register("media.cloud.downloads.reconcile", (_, input) => downloads.requestReconcile(input)));
       add(registry.register("media.cloud.downloads.control", (_, input) => downloads.control(input)));
       add(registry.register("media.cloud.accounts.list", () => catalog.accounts()));
       add(registry.register("media.cloud.authorizations.get", (_, input) => accounts.authorization(input.requestKey)));

@@ -145,10 +145,10 @@ export class ManagedRoot {
       progress?.(0, Number(before.size));
       for (;;) { if (signal?.aborted) throw new CloudError("INTERRUPTED"); const { bytesRead } = await handle.read(buffer, 0, buffer.length, position); if (!bytesRead) break; digest.update(buffer.subarray(0, bytesRead)); upstream?.update(buffer.subarray(0, bytesRead)); position += bytesRead; progress?.(position, Number(before.size)); }
       const after = await handle.stat({ bigint: true });
-      if (before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(position) !== after.size) throw new CloudError("CONFLICT");
+      if (before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(position) !== after.size) throw new CloudError("LOCAL_FILE_CHANGED");
       if (remoteHash && upstream!.digest("hex") !== remoteHash.value) throw new CloudError("REMOTE_CHANGED");
       const current = await lstat(path, { bigint: true });
-      if (!current.isFile() || current.isSymbolicLink() || current.dev !== after.dev || current.ino !== after.ino || current.birthtimeNs !== after.birthtimeNs || current.size !== after.size || current.mtimeNs !== after.mtimeNs || current.ctimeNs !== after.ctimeNs || !await this.matchesRealPath(path)) throw new CloudError("CONFLICT");
+      if (!current.isFile() || current.isSymbolicLink() || current.dev !== after.dev || current.ino !== after.ino || current.birthtimeNs !== after.birthtimeNs || current.size !== after.size || current.mtimeNs !== after.mtimeNs || current.ctimeNs !== after.ctimeNs || !await this.matchesRealPath(path)) throw new CloudError("LOCAL_FILE_CHANGED");
       await handle.sync();
       await this.check(); return { evidence: this.evidence(after, digest.digest("hex")), snapshot: { dev: after.dev, ino: after.ino, size: after.size, birthtimeNs: after.birthtimeNs, mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs } };
     } finally { await handle.close(); }
@@ -207,7 +207,7 @@ export class ManagedRoot {
   async assertVacant(segments: readonly string[]) {
     try { await lstat(await this.filePath("completed", segments)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-    throw new CloudError("CONFLICT");
+    throw new CloudError("TARGET_OCCUPIED");
   }
   completedDirectory() { return this.directory(this.layout === "completed" ? ["completed"] : [], false); }
   stageFilePath(attemptId: string, segments: readonly string[]) { return this.filePath("staging", segments, attemptId, true); }
@@ -215,19 +215,20 @@ export class ManagedRoot {
     const target = await this.filePath("completed", segments, undefined, true);
     try {
       const metadata = await lstat(target, { bigint: true });
-      if (!metadata.isFile() || metadata.isSymbolicLink() || String(metadata.dev) !== this.grant.volume.observedDevice || String(metadata.ino) !== expected.inode || String(metadata.birthtimeNs) !== expected.birthtimeNs || String(metadata.mtimeNs) !== expected.modifiedNs || Number(metadata.size) !== expected.size) throw new CloudError("CONFLICT");
+      if (!metadata.isFile() || metadata.isSymbolicLink() || String(metadata.dev) !== this.grant.volume.observedDevice || String(metadata.ino) !== expected.inode || String(metadata.birthtimeNs) !== expected.birthtimeNs) throw new CloudError("TARGET_OCCUPIED");
+      if (String(metadata.mtimeNs) !== expected.modifiedNs || Number(metadata.size) !== expected.size) throw new CloudError("FILE_EVIDENCE_MISMATCH");
       const existing = await this.hash(target);
-      if (!fingerprint(existing, expected)) throw new CloudError("CONFLICT");
+      if (!fingerprint(existing, expected)) throw new CloudError("FILE_EVIDENCE_MISMATCH");
       return { path: target, evidence: existing, alreadyCommitted: true };
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     const source = await this.filePath("staging", segments, attemptId), verified = await this.hash(source);
-    if (!fingerprint(verified, expected)) throw new CloudError("CONFLICT");
+    if (!fingerprint(verified, expected)) throw new CloudError("FILE_EVIDENCE_MISMATCH");
     await this.filePath("completed", segments, undefined, false); await this.check();
     try { await link(source, target); }
-    catch (error) { throw new CloudError((error as NodeJS.ErrnoException).code === "EEXIST" ? "CONFLICT" : "LOCAL_UNAVAILABLE"); }
+    catch (error) { throw new CloudError((error as NodeJS.ErrnoException).code === "EEXIST" ? "TARGET_OCCUPIED" : "LOCAL_UNAVAILABLE"); }
     await this.syncDirectory(join(target, ".."));
     const result = await this.hash(target);
-    if (!fingerprint(result, expected)) throw new CloudError("CONFLICT");
+    if (!fingerprint(result, expected)) throw new CloudError("FILE_EVIDENCE_MISMATCH");
     return { path: target, evidence: result, alreadyCommitted: false };
   }
   async cleanupAttempt(attemptId: string) {

@@ -180,7 +180,7 @@ describe.skipIf(process.platform !== "darwin")("Mac 真实受管目录与卷策�
     const { path, root } = await setup(), id = randomUUID(), stage = await root.prepareStage(id);
     await writeFile(join(stage, "电影.mp4"), "test-content"); const evidence = await root.verifyStage(id, ["电影.mp4"], 12);
     await writeFile(join(path, "completed", "电影.mp4"), "foreign-data");
-    await expect(root.commit(id, ["电影.mp4"], evidence)).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(root.commit(id, ["电影.mp4"], evidence)).rejects.toMatchObject({ code: "TARGET_OCCUPIED" });
     expect(await readFile(join(path, "completed", "电影.mp4"), "utf8")).toBe("foreign-data");
     const next = randomUUID(), nextStage = await root.prepareStage(next); await writeFile(join(nextStage, "safe.mp4"), "verified");
     const proof = await root.verifyStage(next, ["safe.mp4"], 8), first = await root.commit(next, ["safe.mp4"], proof);
@@ -193,7 +193,7 @@ describe.skipIf(process.platform !== "darwin")("Mac 真实受管目录与卷策�
     const { path, root } = await setup(), attempt = randomUUID(), stage = await root.prepareStage(attempt); await writeFile(join(stage, "race.mp4"), "verified-source");
     const proof = await root.verifyStage(attempt, ["race.mp4"], 15), target = join(path, "completed", "race.mp4");
     await promisify(execFile)(process.execPath, ["-e", "require('node:fs').writeFileSync(process.argv[1], 'another-process', {flag:'wx'})", target], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, shell: false, timeout: 5000 });
-    await expect(root.commit(attempt, ["race.mp4"], proof)).rejects.toMatchObject({ code: "CONFLICT" }); expect(await readFile(target, "utf8")).toBe("another-process");
+    await expect(root.commit(attempt, ["race.mp4"], proof)).rejects.toMatchObject({ code: "TARGET_OCCUPIED" }); expect(await readFile(target, "utf8")).toBe("another-process");
     await expect(probeManagedVolume("/dev")).rejects.toMatchObject({ code: "UNSUPPORTED_CAPABILITY" });
   });
 });

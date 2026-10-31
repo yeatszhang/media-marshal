@@ -1031,7 +1031,7 @@ describe.skipIf(process.platform !== "darwin")("订阅扫描与配置快照", ()
     const job = await f.confirm(); f.downloads.start(); await expect.poll(() => f.state(job.jobId).state).toBe("RECONCILING");
     const inode = (await lstat(join(f.rootPath, "completed/电影.txt"))).ino;
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 0 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: 0 });
-    f.db.connection.exec("DROP TRIGGER receipt_fault"); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
+    f.db.connection.exec("DROP TRIGGER receipt_fault"); f.downloads.requestReconcile({ jobId: job.jobId, itemId: (f.db.connection.prepare("SELECT id FROM download_item").get() as { id: string }).id }); await expect.poll(() => f.state(job.jobId).state).toBe("COMPLETED");
     expect((await lstat(join(f.rootPath, "completed/电影.txt"))).ino).toBe(inode); expect(f.fileEngine.starts).toBe(1);
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: 1 });
   });
@@ -1211,4 +1211,112 @@ describe.runIf(process.platform === "darwin" && process.env.MARSHAL_NATIVE_TESTS
     expect(f.state(job.jobId).progress.completedItems).toBe(2); expect(f.server.gets).toHaveLength(2);
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: 2 });
   }, 60000);
+});
+
+
+describe.skipIf(process.platform !== "darwin")("逐文件提交异常与安全重新核对", () => {
+  async function interrupted(input?: Parameters<typeof fixture>[0], point: "intent" | "linked" = "linked") {
+    const f = await fixture(input); let broken = true;
+    const commits = new DownloadCommits(f.db, f.roots, f.catalog, async (current) => { if (broken && current === point) throw new CloudError("CONFLICT"); });
+    const finish = commits.finish.bind(commits);
+    commits.finish = async (itemId) => { if (broken && point === "intent") throw new CloudError("CONFLICT"); return finish(itemId); };
+    Object.defineProperty(f.downloads, "commits", { value: commits });
+    const job = await f.confirm(); f.downloads.start();
+    await expect.poll(() => f.state(job.jobId).state).toBe("RECONCILING");
+    await expect.poll(() => f.db.connection.prepare("SELECT count(*) AS n FROM download_commit_intent").get()).toEqual({ n: 1 });
+    await expect.poll(() => (Reflect.get(f.downloads, "active") as Map<string, unknown>).size).toBe(0);
+    await expect.poll(() => (Reflect.get(f.downloads, "recoveryRetryAt") as Map<string, unknown>).size).toBe(1);
+    await expect.poll(() => (Reflect.get(f.downloads, "recovering") as Map<string, unknown>).size).toBe(0);
+    const row = f.db.connection.prepare("SELECT i.id,c.attempt_id FROM download_item i JOIN download_commit_intent c ON c.item_id=i.id").get() as { id: string; attempt_id: string };
+    return { ...f, job, row, repair: () => { broken = false; } };
+  }
+  it.each(["intent", "linked"] as const)("%s 后中断沿原提交补齐，重复核对与暂停取消不产生第二次传输", async (point) => {
+    const f = await interrupted(undefined, point), target = join(f.rootPath, "completed/电影.txt");
+    const before = point === "linked" ? (await lstat(target)).ino : null;
+    expect(f.downloads.issues({ jobId: f.job.jobId }).items[0]).toMatchObject({ itemId: f.row.id, relativePath: "电影.txt", stage: "COMMIT", canReconcile: true });
+    f.downloads.control({ jobId: f.job.jobId, operation: "pause", requestKey: randomUUID() });
+    f.repair();
+    const command = { jobId: f.job.jobId, itemId: f.row.id };
+    expect(f.downloads.requestReconcile(command)).toEqual(f.downloads.requestReconcile(command));
+    expect(f.downloads.issues({ jobId: f.job.jobId }).items[0]?.checking).toBe(true);
+    await expect.poll(() => f.state(f.job.jobId).state).toBe("COMPLETED");
+    expect(f.downloads.issues({ jobId: f.job.jobId })).toEqual({ items: [], total: 0 });
+    expect(f.downloads.requestReconcile(command)).toEqual({ jobId: f.job.jobId });
+    expect(f.fileEngine.starts).toBe(1); if (before !== null) expect((await lstat(target)).ino).toBe(before);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: 1 });
+  });
+  it("外部同内容文件保持冲突和持久原因，移走占用后才恢复原文件", async () => {
+    const f = await interrupted(), target = join(f.rootPath, "completed/电影.txt"), external = join(f.rootPath, "用户保留的文件.txt");
+    await rm(target); await writeFile(target, f.input.get("电影.txt")!); const inode = (await lstat(target)).ino;
+    f.repair(); f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
+    await expect.poll(() => f.downloads.issues({ jobId: f.job.jobId }).items[0]?.failure.code).toBe("TARGET_OCCUPIED");
+    expect((await lstat(target)).ino).toBe(inode); expect(f.fileEngine.starts).toBe(1);
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 0 });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_claim").get()).toEqual({ n: 1 });
+    await rename(target, external); f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
+    await expect.poll(() => f.state(f.job.jobId).state).toBe("COMPLETED");
+    expect((await lstat(external)).ino).toBe(inode); expect(await readFile(external)).toEqual(f.input.get("电影.txt"));
+  });
+  it("原文件缺失与证据变化保持提交意图，未知原始错误不能泄漏", async () => {
+    const f = await interrupted(undefined, "intent"), stage = await f.roots.files.get(f.grant.id).stageFilePath(f.row.attempt_id, ["电影.txt"]);
+    await rm(stage); f.repair(); f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
+    await expect.poll(() => f.downloads.issues({ jobId: f.job.jobId }).items[0]?.failure.code).toBe("LOCAL_FILE_MISSING");
+    await writeFile(stage, "同路径不同内容"); f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
+    await expect.poll(() => f.downloads.issues({ jobId: f.job.jobId }).items[0]?.failure.code).toBe("FILE_EVIDENCE_MISMATCH");
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_commit_intent").get()).toEqual({ n: 1 });
+    expect(f.fileEngine.starts).toBe(1);
+  });
+  it("同账号其他文件传输时可恢复已停止提交，但未停止证据和伪造归属不能绕过", async () => {
+    const f = await interrupted(new Map([["一.mp4", Buffer.from("第一个文件")], ["二.mp4", Buffer.from("另一个文件")]]));
+    f.db.connection.prepare("UPDATE download_attempt SET state='UNCERTAIN',stop_evidence_json=NULL WHERE id=?").run(f.row.attempt_id);
+    expect(f.downloads.issues({ jobId: f.job.jobId }).items[0]).toMatchObject({ canReconcile: false, blockedReason: expect.stringContaining("尚未确认") });
+    expect(() => f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id })).toThrow("尚未确认");
+    f.db.connection.prepare("UPDATE download_attempt SET state='EXITED',stop_evidence_json=? WHERE id=?").run(JSON.stringify({ kind: "isolated-stopped" }), f.row.attempt_id);
+    f.fileEngine.holding = true; const next = await f.confirm(f.entries[1]!.ref);
+    await expect.poll(() => f.state(next.jobId).state).toBe("RUNNING");
+    expect(() => f.downloads.requestReconcile({ jobId: next.jobId, itemId: f.row.id })).toThrow();
+    f.repair(); f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
+    await expect.poll(() => f.state(f.job.jobId).state).toBe("COMPLETED");
+    expect(f.state(next.jobId).state).toBe("RUNNING"); expect(f.fileEngine.starts).toBe(2);
+  });
+  it("与其他未完成条目的目标前缀重叠时禁止核对，排除占用后可恢复", async () => {
+    const f = await interrupted(new Map([["一.mp4", Buffer.from("一")], ["二.mp4", Buffer.from("二")]]));
+    f.downloads.setPaused({ paused: true, requestKey: randomUUID() }); const next = await f.confirm(f.entries[1]!.ref);
+    const other = f.db.connection.prepare("SELECT i.id,i.account_id FROM download_job_item d JOIN download_item i ON i.id=d.item_id WHERE d.job_id=?").get(next.jobId) as { id: string; account_id: string };
+    const original = f.db.connection.prepare("SELECT target_segments_json FROM download_item WHERE id=?").get(f.row.id) as { target_segments_json: string };
+    const parts = [...JSON.parse(original.target_segments_json) as string[], "嵌套.mp4"], key = f.roots.files.get(f.grant.id).slotKey(parts), attempt = randomUUID();
+    f.db.connection.prepare("UPDATE download_item SET target_segments_json=?,target_path_key=? WHERE id=?").run(JSON.stringify(parts), key, other.id);
+    f.db.connection.prepare("INSERT INTO download_attempt(id,account_id,binding_id,core_generation,binding_generation,host_generation,idempotency_key,staging_key,state,plan_json,retries,created_at,stopped_at,stop_evidence_json) SELECT ?,account_id,binding_id,core_generation,binding_generation,host_generation,?,?,'EXITED',plan_json,0,created_at,stopped_at,stop_evidence_json FROM download_attempt WHERE id=?").run(attempt, attempt, attempt, f.row.attempt_id);
+    f.db.connection.prepare("INSERT INTO download_claim VALUES(?,?,?,?,?,0)").run(other.id, attempt, other.account_id, f.grant.id, key);
+    expect(f.downloads.issues({ jobId: f.job.jobId }).items[0]).toMatchObject({ canReconcile: false, blockedReason: expect.stringContaining("目标位置") });
+    expect(() => f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id })).toThrow("目标位置");
+    f.db.connection.prepare("DELETE FROM download_claim WHERE item_id=?").run(other.id); f.repair();
+    f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
+    await expect.poll(() => f.state(f.job.jobId).state).toBe("COMPLETED"); expect(f.fileEngine.starts).toBe(1);
+  });
+  it("取消作业仍核对原提交，完成事实和文件保留且不恢复下载需求", async () => {
+    const f = await interrupted(); f.downloads.control({ jobId: f.job.jobId, operation: "cancel", requestKey: randomUUID() });
+    f.repair(); f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
+    await expect.poll(() => f.downloads.get(f.job.jobId)?.state).toBe("CANCELLED");
+    expect(f.db.connection.prepare("SELECT state FROM download_item WHERE id=?").get(f.row.id)).toEqual({ state: "COMPLETED" });
+    expect(f.db.connection.prepare("SELECT demand_state FROM download_job_item WHERE job_id=?").get(f.job.jobId)).toEqual({ demand_state: "CANCELLED" });
+    expect(await readFile(join(f.rootPath, "completed/电影.txt"))).toEqual(f.input.get("电影.txt")); expect(f.fileEngine.starts).toBe(1);
+  });
+  it("已有成功收据矛盾时回滚本次记账，精确原因在刷新后保留", async () => {
+    const f = await interrupted();
+    f.db.connection.prepare("INSERT INTO sync_receipt(id,source_kind,source_namespace,source_object_key,source_version_key,version_json,target_directory_id,target_slot,target_segments_json,local_sha256,size,completed_at,result_kind,result_id,request_variant) SELECT ?,'cloud',account_id,remote_ref,version_key,version_json,target_root_id,target_path_key,target_segments_json,?,expected_size,updated_at,'download-item',id,request_variant FROM download_item WHERE id=?").run(randomUUID(), "0".repeat(64), f.row.id);
+    f.repair(); f.downloads.requestReconcile({ jobId: f.job.jobId, itemId: f.row.id });
+    await expect.poll(() => f.downloads.issues({ jobId: f.job.jobId }).items[0]?.failure.code).toBe("RECEIPT_CONFLICT");
+    expect(f.db.connection.prepare("SELECT failure_code,failure_detail_code FROM download_item WHERE id=?").get(f.row.id)).toEqual({ failure_code: "CONFLICT", failure_detail_code: "RECEIPT_CONFLICT" });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: 0 }); expect(f.fileEngine.starts).toBe(1);
+  });
+  it("自动失败核对有退避，手动核对可立即恢复，重启仍沿用原提交", async () => {
+    const f = await interrupted(), finish = vi.spyOn(f.downloads.commits, "finish");
+    await new Promise((done) => setTimeout(done, 750)); expect(finish).not.toHaveBeenCalled();
+    await f.downloads.close(); f.repair();
+    const restored = new CloudDownloads(f.db, f.host, f.catalog, f.roots); cleanup.push(() => restored.close()); restored.start();
+    await expect.poll(() => restored.list({}).items[0]?.state).toBe("COMPLETED");
+    expect(f.fileEngine.starts).toBe(1); expect(restored.issues({ jobId: f.job.jobId }).total).toBe(0);
+  });
 });
