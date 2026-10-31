@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { doctor } from "./doctor.ts";
+import { createBuild, buildStatus } from "./build.ts";
 import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -59,6 +60,10 @@ export async function requestFromArgs(args: string[]): Promise<Request> {
   });
 }
 export async function dispatch(request: Request): Promise<unknown> {
+  const root = resolve(import.meta.dirname, "../..");
+  if (request.command === "build") return createBuild(root, request);
+  if (request.command === "status" && (request.payload as Input<"status">).jobId)
+    return buildStatus(root, (request.payload as Input<"status">).jobId!);
   if (request.command === "doctor")
     return doctor(resolve(import.meta.dirname, "../.."), request.payload as Input<"doctor">);
   if (request.command === "help")
@@ -69,7 +74,7 @@ export async function dispatch(request: Request): Promise<unknown> {
       usage:
         "npm run --silent desktop:agent -- <command> --json [--session UUID] [--request UUID] [--input JSON文件]",
       protocol: 1,
-      implemented: ["help", "doctor"],
+      implemented: ["help", "doctor", "build", "status(jobId)"],
     };
   throw new ToolError(
     "CAPABILITY_UNAVAILABLE",
@@ -84,6 +89,16 @@ export async function main(args: string[]) {
     request = await requestFromArgs(args);
     const value = await dispatch(request);
     const response = result(request, value);
+    if (
+      ["build", "status"].includes(request.command) &&
+      value &&
+      typeof value === "object" &&
+      "status" in value
+    ) {
+      response.status = String(value.status);
+      if (["failed", "blocked", "unknown"].includes(response.status))
+        process.exitCode = response.status === "failed" ? 1 : 2;
+    }
     if (request.command === "doctor" && (value as { status: string }).status !== "ready") {
       response.status = "blocked";
       process.exitCode = 2;
