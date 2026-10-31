@@ -1,10 +1,11 @@
-import { DesktopError, CloudError, directoryIssueMessage, type ManagedDownloadRoot, type DirectoryIssue } from "@media-marshal/contracts";
+import { DesktopError, CloudError, directoryIssueMessage, publicError, type ManagedDownloadRoot, type DirectoryIssue } from "@media-marshal/contracts";
 import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
 import type { PrivateCoreAction, PrivateCoreInput, PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
 import { realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { pathsOverlap } from "@media-marshal/media-core/files";
 import { probeManagedVolume } from "./volume-probe";
+import { getLogger } from "../../logging/node";
 
 interface RootCore {
   requestPrivate<K extends PrivateCoreAction>(action: K, payload: PrivateCoreInput<K>): Promise<PrivateCoreOutput<K>>;
@@ -42,7 +43,11 @@ export class DownloadRootController {
     return this.serial(async () => {
       for (const previous of await this.core.requestPrivate("cloud.roots.bootstrap", {})) {
         try { const grant = await this.core.requestPrivate("cloud.roots.authorize", await this.probe(await this.validateDirectory(previous.path), previous.id)); await this.host.installRoot(grant); }
-        catch { this.host.forgetRoot?.(previous.id); await this.core.requestPrivate("cloud.roots.unavailable", { id: previous.id }); }
+        catch (error) {
+          const failure = publicError(error);
+          getLogger("directories").warn({ event: "directory.restore.failed", directoryId: previous.id, code: failure.code, directoryIssue: failure.directoryIssue, error }, "下载目录授权恢复未完成");
+          this.host.forgetRoot?.(previous.id); await this.core.requestPrivate("cloud.roots.unavailable", { id: previous.id });
+        }
       }
     });
   }

@@ -48,6 +48,7 @@ import { defaultDiagnostic } from "./cloud/diagnostics";
 import { CloudAccountController } from "./cloud/accounts";
 import { QuarkLoginController } from "./cloud/quark-login";
 import { DownloadRootController } from "./cloud/roots";
+import { ConfigurationDirectoryController } from "./configuration-directories";
 import { cloudCredentialDraftSchema } from "@media-marshal/contracts";
 import { parserLaunchSchema } from "@media-marshal/contracts/internal";
 import { createHash } from "node:crypto";
@@ -104,6 +105,7 @@ async function bootstrap() {
   const cloudAccountsToken = createIdentifier<CloudAccountController>("desktop.cloud-accounts");
   const quarkLoginToken = createIdentifier<QuarkLoginController>("desktop.quark-login");
   const downloadRootsToken = createIdentifier<DownloadRootController>("desktop.download-roots");
+  const configurationDirectoriesToken = createIdentifier<ConfigurationDirectoryController>("desktop.configuration-directories");
   const developmentUrl = !app.isPackaged
     ? process.env.ELECTRON_RENDERER_URL
     : undefined;
@@ -315,16 +317,15 @@ async function bootstrap() {
       const quarkLogin = new QuarkLoginController((input) => accounts.authorize(input), (requestKey) => supervisor.request("cloud.authorizations.get", { requestKey }));
       ctx.container.bind(quarkLoginToken).toConstantValue(quarkLogin);
       ctx.container.bind(downloadRootsToken).toConstantValue(roots);
+      const directories = new ConfigurationDirectoryController(supervisor, roots);
+      ctx.container.bind(configurationDirectoriesToken).toConstantValue(directories);
       let recovering: Promise<void> | undefined, recoverAgain = false;
       const recover = (fresh = false): Promise<void> => {
         if (recovering) { if (fresh) recoverAgain = true; return recovering; }
         return recovering = (async () => {
         if (exiting || supervisor.state !== "ready") return;
         await roots.restore();
-        for (const previous of await supervisor.requestPrivate("configuration.bootstrap", {})) {
-          try { const path = await roots.validateDirectory(previous.grant.path), grant = await (previous.kind === "ordinary" ? probeReadOnlyVolume(path, previous.grant.id) : probeManagedVolume(path, previous.grant.id)); await supervisor.requestPrivate("configuration.authorize", { kind: previous.kind, grant }); }
-          catch { /* 保留原目录身份和不可用状态，等待用户恢复原磁盘。 */ }
-        }
+        await directories.restore();
         for (const previous of await supervisor.requestPrivate("media.targets.bootstrap", {})) {
           try { const target = await probeManagedVolume(await roots.validateDirectory(previous.path), previous.id); await supervisor.requestPrivate("media.targets.authorize", target); }
           catch { /* 每个媒体目标独立恢复；单个目标缺盘不阻断同下载根的其他策略。 */ }
@@ -578,6 +579,15 @@ async function bootstrap() {
           }
           const request = parseCoreRequest({ ...value, kind: "request" });
           if (["sources.save", "sources.pause", "cloud.subscriptions.configure", "cloud.subscriptions.control", "cloud.downloads.preview", "cloud.downloads.confirm"].includes(request.action)) throw new DesktopError("CONFLICT", "该配置入口已并入来源配置，请重新预览确认或使用来源控制");
+          if (request.action === "sync.preview") {
+            const input = coreActions["sync.preview"].input.parse(request.payload);
+            try { return { ok: true, result: await supervisor.request("sync.preview", input) }; }
+            catch (error) {
+              if (publicError(error).code !== "LOCAL_UNAVAILABLE" || !await ctx.get(configurationDirectoriesToken).prepareSyncPreview(input)) throw error;
+            }
+            // 仅在所需原目录成功恢复后重试一次，沿用幂等键；已生成的预览直接返回。
+            return { ok: true, result: await supervisor.request("sync.preview", input) };
+          }
           if (request.action === "source-rules.apply") {
             const input = coreActions["source-rules.apply"].input.parse(request.payload);
             const preview = await supervisor.request("source-rules.get-preview", { id: input.previewId });
