@@ -31,4 +31,10 @@ macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其�
 
 停止只通过原应用连接请求正常退出，等待应用自身 drain；不强制结束业务进程。PID、创建时间或命令不符、控制连接丢失或停机超时均保持 unknown，不接管替代进程。停止回收控制连接和自有应用进程，隔离数据及证据继续保留，过期证据回收按任务 2.15 接入。单元检查使用 `npm run test:desktop-agent`；真实会话回归需先完成当前 build，再运行 `node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tools/desktop-agent/session.integration.ts`。
 
-开发会话的启动身份与请求关联沿用统一日志，详见[日志因果、事件目录及完整性边界](../../docs/development/desktop-logging.md)。控制器注入实际 buildId／sessionId／runId；每个进程有独立代际和序号。界面请求只记录动作和受限业务 ID，后台轮询不冒用上一次点击，普通发行的高频只读调用使用 debug 级别。logs／diagnose 命令在任务 2.6 接入前仍明确受阻。
+开发会话的启动身份与请求关联沿用统一日志，详见[日志因果、事件目录及完整性边界](../../docs/development/desktop-logging.md)。控制器注入实际 buildId／sessionId／runId；每个进程有独立代际和序号。界面请求只记录动作和受限业务 ID，后台轮询不冒用上一次点击，普通发行的高频只读调用使用 debug 级别。logs／diagnose 的查询范围和完整性说明见下文。
+
+`logs --session <sessionId> --input 过滤参数.json --json` 读取本会话日志；支持 level（最低级别）、process、scope、requestId、operationId、limit 和 cursor。operationId 可查询业务 job／task／item ID 或状态事件中的物理关联。一次最多返回 200 条，扫描预算 2 MiB、输出预算 192 KiB；继续查询使用返回的 cursor。游标绑定会话密钥和过滤条件，可调整 limit，不能挪到其他会话或更换过滤条件。轮转按文件身份续读，历史删除／改写、超长行、部分写入及采集限流都有完整性标记。
+
+`diagnose --session <sessionId> --json` 汇总受限只读业务查询、宿主进程列表、最近警告与异常采集；不直接打开运行中的业务 SQLite，不触发重试、补扫、复制或清理。分页摘要会标记截断，组件缺失返回 unavailable。诊断完成只说明查询已结束，`assertions` 始终标记未执行，不据此断言业务成功。
+
+每个 run 自动保留 `observations.jsonl`，采集受信任主页面 pageerror、窗口崩溃、组件退出和日志文件失败；其他来源的登录窗口只记录不可观察，不采集其异常正文。未标记控制台不保存。采集队列最多 256 条、文件最多 1 MiB，丢弃数量和缺失总结均明确报告；正常停止保存 collector.json，异常退出不能假定最后记录完整。日志记录的 dropBatchId／dropReason 按批次分组，dropCount 取最大计数；batchComplete 为 false 时只是下界，不能重复相加。所有查询均保留 historyComplete=false，范围是当前可用历史或有界尾部。

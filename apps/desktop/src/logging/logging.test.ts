@@ -163,8 +163,13 @@ describe("桌面统一日志", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    expect(records).toHaveLength(2);
-    expect(records[0]).toMatchObject({ process: "core", msg: "中文消息", event: "core.ready" });
+    expect(records.filter((record) => record.event === "core.ready")).toHaveLength(2);
+    expect(records.some((record) => record.event === "logging.dropped")).toBe(true);
+    expect(records.find((record) => record.event === "core.ready")).toMatchObject({
+      process: "core",
+      msg: "中文消息",
+      event: "core.ready",
+    });
     expect(output).not.toContain("私有请求");
     expect(output).not.toContain("原始秘密");
   });
@@ -187,7 +192,16 @@ describe("桌面统一日志", () => {
       );
     expect(output).not.toContain("未标记原始内容");
     expect(output).not.toContain("秘密");
-    expect(output.trim().split("\n")).toHaveLength(200);
+    const records = output
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records.filter((record) => record.event !== "logging.dropped")).toHaveLength(200);
+    expect(records.find((record) => record.event === "logging.dropped")).toMatchObject({
+      dropReason: "RATE_LIMIT",
+      dropCount: 1,
+      batchComplete: false,
+    });
   });
 
   it("日志目录不可写时只报告一次，仍输出控制台且关闭不阻塞", async () => {

@@ -2,6 +2,8 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { doctor } from "./doctor.ts";
 import { createBuild, buildStatus } from "./build.ts";
+import { readLogs } from "./log-reader.ts";
+import { diagnoseSession } from "./diagnose.ts";
 import { startSession, sessionCommand } from "./session.ts";
 import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
@@ -62,6 +64,16 @@ export async function requestFromArgs(args: string[]): Promise<Request> {
 }
 export async function dispatch(request: Request): Promise<unknown> {
   const root = resolve(import.meta.dirname, "../..");
+  if (request.command === "diagnose") return diagnoseSession(root, request);
+  if (request.command === "logs") {
+    if (!request.sessionId)
+      throw new ToolError(
+        "SESSION_REQUIRED",
+        "日志查询需要会话标识",
+        "使用 --session 指定自有会话",
+      );
+    return readLogs(root, request.sessionId, request.payload as Input<"logs">);
+  }
   if (request.command === "start") return startSession(root, request);
   if (
     ["status", "stop", "restart"].includes(request.command) &&
@@ -81,7 +93,17 @@ export async function dispatch(request: Request): Promise<unknown> {
       usage:
         "npm run --silent desktop:agent -- <command> --json [--session UUID] [--request UUID] [--input JSON文件]",
       protocol: 1,
-      implemented: ["help", "doctor", "build", "status", "start(empty)", "stop", "restart"],
+      implemented: [
+        "help",
+        "doctor",
+        "build",
+        "status",
+        "start(empty)",
+        "logs",
+        "diagnose",
+        "stop",
+        "restart",
+      ],
     };
   throw new ToolError(
     "CAPABILITY_UNAVAILABLE",

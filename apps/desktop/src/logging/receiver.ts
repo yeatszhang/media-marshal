@@ -1,5 +1,6 @@
 import { StringDecoder } from "node:string_decoder";
 import type { Logger, Level } from "pino";
+import { createLossReporter } from "./loss";
 import { validIdentity } from "./context";
 import { RENDERER_LOG_PREFIX } from "./shared";
 
@@ -26,6 +27,11 @@ const fields = [
   "phase",
   "requestKind",
   "durationMs",
+  "dropReason",
+  "dropSource",
+  "dropCount",
+  "dropBatchId",
+  "batchComplete",
   "error",
   "errorCode",
   "exitCode",
@@ -69,19 +75,31 @@ const fields = [
 /** 只转发结构化日志，不把子进程原始 stderr 或任意页面控制台当作可信日志。 */
 export function createLogReceiver(logger: Logger, source: "core" | "sidecar" | "renderer") {
   const target = logger.child({ process: source });
+  const drop = createLossReporter(
+    target.child({ scope: "logging", process: "main", dropSource: source }),
+  );
   let windowStart = Date.now(),
     count = 0;
   const receive = (line: string) => {
-    if (line.length > 32 * 1024) return;
+    if (line.length > 32 * 1024) {
+      drop("LINE_TOO_LARGE");
+      return;
+    }
     if (Date.now() - windowStart >= 1000) {
       windowStart = Date.now();
       count = 0;
     }
-    if (++count > 200) return;
+    if (++count > 200) {
+      drop("RATE_LIMIT");
+      return;
+    }
     try {
       const record = JSON.parse(line);
       const level = levelNames[record?.level];
-      if (!level || typeof record.msg !== "string") return;
+      if (!level || typeof record.msg !== "string") {
+        drop("INVALID_RECORD");
+        return;
+      }
       const data = Object.fromEntries(
         fields
           .filter((field) => Object.hasOwn(record, field))
@@ -104,6 +122,7 @@ export function createLogReceiver(logger: Logger, source: "core" | "sidecar" | "
         data.sourcePid = record.pid;
       target[level](data, record.msg);
     } catch {
+      drop("INVALID_RECORD");
       /* 原始输出可能包含凭据，不原样兜底。 */
     }
   };
@@ -123,6 +142,7 @@ export function createLogReceiver(logger: Logger, source: "core" | "sidecar" | "
           if (!dropping) buffer += part;
           if (buffer.length > 32 * 1024) {
             buffer = "";
+            if (!dropping) drop("LINE_TOO_LARGE");
             dropping = true;
           }
           if (part.endsWith("\n")) {

@@ -2,6 +2,8 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ElectronApplication } from "@playwright/test";
+import { EventCollector } from "./collector.ts";
+import { readHealth } from "./health.ts";
 import type { Server } from "node:net";
 import { assertBuild, atomicJson } from "./build.ts";
 import { sanitizeLogValue } from "../../apps/desktop/src/logging/shared.ts";
@@ -24,6 +26,7 @@ interface Runtime {
   app?: ElectronApplication;
   server?: Server;
   busy: boolean;
+  collector?: EventCollector;
 }
 async function openApplication(runtime: Runtime) {
   const { root, session } = runtime;
@@ -31,12 +34,15 @@ async function openApplication(runtime: Runtime) {
   const directory = runHome(root, session.runId);
   const dataDir = join(runHome(root, session.profileRunId), "data");
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  session.buildId = build.buildId;
+  runtime.collector = await EventCollector.create(root, session);
   const app = await launchDesktop(root, {
     ...session.options,
     dataDir,
     diagnostics: { sessionId: session.sessionId, runId: session.runId, buildId: build.buildId },
   });
   runtime.app = app;
+  runtime.collector.attach(app);
   session.application = identify(app.process().pid!);
   if (!session.application || !session.application.command.includes(`--user-data-dir=${dataDir}`))
     throw new ToolError(
@@ -110,6 +116,7 @@ async function closeApplication(runtime: Runtime) {
 async function transition(runtime: Runtime, restart: boolean) {
   const { session, root } = runtime;
   await closeApplication(runtime);
+  await runtime.collector?.close();
   if (restart) {
     session.runId = randomUUID();
     session.generation++;
@@ -207,6 +214,11 @@ function dispatcher(runtime: Runtime) {
   let queue = Promise.resolve<unknown>(undefined);
   return (request: Request) => {
     if (request.command === "status") return Promise.resolve(publicSession(runtime.session));
+    if (request.command === "diagnose" && runtime.app && !runtime.busy)
+      return readHealth(runtime.app).then((health) => ({
+        health,
+        collection: runtime.collector?.snapshot(),
+      }));
     if (!["stop", "restart"].includes(request.command))
       return Promise.reject(
         new ToolError(
@@ -239,6 +251,7 @@ export async function supervise(root: string, id: string) {
   } catch (error) {
     session.status = "stopping";
     await closeApplication(runtime).catch(() => {});
+    await runtime.collector?.close().catch(() => {});
     session.status = runtime.app ? "unknown" : "failed";
     session.error = failure(error).error;
     await saveSession(root, session);

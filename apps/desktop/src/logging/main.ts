@@ -4,6 +4,7 @@ import { finished } from "node:stream/promises";
 import pino, { type DestinationStream } from "pino";
 import { createStream } from "rotating-file-stream";
 import { createProcessLogger, setRootLogger } from "./node";
+import { boundedFileSink } from "./file-sink";
 import { logLevel, type LogLevel } from "./shared";
 
 export async function configureMainLogging(
@@ -23,7 +24,7 @@ export async function configureMainLogging(
     if (reported) return;
     reported = true;
     consoleLogger.error(
-      { scope: "logging" },
+      { scope: "logging", event: "logging.unavailable" },
       "本地日志写入失败，请检查日志目录权限或可用空间；控制台日志仍可用",
     );
     options.onFailure?.();
@@ -49,17 +50,11 @@ export async function configureMainLogging(
     available = false;
     reportFailure();
   }
-  const fileStream: DestinationStream = {
-    write(chunk) {
-      if (!available || !file || file.destroyed) return;
-      // Pino 的多目标写入不等待背压，限制慢磁盘上的队列，防止常驻进程无限占用内存。
-      if (file.writableLength > 1024 * 1024) {
-        reportFailure();
-        return;
-      }
-      file.write(chunk);
-    },
-  };
+  const fileStream = boundedFileSink(
+    () => (available ? file : undefined),
+    consoleLogger,
+    reportFailure,
+  );
   const logger = createProcessLogger(
     "main",
     pino.multistream([
