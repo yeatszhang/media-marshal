@@ -68,13 +68,18 @@ export class ManagedRoot {
     }
     for (const item of items) for (let length = 1; length < item.length; length++) if (keys.has(this.slotKey(item.slice(0, length)))) throw new CloudError("CONFLICT");
   }
+  private async matchesRealPath(path: string) {
+    const resolved = await realpath(path);
+    // HFS+ 会分解假名和重音字符；只在已探测为 Unicode 等价的卷上接受这种表示差异。
+    return this.grant.volume.unicodeEquivalent ? resolved.normalize("NFC") === path.normalize("NFC") : resolved === path;
+  }
   private async directory(parts: readonly string[], create: boolean) {
     await this.check(); let path = this.grant.path;
     for (const part of parts) {
       path = join(path, part);
       if (create) await mkdir(path, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error; });
       const info = await lstat(path, { bigint: true });
-      if (!info.isDirectory() || info.isSymbolicLink() || String(info.dev) !== this.grant.volume.observedDevice || await realpath(path) !== path) throw new CloudError("LOCAL_UNAVAILABLE");
+      if (!info.isDirectory() || info.isSymbolicLink() || String(info.dev) !== this.grant.volume.observedDevice || !await this.matchesRealPath(path)) throw new CloudError("LOCAL_UNAVAILABLE");
     }
     await this.check(); return path;
   }
@@ -143,7 +148,7 @@ export class ManagedRoot {
       if (before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(position) !== after.size) throw new CloudError("CONFLICT");
       if (remoteHash && upstream!.digest("hex") !== remoteHash.value) throw new CloudError("REMOTE_CHANGED");
       const current = await lstat(path, { bigint: true });
-      if (!current.isFile() || current.isSymbolicLink() || current.dev !== after.dev || current.ino !== after.ino || current.birthtimeNs !== after.birthtimeNs || current.size !== after.size || current.mtimeNs !== after.mtimeNs || current.ctimeNs !== after.ctimeNs || await realpath(path) !== path) throw new CloudError("CONFLICT");
+      if (!current.isFile() || current.isSymbolicLink() || current.dev !== after.dev || current.ino !== after.ino || current.birthtimeNs !== after.birthtimeNs || current.size !== after.size || current.mtimeNs !== after.mtimeNs || current.ctimeNs !== after.ctimeNs || !await this.matchesRealPath(path)) throw new CloudError("CONFLICT");
       await handle.sync();
       await this.check(); return { evidence: this.evidence(after, digest.digest("hex")), snapshot: { dev: after.dev, ino: after.ino, size: after.size, birthtimeNs: after.birthtimeNs, mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs } };
     } finally { await handle.close(); }

@@ -111,6 +111,50 @@ describe.skipIf(process.platform !== "darwin")("Mac 真实受管目录与卷策�
     expect(await readdir(path)).toEqual([]);
     expect(await roots.list()).toMatchObject([{ state: "UNAVAILABLE" }]);
   });
+  it("Unicode 等价卷上的分解假名目录和文件可校验、提交并重复核对", async () => {
+    const { path, root, grant } = await setup(), attempt = randomUUID(), stage = await root.prepareStage(attempt);
+    expect(grant.volume.unicodeEquivalent).toBe(true);
+    const parts = ["薬屋のひとりごと 第3期", "épisode.mp4"], decomposed = parts.map((part) => part.normalize("NFD"));
+    await mkdir(join(stage, decomposed[0]!));
+    await writeFile(join(stage, ...decomposed), "verified");
+    await mkdir(join(path, "completed", decomposed[0]!));
+    expect(await realpath(join(stage, ...parts))).not.toBe(join(stage, ...parts));
+    const strict = new ManagedRoots();
+    try {
+      await strict.install({ ...grant, volume: { ...grant.volume, unicodeEquivalent: false } });
+      await expect(strict.get(grant.id).verifyStage(attempt, parts, 8)).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE" });
+    } finally { await strict.close(); }
+    const proof = await root.verifyStage(attempt, parts, 8);
+    expect((await root.commit(attempt, parts, proof)).alreadyCommitted).toBe(false);
+    expect((await root.commit(attempt, parts, proof)).alreadyCommitted).toBe(true);
+    expect(await root.inspectCompleted(parts)).toEqual(proof);
+    await root.cleanupAttempt(attempt);
+    expect(await readFile(join(path, "completed", ...parts), "utf8")).toBe("verified");
+  });
+  it("真实隔离 HFS+ 卷可校验并提交含组合假名的目录和文件", async () => {
+    const base = await directory(), image = join(base, "unicode.dmg"), mount = join(base, "volume"), run = promisify(execFile);
+    await mkdir(mount);
+    await run("hdiutil", ["create", "-size", "32m", "-fs", "HFS+", "-volname", "MarshalUnicodeTest", image]);
+    await run("hdiutil", ["attach", "-nobrowse", "-mountpoint", mount, image]);
+    const files = new ManagedRoots();
+    try {
+      const grant = await probeManagedVolume(mount);
+      expect(grant.volume).toMatchObject({ fsType: "hfs", unicodeEquivalent: true });
+      await files.install(grant);
+      const root = files.get(grant.id), attempt = randomUUID(), parts = ["薬屋のひとりごと 第3期", "épisode.mp4"];
+      await root.prepareStage(attempt);
+      const stage = await root.stageFilePath(attempt, parts);
+      await writeFile(stage, "verified");
+      expect(await realpath(stage)).not.toBe(stage);
+      const proof = await root.verifyStage(attempt, parts, 8);
+      await root.commit(attempt, parts, proof);
+      await root.cleanupAttempt(attempt);
+      expect(await root.inspectCompleted(parts)).toEqual(proof);
+    } finally {
+      await files.close();
+      await run("hdiutil", ["detach", mount]);
+    }
+  }, 30000);
   it("通过真实 Core 私有授权隔离普通来源，双向拒绝目录交叉覆盖", async () => {
     const path = await directory(), runtime = createMediaApplication(join(path, "app.sqlite3")); await runtime.app.start(); cleanup.push(() => runtime.stop());
     const source = join(path, "source"), target = join(path, "target"), managed = join(path, "managed"); await Promise.all([source, target, managed].map((p) => mkdir(p)));
