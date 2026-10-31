@@ -21,11 +21,12 @@ import { LocalSync } from "./local-sync.js";
 import { SourceRoot } from "../files/source-root.js";
 import { DownloadCleanupJournal } from "../ingestion/download-cleanup-journal.js";
 import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
+import type { CoreLogger } from "../application/logger.js";
 
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
 const versions = (rule: RecognitionRule | SyncSourceRule) => ({ id: rule.id, expectedVersion: rule.version, expectedDraftRevision: rule.draftRevision, expectedLifecycleRevision: rule.lifecycleRevision });
-async function fixture() {
+async function fixture(logger?: CoreLogger) {
   const folder = await realpath(await mkdtemp(join(tmpdir(), "marshal-independent-recognition-"))); cleanup.push(() => rm(folder, { recursive: true, force: true }));
   const db = await CoreDatabase.open(join(folder, "core.sqlite3")); cleanup.push(() => db.close()); const roots = new CloudRoots(db); cleanup.push(() => roots.close());
   const directories = new ConfigurationDirectories(db, roots); cleanup.push(() => directories.close());
@@ -37,7 +38,7 @@ async function fixture() {
   const metadata = (type: "MOVIE" | "TV_SHOW") => ({ tmdbId: type === "MOVIE" ? 1 : 2, mediaType: type, title: type === "MOVIE" ? "测试电影" : "测试剧集", originalTitle: null, year: 2026 });
   vi.spyOn(connections.tmdb, "search").mockImplementation(async (_query, type) => [metadata(type)]); vi.spyOn(connections.tmdb, "detail").mockImplementation(async (_id, type) => ({ ...metadata(type), seasons: type === "TV_SHOW" ? [1] : [] })); vi.spyOn(connections.tmdb, "episodes").mockResolvedValue([{ season: 1, episode: 1, title: "第一集" }]);
   const parser = { ready: true, start: async () => {}, close: async () => {}, parse: async (name: string) => normalizeParse(name.includes("S01") ? { title: "测试剧集", type: "episode", year: 2026, season: 1, episode: 1 } : { title: "测试电影", type: "movie", year: 2026 }, name) };
-  const pipeline = new IngestionPipeline(db, () => parser, connections, now, () => clock); cleanup.push(() => pipeline.close()); const recognition = new RecognitionRules(db, directories, pipeline, now); cleanup.push(() => recognition.close());
+  const pipeline = new IngestionPipeline(db, () => parser, connections, now, () => clock, undefined, logger); cleanup.push(() => pipeline.close()); const recognition = new RecognitionRules(db, directories, pipeline, now, undefined, logger); cleanup.push(() => recognition.close());
   const downloads = new CloudDownloads(db, unavailableHost, new RemoteCatalog(db, unavailableHost), roots, now); cleanup.push(() => downloads.close()); const sync = new SyncRules(db, directories, downloads, new LocalSync(db, directories, roots, now, () => clock), now); cleanup.push(() => sync.close());
   const bytes = "真实原文件，识别与同步独立。".repeat(500); await writeFile(join(input.path, "测试电影.2026.mp4"), bytes); await writeFile(join(input.path, "测试剧集.S01E01.mp4"), bytes);
   const movieTarget = { id: randomUUID(), name: "电影主库", mediaType: "MOVIE" as const, directoryId: movie.id, template: "{title}/{title}.{ext}" }, tvTarget = { id: randomUUID(), name: "剧集主库", mediaType: "TV_SHOW" as const, directoryId: tv.id, template: null };
@@ -63,9 +64,12 @@ it("媒体目录列表标识当前设置，历史识别目标不冒充默认目�
   expect(f.pipeline.libraries().find((row) => row.targetId === f.movieTarget.id)!.configuredMediaTypes).toBeUndefined();
 });
 it("普通已有目录可以先空目标识别，再混合电影与剧集分库，不要求同步或 Emby", async () => {
-  const f = await fixture(); let rule = await f.enable(f.save()); const sourceId = rule.runtime!.sourceId!; await f.pipeline.scan(sourceId); await f.advance(sourceId);
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const f = await fixture(logger); let rule = await f.enable(f.save()); const sourceId = rule.runtime!.sourceId!; await f.pipeline.scan(sourceId); await f.advance(sourceId);
   expect(new CoreService(f.db).getRuntime()).toMatchObject({ sourceCount: 0, recognitionCount: 1 });
   const movieTask = await f.task(sourceId, "测试电影.2026.mp4"), tvTask = await f.task(sourceId, "测试剧集.S01E01.mp4");
+  expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ event: "recognition.mapping.confirmed", ruleId: rule.id, version: rule.version }), expect.any(String));
+  expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ event: "recognition.task.matched", sourceId, taskId: movieTask, matchCount: expect.any(Number) }), expect.any(String));
   await expect(f.pipeline.preview({ taskId: movieTask, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false })).rejects.toThrow(/没有.*目标/);
   rule = await f.enable(f.save(rule, { targets: [f.movieTarget, f.tvTarget] })); await f.advance(sourceId);
   const movie = await f.pipeline.preview({ taskId: movieTask, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false }), tv = await f.pipeline.preview({ taskId: tvTask, requestKey: randomUUID(), selection: { tmdbId: 2, mediaType: "TV_SHOW", season: 1, episode: 1 }, includeAccessories: false });

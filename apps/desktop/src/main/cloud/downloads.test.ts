@@ -38,6 +38,7 @@ import { SidecarBinaryResolver, lockedDefinitions, sidecarTarget } from "../../s
 import { guardianManifestSchema } from "../../sidecar-host/protocol";
 import { ManagedGuardian } from "../../sidecar-host/guardian";
 import { RcloneCliEngine } from "../../sidecar-host/rclone/engine";
+import type { CoreLogger } from "@media-marshal/media-core";
 
 class FileEngine implements TransferEngine {
   readonly implementationId = "test.files"; readonly supportedSourceKinds = ["webdav"] as const;
@@ -67,7 +68,7 @@ class FileEngine implements TransferEngine {
 }
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { for (const work of cleanup.splice(0).reverse()) await work(); });
-async function fixture(input = new Map([["电影.txt", Buffer.from("完整测试文件")]]), native = false, now = Date.now) {
+async function fixture(input = new Map([["电影.txt", Buffer.from("完整测试文件")]]), native = false, now = Date.now, logger?: CoreLogger) {
   const path = await realpath(await mkdtemp(join(tmpdir(), "marshal-downloads-"))); cleanup.push(() => rm(path, { recursive: true, force: true }));
   const db = await CoreDatabase.open(join(path, "desktop.sqlite3")); cleanup.push(() => db.close());
   const roots = new CloudRoots(db); cleanup.push(() => roots.close());
@@ -89,7 +90,7 @@ async function fixture(input = new Map([["电影.txt", Buffer.from("完整测试
     if (!response.ok) throw new CloudError(response.error.code, response.error.retryAfterSeconds); return response.result as never;
   }, observe: (_handle, _context, listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   accounts.dispatch("cloud.authorization.finish", { jobId: prepared.job.id, failure: null, capabilities: await provider.capabilities(binding) as DriveCapabilities, identityKey: "a".repeat(64) });
-  const catalog = new RemoteCatalog(db, host), account = catalog.accounts()[0]!, downloads = new CloudDownloads(db, host, catalog, roots, now); cleanup.push(() => downloads.close());
+  const catalog = new RemoteCatalog(db, host), account = catalog.accounts()[0]!, downloads = new CloudDownloads(db, host, catalog, roots, now, logger); cleanup.push(() => downloads.close());
   const entries = (await catalog.list({ accountId: account.id, parentRef: account.rootRef! })).items;
   const subscriptions = new CloudSubscriptions(db, downloads, catalog, roots); cleanup.push(() => subscriptions.close());
   const preview = async (ref = entries[0]!.ref, options: { forceRedownload?: boolean; layout?: "selection" | "drive"; filters?: { extensions?: string[]; names?: string[]; rules?: SyncFilter[] } } = {}) => {
@@ -1095,12 +1096,17 @@ describe.skipIf(process.platform !== "darwin")("Core 下载调度、文件校验
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 1 }); expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_outbox").get()).toEqual({ n: 1 });
   });
   it("认证失败停止新领取，网络失败有限重试，远端变化不能进入完成目录", async () => {
-    const f = await fixture(), job = await f.confirm(); f.provider.fault = () => { throw new CloudError("AUTH_REQUIRED"); }; f.downloads.start();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const f = await fixture(undefined, false, Date.now, logger), job = await f.confirm(); f.provider.fault = () => { throw new CloudError("AUTH_REQUIRED"); }; f.downloads.start();
     await expect.poll(() => f.state(job.jobId).state).toBe("AUTH_REQUIRED"); expect(f.fileEngine.starts).toBe(0);
     f.provider.fault = undefined; f.db.connection.prepare("UPDATE cloud_account SET status='READY'").run();
     f.downloads.control({ jobId: job.jobId, operation: "retry", requestKey: randomUUID() });
     f.input.set("电影.txt", Buffer.from("同名远端内容已改变")); await expect.poll(() => f.state(job.jobId).state).toBe("FAILED");
     expect(f.state(job.jobId).failure?.code).toBe("REMOTE_CHANGED"); expect(await readdir(join(f.rootPath, "completed"))).toEqual([]);
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ event: "download.job.confirmed", jobId: job.jobId }), expect.any(String));
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: "download.item.failed", errorCode: "AUTH_REQUIRED" }), expect.any(String));
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: "download.item.failed", errorCode: "REMOTE_CHANGED" }), expect.any(String));
+    expect(logger.info.mock.calls.some(([fields]) => fields.event === "download.job.state" && fields.toState === "COMPLETED")).toBe(false);
   });
   it("传输缺文件按固定策略最多三次，不会重复累计成功字节", async () => {
     const f = await fixture(), job = await f.confirm(); f.fileEngine.omit = true; f.fileEngine.exitCode = 5; f.downloads.start();

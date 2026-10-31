@@ -22,6 +22,8 @@ import type { CoreHostBridge } from "@media-marshal/contracts/internal/rpc";
 import { privateCoreActions, privateCoreResponseSchema, type PrivateCoreAction, type PrivateCoreInput, type PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
 import { CloudError, cloudErrorCodeSchema } from "@media-marshal/contracts";
 import type { NativeFileLaunch, ParserLaunch } from "@media-marshal/contracts/internal";
+import { getLogger } from "../logging/node";
+import { createLogReceiver } from "../logging/receiver";
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -87,9 +89,9 @@ export class CoreSupervisor {
     const hostGeneration = this.hostBridge?.generation ?? randomUUID();
     this.hostBridge?.attachCore(coreGeneration, (message) => port1.postMessage(message));
     let heartbeat: ReturnType<typeof setInterval> | undefined;
-    // 子进程错误不直接输出，避免原始数据库/文件错误泄漏个人路径。
-    child.stdout?.on("data", () => {});
-    child.stderr?.on("data", () => {});
+    const logs = createLogReceiver(getLogger("core-supervisor"), "core");
+    child.stdout?.on("data", logs.stream());
+    child.stderr?.on("data", logs.stream());
     let readyResolve!: () => void, readyReject!: (error: unknown) => void;
     const ready = new Promise<void>((resolve, reject) => {
       readyResolve = resolve;
@@ -134,6 +136,7 @@ export class CoreSupervisor {
         }
         clearTimeout(readyTimer);
         this.state = "ready";
+        getLogger("core-supervisor").info({ event: "core.connected" }, "媒体核心连接已建立");
         this.detail = null;
         readyResolve();
         void this.onReady?.().catch(() => {});
@@ -173,7 +176,9 @@ export class CoreSupervisor {
     });
     port1.start();
     this.exited = new Promise<void>((resolve) =>
-      child.once("exit", () => {
+      child.once("exit", (exitCode: number) => {
+        const log = getLogger("core-supervisor");
+        log[this.stopping ? "info" : "error"]({ event: "core.exit", exitCode }, this.stopping ? "媒体核心进程已退出" : "媒体核心意外退出，正在核对恢复条件");
         clearInterval(heartbeat);
         fail();
         port1.close();

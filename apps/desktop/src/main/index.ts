@@ -52,6 +52,12 @@ import { cloudCredentialDraftSchema } from "@media-marshal/contracts";
 import { parserLaunchSchema } from "@media-marshal/contracts/internal";
 import { createHash } from "node:crypto";
 import { probeManagedVolume, probeReadOnlyVolume } from "./cloud/volume-probe";
+import { configureMainLogging } from "../logging/main";
+import { getLogger } from "../logging/node";
+import { createLogReceiver } from "../logging/receiver";
+import { logLevel } from "../logging/shared";
+
+let logging: Awaited<ReturnType<typeof configureMainLogging>> | undefined;
 
 async function installServiceCredentials(supervisor: CoreSupervisor, vault: Credentials) {
   const { values, unavailable } = await vault.readServices();
@@ -74,9 +80,23 @@ windowPresentation.prepare(app);
 windowPresentation.guardNativeUi(dialog, shell);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
-else void app.whenReady().then(bootstrap);
+else void app.whenReady().then(bootstrap).catch(async (error) => {
+  getLogger("main").fatal({ error }, "客户端初始化异常，无法继续启动");
+  dialog.showErrorBox("客户端启动失败", "无法初始化客户端，请检查本地日志并重新启动。");
+  await logging?.close();
+  app.exit(1);
+});
 
 async function bootstrap() {
+  const level = logLevel(process.env.MARSHAL_LOG_LEVEL, app.isPackaged ? "info" : "debug");
+  process.env.MARSHAL_LOG_LEVEL = level;
+  logging = await configureMainLogging(join(app.getPath("userData"), "logs"), { level, onFailure: () => {
+    dialog.showErrorBox("本地日志不可用", "无法完整保存本地日志，请检查应用数据目录权限和磁盘空间。控制台日志仍可用。");
+  } });
+  const log = getLogger("main");
+  log.info({ event: "app.start" }, "客户端正在启动");
+  log.info(`日志文件：${logging.path}；日志级别：${level}`);
+  process.on("uncaughtExceptionMonitor", (error) => log.fatal({ error }, "主进程发生未捕获异常"));
   const coreToken = createIdentifier<CoreSupervisor>("desktop.core");
   const credentialToken = createIdentifier<Credentials>("desktop.credentials");
   const sidecarToken = createIdentifier<SidecarSupervisor>("desktop.sidecars");
@@ -161,6 +181,16 @@ async function bootstrap() {
       },
     });
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    const rendererLogs = createLogReceiver(getLogger("renderer"), "renderer");
+    window.webContents.on("console-message", (details) => {
+      if (details.frame !== window?.webContents.mainFrame) return;
+      try { requireTrustedRequest({}, details.frame.url, true, developmentUrl); }
+      catch { return; }
+      rendererLogs.renderer(details.message);
+    });
+    window.webContents.on("render-process-gone", (_event, details) => {
+      log.error({ event: "renderer.exit", reason: details.reason, exitCode: details.exitCode }, "界面进程已退出");
+    });
     rendererReload = new RendererReloadController(window.webContents, ipcMain, () => !exiting && !maintenance, developmentUrl);
     window.webContents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown" || input.isComposing || input.alt) return;
@@ -384,6 +414,7 @@ async function bootstrap() {
       const supervisor = ctx.get(coreToken),
         vault = ctx.get(credentialToken);
       ipcMain.handle(DESKTOP_CHANNEL, async (event, value: unknown) => {
+        let loggedAction: string | undefined;
         try {
           if (maintenance || exiting) throw new DesktopError("INTERRUPTED", "正在停止客户端，请等待操作完成");
           requireTrustedRequest(
@@ -413,6 +444,7 @@ async function bootstrap() {
               "页面与应用版本不一致，请重新打开窗口",
             );
           const action = value.action;
+          if (Object.hasOwn(nativeActions, action) || Object.hasOwn(coreActions, action)) loggedAction = action;
           if (Object.prototype.hasOwnProperty.call(nativeActions, action)) {
             const schema = nativeActions[action as keyof typeof nativeActions];
             const parsed = schema.safeParse(value.payload);
@@ -586,6 +618,7 @@ async function bootstrap() {
             ),
           };
         } catch (error) {
+          log.warn({ action: loggedAction, error, code: publicError(error).code }, "桌面请求未完成");
           return { ok: false, error: publicError(error) };
         }
       });
@@ -723,12 +756,15 @@ async function bootstrap() {
           Promise.resolve().then(() => desktop.container.isBound(coreToken) ? desktop.container.get(coreToken).stop() : undefined),
         ]);
       } finally {
-        await desktop.stop().catch(() => {});
+        await desktop.stop().catch((error) => log.error({ error }, "客户端资源清理未完成"));
+        log.info({ event: "app.stopped" }, "客户端已停止");
+        await logging?.close();
         app.quit();
       }
     })().catch(() => app.quit());
   });
-  await desktop.start().catch(async () => {
+  await desktop.start().catch(async (error) => {
+    log.error({ event: "app.start.failed", error }, "客户端启动失败");
     await desktop.stop().catch(() => {});
     if (exiting) return;
     dialog.showErrorBox(
@@ -736,6 +772,7 @@ async function bootstrap() {
       "无法初始化客户端，请重新启动或检查安装包。",
     );
     exiting = true;
+    await logging?.close();
     app.quit();
   });
 }

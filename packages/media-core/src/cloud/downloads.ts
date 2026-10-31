@@ -12,6 +12,7 @@ import { acceptExecutionEvent } from "./planning.js";
 import { EmbyLibraryFiles } from "../sources/emby-library-files.js";
 import { SyncReceipts } from "../sources/sync-receipts.js";
 import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 
 interface Item { id: string; account_id: string; remote_ref: string; version_json: string; target_root_id: string; target_path_key: string; target_segments_json: string; expected_size: number; state: DownloadState; attempt_count: number }
 interface Attempt { id: string; host_generation: string; core_generation: string; binding_generation: string; execution_id: string | null; state: string; plan_json: string }
@@ -32,10 +33,11 @@ export class CloudDownloads {
   private readonly recoveryRetryAt = new Map<string, number>();
   private timer?: ReturnType<typeof setInterval>;
   private ticking = false; private closed = false; private suspended = false;
-  constructor(private readonly database: CoreDatabase, private readonly host: CoreHostGateway, private readonly catalog: RemoteCatalog, private readonly roots: CloudRoots, private readonly now = Date.now) {
-    this.previews = new DownloadPreviews(database, catalog, roots, now); this.commits = new DownloadCommits(database, roots, catalog);
-    database.connection.prepare("UPDATE download_item SET state='RECONCILING' WHERE state IN ('RUNNING','VERIFYING','COMMITTING','PAUSING','CANCELLING')").run();
+  constructor(private readonly database: CoreDatabase, private readonly host: CoreHostGateway, private readonly catalog: RemoteCatalog, private readonly roots: CloudRoots, private readonly now = Date.now, private readonly logger: CoreLogger = silentLogger) {
+    this.previews = new DownloadPreviews(database, catalog, roots, now, logger); this.commits = new DownloadCommits(database, roots, catalog);
+    const recovered = database.connection.prepare("UPDATE download_item SET state='RECONCILING' WHERE state IN ('RUNNING','VERIFYING','COMMITTING','PAUSING','CANCELLING')").run();
     database.connection.prepare("UPDATE download_attempt SET state='UNCERTAIN' WHERE state IN ('CLAIMED','RUNNING','STOPPING')").run();
+    if (recovered.changes) logger.info({ event: "download.recovery.pending", fileCount: recovered.changes }, "发现中断的下载，等待停止证据和文件核对");
   }
   reconcileRestored() {
     const db = this.database.connection;
@@ -80,7 +82,7 @@ export class CloudDownloads {
     }
   }
   quiesce() { this.suspended = true; this.libraryAbort.abort(); }
-  start() { if (!this.timer) this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 250); }
+  start() { if (!this.timer) this.timer = setInterval(() => { void this.tick().catch((error) => this.logger.error({ event: "download.scheduler.failed", error }, "下载调度未完成")); }, 250); }
   async completedRoot(jobId: string) {
     const row = this.database.connection.prepare("SELECT i.target_root_id FROM download_item i JOIN download_job_item d ON d.item_id=i.id WHERE d.job_id=? AND i.state='COMPLETED' UNION SELECT r.target_directory_id AS target_root_id FROM download_job_receipt j JOIN sync_receipt r ON r.id=j.receipt_id WHERE j.job_id=? LIMIT 1").get(jobId, jobId) as { target_root_id: string } | undefined;
     if (!row) throw new CloudError("CONFLICT"); return this.roots.files.get(row.target_root_id).completedDirectory();
@@ -227,7 +229,9 @@ export class CloudDownloads {
       db.prepare("INSERT OR IGNORE INTO cloud_global_pause_job(job_id,created_at) VALUES(?,?)").run(jobId, now);
       this.control({ jobId, operation: "pause", requestKey: randomUUID() }, true);
     }
-    this.aggregate(); return { jobId };
+    this.aggregate();
+    this.logger.info({ event: "download.job.confirmed", jobId, previewId: preview.id, fileCount: snapshot.items.length }, "下载作业已确认");
+    return { jobId };
   }
   /** 复核只撤销当前暂停作业的未完成需求，物理下载仍由下载所有者管理。 */
   applyLibraryRecheck(jobId: string, snapshot: PreviewSnapshot) {
@@ -283,7 +287,9 @@ export class CloudDownloads {
       }
       db.prepare("INSERT INTO download_control(request_key,job_id,operation,created_at) VALUES(?,?,?,?)").run(input.requestKey, input.jobId, input.operation, new Date(this.now()).toISOString());
     })();
-    this.aggregate(); return { jobId: input.jobId };
+    this.aggregate();
+    this.logger.info({ event: "download.job.controlled", jobId: input.jobId, operation: input.operation }, "下载作业控制已受理");
+    return { jobId: input.jobId };
   }
   private state(id: string, state: DownloadState, failure: CloudFailure["code"] | null = null) { this.database.connection.prepare("UPDATE download_item SET state=?,failure_code=?,failure_detail_code=?,updated_at=? WHERE id=? AND state!='COMPLETED'").run(state, ...downloadFailureColumns(failure), new Date(this.now()).toISOString(), id); }
   private policy(itemId: string) {
@@ -302,6 +308,7 @@ export class CloudDownloads {
     if (failure.code === "RATE_LIMITED") this.database.connection.prepare("INSERT INTO cloud_account_backoff(account_id,until_at) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET until_at=max(until_at,excluded.until_at)").run(item.account_id, new Date(this.now() + Math.max(1000, (failure.retryAfterSeconds ?? 1) * 1000)).toISOString());
     if (failure.code === "AUTH_REQUIRED") this.database.connection.prepare("UPDATE cloud_account SET status='AUTH_REQUIRED',updated_at=? WHERE id=?").run(new Date(this.now()).toISOString(), item.account_id);
     this.state(item.id, state, failure.code);
+    this.logger.warn({ event: "download.item.failed", itemId: item.id, state, errorCode: failure.code, error }, "下载文件未完成，已记录失败或重试状态");
   }
   private aggregate() {
     const db = this.database.connection, jobs = db.prepare("SELECT id,state FROM download_job WHERE state!='CANCELLED'").all() as { id: string; state: DownloadState }[];
@@ -314,7 +321,10 @@ export class CloudDownloads {
       } else if (!pending.length) next = "COMPLETED";
       else if (job.state === "PAUSED") continue;
       else next = (["COMMITTING", "VERIFYING", "RUNNING", "RECONCILING", "QUEUED", "RETRY_WAIT", "AUTH_REQUIRED", "BLOCKED_LOCAL", "FAILED", "PAUSED", "CANCELLED"] as DownloadState[]).find((state) => pending.some((item) => item.state === state)) ?? "FAILED";
-      if (job.state !== next) db.prepare("UPDATE download_job SET state=?,updated_at=? WHERE id=?").run(next, new Date(this.now()).toISOString(), job.id);
+      if (job.state !== next) {
+        db.prepare("UPDATE download_job SET state=?,updated_at=? WHERE id=?").run(next, new Date(this.now()).toISOString(), job.id);
+        this.logger.info({ event: "download.job.state", jobId: job.id, fromState: job.state, toState: next, fileCount: items.length, readyCount: items.length - pending.length }, "下载作业状态已更新");
+      }
     }
   }
   get(id: string) { return this.list({ page: 1, pageSize: 1 }, id).items[0] ?? null; }
@@ -383,6 +393,7 @@ export class CloudDownloads {
         db.prepare("INSERT INTO download_claim(item_id,attempt_id,account_id,target_root_id,target_path_key,ordinal) VALUES(?,?,?,?,?,0)").run(item.id, attemptId, item.account_id, item.target_root_id, item.target_path_key);
         db.prepare("INSERT INTO download_attempt_item(attempt_id,item_id) VALUES(?,?)").run(attemptId, item.id); this.state(item.id, "RUNNING");
       })(); claimed = true;
+      this.logger.info({ event: "download.item.started", itemId: item.id, attemptId, bytes: item.expected_size }, "下载文件已领取，正在启动传输");
       const handle = await this.host.request("transfer.start", plan, context, attemptId); running.handle = handle;
       db.prepare("UPDATE download_attempt SET state='RUNNING',execution_id=? WHERE id=? AND state='CLAIMED'").run(handle.executionId, attemptId);
       unobserve = this.host.observe?.(handle, context, (event) => this.event(running, event));
@@ -403,6 +414,7 @@ export class CloudDownloads {
       db.prepare("UPDATE download_attempt SET state=?,exit_code=?,stopped_at=?,stop_evidence_json=? WHERE id=?").run(running.stop || this.closed ? "STOPPED" : "EXITED", exitCode, new Date(this.now()).toISOString(), JSON.stringify({ kind: "host-confirmed", executionId: handle.executionId, hostGeneration: context.hostGeneration }), attemptId);
       if (running.stop || this.closed || !this.demands(item.id)) { this.state(item.id, this.closed ? "QUEUED" : this.retainedDemand(item.id) ? "PAUSED" : "CANCELLED"); return; }
       this.state(item.id, "VERIFYING");
+      this.logger.debug({ event: "download.item.verifying", itemId: item.id, attemptId, exitCode }, "传输已停止，正在核验文件并提交");
       try { await this.commits.verifyAndCommit(attemptId, item.target_root_id, plan.items[0]!); }
       catch (error) {
         if (running.stop && !db.prepare("SELECT 1 FROM download_commit_intent WHERE item_id=?").get(item.id)) { this.state(item.id, "PAUSED"); return; }
@@ -416,7 +428,10 @@ export class CloudDownloads {
       if (claimed && !stopped && running.handle && running.context) {
         try { await this.host.request("transfer.stop", running.handle, running.context, randomUUID()); stopped = true; db.prepare("UPDATE download_attempt SET state='STOPPED',stopped_at=?,stop_evidence_json=? WHERE id=?").run(new Date(this.now()).toISOString(), JSON.stringify({ kind: "host-confirmed-stop", executionId: running.handle.executionId }), running.context.attemptId); } catch {}
       }
-      if (claimed && !stopped) { db.prepare("UPDATE download_attempt SET state='UNCERTAIN' WHERE id=?").run(running.context!.attemptId); this.state(item.id, "RECONCILING", "COMPONENT_UNAVAILABLE"); }
+      if (claimed && !stopped) {
+        db.prepare("UPDATE download_attempt SET state='UNCERTAIN' WHERE id=?").run(running.context!.attemptId); this.state(item.id, "RECONCILING", "COMPONENT_UNAVAILABLE");
+        this.logger.warn({ event: "download.item.uncertain", itemId: item.id, attemptId: running.context!.attemptId, error }, "下载执行尚未确认停止，已阻止重新启动并等待核对");
+      }
       else if (!db.prepare("SELECT 1 FROM download_commit_intent WHERE item_id=?").get(item.id)) {
         if (running.stop || this.closed) this.state(item.id, this.closed ? "QUEUED" : this.retainedDemand(item.id) ? "PAUSED" : "CANCELLED"); else this.fail(item, error);
       }
@@ -499,11 +514,15 @@ export class CloudDownloads {
   }
   private launchRecovery(item: RecoveryItem) {
     if (this.closed || this.recovering.has(item.id)) return;
+    this.logger.info({ event: "download.recovery.started", itemId: item.id, attemptId: item.attempt_id }, "正在恢复核对中断的下载");
     const work = Promise.resolve().then(async () => {
       try {
         // 异步工作开始时重新取证，不能沿用按钮点击时的停止与归属结论。
         const current = this.recoveryItem(item.id);
-        if (!current || this.closed || this.recoveryBlocked(current)) return;
+        if (!current || this.closed || this.recoveryBlocked(current)) {
+          this.logger.debug({ event: "download.recovery.blocked", itemId: item.id, blocked: true }, "下载恢复条件已变化，等待重新核对");
+          return;
+        }
         const root = this.roots.files.get(current.target_root_id); await root.check();
         if (current.commit_state) await this.commits.finish(current.id);
         else {
@@ -513,8 +532,11 @@ export class CloudDownloads {
         }
       } catch (error) {
         const failure = cloudFailure(error instanceof CloudError ? error : (error as NodeJS.ErrnoException).code === "ENOENT" ? new CloudError("LOCAL_FILE_MISSING") : error);
+        this.logger.warn({ event: "download.recovery.failed", itemId: item.id, errorCode: failure.code, error }, "下载恢复核对未完成，原文件和计划保留");
         this.state(item.id, failure.code === "LOCAL_UNAVAILABLE" ? "BLOCKED_LOCAL" : "RECONCILING", failure.code);
       } finally {
+        const state = (this.database.connection.prepare("SELECT state FROM download_item WHERE id=?").get(item.id) as { state: string } | undefined)?.state;
+        this.logger.info({ event: "download.recovery.finished", itemId: item.id, state }, "本次下载恢复核对已结束");
         if ((this.database.connection.prepare("SELECT state FROM download_item WHERE id=?").get(item.id) as { state: string } | undefined)?.state === "COMPLETED") this.recoveryRetryAt.delete(item.id);
         else this.recoveryRetryAt.set(item.id, this.now() + 60000);
         this.recovering.delete(item.id); this.aggregate();

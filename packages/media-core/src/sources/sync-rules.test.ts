@@ -21,10 +21,11 @@ import { SyncReceipts } from "./sync-receipts.js";
 import { EmbyLibraryFiles } from "./emby-library-files.js";
 import { LocalSync } from "./local-sync.js";
 import { SyncRules } from "./sync-rules.js";
+import type { CoreLogger } from "../application/logger.js";
 
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
-async function fixture() {
+async function fixture(logger?: CoreLogger) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "marshal-local-sync-"))); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const db = await CoreDatabase.open(join(directory, "core.sqlite3")); cleanup.push(() => db.close());
   const roots = new CloudRoots(db); cleanup.push(() => roots.close()); const directories = new ConfigurationDirectories(db, roots); cleanup.push(() => directories.close());
@@ -32,8 +33,8 @@ async function fixture() {
   async function grant(name: string) { const path = join(directory, name); await mkdir(path, { recursive: true }); const info = await lstat(path, { bigint: true }), fs = await statfs(path, { bigint: true }); return { id: randomUUID(), path, volume: { volumeId, rootInode: String(info.ino), rootBirthtimeNs: String(info.birthtimeNs), observedDevice: String(info.dev), fsTypeCode: String(fs.type), fsType: "isolated-test", caseSensitive: true, unicodeEquivalent: true, pathMaxBytes: 4096 } } satisfies ManagedRootGrant; }
   const input = await grant("原输入 中文"), target = await grant("下载目标 A"), secondTarget = await grant("下载目标 B");
   await directories.authorize(input, "ordinary"); await directories.authorize(target, "managed"); await directories.authorize(secondTarget, "managed"); directories.setDefault({ directoryId: target.id, expectedVersion: 0, requestKey: randomUUID() });
-  const catalog = new RemoteCatalog(db, unavailableHost), downloads = new CloudDownloads(db, unavailableHost, catalog, roots, now); cleanup.push(() => downloads.close());
-  const local = new LocalSync(db, directories, roots, now, () => clock), rules = new SyncRules(db, directories, downloads, local, now); cleanup.push(() => rules.close());
+  const catalog = new RemoteCatalog(db, unavailableHost), downloads = new CloudDownloads(db, unavailableHost, catalog, roots, now, logger); cleanup.push(() => downloads.close());
+  const local = new LocalSync(db, directories, roots, now, () => clock, logger), rules = new SyncRules(db, directories, downloads, local, now, undefined, logger); cleanup.push(() => rules.close());
   const content = "真实隔离同步文件，保留原输入。".repeat(100); await writeFile(join(input.path, "原片.mp4"), content);
   const version = (row: SyncSourceRule) => ({ id: row.id, expectedVersion: row.version, expectedDraftRevision: row.draftRevision, expectedLifecycleRevision: row.lifecycleRevision });
   const save = (row?: SyncSourceRule, directoryId?: string) => rules.save({ ...(row ? version(row) : { id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0 }), requestKey: randomUUID(), configuration: { type: "local", name: row?.draft.name ?? "本地单向同步", inputDirectoryId: input.id, target: directoryId ? { kind: "directory", directoryId } : { kind: "default" } } });
@@ -99,9 +100,12 @@ describe("同步优先检查 Emby 已有文件", () => {
     expect(f.downloads.get(f.rules.getJob(result.jobId!).downloadJobId!)?.state).toBe("COMPLETED");
   });
   it("网盘预览后库内文件消失时持久报告失败，重新预览恢复普通下载候选", async () => {
-    const f = await fixture(), library = await libraryFixture(f), preview = await cloudPreview(f);
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const f = await fixture(logger), library = await libraryFixture(f), preview = await cloudPreview(f);
     await rm(library.path); const result = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), runOnce: true }); await f.rules.tick();
     expect(f.rules.getJob(result.jobId!)).toMatchObject({ state: "NEEDS_ATTENTION", failure: expect.stringContaining("媒体库") });
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: "sync.job.failed", sourceId: preview.sourceId, jobId: result.jobId }), expect.any(String));
+    expect(logger.info.mock.calls.some(([fields]) => fields.event === "sync.job.state" && fields.toState === "DONE")).toBe(false);
     expect(f.rules.jobFiles({ id: result.jobId! }).items[0]).toMatchObject({ state: "NEEDS_ATTENTION", reason: expect.stringContaining("媒体库") });
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 0 });
     const next = await f.preview(f.rules.get(preview.sourceId), "execution");
@@ -202,7 +206,8 @@ describe("独立本地单向同步、成功历史和阶段控制", () => {
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 1 });
   });
   it("无账号和 Go 组件仍可预览、明确确认及 COPY，重复确认只产生一个操作和成功收据", async () => {
-    const f = await fixture(), source = await f.enable();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const f = await fixture(logger), source = await f.enable();
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM local_sync_operation").get()).toEqual({ n: 0 });
     const early = await f.preview(source, "execution"); expect(early).toMatchObject({ state: "BLOCKED", observing: 1 });
     await f.advance(); const p = f.rules.getPreview(early.id); expect(p).toMatchObject({ state: "READY", observing: 0 });
@@ -210,6 +215,9 @@ describe("独立本地单向同步、成功历史和阶段控制", () => {
     const command = { previewId: p.id, requestKey: randomUUID(), filesComplete: true as const }, result = await f.rules.confirm(command); expect(await f.rules.confirm(command)).toEqual(result); await f.rules.tick();
     expect(await readFile(join(f.target.path, "completed/原片.mp4"), "utf8")).toBe(f.content); expect(await readFile(join(f.input.path, "原片.mp4"), "utf8")).toBe(f.content);
     expect(f.rules.jobs({}).items[0]).toMatchObject({ id: result.jobId, state: "DONE", files: 1, done: 1 });
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ event: "sync.confirmed", sourceId: source.id, jobId: result.jobId }), expect.any(String));
+    expect(logger.info.mock.calls.filter(([fields]) => fields.event === "sync.local.completed")).toHaveLength(1);
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ event: "sync.local.completed", operationId: expect.any(String), attemptId: expect.any(String), bytes: Buffer.byteLength(f.content) }), expect.any(String));
     for (const table of ["local_sync_operation", "sync_receipt"]) expect(f.db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 1 });
     for (const table of ["download_job", "download_attempt", "media_task", "ingestion_operation"]) expect(f.db.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
   });

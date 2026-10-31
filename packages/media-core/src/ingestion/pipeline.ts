@@ -1,4 +1,5 @@
 import type { ScanResult } from "../sources/scans.js";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access, open } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -97,7 +98,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private readonly scans = new Map<string, Promise<ScanResult>>();
   private readonly scanControllers = new Map<string, AbortController>();
   private readonly watches = new Map<string, { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout> }>();
-  constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly watchFiles: typeof watch = watch) {
+  constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly watchFiles: typeof watch = watch, private readonly logger: CoreLogger = silentLogger) {
     const db = database.connection;
     this.seasons = new IngestionSeasons(database, (id) => this.describeCandidate(id), (id) => this.task(id));
     this.directories = new IngestionDirectories(database, (id) => this.describeCandidate(id), (id) => this.task(id));
@@ -965,7 +966,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       if (automaticKey) db.prepare("UPDATE ingestion_automatic SET task_id=?,state='RECOGNIZING' WHERE id=?").run(id, owned()!.id);
       return id;
     })();
-    void this.tick().catch(() => {}); return { taskId };
+    this.logger.info({ event: "recognition.task.created", sourceId: row.source_id, candidateId: row.id, taskId }, "识别任务已领取");
+    void this.tick().catch((error) => this.logger.error({ event: "recognition.scheduler.failed", error }, "识别整理调度未完成")); return { taskId };
   }
   task(taskId: string): CoreOutput<"ingestion.task"> {
     const row = this.database.connection.prepare("SELECT t.*,c.id AS candidate_id,c.reason FROM media_task t JOIN ingestion_candidate c ON c.task_id=t.id WHERE t.id=?").get(taskId) as { id: string; candidate_id: string; source_path: string; status: string; parsed_json: string | null; reason: string | null } | undefined;
@@ -982,6 +984,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const source = this.candidateSource(row), parser = this.parser(), edited = this.recognitionEdits.saved(row.task_id!), recognitionRevision = this.recognitionEdits.revision(row.task_id!); if (!parser && !edited) throw new DesktopError("COMPONENT_UNAVAILABLE", "名称解析器尚未就绪，请重试", true);
     const connectionVersion = this.connections.version, relative: string[] = JSON.parse(row.relative_json);
     db.prepare("UPDATE media_task SET status='PROCESSING',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id);
+    this.logger.info({ event: "recognition.task.started", sourceId: row.source_id, candidateId: row.id, taskId: row.task_id }, "正在解析文件并匹配媒体信息");
     const parsed = edited ?? await parser!.parse(relative.at(-1)!, signal); if (!edited && source.media_type !== "AUTO") parsed.type = source.media_type;
     parsed.season = parsed.type === "TV_SHOW" ? resolveSeason(parsed.season, null, relative.slice(0, -1)) : null;
     let matches = await searchMatches(parsed, this.connections.tmdb, signal, !!edited);
@@ -1010,6 +1013,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(matches.length ? null : "没有可靠候选，请手动输入 TMDB ID 预览", row.id);
       this.recognitionEdits.matched(row.task_id!, recognitionRevision);
     })();
+    this.logger.info({ event: "recognition.task.matched", sourceId: row.source_id, candidateId: row.id, taskId: row.task_id, matchCount: matches.length, state: "AWAITING_CONFIRMATION" }, "识别匹配已完成，等待核对候选");
   }
   private async observeAccessory(sourceId: string, relative: string[], expected?: SourceSnapshot, policyKey = "local", check?: () => void) {
     check?.(); this.source(sourceId); const snapshot = await this.sources.get(sourceId)!.inspect(relative); check?.(); const version = sourceVersion(snapshot), key = sourceId + ":" + policyKey + ":" + JSON.stringify(relative);
@@ -1084,7 +1088,9 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const result: PreviewRow = { id: randomUUID(), request_key: input.requestKey, task_id: input.taskId, input_hash: digest, plan_json: JSON.stringify(plan), expires_at: this.now() + 10 * 60 * 1000, operation_id: null };
     const concurrent = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (concurrent) { if (concurrent.input_hash !== digest) throw conflict(); return this.previewDto(concurrent); }
-    db.prepare("INSERT INTO ingestion_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(result.id, result.request_key, result.task_id, result.input_hash, result.plan_json, result.expires_at); return this.previewDto(result);
+    db.prepare("INSERT INTO ingestion_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(result.id, result.request_key, result.task_id, result.input_hash, result.plan_json, result.expires_at);
+    this.logger.info({ event: "recognition.mapping.resolved", ruleId: route?.snapshot.ruleId, sourceId: row.source_id, taskId: input.taskId, previewId: result.id, targetId: plan.logicalTargetId ?? target.grant.id, mediaType: selection.mediaType }, "识别映射目标已核对，整理预览已生成");
+    return this.previewDto(result);
   }
   private assertCoordinates(selection: Plan["selection"], candidateId: string) {
     const candidate = this.candidate(candidateId), current = JSON.parse(candidate.relative_json) as string[];
@@ -1238,6 +1244,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         if (!latest.managed_item_id && !latest.is_current) { db.prepare("UPDATE media_task SET status='SKIPPED',updated_at=? WHERE id=? AND status!='DONE'").run(timestamp(this.now), row.task_id); continue; }
         if (error instanceof SourceWorkInterrupted) { db.prepare("UPDATE media_task SET status='PENDING',updated_at=? WHERE id=? AND status='PROCESSING'").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(error.message, row.id); continue; }
         db.prepare("UPDATE media_task SET status='AWAITING_CONFIRMATION',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(recognitionFailure(error), row.id);
+        this.logger.warn({ event: "recognition.task.failed", sourceId: row.source_id, candidateId: row.id, taskId: row.task_id, error }, "识别匹配未完成，已转为人工核对");
       } }
       await this.automatic.tick();
       const operations = db.prepare("SELECT o.* FROM ingestion_operation o JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND (s.paused=0 OR json_extract(o.plan_json,'$.recognitionSnapshot') IS NOT NULL OR EXISTS(SELECT 1 FROM recognition_input ri WHERE ri.source_id=s.id)) ORDER BY o.created_at,o.id LIMIT 10").all() as OperationRow[];
@@ -1250,6 +1257,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         db.prepare("UPDATE ingestion_operation SET phase='NEEDS_ATTENTION',failure_code=?,updated_at=? WHERE id=?").run(error instanceof DesktopError ? error.code : "STORAGE_ERROR", timestamp(this.now), operation.id);
         db.prepare("UPDATE media_task SET status='FAILED',updated_at=? WHERE id=?").run(timestamp(this.now), operation.task_id);
         db.prepare("UPDATE ingestion_candidate SET reason='整理中断或证据冲突，未覆盖现有文件；请检查后重试' WHERE id=?").run(operation.candidate_id);
+        this.logger.warn({ event: "recognition.organize.failed", operationId: operation.id, taskId: operation.task_id, candidateId: operation.candidate_id, error }, "整理文件未完成，已保留原计划并等待处理");
       } }
       const accessories = db.prepare("SELECT a.*,o.task_id,o.candidate_id FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase='RECORDED' AND a.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND (s.paused=0 OR json_extract(o.plan_json,'$.recognitionSnapshot') IS NOT NULL OR EXISTS(SELECT 1 FROM recognition_input ri WHERE ri.source_id=s.id)) ORDER BY a.created_at,a.id LIMIT 100").all() as (OperationRow & { operation_id: string })[];
       for (const asset of accessories) { if (controller.signal.aborted) return; if (!this.operationRunnable(asset)) continue; try { await this.withSourceWork(asset.candidate_id, controller.signal, (signal) => this.copyAccessory(asset, signal)); } catch (error) {

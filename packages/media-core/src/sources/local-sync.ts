@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { open } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { DesktopError, CloudError, compileSyncFilters, syncSourceConfigurationSchema, type SyncSourceSnapshot, type VersionEvidence } from "@media-marshal/contracts";
@@ -28,7 +29,7 @@ export class LocalSync {
   private readonly libraryAbort = new AbortController();
   private observedAt = -Infinity;
   private globallyPaused = false;
-  constructor(private readonly database: CoreDatabase, private readonly directories: ConfigurationDirectories, private readonly roots: CloudRoots, private readonly now = Date.now, private readonly monotonic = () => performance.now()) {}
+  constructor(private readonly database: CoreDatabase, private readonly directories: ConfigurationDirectories, private readonly roots: CloudRoots, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly logger: CoreLogger = silentLogger) {}
   private stable(key: string, snapshot: SourceSnapshot) {
     const now = this.monotonic(), wall = this.now(), version = sourceVersion(snapshot), old = this.observations.get(key);
     if (!old || old.version !== version || now - old.last > 30000 || Math.abs(wall - old.wall - (now - old.last)) > 5000) { this.observations.set(key, { since: now, last: now, wall, version }); return false; }
@@ -85,6 +86,7 @@ export class LocalSync {
     await source.check(); assertSpaceBudget(await target.check(), result.filter((file) => !file.receiptId && !file.libraryFile).reduce((sum, file) => sum + file.size, 0));
     if (this.closed) throw new DesktopError("INTERRUPTED", "本地同步预览已停止", true);
     db.prepare("INSERT INTO local_sync_preview(id,request_key,signature,snapshot_json,files_json,force,expires_at) VALUES(?,?,?,?,?,?,?)").run(id, requestKey, signature, JSON.stringify(snapshot), JSON.stringify(result), Number(force), this.now() + 15 * 60 * 1000);
+    this.logger.info({ event: "sync.local.preview.ready", sourceId: snapshot.sourceId, previewId: id, fileCount: result.length, readyCount: result.filter((file) => file.state === "READY").length, reusedCount: result.filter((file) => ["REUSED", "IN_LIBRARY"].includes(file.state)).length }, "本地同步清单已生成，等待完整性确认");
     return this.preview(id);
   }
   async confirm(previewId: string, jobId: string, filesComplete: boolean) {
@@ -141,6 +143,7 @@ export class LocalSync {
       try { await this.copy(row, controller.signal); }
       catch (error) {
         const paused = controller.signal.aborted || error instanceof DesktopError && error.code === "INTERRUPTED";
+        this.logger[paused ? "info" : "warn"]({ event: paused ? "sync.local.interrupted" : "sync.local.failed", operationId: row.id, attemptId: row.attempt_id, error }, paused ? "本地同步已中断，原计划保留" : "本地同步文件未完成，等待处理");
         const failure = paused ? "同步已暂停，原计划和文件保留，恢复后重新核对" : error instanceof DesktopError ? error.message : error instanceof CloudError && ["CONFLICT", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "RECEIPT_CONFLICT"].includes(error.code) ? "同步目标被占用或文件证据不一致，请保留双方文件，处理后重试原作业" : "原输入或目标不可用，请恢复原磁盘和目录授权后重试";
         if (!paused) db.transaction(() => { db.prepare("UPDATE local_sync_operation SET phase='NEEDS_ATTENTION',failure=?,updated_at=? WHERE id=?").run(failure, new Date(this.now()).toISOString(), row.id); db.prepare("UPDATE local_sync_member SET state='NEEDS_ATTENTION',failure=? WHERE operation_id=?").run(failure, row.id); })();
       } finally { this.active.delete(row.id); }
@@ -176,6 +179,7 @@ export class LocalSync {
       assertSpaceBudget(await target.check(), plan.snapshot.size, reserved);
       if (row.phase === "COPYING") { await target.cleanupAttempt(row.attempt_id).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); row.attempt_id = randomUUID(); }
       db.prepare("UPDATE local_sync_operation SET phase='COPYING',attempt_id=?,updated_at=? WHERE id=?").run(row.attempt_id, new Date(this.now()).toISOString(), row.id);
+      this.logger.info({ event: "sync.local.copy.started", operationId: row.id, attemptId: row.attempt_id, bytes: plan.snapshot.size }, "本地同步开始复制文件");
       await target.prepareStage(row.attempt_id); const stage = await target.stageFilePath(row.attempt_id, plan.targetSegments);
       let digest = "";
       await source.read(plan.sourceSegments, plan.snapshot, async (reader) => {
@@ -197,6 +201,7 @@ export class LocalSync {
       new OwnedAttemptCleanup(this.database).record("local_sync_operation", row.id, row.attempt_id, target.grant);
     })(); } catch { throw new DesktopError("STORAGE_ERROR", "本地同步结果尚未完成记账，已提交文件保留；请重启核心后仅重试原作业，不要删除私有恢复文件", true); }
     await new OwnedAttemptCleanup(this.database).run("local_sync_operation", row.id, target);
+    this.logger.info({ event: "sync.local.completed", operationId: row.id, attemptId: row.attempt_id, bytes: plan.snapshot.size }, "本地同步文件已核验提交并完成记账");
   }
   pauseChanged(inputDirectoryId?: string, sourceId?: string) {
     if (!inputDirectoryId) this.resetObservations();

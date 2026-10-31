@@ -41,6 +41,7 @@ import { SyncRules } from "../sources/sync-rules.js";
 import { Corrections } from "../ingestion/corrections.js";
 import { DownloadCleanupService } from "../ingestion/download-cleanup-service.js";
 import { loadNativeRename, type NativeRenameLaunch } from "../files/native-rename.js";
+import { scopedLogger, type CoreLogger } from "../application/logger.js";
 
 declare module "@yeatz/app-framework/command" {
   interface Commands {
@@ -186,7 +187,7 @@ declare module "@yeatz/app-framework/command" {
 export function createMediaApplication(
   databasePath: string,
   extraModules: ApplicationModule[] = [],
-  options: { host?: CoreHostGateway; ingestion?: ManagedIngestionSink; parser?: ParserLaunch; nativeFiles?: NativeRenameLaunch; cancelHostRequests?: () => void } = {},
+  options: { host?: CoreHostGateway; ingestion?: ManagedIngestionSink; parser?: ParserLaunch; nativeFiles?: NativeRenameLaunch; cancelHostRequests?: () => void; logger?: CoreLogger } = {},
 ) {
   let accepting = true, stopFlight: Promise<void> | undefined, quiescence: Promise<PromiseSettledResult<unknown>[]> | undefined;
   const ensureAccepting = () => { if (!accepting) throw new DesktopError("INTERRUPTED", "核心正在停止", true); };
@@ -209,7 +210,7 @@ export function createMediaApplication(
       accounts = new CloudAccounts(db); accounts.recover();
       roots = new CloudRoots(db); ctx.disposables.add(() => roots.close());
       catalog = new RemoteCatalog(db, options.host ?? unavailableHost, Date.now, (binding) => accounts.isReady(binding));
-      downloads = new CloudDownloads(db, options.host ?? unavailableHost, catalog, roots);
+      downloads = new CloudDownloads(db, options.host ?? unavailableHost, catalog, roots, Date.now, scopedLogger(options.logger, "downloads"));
       ctx.disposables.add(() => downloads.close());
       subscriptions = new CloudSubscriptions(db, downloads, catalog, roots);
       ctx.disposables.add(() => subscriptions.close());
@@ -238,14 +239,14 @@ export function createMediaApplication(
       connections = new MediaConnections(ctx.get(DatabaseToken), () => service.getSettings());
       ctx.container.bind(MediaConnectionsToken).toConstantValue(connections);
       ctx.disposables.add(() => connections.close());
-      ingestion = new IngestionPipeline(ctx.get(DatabaseToken), () => parser, connections);
+      ingestion = new IngestionPipeline(ctx.get(DatabaseToken), () => parser, connections, Date.now, undefined, undefined, scopedLogger(options.logger, "recognition"));
       ctx.disposables.add(() => ingestion.close());
       sourceRules = new SourceRules(ctx.get(DatabaseToken), downloads, subscriptions, ingestion);
       configurationDirectories = new ConfigurationDirectories(ctx.get(DatabaseToken), roots);
       ctx.disposables.add(() => configurationDirectories.close());
-      syncRules = new SyncRules(ctx.get(DatabaseToken), configurationDirectories, downloads, new LocalSync(ctx.get(DatabaseToken), configurationDirectories, roots), Date.now, () => sourceRules.synchronize());
+      syncRules = new SyncRules(ctx.get(DatabaseToken), configurationDirectories, downloads, new LocalSync(ctx.get(DatabaseToken), configurationDirectories, roots, Date.now, undefined, scopedLogger(options.logger, "local-sync")), Date.now, () => sourceRules.synchronize(), scopedLogger(options.logger, "sync"));
       ctx.disposables.add(() => syncRules.close());
-      recognitionRules = new RecognitionRules(ctx.get(DatabaseToken), configurationDirectories, ingestion, Date.now, () => sourceRules.synchronize());
+      recognitionRules = new RecognitionRules(ctx.get(DatabaseToken), configurationDirectories, ingestion, Date.now, () => sourceRules.synchronize(), scopedLogger(options.logger, "recognition-rules"));
       ctx.disposables.add(() => recognitionRules.close());
       ctx.disposables.add(() => sourceRules.close());
       outbox = new IngestionOutbox(ctx.get(DatabaseToken), roots, options.ingestion ?? ingestion);

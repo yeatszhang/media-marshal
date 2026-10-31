@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { join } from "node:path";
 import { DesktopError, CloudError, cloudFailure, type CloudFailure, sourceConfigurationSchema, syncSourceRuleSchema, syncSourceConfigurationSchema, syncSourceSnapshotSchema, type CoreInput, type CoreOutput, type SyncSourceRule, type SyncSourceSnapshot } from "@media-marshal/contracts";
 import type { CoreDatabase } from "../infrastructure/database.js";
@@ -23,7 +24,7 @@ export class SyncRules {
   private closed = false; private timer?: ReturnType<typeof setInterval>; private flight?: Promise<void>; private queue: Promise<unknown> = Promise.resolve();
   private previews = new Map<string, { signature: string; promise: Promise<CoreOutput<"sync.preview">> }>();
   private readonly libraryRechecks: SyncLibraryRechecks;
-  constructor(private readonly database: CoreDatabase, readonly directories: ConfigurationDirectories, private readonly downloads: CloudDownloads, readonly local: LocalSync, private readonly now = Date.now, private readonly legacyChanged?: () => void) { this.libraryRechecks = new SyncLibraryRechecks(database, downloads, now); }
+  constructor(private readonly database: CoreDatabase, readonly directories: ConfigurationDirectories, private readonly downloads: CloudDownloads, readonly local: LocalSync, private readonly now = Date.now, private readonly legacyChanged?: () => void, private readonly logger: CoreLogger = silentLogger) { this.libraryRechecks = new SyncLibraryRechecks(database, downloads, now); }
   private writable() { if (this.closed) throw new DesktopError("INTERRUPTED", "同步服务正在停止，请重新进入后查询原任务", true); }
   private row(id: string) { return this.database.connection.prepare("SELECT * FROM sync_source_rule WHERE id=?").get(id) as Row | undefined; }
   get(id: string): SyncSourceRule {
@@ -97,7 +98,11 @@ export class SyncRules {
   preview(input: CoreInput<"sync.preview">): Promise<CoreOutput<"sync.preview">> {
     this.writable(); const signature = hash(input), existing = this.previews.get(input.requestKey);
     if (existing) { if (existing.signature !== signature) throw conflict("预览请求标识已用于不同范围"); return existing.promise; }
-    const promise = this.buildPreview(input).finally(() => { this.previews.delete(input.requestKey); }); this.previews.set(input.requestKey, { signature, promise }); return promise;
+    this.logger.info({ event: "sync.preview.started", sourceId: input.id, mode: input.mode ?? "configuration" }, "正在生成同步预览");
+    const promise = this.buildPreview(input).then((result) => {
+      this.logger.info({ event: "sync.preview.finished", sourceId: input.id, previewId: result.id, state: result.state }, "本次同步预览已生成");
+      return result;
+    }, (error) => { this.logger.warn({ event: "sync.preview.failed", sourceId: input.id, error }, "同步预览未完成"); throw error; }).finally(() => { this.previews.delete(input.requestKey); }); this.previews.set(input.requestKey, { signature, promise }); return promise;
   }
   private async buildPreview(input: CoreInput<"sync.preview">) {
     const db = this.database.connection, repeated = db.prepare("SELECT * FROM sync_configuration_preview WHERE request_key=?").get(input.requestKey) as Preview | undefined;
@@ -185,7 +190,8 @@ export class SyncRules {
       db.prepare("UPDATE sync_configuration_preview SET state=CASE WHEN id=? THEN 'APPLIED' ELSE 'EXPIRED' END WHERE source_id=? AND state='READY'").run(row.id, owner.id);
       const saved = { rule: this.get(owner.id), jobId }; this.receipt(input.requestKey, signature, saved); return saved;
     })();
-    this.legacyChanged?.(); if (this.timer) void this.tick().catch(() => {}); return result;
+    this.logger.info({ event: "sync.confirmed", sourceId: owner.id, previewId: row.id, jobId: result.jobId, version: result.rule.version, mode: row.mode }, "同步预览已确认，配置与执行意图已记账");
+    this.legacyChanged?.(); if (this.timer) void this.tick().catch((error) => this.logger.error({ event: "sync.scheduler.failed", error }, "同步调度未完成")); return result;
   }
   private retireLegacy(id: string) {
     const db = this.database.connection;
@@ -335,7 +341,7 @@ export class SyncRules {
     else throw conflict("该作业的远端预览未能提交，请从来源重新预览执行，原历史会保留");
     const result = this.jobDto(this.job(row.id)); this.receipt(input.requestKey, signature, result); return result;
   }
-  start() { if (!this.closed && !this.timer) this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 1000); }
+  start() { if (!this.closed && !this.timer) this.timer = setInterval(() => { void this.tick().catch((error) => this.logger.error({ event: "sync.scheduler.failed", error }, "同步调度未完成")); }, 1000); }
   tick(): Promise<void> { if (this.closed) return Promise.resolve(); return this.flight ??= this.run().finally(() => { this.flight = undefined; }); }
   private async run() {
     const db = this.database.connection;
@@ -353,12 +359,15 @@ export class SyncRules {
           const result = await this.downloads.confirm({ previewId: row.preview_id!, requestKey: row.request_key }, { syncSourceId: row.source_id, syncSourceVersion: row.source_version, syncJobId: row.id });
           row.download_job_id = result.jobId;
           db.prepare("UPDATE sync_job SET download_job_id=?,state='RUNNING',failure=NULL,updated_at=? WHERE id=?").run(result.jobId, new Date(this.now()).toISOString(), row.id);
+          this.logger.info({ event: "sync.download.linked", sourceId: row.source_id, jobId: row.id, downloadJobId: result.jobId }, "同步作业已交给下载队列");
         }
         const download = this.downloads.get(row.download_job_id); if (!download) throw conflict("原下载作业已不存在，请查看历史后重新预览");
         const state = download.state === "COMPLETED" ? "DONE" : ["FAILED", "AUTH_REQUIRED", "BLOCKED_LOCAL"].includes(download.state) ? "NEEDS_ATTENTION" : ["CANCELLED", "CANCELLING"].includes(download.state) ? "CANCELED" : "RUNNING";
         db.prepare("UPDATE sync_job SET state=?,failure=?,updated_at=? WHERE id=?").run(state, download.failure?.message ?? null, new Date(this.now()).toISOString(), row.id);
+        if (row.state !== state) this.logger.info({ event: "sync.job.state", sourceId: row.source_id, jobId: row.id, fromState: row.state, toState: state }, "同步作业状态已更新");
       } catch (error) {
         const failure = error instanceof DesktopError ? error.message : error instanceof CloudError ? error.message : "同步范围或远端连接无法核对，请重新选择范围并预览；原成果保留";
+        if (row.state !== "NEEDS_ATTENTION") this.logger.warn({ event: "sync.job.failed", sourceId: row.source_id, jobId: row.id, error }, "同步作业需要处理，原成果保留");
         db.prepare("UPDATE sync_job SET state='NEEDS_ATTENTION',failure=?,updated_at=? WHERE id=?").run(failure, new Date(this.now()).toISOString(), row.id);
       }
     }

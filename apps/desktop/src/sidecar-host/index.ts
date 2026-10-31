@@ -7,6 +7,12 @@ import { sidecarInitializeSchema, credentialInstallSchema, credentialDropSchema,
 import { ManagedRoots, assertSpaceBudget } from "@media-marshal/media-core/files";
 import { createSidecarApplication } from "./application";
 import { openListModule } from "./openlist/module";
+import { createProcessLogger, setRootLogger } from "../logging/node";
+
+const log = createProcessLogger("sidecar").child({ scope: "sidecar" });
+setRootLogger(log);
+log.info({ event: "sidecar.start" }, "网盘组件宿主进程已启动");
+process.on("uncaughtExceptionMonitor", (error) => log.fatal({ error }, "网盘组件宿主发生未捕获异常"));
 
 process.parentPort.once("message", (initial) => {
   const input = sidecarInitializeSchema.safeParse(initial.data);
@@ -46,8 +52,8 @@ process.parentPort.once("message", (initial) => {
     if (stopping) return stopping;
     for (const pending of refreshing.values()) pending.done(false);
     return stopping = runtime.stop().finally(() => roots.close()).then(
-    () => { clearInterval(check); port.postMessage({ kind: "sidecar.stopped", hostGeneration: config.hostGeneration, stopped: true }); setTimeout(() => { port.close(); process.exit(0); }, 25); },
-    () => { clearInterval(check); port.close(); process.exit(1); },
+    () => { log.info({ event: "sidecar.stopped" }, "网盘组件宿主已停止"); clearInterval(check); port.postMessage({ kind: "sidecar.stopped", hostGeneration: config.hostGeneration, stopped: true }); setTimeout(() => { port.close(); process.exit(0); }, 25); },
+    (error) => { log.error({ error }, "网盘组件宿主停止失败"); clearInterval(check); port.close(); process.exit(1); },
     );
   };
   const check = setInterval(() => { if (Date.now() - heartbeat > 10000) void stop(); }, 250);
@@ -77,11 +83,13 @@ process.parentPort.once("message", (initial) => {
       })(); return;
     }
     if (data?.kind !== "host.request" || stopping) return;
-    void runtime.dispatch(data).then((response) => { if (!stopping) port.postMessage(response); }).catch(() => {});
+    void runtime.dispatch(data).then((response) => { if (!stopping) port.postMessage(response); }).catch((error) => {
+      log.error({ error }, "网盘组件请求未完成");
+    });
   });
   port.start();
   void (async () => { for (const grant of config.roots) await roots.install(grant); await runtime.app.start(); })().then(
-    () => { if (!stopping) port.postMessage({ kind: "sidecar.ready", protocolVersion: HOST_PROTOCOL_VERSION, hostGeneration: config.hostGeneration }); },
-    async (error) => { port.postMessage({ kind: "sidecar.failed", protocolVersion: HOST_PROTOCOL_VERSION, error: cloudFailure(error) }); await stop(); },
+    () => { if (!stopping) { log.info({ event: "sidecar.ready" }, "网盘组件宿主已就绪"); port.postMessage({ kind: "sidecar.ready", protocolVersion: HOST_PROTOCOL_VERSION, hostGeneration: config.hostGeneration }); } },
+    async (error) => { log.error({ event: "sidecar.start.failed", error }, "网盘组件宿主启动失败"); port.postMessage({ kind: "sidecar.failed", protocolVersion: HOST_PROTOCOL_VERSION, error: cloudFailure(error) }); await stop(); },
   );
 });

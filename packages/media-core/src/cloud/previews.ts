@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { DesktopError, CloudError, cloudFailure, cloudFiltersSchema, compileSyncFilters, type SyncFilter, type CloudFailure, type DownloadPreview, type CloudInput, type RemoteEntry } from "@media-marshal/contracts";
 import { localFileEvidenceSchema, type BindingRef, type TransferItem } from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
@@ -18,7 +19,7 @@ export interface PreviewRow { id: string; account_id: string; remote_root_ref: s
 export class DownloadPreviews {
   private libraries = new Map<string, EmbyLibraryFiles>();
   private flights = new Map<string, Promise<unknown>>(); private cancelled = new Set<string>(); private closed = false;
-  constructor(private readonly database: CoreDatabase, private readonly catalog: RemoteCatalog, private readonly roots: CloudRoots, private readonly now = Date.now) {
+  constructor(private readonly database: CoreDatabase, private readonly catalog: RemoteCatalog, private readonly roots: CloudRoots, private readonly now = Date.now, private readonly logger: CoreLogger = silentLogger) {
     database.connection.prepare("UPDATE cloud_preview SET state='EXPIRED' WHERE state='BUILDING'").run();
   }
   row(id: string) { return this.database.connection.prepare("SELECT * FROM cloud_preview WHERE id=?").get(id) as PreviewRow | undefined; }
@@ -53,6 +54,7 @@ export class DownloadPreviews {
     return this.dto(row);
   }
   private async scan(row: PreviewRow, snapshot: PreviewSnapshot, root: ReturnType<CloudRoots["files"]["get"]>, library?: EmbyLibraryFiles) {
+    this.logger.info({ event: "download.preview.started", previewId: row.id }, "正在扫描下载范围并生成计划");
     const save = (state: string) => this.database.connection.prepare("UPDATE cloud_preview SET snapshot_json=?,state=? WHERE id=?").run(JSON.stringify(snapshot), state, row.id);
     try {
       const selected = await this.catalog.stat(row.account_id, row.remote_root_ref); snapshot.name = selected.name; snapshot.rootType = selected.type;
@@ -112,7 +114,8 @@ export class DownloadPreviews {
       await this.roots.budget(row.target_root_id, requiredBytes);
       if (this.closed || this.cancelled.has(row.id)) throw new CloudError("INTERRUPTED");
       snapshot.complete = true; save("READY");
-    } catch (error) { snapshot.failure = cloudFailure(error); snapshot.complete = false; save("EXPIRED"); }
+      this.logger.info({ event: "download.preview.ready", previewId: row.id, fileCount: snapshot.items.length, failedCount: snapshot.items.filter((item) => item.issue).length }, "下载计划已生成，请核对逐项结果后确认");
+    } catch (error) { snapshot.failure = cloudFailure(error); snapshot.complete = false; save("EXPIRED"); this.logger.warn({ event: "download.preview.failed", previewId: row.id, errorCode: snapshot.failure.code, error }, "下载计划扫描未完成"); }
   }
   private async checkDownloadCandidate(row: PreviewRow, snapshot: PreviewSnapshot, item: PreviewSnapshot["items"][number], root: ReturnType<CloudRoots["files"]["get"]>, historyOnly = false) {
     const db = this.database.connection;
