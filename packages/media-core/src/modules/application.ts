@@ -39,10 +39,18 @@ import { ConfigurationDirectories } from "../sources/configuration-directories.j
 import { LocalSync } from "../sources/local-sync.js";
 import { SyncRules } from "../sources/sync-rules.js";
 import { Corrections } from "../ingestion/corrections.js";
+import { DownloadCleanupService } from "../ingestion/download-cleanup-service.js";
 import { loadNativeRename, type NativeRenameLaunch } from "../files/native-rename.js";
 
 declare module "@yeatz/app-framework/command" {
   interface Commands {
+    "media.cleanup.list": (input: CoreInput<"cleanup.list">) => CoreOutput<"cleanup.list">;
+    "media.cleanup.scope": (input: CoreInput<"cleanup.scope">) => CoreOutput<"cleanup.scope">;
+    "media.cleanup.preview": (input: CoreInput<"cleanup.preview">) => CoreOutput<"cleanup.preview">;
+    "media.cleanup.get-preview": (input: CoreInput<"cleanup.get-preview">) => CoreOutput<"cleanup.get-preview">;
+    "media.cleanup.confirm": (input: CoreInput<"cleanup.confirm">) => Promise<CoreOutput<"cleanup.confirm">>;
+    "media.cleanup.cancel-preview": (input: CoreInput<"cleanup.cancel-preview">) => CoreOutput<"cleanup.cancel-preview">;
+    "media.cleanup.retry": (input: CoreInput<"cleanup.retry">) => CoreOutput<"cleanup.retry">;
     "media.corrections.preparation": (input: CoreInput<"corrections.preparation">) => CoreOutput<"corrections.preparation">;
     "media.corrections.cancel-preparation": (input: CoreInput<"corrections.cancel-preparation">) => CoreOutput<"corrections.cancel-preparation">;
     "media.corrections.scope": (input: CoreInput<"corrections.scope">) => CoreOutput<"corrections.scope">;
@@ -243,9 +251,17 @@ export function createMediaApplication(
       delivery = new EmbyDelivery(ctx.get(DatabaseToken), connections, () => service.getSettings(), ingestion);
       ctx.disposables.add(() => delivery.close());
       const native = options.nativeFiles ? await loadNativeRename(options.nativeFiles).catch(() => undefined) : undefined; ensureAccepting();
+      cleanup = new DownloadCleanupService(ctx.get(DatabaseToken), native); ctx.disposables.add(() => cleanup.close());
       corrections = new Corrections(ctx.get(DatabaseToken), ingestion, connections, native); ctx.disposables.add(() => corrections.close());
       const registry = ctx.commandRegistry;
       const add = (dispose: () => void) => ctx.disposables.add(dispose);
+      add(registry.register("media.cleanup.list", (_, input) => cleanup.list(input)));
+      add(registry.register("media.cleanup.scope", (_, input) => cleanup.scope(input)));
+      add(registry.register("media.cleanup.preview", (_, input) => cleanup.preview(input)));
+      add(registry.register("media.cleanup.get-preview", (_, input) => cleanup.getPreview(input.id)));
+      add(registry.register("media.cleanup.confirm", (_, input) => cleanup.confirm(input.id)));
+      add(registry.register("media.cleanup.cancel-preview", (_, input) => cleanup.cancel(input.id)));
+      add(registry.register("media.cleanup.retry", (_, input) => cleanup.retry(input.id)));
       add(registry.register("media.corrections.preparation", (_, input) => corrections.preparations.get(input.id)));
       add(registry.register("media.corrections.cancel-preparation", (_, input) => corrections.preparations.cancel(input.id)));
       add(registry.register("media.corrections.scope", (_, input) => corrections.batches.scope(input)));
@@ -388,8 +404,8 @@ export function createMediaApplication(
       );
     },
   };
-  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); recognitionRules.start(); syncRules.start(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); } };
-  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories, syncRules: SyncRules, recognitionRules: RecognitionRules;
+  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); recognitionRules.start(); syncRules.start(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); cleanup.start(); } };
+  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories, syncRules: SyncRules, recognitionRules: RecognitionRules, cleanup: DownloadCleanupService;
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],
   });
@@ -403,7 +419,7 @@ export function createMediaApplication(
     // 取消等待不等同于文件回滚或写入者已停止；后者仍由 Main／Host 回收证明。
     let cancelFailure: unknown;
     try { options.cancelHostRequests?.(); } catch (error) { cancelFailure = error; }
-    return quiescence = Promise.allSettled([recognitionRules?.close(), syncRules?.close(), configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
+    return quiescence = Promise.allSettled([cleanup?.close(), recognitionRules?.close(), syncRules?.close(), configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
   }
   return {
     app,

@@ -14,6 +14,7 @@ import { CoreDatabase } from "../../../../../packages/media-core/src/infrastruct
 import { CloudAccounts } from "../../../../../packages/media-core/src/cloud/accounts";
 import { RemoteCatalog } from "../../../../../packages/media-core/src/cloud/catalog";
 import { CloudRoots } from "../../../../../packages/media-core/src/cloud/roots";
+import { ManagedRoot } from "../../../../../packages/media-core/src/files/index";
 import { CloudDownloads } from "../../../../../packages/media-core/src/cloud/downloads";
 import { IngestionOutbox } from "../../../../../packages/media-core/src/cloud/outbox";
 import { CloudSubscriptions } from "../../../../../packages/media-core/src/cloud/subscriptions";
@@ -195,6 +196,18 @@ describe.skipIf(process.platform !== "darwin")("统一来源与下载版本关�
     const p = await f.preview(draft), source = await f.rules.apply({ previewId: p.id, requestKey: randomUUID() }, target ? { source: f.grant, target } : undefined);
     return { p, source, job: await f.downloads.confirm({ previewId: p.download!.id, requestKey: randomUUID() }) };
   }
+  it("下载暂存回收尚未记账时不接入识别，不消耗 outbox 重试次数，完成后才保存稳定快照", async () => {
+    const f = await setup(), targetPath = join(f.path, "交接目标"); await mkdir(targetPath); const target = await probeManagedVolume(targetPath);
+    const planned = await organized(f, "等待暂存回收", f.account.rootRef!, target), cleanupAttempt = ManagedRoot.prototype.cleanupAttempt;
+    let release!: () => void, entered!: () => void, held = false; const gate = new Promise<void>((done) => { release = done; }), ready = new Promise<void>((done) => { entered = done; }); cleanup.push(() => release());
+    const spy = vi.spyOn(ManagedRoot.prototype, "cleanupAttempt").mockImplementation(async function (this: ManagedRoot, ...args) { if (!held && this.grant.id === f.grant.id) { held = true; entered(); await gate; } return cleanupAttempt.apply(this, args); }); cleanup.push(() => spy.mockRestore());
+    f.downloads.start(); await ready;
+    const item = f.db.connection.prepare("SELECT i.id,i.version_key FROM download_item i JOIN download_job_item j ON j.item_id=i.id WHERE j.job_id=?").get(planned.job.jobId) as { id: string; version_key: string };
+    expect(f.pipeline.canAccept({ itemId: item.id, versionKey: item.version_key })).toBe(false);
+    const outbox = new IngestionOutbox(f.db, f.roots, f.pipeline); cleanup.push(() => outbox.close()); await outbox.deliver(); expect(f.db.connection.prepare("SELECT delivery_attempts FROM ingestion_outbox WHERE item_id=?").get(item.id)).toEqual({ delivery_attempts: 0 }); expect(f.pipeline.list({}).total).toBe(0);
+    release(); await f.downloads.close(); spy.mockRestore(); await outbox.deliver(); expect(f.pipeline.list({}).total).toBe(1);
+    expect(f.db.connection.prepare("SELECT state FROM ingestion_outbox WHERE item_id=?").get(item.id)).toEqual({ state: "ACKNOWLEDGED" });
+  });
   async function relogin(f: Awaited<ReturnType<typeof setup>>, accountId = f.account.id) {
     const prepared = f.accounts.dispatch("cloud.authorization.begin", { accountId, name: "重新登录", requestKey: randomUUID(), implementationId: f.provider.implementationId });
     await f.sidecar.installCredential(prepared.candidate.binding, "isolated-fixture");

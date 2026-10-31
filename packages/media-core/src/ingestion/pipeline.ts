@@ -13,6 +13,8 @@ import type { CoreDatabase } from "../infrastructure/database.js";
 import type { NameParser } from "../infrastructure/parser-process.js";
 import { SourceRoot, sameSnapshot, sourceSnapshotSchema, sourceVersion, type SourceSnapshot } from "../files/source-root.js";
 import { ManagedRoot, ManagedRoots, pathsOverlap, sameVolumeRoot, assertSpaceBudget } from "../files/index.js";
+import { authorizeOrganizedDownloadCleanup } from "./download-cleanup-intents.js";
+import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
 import type { ManagedIngestionSink } from "../cloud/outbox.js";
 import type { MediaConnections } from "../application/media-connections.js";
 import { mergeParentEvidence, parentContext, searchMatches, type MediaMatch, type MetadataWork } from "../domain/matching.js";
@@ -699,6 +701,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     return this.candidateSource(candidate);
   }
   canAccept(input: { itemId: string; versionKey: string }) {
+    if (this.database.connection.prepare("SELECT 1 FROM owned_attempt_cleanup a JOIN download_commit_intent c ON c.attempt_id=a.attempt_id WHERE c.item_id=? AND a.owner_kind='download_attempt' AND a.state!='DONE'").get(input.itemId)) return false;
     const independent = this.database.connection.prepare("SELECT i.source_id,r.paused,r.deleted_at,p.candidate_id FROM download_item d JOIN recognition_input i ON i.directory_id=d.target_root_id AND i.active=1 AND i.mode='managed-completed' JOIN recognition_rule r ON r.id=i.rule_id LEFT JOIN sync_receipt s ON s.result_kind='download-item' AND s.result_id=d.id LEFT JOIN recognition_receipt p ON p.receipt_id=s.id WHERE d.id=? AND d.version_key=?").get(input.itemId, input.versionKey) as { source_id: string; paused: number; deleted_at: string | null; candidate_id: string | null } | undefined;
     if (independent) { if (independent.candidate_id) return true; if (independent.paused || independent.deleted_at || this.closed || this.pauseStatus().paused) return false; try { this.source(independent.source_id); return true; } catch { return false; } }
     if (this.database.connection.prepare("SELECT 1 FROM ingestion_candidate WHERE managed_item_id=? AND managed_version_key=?").get(input.itemId, input.versionKey)) return true;
@@ -792,6 +795,10 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const row = db.prepare("SELECT r.*,e.evidence_json FROM sync_receipt r LEFT JOIN sync_receipt_evidence e ON e.receipt_id=r.id WHERE r.id=? AND r.target_directory_id=?").get(receiptId, owner.directory_id) as { target_segments_json: string; local_sha256: string; size: number; evidence_json: string | null } | undefined;
     if (!row) throw conflict("正式同步成功收据已不存在，请核对原任务；不会补下载");
     const relative = ["completed", ...JSON.parse(row.target_segments_json)], previous = db.prepare("SELECT candidate_id FROM recognition_receipt WHERE receipt_id=?").get(receiptId) as { candidate_id: string | null } | undefined;
+    if (db.prepare("SELECT 1 FROM download_cleanup WHERE receipt_id=? AND claimed=1").get(receiptId)) {
+      if (previous?.candidate_id && ["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(this.candidate(previous.candidate_id).state)) return { candidateId: previous.candidate_id };
+      throw conflict("此受管原件已按媒体库内容核验领取清理；请查询原整理成果，不会重新下载或接入新原件任务");
+    }
     try {
       check?.(); this.source(sourceId); const source = this.sources.get(sourceId)!, snapshot = await source.inspect(relative); check?.();
       const evidence = row.evidence_json ? localFileEvidenceSchema.parse(JSON.parse(row.evidence_json)) : null;
@@ -834,6 +841,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!committed || committed.target_segments_json !== JSON.stringify(input.completedSegments)) throw conflict();
     const evidence = localFileEvidenceSchema.parse(JSON.parse(committed.file_evidence_json));
     if (evidence.sha256 !== input.sha256 || evidence.size !== input.size) throw conflict();
+    if (db.prepare("SELECT 1 FROM owned_attempt_cleanup a JOIN download_commit_intent c ON c.attempt_id=a.attempt_id WHERE c.item_id=? AND a.owner_kind='download_attempt' AND a.state!='DONE'").get(input.itemId)) throw conflict("下载所属暂存仍在回收，请等待回收记账后再次交接；尚未创建新的识别候选");
     const previous = db.prepare("SELECT * FROM ingestion_candidate WHERE managed_item_id=? AND managed_version_key=?").get(input.itemId, input.versionKey) as CandidateRow | undefined;
     if (previous) {
       if (previous.expected_sha256 !== input.sha256 || sourceSnapshotSchema.parse(JSON.parse(previous.snapshot_json)).size !== input.size) throw conflict();
@@ -1127,6 +1135,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("UPDATE media_task SET status='PROCESSING',confirmed_json=?,metadata_json=?,title=?,updated_at=? WHERE id=?").run(JSON.stringify(plan.selection), JSON.stringify(plan.metadata), plan.metadata.title, current, receipt.task_id);
       db.prepare("INSERT INTO desktop_job(id,kind,state,plan_json,updated_at) VALUES(?,'ingestion','PLANNED',?,?)").run(id, receipt.plan_json, current);
       for (const asset of plan.accessories ?? []) db.prepare("INSERT INTO ingestion_accessory(id,operation_id,target_root_id,plan_json,attempt_id,phase,created_at,updated_at) VALUES(?,?,?,?,?,'PLANNED',?,?)").run(randomUUID(), id, plan.target.id, JSON.stringify({ ...plan, ...asset, accessories: [] }), randomUUID(), current, current);
+      authorizeOrganizedDownloadCleanup(this.database, id, receipt.task_id);
     })(); void this.tick().catch(() => {}); return { operationId: id };
   }
   private reserved(rootId: string, except?: string) { const rows = this.database.connection.prepare("SELECT id,plan_json FROM ingestion_operation WHERE target_root_id=? AND phase IN ('PLANNED','COPYING') UNION ALL SELECT id,plan_json FROM ingestion_accessory WHERE target_root_id=? AND phase IN ('PLANNED','COPYING')").all(rootId, rootId) as { id: string; plan_json: string }[]; return rows.filter((row) => row.id !== except).reduce((total, row) => total + (JSON.parse(row.plan_json) as Plan).snapshot.size, 0); }
@@ -1172,7 +1181,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(plan.accessories?.length ? "COPYING_ACCESSORIES" : "DONE", timestamp(this.now), operation.id);
       const connection = db.prepare("SELECT id,version FROM emby_connection ORDER BY verified_at DESC LIMIT 1").get() as { id: string; version: number } | undefined;
       db.prepare("INSERT INTO emby_delivery(task_id,operation_id,connection_id,connection_version,state,next_attempt_at,updated_at,binding_json) VALUES(?,?,?,?,'REFRESH_PENDING',?,?,?) ON CONFLICT(task_id) DO NOTHING").run(plan.taskId, operation.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, timestamp(this.now), plan.embyBinding ? JSON.stringify(plan.embyBinding) : null);
-    })(); await target.cleanupAttempt(operation.attempt_id).catch(() => {});
+      new OwnedAttemptCleanup(this.database).record("ingestion_operation", operation.id, operation.attempt_id, target.grant);
+    })(); await new OwnedAttemptCleanup(this.database).run("ingestion_operation", operation.id, target);
   }
   private async copyAccessory(operation: OperationRow & { operation_id: string }, signal: AbortSignal) {
     const committed = await this.copyContent(operation, signal, "ingestion_accessory"); if (!committed) return;
@@ -1182,7 +1192,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       // 字幕稍后补齐时只再安排交付，主视频记录和文件不重新复制。
       db.prepare("UPDATE emby_delivery SET state='REFRESH_PENDING',next_attempt_at=?,check_started_at=NULL,emby_item_id=NULL WHERE task_id=? AND state IN ('REFRESH_PENDING','WAITING_LIBRARY','COLLECTED')").run(this.now() + 30000, plan.taskId);
       db.prepare("UPDATE media_task SET delivery_status=(SELECT state FROM emby_delivery WHERE task_id=?) WHERE id=?").run(plan.taskId, plan.taskId);
-    })(); await this.targets.get(plan.target.id).cleanupAttempt(operation.attempt_id).catch(() => {}); this.accessoryJobState(operation.operation_id);
+      new OwnedAttemptCleanup(this.database).record("ingestion_accessory", operation.id, operation.attempt_id, this.targets.get(plan.target.id).grant);
+    })(); await new OwnedAttemptCleanup(this.database).run("ingestion_accessory", operation.id, this.targets.get(plan.target.id)); this.accessoryJobState(operation.operation_id);
   }
   private accessoryJobState(operationId: string) { const rows = this.database.connection.prepare("SELECT phase FROM ingestion_accessory WHERE operation_id=?").all(operationId) as { phase: string }[]; this.database.connection.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(rows.every((row) => row.phase === "RECORDED") ? "DONE" : rows.some((row) => row.phase === "NEEDS_ATTENTION") ? "PARTIAL_FAILED" : "COPYING_ACCESSORIES", timestamp(this.now), operationId); }
   retry(taskId: string) {

@@ -19,6 +19,8 @@ import { RecognitionRules } from "./recognition-rules.js";
 import { SyncRules } from "./sync-rules.js";
 import { LocalSync } from "./local-sync.js";
 import { SourceRoot } from "../files/source-root.js";
+import { DownloadCleanupJournal } from "../ingestion/download-cleanup-journal.js";
+import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
 
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -89,6 +91,31 @@ it("受管输入只接收真实本地同步成果，外部／暂存文件排除�
   await f.sync.control({ ...versions(active), requestKey: randomUUID(), operation: "pause" }); await f.advance(sourceId); expect(f.recognition.get(rule.id).paused).toBe(false); expect(f.pipeline.list({ sourceId }).items.every((row) => row.state === "READY")).toBe(true);
   await rm(join(f.download.path, "completed/测试电影.2026.mp4")); await f.pipeline.scan(sourceId); expect(f.recognition.get(rule.id).runtime!.unavailableInputs).toBe(1); expect(f.sync.jobs({}).total).toBe(1); expect(f.pipeline.list({ sourceId }).total).toBe(2);
   const paused = await f.recognition.control({ ...versions(rule), requestKey: randomUUID(), operation: "pause" }); await f.sync.control({ ...versions(f.sync.get(active.id)), requestKey: randomUUID(), operation: "resume" }); expect(f.recognition.get(rule.id).paused).toBe(true); expect(f.sync.jobs({}).items[0]!.recognition).toEqual({ state: "PAUSED", ruleId: rule.id }); await f.recognition.control({ ...versions(paused), requestKey: randomUUID(), operation: "resume" });
+});
+it("本地同步的暂存回收失败单独记账，成功收据与同步状态保留，重试只回收所属目录", async () => {
+  const f = await fixture(), root = f.roots.files.get(f.download.id);
+  vi.spyOn(root, "cleanupAttempt").mockRejectedValueOnce(Object.assign(new Error("隔离权限故障"), { code: "EACCES" })); await f.synchronize();
+  const row = f.db.connection.prepare("SELECT owner_id,attempt_id,state,retained_bytes FROM owned_attempt_cleanup WHERE owner_kind='local_sync_operation' AND state='NEEDS_ATTENTION'").get() as { owner_id: string; attempt_id: string; state: string; retained_bytes: number };
+  expect(row).toBeDefined(); expect(row.retained_bytes).toBe(Buffer.byteLength(f.bytes)); expect(f.sync.jobs({}).items[0]!.state).toBe("DONE");
+  expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 2 }); await new OwnedAttemptCleanup(f.db).run("local_sync_operation", row.owner_id, root);
+  expect(f.db.connection.prepare("SELECT state FROM owned_attempt_cleanup WHERE owner_kind='local_sync_operation' AND owner_id=?").get(row.owner_id)).toEqual({ state: "DONE" }); expect(await readFile(join(f.input.path, "测试电影.2026.mp4"), "utf8")).toBe(f.bytes);
+});
+it("受管原件主动清理后补扫保留已交付候选，普通再次同步沿用成功收据而不补回", async () => {
+  const f = await fixture(), sync = await f.synchronize(), rule = await f.enable(f.save(undefined, { input: { kind: "default" }, targets: [f.movieTarget, f.tvTarget] })), sourceId = rule.runtime!.sourceId!;
+  await f.pipeline.scan(sourceId); await f.advance(sourceId); const taskId = await f.task(sourceId, "测试电影.2026.mp4");
+  const preview = await f.pipeline.preview({ taskId, requestKey: randomUUID(), selection: { tmdbId: 1, mediaType: "MOVIE" }, includeAccessories: false }); await f.pipeline.confirm({ previewId: preview.id, requestKey: randomUUID() }); await f.pipeline.tick();
+  expect(f.pipeline.task(taskId).state).toBe("DONE");
+  const operation = f.db.connection.prepare("SELECT plan_json FROM ingestion_operation WHERE task_id=?").get(taskId) as { plan_json: string }, plan = JSON.parse(operation.plan_json);
+  const receipt = f.db.connection.prepare("SELECT r.id,e.evidence_json FROM sync_receipt r JOIN sync_receipt_evidence e ON e.receipt_id=r.id WHERE r.target_directory_id=? AND r.target_segments_json=?").get(f.download.id, JSON.stringify(plan.sourceSegments.slice(1))) as { id: string; evidence_json: string };
+  const target = (await f.pipeline.targets.get(plan.target.id).inspectForRelocation(plan.targetSegments)).evidence;
+  // 下游投影回归：模拟清理所有者已持久记账的事实，真实删除协议另由原生强杀测试覆盖。
+  const journal = new DownloadCleanupJournal(f.db), cleanup = journal.create(receipt.id, taskId, { source: { grant: plan.source, segments: plan.sourceSegments, evidence: JSON.parse(receipt.evidence_json) }, target: { grant: plan.target, segments: plan.targetSegments, evidence: target }, targetId: plan.target.id, binding: "隔离下游事实夹具", connectionId: randomUUID(), connectionVersion: 1, authorization: "ORGANIZE" });
+  journal.advance(cleanup.id, "PENDING", "CLAIMED"); journal.advance(cleanup.id, "CLAIMED", "QUARANTINED"); journal.advance(cleanup.id, "QUARANTINED", "REMOVING");
+  await rm(preview.sourcePath); journal.advance(cleanup.id, "REMOVING", "SOURCE_REMOVED"); journal.advance(cleanup.id, "SOURCE_REMOVED", "CACHE_PENDING"); journal.advance(cleanup.id, "CACHE_PENDING", "DONE");
+  await f.pipeline.scan(sourceId); expect(f.pipeline.task(taskId).state).toBe("DONE"); expect(f.recognition.get(rule.id).runtime!.unavailableInputs).toBe(0);
+  expect(f.db.connection.prepare("SELECT state FROM recognition_receipt WHERE receipt_id=?").get(receipt.id)).toEqual({ state: "ACCEPTED" });
+  const next = await f.sync.preview({ ...versions(sync), requestKey: randomUUID(), mode: "execution" }); expect(next.removed).toBe(1); expect(next.conflicts).toBe(0);
+  await f.sync.confirm({ previewId: next.id, requestKey: randomUUID(), filesComplete: true }); await f.sync.tick(); await expect(readFile(preview.sourcePath)).rejects.toMatchObject({ code: "ENOENT" }); expect(await readFile(preview.targetPath, "utf8")).toBe(f.bytes);
 });
 it("已受理 COPY 冻结原目标，改规则与全局暂停不替换计划，恢复后复制原位置", async () => {
   const f = await fixture(); let rule = await f.enable(f.save(undefined, { targets: [f.movieTarget] })); const sourceId = rule.runtime!.sourceId!; await f.pipeline.scan(sourceId); await f.advance(sourceId); const taskId = await f.task(sourceId, "测试电影.2026.mp4");

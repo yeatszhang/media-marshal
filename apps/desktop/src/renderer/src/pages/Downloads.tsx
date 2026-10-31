@@ -6,6 +6,7 @@ import { Download, FolderOpen, Pause, Play, RefreshCw, X } from "lucide-react";
 import { DownloadsViewModel } from "../services";
 import { Header, Empty, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
+import { DownloadCleanupPanel } from "../components/DownloadCleanupPanel";
 
 const size = (value: number) => value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KiB` : value < 1024 ** 3 ? `${(value / 1024 ** 2).toFixed(1)} MiB` : `${(value / 1024 ** 3).toFixed(2)} GiB`;
 export function Downloads() {
@@ -25,6 +26,7 @@ export function Downloads() {
         {total !== null && total > 0 && <progress aria-label={t("cloud.downloadProgress")} max={total} value={Math.min(job.progress.bytes, total)} />}
         {job.state === "PAUSED" && <p className="cloud-hint">{t("cloud.pausedProgress")}</p>}
         {job.failure && <ErrorNotice message={job.failure.message} />}
+        {!!job.localCleanedFiles && <p className="notice" role="status">{job.localCleanedFiles} 项受管副本已核验媒体库内容并主动清理，成功同步记录保留；普通扫描不会重新下载。</p>}
         {!!job.localRemovedFiles && <p className="notice" role="status">{job.localRemovedFiles} 项已同步，本地已移除。普通扫描和执行一次会保留成功记录；需要再次获取时，请在来源中预览并确认强制重新下载。</p>}
         {(job.state === "RECONCILING" || job.state === "PAUSING") && <p className="cloud-hint">{t("cloud.writerWaiting")}</p>}
         {job.progress.completedItems > 0 && (job.ingestion?.organization === "NOT_ENABLED" ? <p className="cloud-hint">{t("cloud.completedFilesNoOrganization")}</p> : job.ingestion?.organization === "REVIEW_REQUIRED" ? <p className="cloud-hint">{t("cloud.completedFilesReviewRequired")}</p> : job.ingestion ? <div className="notice" role="status"><span>{t("cloud.completedCount", { done: job.progress.completedItems, total: job.progress.totalItems ?? "—" })}</span><span>· {t("ingestion.fileDone")} {job.ingestion.organized}</span><span>· {t("ingestion.embyStatus")} {job.ingestion.collected}</span>{job.ingestion.pending > 0 && <span>· {t("ingestion.pendingCount", { count: job.ingestion.pending })}</span>}</div> : <p className="cloud-hint">{t("cloud.pendingIngestion")}</p>)}
@@ -32,5 +34,6 @@ export function Downloads() {
       </article>;
     })}</div>
     <div className="download-pagination"><Button variant="outline" size="sm" disabled={state.page <= 1} onClick={() => { void model.refresh(state.page - 1); }}>{t("cloud.previousPage")}</Button><span>{t("cloud.pageCount", { page: state.page, total: state.total })}</span><Button variant="outline" size="sm" disabled={state.page * 25 >= state.total} onClick={() => { void model.refresh(state.page + 1); }}>{t("cloud.nextPage")}</Button></div>
+    <DownloadCleanupPanel />
   </>;
 }

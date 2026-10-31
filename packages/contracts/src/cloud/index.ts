@@ -126,6 +126,7 @@ export type CloudDiagnosticCounts = z.infer<typeof cloudDiagnosticCountsSchema>;
 export const downloadJobSchema = z.strictObject({
   id, accountId: id, name: z.string().max(1024), state: downloadStateSchema, progress: downloadProgressSchema,
   localRemovedFiles: count.optional(),
+  localCleanedFiles: count.optional(),
   sourceId: id.nullable().optional(), sourceVersion: count.nullable().optional(),
   ingestion: z.strictObject({ pending: count, candidates: count, organized: count, collected: count, needsAttention: count, organization: z.enum(["ENABLED", "NOT_ENABLED", "REVIEW_REQUIRED", "UNASSIGNED"]).optional() }).optional(),
   failure: cloudFailureSchema.nullable(), updatedAt: timestamp,

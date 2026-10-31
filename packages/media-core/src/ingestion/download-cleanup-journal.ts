@@ -74,9 +74,16 @@ export class DownloadCleanupJournal {
       .run(row.phase, message.slice(0, 500), new Date(this.now()).toISOString(), id, row.phase);
     return this.get(id);
   }
+  wait(id: string, message: string) {
+    this.database.connection.prepare("UPDATE download_cleanup SET waiting_reason=?,updated_at=? WHERE id=? AND phase NOT IN ('DONE','NEEDS_ATTENTION')").run(message.slice(0, 500), new Date(this.now()).toISOString(), id);
+    return this.get(id);
+  }
   retry(id: string) {
     const row = this.get(id); if (row.phase !== "NEEDS_ATTENTION") return row;
-    this.database.connection.prepare("UPDATE download_cleanup SET phase=resume_phase,resume_phase=NULL,failure=NULL,updated_at=? WHERE id=? AND phase='NEEDS_ATTENTION'").run(new Date(this.now()).toISOString(), id);
+    this.database.connection.transaction(() => {
+      if (["PENDING", "WAITING_REFERENCES", "CLAIMED", "QUARANTINED", "REMOVING"].includes(row.resume_phase ?? "")) this.database.connection.prepare("INSERT OR IGNORE INTO download_cleanup_binding_review(cleanup_id,state,requested_at) VALUES(?,'PENDING',?)").run(id, new Date(this.now()).toISOString());
+      this.database.connection.prepare("UPDATE download_cleanup SET phase=resume_phase,resume_phase=NULL,failure=NULL,updated_at=? WHERE id=? AND phase='NEEDS_ATTENTION'").run(new Date(this.now()).toISOString(), id);
+    })();
     return this.get(id);
   }
 }

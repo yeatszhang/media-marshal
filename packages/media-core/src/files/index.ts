@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { open, lstat, realpath, mkdir, readFile, writeFile, rm, link, statfs, type FileHandle } from "node:fs/promises";
+import { open, lstat, realpath, mkdir, readFile, writeFile, readdir, rm, rmdir, link, statfs, type FileHandle } from "node:fs/promises";
 import type { NativeFileSnapshot, NativeRenameApi } from "./native-rename.js";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { CloudError, type VersionEvidence } from "@media-marshal/contracts";
@@ -237,6 +237,30 @@ export class ManagedRoot {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     await this.check(); if (directory) await rm(directory, { recursive: true, force: false });
     await rm(join(this.grant.path, ".media-marshal", "attempts", attemptId + ".json"));
+  }
+  /** 统计带本作业标记的暂存字节，不遍历未知缓存或符号链接。 */
+  async ownedAttemptBytes(attemptId: string) {
+    await this.marker(attemptId); const pending = [[".media-marshal", "staging", this.attempt(attemptId)]];
+    let bytes = 0, entries = 0;
+    while (pending.length) {
+      const parts = pending.shift()!, path = await this.directory(parts, false);
+      for (const entry of await readdir(path, { withFileTypes: true })) {
+        if (++entries > 10000) throw new CloudError("CONFLICT");
+        const info = await lstat(join(path, entry.name), { bigint: true });
+        if (info.isSymbolicLink() || String(info.dev) !== this.grant.volume.observedDevice) throw new CloudError("CONFLICT");
+        if (info.isDirectory()) pending.push([...parts, entry.name]); else if (info.isFile()) bytes += Number(info.size); else throw new CloudError("CONFLICT");
+        if (!Number.isSafeInteger(bytes)) throw new CloudError("CONFLICT");
+      }
+    }
+    await this.marker(attemptId); await this.check(); return bytes;
+  }
+  /** 只移除已清理原件的空父目录，绝不递归删除、移除完成区根或跨越原卷。 */
+  async cleanupEmptyCompletedParents(parts: readonly string[]) {
+    this.segments(parts); if (parts[0] !== "completed") throw new CloudError("INVALID_REQUEST");
+    for (let length = parts.length - 1; length > 1; length--) {
+      try { const path = await this.directory(parts.slice(0, length), false); await this.check(); await rmdir(path); await this.syncDirectory(join(path, "..")); }
+      catch (error) { if (["ENOENT", "ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) return; throw error; }
+    }
   }
   async close() { if (!this.closed) { this.closed = true; await this.handle.close(); } }
 }

@@ -19,6 +19,7 @@ const versionKey = (value: unknown) => createHash("sha256").update(JSON.stringif
 export class SyncReceipts {
   constructor(private readonly database: CoreDatabase, private readonly now = Date.now) {}
   get(id: string) { return this.database.connection.prepare("SELECT * FROM sync_receipt WHERE id=?").get(id) as SyncReceipt | undefined; }
+  isCleaned(id: string) { return !!this.database.connection.prepare("SELECT 1 FROM download_cleanup WHERE receipt_id=? AND (phase IN ('SOURCE_REMOVED','CACHE_PENDING','DONE') OR resume_phase IN ('SOURCE_REMOVED','CACHE_PENDING'))").get(id); }
   byResult(kind: SyncReceipt["result_kind"], resultId: string) { return this.database.connection.prepare("SELECT * FROM sync_receipt WHERE result_kind=? AND result_id=?").get(kind, resultId) as SyncReceipt | undefined; }
   find(kind: SyncReceipt["source_kind"], namespace: string, objectKey: string, version: VersionEvidence, targetId: string, slot: string) {
     const parsed = versionEvidenceSchema.parse(version);

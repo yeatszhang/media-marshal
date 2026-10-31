@@ -8,6 +8,7 @@ import type { CloudRoots } from "../cloud/roots.js";
 import { assertSpaceBudget, sameVolumeRoot } from "../files/index.js";
 import { sourceVersion, sameSnapshot, type SourceSnapshot } from "../files/source-root.js";
 import { SyncReceipts } from "./sync-receipts.js";
+import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
 import { EmbyLibraryFiles, libraryFileReason, type LibraryFileEvidence } from "./emby-library-files.js";
 import type { ConfigurationDirectories } from "./configuration-directories.js";
 
@@ -73,7 +74,7 @@ export class LocalSync {
       } else if (receipt) {
         const state = await receipts.observe(receipt, target);
         file.state = state === "PRESENT" ? "REUSED" : state === "REMOVED" ? "REMOVED" : state === "CONFLICT" ? "CONFLICT" : "UNAVAILABLE";
-        file.reason = state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回，可显式预览重新同步" : state === "PRESENT" ? "已同步，复用成功收据" : state === "CONFLICT" ? "已同步目标的身份或内容已变化，请保留双方文件并核对" : "原目标卷或目录不可用，不认定为删除";
+        file.reason = state === "REMOVED" && receipts.isCleaned(receipt.id) ? "已核验媒体库内容并主动清理受管副本；成功同步记录保留，普通执行不会补回" : state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回，可显式预览重新同步" : state === "PRESENT" ? "已同步，复用成功收据" : state === "CONFLICT" ? "已同步目标的身份或内容已变化，请保留双方文件并核对" : "原目标卷或目录不可用，不认定为删除";
       } else {
         if (this.stable(namespace + JSON.stringify(segments), proof)) { file.state = "READY"; file.reason = null; }
         try { await target.assertVacant(targetSegments); } catch (error) { file.state = error instanceof CloudError && error.code === "CONFLICT" ? "CONFLICT" : "UNAVAILABLE"; file.reason = file.state === "CONFLICT" ? "目标已被其他内容占用，不覆盖；请处理后重新预览" : "目标目录不可用，请恢复原磁盘和授权后重试"; }
@@ -193,8 +194,9 @@ export class LocalSync {
       const receipt = new SyncReceipts(this.database, this.now).record({ source_kind: "local", source_namespace: row.source_namespace, source_object_key: row.source_object_key, source_version_key: row.source_version_key, version_json: row.version_json, target_directory_id: row.target_directory_id, target_slot: row.target_slot, target_segments_json: JSON.stringify(plan.targetSegments), completed_at: stamp, result_kind: "local-sync", result_id: row.id, request_variant: plan.variant }, committed.evidence);
       db.prepare("UPDATE local_sync_operation SET phase='RECORDED',failure=NULL,updated_at=? WHERE id=?").run(stamp, row.id);
       db.prepare("UPDATE local_sync_member SET state='DONE',receipt_id=?,failure=NULL WHERE operation_id=?").run(receipt.id, row.id);
+      new OwnedAttemptCleanup(this.database).record("local_sync_operation", row.id, row.attempt_id, target.grant);
     })(); } catch { throw new DesktopError("STORAGE_ERROR", "本地同步结果尚未完成记账，已提交文件保留；请重启核心后仅重试原作业，不要删除私有恢复文件", true); }
-    await target.cleanupAttempt(row.attempt_id).catch(() => {});
+    await new OwnedAttemptCleanup(this.database).run("local_sync_operation", row.id, target);
   }
   pauseChanged(inputDirectoryId?: string, sourceId?: string) {
     if (!inputDirectoryId) this.resetObservations();

@@ -2,6 +2,7 @@ import { hostPreferencesDraftSchema, licenseIdSchema, type HostPreferencesDraft,
 export * from "./desktop-host.js";
 export * from "./renderer-lifecycle.js";
 export * from "./download-cleanup.js";
+import { downloadCleanupActions } from "./download-cleanup.js";
 import { z } from "zod";
 import { directoryIssueSchema, type DirectoryIssue } from "./directory-issues.js";
 export * from "./directory-issues.js";
@@ -178,6 +179,7 @@ const empty = z.strictObject({});
 export const coreActions = {
   ...configurationActions,
   ...syncActions,
+  ...downloadCleanupActions,
   ...recognitionActions,
   ...correctionActions,
   ...sourceRuleActions,
@@ -304,6 +306,13 @@ export interface DesktopApi {
   removeSyncJob(input: CoreInput<"sync.remove-job">): Promise<CoreOutput<"sync.remove-job">>;
   retrySyncJob(input: CoreInput<"sync.retry">): Promise<CoreOutput<"sync.retry">>;
   listConfigurationDirectories(): Promise<CoreOutput<"configuration.directories">>;
+  listDownloadCleanup(input: CoreInput<"cleanup.list">): Promise<CoreOutput<"cleanup.list">>;
+  getDownloadCleanupScope(input: CoreInput<"cleanup.scope">): Promise<CoreOutput<"cleanup.scope">>;
+  previewDownloadCleanup(input: CoreInput<"cleanup.preview">): Promise<CoreOutput<"cleanup.preview">>;
+  getDownloadCleanupPreview(id: string): Promise<CoreOutput<"cleanup.get-preview">>;
+  confirmDownloadCleanup(id: string): Promise<CoreOutput<"cleanup.confirm">>;
+  cancelDownloadCleanupPreview(id: string): Promise<CoreOutput<"cleanup.cancel-preview">>;
+  retryDownloadCleanup(id: string): Promise<CoreOutput<"cleanup.retry">>;
   getDefaultDownloadDirectory(): Promise<CoreOutput<"configuration.default">>;
   setDefaultDownloadDirectory(input: CoreInput<"configuration.set-default">): Promise<CoreOutput<"configuration.set-default">>;
   chooseConfigurationDirectory(kind: "ordinary" | "managed" | "media"): Promise<z.infer<typeof configurationDirectorySchema> | null>;
