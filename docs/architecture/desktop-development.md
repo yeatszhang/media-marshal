@@ -64,6 +64,8 @@ log.warn({ action, requestId, error }, "请求未完成");
 
 日志目录与新文件在支持 POSIX 权限的平台分别使用 `0700`、`0600`。本地日志可能包含调用位置等开发信息，继续排除在普通「导出诊断」和业务升级备份之外。目录创建、文件写入或队列超限时，控制台保留明确错误，当前进程只弹一次日志保存问题；日志失败不替代已有业务错误反馈。
 
+Main、Core、Sidecar、Preload 和 Renderer 构建均生成带源码内容的 `.map`，随 `out/**` 纳入应用资源。三个 Node 进程分别通过独立的 `bootstrap.ts` 先启用原生堆栈映射，再同步加载业务入口，终端和本地日志保留 TypeScript 文件及行列号；不能仅在业务 bundle 内启用，因为 [Node 仅加载启用映射之后读取的模块的 sourcemap](https://nodejs.org/api/module.html#modulesetsourcemapssupportenabled-options)。Preload／Renderer 的映射供 DevTools 定位源码使用，浏览器序列化后的 `Error.stack` 字符串不会自动改写。修改构建配置后，已运行的 `desktop:dev` 必须退出重启；仅刷新页面或沿用旧监听进程不能更新构建配置。复验入口：`npm run test:desktop -- apps/desktop/tests/source-maps.spec.ts`，使用隔离资料目录核对三个真实进程的异常源码位置和页面映射加载，不连接个人网盘或启动原生网盘组件。
+
 ### E2E 前台与后台模式
 
 `npm run test:desktop` 默认使用后台模式。它保留真实 Electron 主窗口、登录子窗口、DOM 和截图能力，但窗口不显示、不请求焦点、不出现在任务栏或 macOS Dock；隐藏窗口关闭后台节流。测试仍使用各自隔离的用户数据目录，不连接正在使用的开发实例。

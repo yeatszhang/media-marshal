@@ -26,25 +26,30 @@ export default defineConfig({
     plugins: [typescriptDecorators()],
     resolve: { alias },
     build: {
+      sourcemap: true,
       externalizeDeps: {
         exclude: ["@media-marshal/contracts", "@media-marshal/media-core"],
         include: ["better-sqlite3"],
       },
       rolldownOptions: {
         input: {
-          index: resolve("src/main/index.ts"),
-          worker: resolve("src/worker/index.ts"),
-          "sidecar-host": resolve("src/sidecar-host/index.ts"),
+          index: resolve("src/main/bootstrap.ts"),
+          application: resolve("src/main/index.ts"),
+          worker: resolve("src/worker/bootstrap.ts"),
+          "core-application": resolve("src/worker/index.ts"),
+          "sidecar-host": resolve("src/sidecar-host/bootstrap.ts"),
+          "sidecar-application": resolve("src/sidecar-host/index.ts"),
         },
       },
     },
   },
   preload: {
     resolve: { alias },
-    build: { externalizeDeps: false, isolatedEntries: true },
+    build: { sourcemap: true, externalizeDeps: false, isolatedEntries: true },
   },
   renderer: {
     resolve: { alias },
+    build: { sourcemap: true },
     plugins: [
       typescriptDecorators(),
       react(),
