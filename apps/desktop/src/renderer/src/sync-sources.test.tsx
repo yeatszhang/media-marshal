@@ -11,13 +11,13 @@ import { SyncSources } from "./pages/SyncSources";
 import { SyncViewModel } from "./sync-model";
 import { i18nReady } from "./i18n";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-Object.assign(HTMLDialogElement.prototype, { showModal() { this.setAttribute("open", ""); }, close() { this.removeAttribute("open"); } });
+Object.assign(HTMLDialogElement.prototype, { showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); }, close(this: HTMLDialogElement) { this.removeAttribute("open"); } });
 const cleanup: (() => Promise<void>)[] = []; afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); document.body.innerHTML = ""; });
 const button = (name: string) => { const value = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === name); expect(value, name).toBeTruthy(); return value!; };
 const field = (name: string) => document.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label="${name}"]`)!;
 async function click(name: string) { await act(async () => button(name).click()); }
 async function fill(name: string, value: string) { const input = field(name); expect(input, name).toBeTruthy(); const prototype = input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype; await act(async () => { Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event(input instanceof HTMLSelectElement ? "change" : "input", { bubbles: true })); }); }
-async function mount(path = "/sources", setup?: (fixture: ReturnType<typeof fixture>) => void) {
+async function mount(path = "/sources", setup?: (value: ReturnType<typeof fixture>) => void) {
   await i18nReady; const f = fixture(); setup?.(f); const app = createRendererApplication(f.api as unknown as DesktopApi); await app.start();
   const element = document.createElement("div"); document.body.append(element); const root = createRoot(element);
   await act(async () => root.render(<StrictMode><ContainerProvider value={app.container}><SyncDraftProvider><MemoryRouter initialEntries={[path]}><Routes><Route path="/sources" element={<SyncSources />} /><Route path="/cloud" element={<Link to="/sources">返回来源</Link>} /></Routes></MemoryRouter></SyncDraftProvider></ContainerProvider></StrictMode>));
@@ -28,11 +28,11 @@ function fixture() {
   const binding = (value: typeof input | typeof target) => ({ id: value.id, version: value.version, path: value.path });
   const stamp = new Date().toISOString(), account = { id: crypto.randomUUID(), rootRef: crypto.randomUUID(), name: "隔离账号", status: "READY" as const, providerKind: "quark" as const, capabilities: null }, directory = { accountId: account.id, ref: crypto.randomUUID(), parentRef: account.rootRef, name: "中文 目录", type: "directory" as const, size: null, modifiedAt: null, version: null };
   const api = {
-    listSyncSources: vi.fn(async () => structuredClone([...rows.values()])), listConfigurationDirectories: vi.fn(async () => [input, target]), getDefaultDownloadDirectory: vi.fn(async () => ({ version: 1, directory: binding(target) })), listCloudAccounts: vi.fn(async () => [{ ...account }]), listSyncJobs: vi.fn(async () => ({ items: [], total: 0 })), getCloudDownloadPause: vi.fn(async () => ({ paused: false })), chooseConfigurationDirectory: vi.fn(async (kind: string) => kind === "ordinary" ? input : target),
+    listSyncSources: vi.fn(async () => structuredClone([...rows.values()])), listConfigurationDirectories: vi.fn(async () => [input, target]), getDefaultDownloadDirectory: vi.fn(async () => ({ version: 1, directory: binding(target) })), listCloudAccounts: vi.fn(async () => [{ ...account }]), listSyncJobs: vi.fn<DesktopApi["listSyncJobs"]>(async () => ({ items: [], total: 0 })), getCloudDownloadPause: vi.fn(async () => ({ paused: false })), chooseConfigurationDirectory: vi.fn(async (kind: string) => kind === "ordinary" ? input : target),
     saveSyncSource: vi.fn<DesktopApi["saveSyncSource"]>(async (value) => { const configuration = syncSourceConfigurationSchema.parse(value.configuration), old = rows.get(value.id); const row: SyncSourceRule = { id: value.id, version: old?.version ?? 0, draftRevision: value.expectedDraftRevision + 1, lifecycleRevision: 0, draft: configuration, snapshot: old?.snapshot ?? null, paused: true, deletedAt: null, reviewReasons: [], createdAt: stamp, updatedAt: stamp, runtime: { claimed: false, nextScanAt: null, failure: null } }; rows.set(row.id, row); return structuredClone(row); }),
     previewSyncSource: vi.fn<DesktopApi["previewSyncSource"]>(async (value) => { const row = rows.get(value.id)!; if (!(await api.getDefaultDownloadDirectory()).directory) throw new Error("尚未设置默认下载目录，请选择具体目录"); const preview: CoreOutput<"sync.preview"> = { id: crypto.randomUUID(), sourceId: row.id, mode: value.mode ?? "configuration", state: "READY", snapshot: { sourceId: row.id, sourceVersion: row.version + 1, configuration: row.draft, inputDirectory: row.draft.type === "local" ? binding(input) : null, targetDirectory: binding(target), defaultDirectoryVersion: 1 }, expiresAt: Date.now() + 900000, files: 1, bytes: 100, complete: true, observing: 0, conflicts: 0, reused: 0, removed: 0, force: false, failure: null, download: null, jobId: null }; previews.set(preview.id, preview); return structuredClone(preview); }),
     getSyncPreview: vi.fn<DesktopApi["getSyncPreview"]>(async (id) => structuredClone(previews.get(id)!)), listSyncPreviewFiles: vi.fn<DesktopApi["listSyncPreviewFiles"]>(async () => ({ items: [{ relativePath: "原片.mp4", targetPath: target.path + "/completed/原片.mp4", size: 100, state: "READY" as const, reason: null }], total: 1 })),
-    confirmSyncSource: vi.fn<DesktopApi["confirmSyncSource"]>(async (value) => { const preview = previews.get(value.previewId)!, row = rows.get(preview.sourceId)!; row.snapshot = preview.snapshot; row.version = preview.snapshot.sourceVersion; row.paused = false; row.runtime!.claimed = true; preview.state = "APPLIED"; return { rule: structuredClone(row), jobId: null }; }), controlSyncSource: vi.fn(), setCloudDownloadPause: vi.fn(), retrySyncJob: vi.fn(), removeSyncJob: vi.fn(), getSyncJob: vi.fn(), listSyncJobFiles: vi.fn(),
+    confirmSyncSource: vi.fn<DesktopApi["confirmSyncSource"]>(async (value) => { const preview = previews.get(value.previewId)!, row = rows.get(preview.sourceId)!; row.snapshot = preview.snapshot; row.version = preview.snapshot.sourceVersion; row.paused = false; row.runtime!.claimed = true; preview.state = "APPLIED"; return { rule: structuredClone(row), jobId: null }; }), controlSyncSource: vi.fn(), setCloudDownloadPause: vi.fn(), retrySyncJob: vi.fn(), recheckSyncJobLibrary: vi.fn<DesktopApi["recheckSyncJobLibrary"]>(), removeSyncJob: vi.fn(), getSyncJob: vi.fn(), listSyncJobFiles: vi.fn(),
     listRemote: vi.fn(async () => ({ items: [directory], nextCursor: null, total: 1, complete: true })), statRemote: vi.fn(async () => directory),
   };
   return { api, input, target, rows, previews, account, directory };
@@ -169,4 +169,29 @@ it("同步任务列表与详情展示等待原因，恢复后清除提示", asyn
   f.api.listSyncJobs.mockResolvedValue({ items: [{ ...job, state: "RUNNING", waitingReason: null }], total: 1 });
   await act(async () => { await f.app.container.get(SyncViewModel).refresh(); });
   expect(f.element.textContent).not.toContain(waitingReason); expect(f.element.textContent).toContain("执行中");
+});
+
+
+it("媒体库复核展示暂停要求、显式受理与持久进度，关闭重开不重复发起", async () => {
+  const job: CoreOutput<"sync.job"> = { id: crypto.randomUUID(), sourceId: crypto.randomUUID(), sourceVersion: 1, state: "RUNNING", files: 22, inLibrary: 0, done: 0, reused: 0, removed: 0, failed: 0, failure: null, waitingReason: null, downloadJobId: crypto.randomUUID(), libraryRecheckBlockedReason: "请先暂停对应来源，等待在途下载停止后重新核对", createdAt: "2026-10-31", updatedAt: "2026-10-31" };
+  const f = await mount("/sources", (f) => { f.api.listSyncJobs.mockResolvedValue({ items: [job], total: 1 }); f.api.getSyncJob.mockResolvedValue(job); f.api.listSyncJobFiles.mockResolvedValue({ items: [], total: 0 }); });
+  await click("查看任务明细"); expect(button("重新核对媒体库已有文件").disabled).toBe(true);
+  const description = document.getElementById(button("重新核对媒体库已有文件").getAttribute("aria-describedby")!); expect(description?.textContent).toContain("请先暂停对应来源");
+  expect(f.api.recheckSyncJobLibrary).not.toHaveBeenCalled(); await click("关闭任务详情");
+  job.libraryRecheckBlockedReason = null;
+  const pending = { ...job, libraryRecheck: { state: "PENDING" as const, checked: 0, total: 22, matched: 0, skippedBytes: 0, failure: null, updatedAt: "2026-10-31" }, libraryRecheckBlockedReason: "正在重新核对媒体库，请等待结果；来源保持暂停" };
+  f.api.recheckSyncJobLibrary.mockResolvedValue(pending); await click("查看任务明细"); await click("重新核对媒体库已有文件");
+  expect(f.api.recheckSyncJobLibrary).toHaveBeenCalledTimes(1); expect(button("正在核对媒体库…").disabled).toBe(true); expect(document.body.textContent).toContain("0 / 22 个视频");
+  await click("关闭任务详情"); f.api.getSyncJob.mockResolvedValue(pending); await click("查看任务明细"); expect(document.body.textContent).toContain("0 / 22 个视频"); expect(f.api.recheckSyncJobLibrary).toHaveBeenCalledTimes(1);
+  await click("关闭任务详情");
+  f.api.getSyncJob.mockResolvedValue({ ...job, inLibrary: 22, libraryRecheck: { ...pending.libraryRecheck, state: "DONE", checked: 22, matched: 22, skippedBytes: 73220767192 } });
+  await click("查看任务明细"); expect(document.body.textContent).toContain("本次跳过 22 个视频，避免下载 68.19 GiB"); expect(document.body.textContent).toContain("来源保持暂停");
+});
+
+it("复核失败在任务和文件行可见，受理失败不会被查询成功清除", async () => {
+  const job: CoreOutput<"sync.job"> = { id: crypto.randomUUID(), sourceId: crypto.randomUUID(), sourceVersion: 1, state: "RUNNING", files: 1, done: 0, reused: 0, removed: 0, failed: 0, failure: null, waitingReason: null, downloadJobId: crypto.randomUUID(), libraryRecheckBlockedReason: null, libraryRecheck: { state: "FAILED", checked: 0, total: 1, matched: 0, skippedBytes: 0, relativePath: "视频/长片名 S01E04.mp4", failure: "疑似重复，需核对：视频/长片名 S01E04.mp4；作品身份冲突，请核对后重试", updatedAt: "2026-10-31" }, createdAt: "2026-10-31", updatedAt: "2026-10-31" };
+  const f = await mount("/sources", (f) => { f.api.listSyncJobs.mockResolvedValue({ items: [job], total: 1 }); f.api.getSyncJob.mockResolvedValue(job); f.api.listSyncJobFiles.mockResolvedValue({ items: [{ relativePath: job.libraryRecheck!.relativePath!, targetPath: "/媒体库/中文路径.mp4", size: 100, state: "NEEDS_ATTENTION", reason: job.libraryRecheck!.failure }], total: 1 }); f.api.recheckSyncJobLibrary.mockRejectedValue(new Error("在途下载尚未到达暂停安全点，请稍后重试")); });
+  await click("查看任务明细"); const detail = document.querySelector('dialog[aria-label="同步任务详情"]')!;
+  expect(detail.querySelector('[role="alert"]')?.textContent).toContain("作品身份冲突"); expect(detail.querySelector('.sync-file-blocked')?.textContent).toContain("长片名 S01E04");
+  await click("重新核对媒体库已有文件"); expect(detail.querySelector('[role="alert"]')?.textContent).toContain("暂停安全点"); expect(f.api.recheckSyncJobLibrary).toHaveBeenCalledTimes(1);
 });

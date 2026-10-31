@@ -119,3 +119,11 @@ it("公开写入仅接受公共下载目录，拒绝识别客户端和逐规则�
   }
   expect(recognitionRuleWriteSchema.safeParse({ ...edit(), configuration: { name: "公共目录识别", targets: [target()] } }).success).toBe(true);
 });
+
+
+it("同步复核只接受任务 ID 和幂等键，不接受本机路径或跳过结论", () => {
+  const input = { id: randomUUID(), requestKey: randomUUID() }, action = coreActions["sync.recheck-library"];
+  expect(action.input.parse(input)).toEqual(input);
+  for (const extra of [{ path: "/Volumes/个人媒体" }, { grant: {} }, { inLibrary: true }, { files: ["a.mp4"] }]) expect(action.input.safeParse({ ...input, ...extra }).success).toBe(false);
+  expect(action.input.safeParse({ id: input.id }).success).toBe(false);
+});

@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, realpath, rm, writeFile, readFile, stat } from "node:fs
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 
 test("同步预览高亮冲突并在确认按钮旁解释拦截原因", async () => {
   const directory = await mkdtemp(join(tmpdir(), "marshal-sync-feedback-"));
@@ -73,7 +75,7 @@ test("同步优先复核 Emby 目录已有文件，窗口标记已在媒体库�
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   const address = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
-  const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")); delete env.ELECTRON_RUN_AS_NODE;
   const app = await _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`], env });
   try {
     const page = await app.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
@@ -153,4 +155,62 @@ test("同步优先复核 Emby 目录已有文件，窗口标记已在媒体库�
     await app.close(); server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done()));
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+
+test("暂停网盘任务显式复核改名视频，失败可见且重载保留跳过证据", async () => {
+  test.setTimeout(90000);
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "marshal-recheck-window-"))), target = join(directory, "下载 中文"), media = join(directory, "媒体库 中文");
+  const folder = join(media, "猫头鹰谋杀案 (2024) [tmdbid=241548]", "Season 01"), mediaName = "猫头鹰谋杀案 (2024) - S01E04 - 2160p.mp4", content = "窗口复核夹具，媒体已存在且整理改名。";
+  await mkdir(target); await mkdir(folder, { recursive: true }); await writeFile(join(folder, mediaName), content); const inode = (await stat(join(folder, mediaName))).ino;
+  const server = createServer((req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    const url = new URL(req.url!, "http://localhost");
+    if (url.pathname === "/System/Info") res.end(JSON.stringify({ Id: "recheck-server", Version: "4.9-fixture" }));
+    else if (url.pathname === "/Library/VirtualFolders/Query") res.end(JSON.stringify({ Items: [{ ItemId: "movies", Name: "隔离复核库", Locations: [media], CollectionType: "movies" }], TotalRecordCount: 1 }));
+    else if (url.pathname === "/Items") res.end(JSON.stringify({ Items: [], TotalRecordCount: 0 }));
+    else res.writeHead(204).end();
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); const address = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+  const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")); delete env.ELECTRON_RUN_AS_NODE;
+  const launch = () => _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`], env });
+  let app = await launch();
+  try {
+    let page = await app.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+    await app.evaluate(({ dialog }, paths) => { let i = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[i++]!] })) as typeof dialog.showOpenDialog; }, [target, media]);
+    const rootId = await page.evaluate(async ({ media, address }) => {
+      const target = await window.desktopApi.chooseConfigurationDirectory("managed");
+      await window.desktopApi.setDefaultDownloadDirectory({ expectedVersion: 0, directoryId: target!.id, requestKey: crypto.randomUUID() });
+      const libraries = await window.desktopApi.chooseMediaTarget("MOVIE");
+      await window.desktopApi.saveSettings({ language: "zh-CN", embyUrl: address, tmdbProxy: "" }); await window.desktopApi.saveCredential("emby", "isolated-recheck-test");
+      await window.desktopApi.connectEmby({ serverId: "recheck-server", libraries: [{ targetId: libraries[0]!.targetId, libraryId: "movies", libraryPath: media }] });
+      return target!.id;
+    }, { media, address });
+    await app.close();
+    const config = join(directory, "seed-recheck.json"); await writeFile(config, JSON.stringify({ database: join(directory, "data/desktop.sqlite3"), rootId, size: Buffer.byteLength(content) }));
+    const seeded = await new Promise<string>((done, fail) => execFile(createRequire(resolve("package.json"))("electron") as string, [resolve("tools/desktop-files/seed-sync-library-recheck.mjs"), config], { cwd: resolve("."), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 20000 }, (error, stdout) => error ? fail(error) : done(stdout)));
+    const fixture = JSON.parse(seeded.trim()) as { jobId: string; sourceId: string };
+    app = await launch(); page = await app.firstWindow(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "来源", exact: true }).click();
+    await page.getByRole("button", { name: "查看任务明细", exact: true }).click(); const detail = page.getByRole("dialog", { name: "同步任务详情", exact: true });
+    await expect(detail.getByRole("button", { name: "重新核对媒体库已有文件", exact: true })).toBeEnabled();
+    // 先验证目录失联的持久反馈，再恢复同一原目录重试。
+    await import("node:fs/promises").then(({ rename }) => rename(media, media + "-离线"));
+    await detail.getByRole("button", { name: "重新核对媒体库已有文件", exact: true }).click();
+    await expect(detail.getByRole("alert")).toContainText("媒体库检查未完成"); await expect(detail.locator(".sync-file-blocked")).toContainText("Moonflower Murders S01E04");
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640)); await detail.screenshot({ path: "test-results/desktop/sync-library-recheck-failed-920.png" });
+    await import("node:fs/promises").then(({ rename }) => rename(media + "-离线", media));
+    await detail.getByRole("button", { name: "重新核对媒体库已有文件", exact: true }).click();
+    await expect(detail).toContainText("媒体库核对完成：本次跳过 1 个视频"); await expect(detail.locator(".sync-files")).toContainText("作品、季集、格式和字节大小一致"); await expect(detail.locator(".sync-files")).toContainText(join(folder, mediaName));
+    await page.reload(); await expect(detail).toContainText("媒体库核对完成：本次跳过 1 个视频");
+    await page.evaluate(() => window.desktopApi.restartCore()); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+    await expect(detail).toContainText("媒体库核对完成：本次跳过 1 个视频");
+    expect(await page.evaluate(({ sourceId }) => window.desktopApi.listSyncSources({}).then((rows) => rows.find((row) => row.id === sourceId)?.paused), fixture)).toBe(true);
+    for (const width of [1240, 920]) {
+      await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
+      expect(await detail.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true); await detail.screenshot({ path: `test-results/desktop/sync-library-recheck-done-${width}.png` });
+    }
+    await page.keyboard.press("Escape"); await expect(detail).not.toBeVisible(); expect((await stat(join(folder, mediaName))).ino).toBe(inode); expect(await readFile(join(folder, mediaName), "utf8")).toBe(content);
+    await expect(readFile(join(target, "completed", "视频电影", "X 喜鹊+猫头鹰+翠鸟谋杀案", "猫头鹰谋杀案 (2024)", "第 1 季 - 2160p WEB-DL H265 10bit AAC", "Moonflower Murders S01E04 - 第 4 集 - 2160p WEB-DL H265 10bit AAC.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+  } finally { await app.close(); server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done())); await rm(directory, { recursive: true, force: true }); }
 });

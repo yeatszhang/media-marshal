@@ -15,7 +15,7 @@ const status = { READY: "可确认", BUILDING: "正在扫描", BLOCKED: "需要�
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "查询未完成，请核对连接后重试";
 function Pager({ page, total, onChange }: { page: number; total: number; onChange(page: number): void }) { return total > 25 ? <div className="download-pagination"><Button variant="outline" disabled={page <= 1} onClick={() => onChange(page - 1)}>上一页</Button><span>{page} / {Math.ceil(total / 25)}</span><Button variant="outline" disabled={page * 25 >= total} onClick={() => onChange(page + 1)}>下一页</Button></div> : null; }
 function FileList({ data }: { data: CoreOutput<"sync.preview-files"> | null }) { return <div className="sync-files">{data?.items.map((file) => {
-  const blocked = file.state === "CONFLICT" || file.state === "UNAVAILABLE";
+  const blocked = file.state === "CONFLICT" || file.state === "UNAVAILABLE" || file.state === "NEEDS_ATTENTION";
   return <article key={file.relativePath} className={blocked ? "sync-file-blocked" : undefined}><strong className="settings-mapping-path">{file.relativePath}</strong><span>{sourceSize(file.size)} · <strong className={blocked ? "sync-conflict" : undefined}>{status[file.state]}</strong></span><p className="settings-mapping-path">→ {file.targetPath}</p>{file.reason && <p className={blocked ? "sync-conflict" : undefined}>{file.reason}</p>}{blocked && <p className="sync-conflict">请核对该文件的目标路径和上述原因，处理后重新预览。</p>}</article>;
 })}</div>; }
 
@@ -54,9 +54,41 @@ function SyncPreview({ id, onClose, onApplied }: { id: string; onClose(): void; 
 }
 
 function SyncJob({ id, onClose }: { id: string; onClose(): void }) {
-  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy), [job, setJob] = useState<CoreOutput<"sync.job"> | null>(null), [files, setFiles] = useState<CoreOutput<"sync.job-files"> | null>(null), [page, setPage] = useState(1), [error, setError] = useState<string | null>(null);
-  useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const [j, f] = await Promise.all([model.client.getSyncJob(id), model.client.listSyncJobFiles({ id, page })]); if (live) { setJob(j); setFiles(f); setError(null); } } catch (error) { if (live) setError(errorMessage(error)); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, id, page]);
-  return <EditorSurface title="同步任务详情" variant="modal" dirty={false} onClose={onClose}>{(requestClose) => <section className="sync-job-detail" aria-label="同步任务详情"><div className="cloud-browser-toolbar"><h2>同步任务详情</h2><Button variant="ghost" onClick={requestClose}>关闭任务详情</Button></div><ErrorNotice message={error ?? job?.failure ?? null} />{job?.waitingReason && <p className="notice" role="status">{job.waitingReason}</p>}{!job && !error && <p role="status">正在加载任务明细…</p>}{job && <><p>{status[job.state]} · 冻结版本 v{job.sourceVersion} · 共 {job.files} 项 · 完成 {job.done} · 已在媒体库 {job.inLibrary ?? 0} · 复用 {job.reused} · 移除 {job.removed} · 失败 {job.failed}</p><p className="cloud-hint">{job.recognition?.state === "NOT_ENABLED" ? "此完成目录尚未启用识别；之后配置独立识别可补处理，无需重新同步。" : job.recognition?.state === "PAUSED" ? "此输入的独立识别已暂停，成功成果保留等待恢复。" : job.recognition?.state === "ENABLED" ? "此完成目录已接入独立识别，复制与媒体整理分别记账。" : ""}{job.recognition?.ruleId && <Link to={`/recognition?rule=${job.recognition.ruleId}`}>查看对应识别规则</Link>}</p><p className="cloud-hint">任务标识：{id}。规则编辑不替换本作业计划；重载只查询状态。</p><FileList data={files} /><Pager page={page} total={files?.total ?? 0} onChange={setPage} />{job.state === "NEEDS_ATTENTION" && <Button variant="outline" disabled={busy} onClick={() => { void model.command("retry:" + id, (requestKey) => model.client.retrySyncJob({ id, requestKey })); }}>重试原同步作业</Button>}</>}</section>}</EditorSurface>;
+  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy);
+  const [job, setJob] = useState<CoreOutput<"sync.job"> | null>(null), [files, setFiles] = useState<CoreOutput<"sync.job-files"> | null>(null), [page, setPage] = useState(1);
+  const [error, setError] = useState<string | null>(null), [actionError, setActionError] = useState<string | null>(null), live = useRef(false), currentId = useRef(id), recheckReasonId = useId();
+  currentId.current = id;
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => { let active = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const [j, f] = await Promise.all([model.client.getSyncJob(id), model.client.listSyncJobFiles({ id, page })]); if (active) { setJob(j); setFiles(f); setError(null); } } catch (error) { if (active) setError(errorMessage(error)); } if (active) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { active = false; clearTimeout(timer); }; }, [model, id, page]);
+  const recheck = job?.libraryRecheck, checking = recheck?.state === "PENDING" || recheck?.state === "RUNNING";
+  const recheckReason = busy ? "正在提交同步操作，请等待完成。" : job?.libraryRecheckBlockedReason ?? (checking ? "正在重新核对媒体库，请等待结果；来源保持暂停。" : null);
+  const actOnJob = (operation: "recheck" | "retry") => {
+    setActionError(null);
+    void model.command(operation + ":" + id, (requestKey) => operation === "recheck" ? model.client.recheckSyncJobLibrary({ id, requestKey }) : model.client.retrySyncJob({ id, requestKey })).then((result) => {
+      if (!live.current || currentId.current !== id) return;
+      if (result) setJob(result); else setActionError(model.state.error ?? "任务操作未提交，请核对来源状态后重试");
+    });
+  };
+  return <EditorSurface title="同步任务详情" variant="modal" dirty={false} onClose={onClose}>{(requestClose) => <section className="sync-job-detail" aria-label="同步任务详情">
+    <div className="cloud-browser-toolbar"><h2>同步任务详情</h2><Button variant="ghost" onClick={requestClose}>关闭任务详情</Button></div>
+    <ErrorNotice message={actionError ?? error ?? recheck?.failure ?? job?.failure ?? null} />
+    {job?.waitingReason && <p className="notice" role="status">{job.waitingReason}</p>}
+    {!job && !error && <p role="status">正在加载任务明细…</p>}
+    {job && <>
+      <p>{status[job.state]} · 冻结版本 v{job.sourceVersion} · 共 {job.files} 项 · 完成 {job.done} · 已在媒体库 {job.inLibrary ?? 0} · 复用 {job.reused} · 移除 {job.removed} · 失败 {job.failed}</p>
+      <p className="cloud-hint">{job.recognition?.state === "NOT_ENABLED" ? "此完成目录尚未启用识别；之后配置独立识别可补处理，无需重新同步。" : job.recognition?.state === "PAUSED" ? "此输入的独立识别已暂停，成功成果保留等待恢复。" : job.recognition?.state === "ENABLED" ? "此完成目录已接入独立识别，复制与媒体整理分别记账。" : ""}{job.recognition?.ruleId && <Link to={`/recognition?rule=${job.recognition.ruleId}`}>查看对应识别规则</Link>}</p>
+      <p className="cloud-hint">任务标识：{id}。规则编辑不替换本作业计划；重载只查询状态。</p>
+      {recheck && <p className="notice settings-mapping-path" role="status">{checking ? `正在重新核对媒体库：${recheck.checked} / ${recheck.total} 个视频` : recheck.state === "DONE" ? `媒体库核对完成：本次跳过 ${recheck.matched} 个视频，避免下载 ${sourceSize(recheck.skippedBytes)}。来源保持暂停。` : `媒体库核对未完成，已检查 ${recheck.checked} / ${recheck.total} 个视频，本次未撤销下载需求。`}{checking && recheck.relativePath && <span> · {recheck.relativePath}</span>}</p>}
+      {job.state !== "DONE" && job.state !== "CANCELED" && <div className="form-group">
+        <p className="cloud-hint">重新检查原清单中的未完成视频，跳过媒体库已有文件；完成历史和其他任务的下载需求保留。</p>
+        {recheckReason && <p id={recheckReasonId} className="cloud-hint">{recheckReason}</p>}
+        <div className="form-actions"><Button variant="outline" disabled={!!recheckReason} aria-describedby={recheckReason ? recheckReasonId : undefined} onClick={() => actOnJob("recheck")}>{checking ? "正在核对媒体库…" : "重新核对媒体库已有文件"}</Button>
+          {job.state === "NEEDS_ATTENTION" && <Button variant="outline" disabled={busy || checking} onClick={() => actOnJob("retry")}>重试原同步作业</Button>}
+        </div>
+      </div>}
+      <FileList data={files} /><Pager page={page} total={files?.total ?? 0} onChange={setPage} />
+    </>}
+  </section>}</EditorSurface>;
 }
 
 function RemoveSyncJob({ job, onClose, onRemoved }: { job: CoreOutput<"sync.job">; onClose(): void; onRemoved(): void }) {

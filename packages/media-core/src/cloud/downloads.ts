@@ -22,6 +22,7 @@ const versionKey = (version: unknown) => createHash("sha256").update(JSON.string
 /** 业务调度只依赖远端引用、宿主契约和文件提交组件，不解释具体传输协议。 */
 export class CloudDownloads {
   readonly previews: DownloadPreviews;
+  private readonly libraryAbort = new AbortController();
   readonly commits: DownloadCommits;
   private active = new Map<string, Running>();
   private timer?: ReturnType<typeof setInterval>;
@@ -73,7 +74,7 @@ export class CloudDownloads {
       }
     }
   }
-  quiesce() { this.suspended = true; }
+  quiesce() { this.suspended = true; this.libraryAbort.abort(); }
   start() { if (!this.timer) this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 250); }
   async completedRoot(jobId: string) {
     const row = this.database.connection.prepare("SELECT i.target_root_id FROM download_item i JOIN download_job_item d ON d.item_id=i.id WHERE d.job_id=? AND i.state='COMPLETED' UNION SELECT r.target_directory_id AS target_root_id FROM download_job_receipt j JOIN sync_receipt r ON r.id=j.receipt_id WHERE j.job_id=? LIMIT 1").get(jobId, jobId) as { target_root_id: string } | undefined;
@@ -171,9 +172,10 @@ export class CloudDownloads {
     if (this.catalog.source(preview.account_id, preview.remote_root_ref).binding.generation !== snapshot.binding.generation) throw new CloudError("REMOTE_CHANGED");
     const root = this.roots.files.get(preview.target_root_id); root.assertMappings(snapshot.items.map((item) => item.targetSegments));
     await this.roots.budget(preview.target_root_id, snapshot.items.reduce((sum, item) => sum + (!item.libraryFile && !item.reuseItemId && !item.receiptId && !item.issue ? item.expectedSize : 0), 0));
+    const library = new EmbyLibraryFiles(this.database, this.libraryAbort.signal);
     for (const item of snapshot.items) if (item.libraryFile) {
       if (!syncOwner || snapshot.variant) throw new CloudError("CONFLICT");
-      await new EmbyLibraryFiles(this.database).verify(item.libraryFile);
+      await library.verify(item.libraryFile);
     }
     const id = randomUUID(), now = new Date(this.now()).toISOString();
     const jobId = db.transaction(() => {
@@ -221,6 +223,26 @@ export class CloudDownloads {
       this.control({ jobId, operation: "pause", requestKey: randomUUID() }, true);
     }
     this.aggregate(); return { jobId };
+  }
+  /** 复核只撤销当前暂停作业的未完成需求，物理下载仍由下载所有者管理。 */
+  applyLibraryRecheck(jobId: string, snapshot: PreviewSnapshot) {
+    const db = this.database.connection;
+    if (!db.inTransaction) throw new Error("媒体库复核必须在同步结果事务内提交");
+    const job = db.prepare("SELECT j.state,j.preview_id FROM download_job j JOIN sync_cloud_demand d ON d.job_id=j.id JOIN sync_source_rule r ON r.id=d.source_id WHERE j.id=? AND r.paused=1 AND r.deleted_at IS NULL").get(jobId) as { state: string; preview_id: string } | undefined;
+    if (!job || job.state !== "PAUSED" || snapshot.variant) throw new CloudError("CONFLICT");
+    const linked = new Map((db.prepare("SELECT i.* FROM download_job_item d JOIN download_item i ON i.id=d.item_id WHERE d.job_id=?").all(jobId) as Item[]).map((item) => [item.target_path_key, item]));
+    for (const file of snapshot.items) {
+      if (!file.libraryFile) continue;
+      const item = linked.get(file.targetPathKey);
+      if (!item) continue;
+      // 读取期间共享下载可能完成；不能将成功事实改写为跳过。
+      if (item.state === "COMPLETED") { delete file.libraryFile; continue; }
+      const active = this.active.get(item.account_id)?.item.id === item.id || !!db.prepare("SELECT 1 FROM download_claim WHERE item_id=?").get(item.id);
+      if (item.state === "COMMITTING" || active && !this.demands(item.id, jobId)) throw new CloudError("CONFLICT");
+      db.prepare("DELETE FROM download_job_item WHERE job_id=? AND item_id=?").run(jobId, item.id);
+      if (!active && !this.retainedDemand(item.id)) this.state(item.id, "CANCELLED");
+    }
+    if (!db.prepare("SELECT 1 FROM download_job_item d JOIN download_item i ON i.id=d.item_id WHERE d.job_id=? AND i.state!='COMPLETED' LIMIT 1").get(jobId)) db.prepare("UPDATE download_job SET state='COMPLETED',updated_at=? WHERE id=?").run(new Date(this.now()).toISOString(), jobId);
   }
   control(input: CloudInput<"cloud.downloads.control">, global = false) {
     if (this.closed) throw new CloudError("INTERRUPTED");
@@ -434,7 +456,7 @@ export class CloudDownloads {
     }
   }
   async close() {
-    this.closed = true; clearInterval(this.timer); this.timer = undefined;
+    this.closed = true; this.libraryAbort.abort(); clearInterval(this.timer); this.timer = undefined;
     for (const running of this.active.values()) running.stop = true;
     await this.previews.close(); await Promise.allSettled([...this.active.values()].map((run) => run.done));
     while (this.ticking) await delay(10);

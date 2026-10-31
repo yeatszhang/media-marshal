@@ -93,11 +93,12 @@ export class LocalSync {
     const snapshot = JSON.parse(preview.snapshot_json) as SyncSourceSnapshot, files = this.preview(previewId).files;
     if (files.some((file) => !["IN_LIBRARY", "READY", "REUSED", "REMOVED"].includes(file.state))) throw conflict("同步预览仍有未就绪、冲突或不可用文件，请逐项处理并重新预览");
     const source = this.directories.reader(snapshot.inputDirectory!.id), target = this.roots.files.get(snapshot.targetDirectory.id), receipts = new SyncReceipts(this.database, this.now);
+    const library = new EmbyLibraryFiles(this.database, this.libraryAbort.signal);
     for (const file of files) {
       let actual: SourceSnapshot;
       try { actual = await source.inspect(file.segments); } catch { throw new DesktopError("LOCAL_UNAVAILABLE", `来源「${file.segments.join("/").slice(-180)}」无法读取，请恢复原文件、原磁盘和权限后重新预览`, true); }
       if (!sameSnapshot(file.snapshot, actual)) throw conflict(`来源 ${file.segments.join("/").slice(-180)} 已变化，请重新预览`);
-      if (file.libraryFile) await new EmbyLibraryFiles(this.database, this.libraryAbort.signal).verify(file.libraryFile);
+      if (file.libraryFile) await library.verify(file.libraryFile);
       else if (file.receiptId) { const receipt = receipts.get(file.receiptId); if (!receipt || !["PRESENT", "REMOVED"].includes(await receipts.observe(receipt, target))) throw conflict(`已同步目标 ${file.targetSegments.join("/")} 已变化，请核对后重新预览`); }
       else if (!this.stable(file.namespace + JSON.stringify(file.segments), file.snapshot)) throw conflict(`来源 ${file.segments.join("/")} 需要重新连续观察至少 120 秒`);
     }

@@ -28,7 +28,7 @@ export function libraryMediaIdentity(segments: readonly string[]): LibraryMediaI
 }
 export function conflictingMediaIdentity(a: LibraryMediaIdentity, b: LibraryMediaIdentity) {
   return a.conflict || b.conflict || !!(a.tmdbId && b.tmdbId && a.tmdbId !== b.tmdbId)
-    || !!(a.title && b.title && (a.title !== b.title || a.year !== b.year))
+    || !!(!(a.tmdbId && b.tmdbId && a.tmdbId === b.tmdbId) && a.title && b.title && (a.title !== b.title || a.year !== b.year))
     || a.season !== undefined && b.season !== undefined && a.season !== b.season
     || a.episode !== undefined && b.episode !== undefined && a.episode !== b.episode;
 }

@@ -21,7 +21,7 @@ export const libraryFileReason = (file: LibraryFileEvidence) => file.comparison 
   ? `已在媒体库，${(file.algorithm ?? "sha256").toUpperCase()} 内容摘要一致，跳过同步`
   : `已在媒体库，${file.comparison === "MEDIA_SIZE" ? "作品、季集、格式和字节大小一致" : "完整文件名和字节大小一致"}；远端无内容摘要，弱比较无法检测同尺寸内容替换`;
 export const libraryFilePath = (file: LibraryFileEvidence) => join(file.grant.path, ...file.segments);
-const unavailable = (path: string) => new DesktopError("LOCAL_UNAVAILABLE", `媒体库检查未完成：${path}。目录不可读、授权或关联失效，请恢复原卷并核验目录和 Emby 关联后重新预览`.slice(0, 500), true);
+const unavailable = (path: string, error?: unknown) => new DesktopError("LOCAL_UNAVAILABLE", `媒体库检查未完成：${path.slice(-220)}。${error instanceof DesktopError ? error.message.slice(0, 120) : "目录不可读、授权或关联失效"}；请恢复原卷并核验目录和 Emby 关联后重新检查`, true);
 
 /** 会话内只扫描一次；候选按字节大小索引，文件名不阻断内容比较。 */
 export class EmbyLibraryFiles {
@@ -56,10 +56,14 @@ export class EmbyLibraryFiles {
           const file = { targetId: target.target_root_id, binding: target.binding_json, connectionId: target.connection_id, connectionVersion: target.version, grant, segments, snapshot };
           const bucket = result.get(snapshot.size) ?? []; bucket.push(file); result.set(snapshot.size, bucket);
         }
-      } catch { this.check(); throw unavailable(path); }
+      } catch (error) { this.check(); throw unavailable(path, error); }
       finally { await root?.close(); }
     }
     return result;
+  }
+  private async openCandidate(candidate: Candidate) {
+    try { this.check(); return await SourceRoot.open(candidate.grant); }
+    catch (error) { this.check(); throw unavailable(join(candidate.grant.path, ...candidate.segments), error); }
   }
   private async digest(root: SourceRoot, segments: string[], snapshot: SourceSnapshot, algorithm: "sha256" | "sha1" | "md5") {
     this.check();
@@ -89,12 +93,13 @@ export class EmbyLibraryFiles {
       const algorithm = version?.kind === "hash" ? version.algorithm : "sha256";
       const expected = source ? (await this.digest(source.root, source.segments, source.snapshot, "sha256")).sha256 : version?.kind === "hash" ? version.value : "";
       for (const candidate of candidates) {
-        this.check(); const root = await SourceRoot.open(candidate.grant);
+        this.check(); const root = await this.openCandidate(candidate);
         try {
           const proof = await this.digest(root, candidate.segments, candidate.snapshot, algorithm);
           if ((source ? proof.sha256 : proof.digest) !== expected) continue;
           return { ...candidate, sha256: proof.sha256, comparison: "CONTENT", algorithm, digest: proof.digest, checkedAt: new Date().toISOString() };
-        } finally { await root.close(); }
+        } catch (error) { this.check(); if (error instanceof DesktopError) throw error; throw unavailable(join(candidate.grant.path, ...candidate.segments), error); }
+        finally { await root.close(); }
       }
       return;
     }
@@ -103,9 +108,10 @@ export class EmbyLibraryFiles {
     const named = eligible.filter((file) => file.segments.at(-1)!.normalize("NFC") === name.normalize("NFC"));
     const matching = eligible.filter((file) => sameMediaIdentity(identity, libraryMediaIdentity(file.segments)));
     const choices = matching.length ? matching : named;
-    if (choices.length !== 1) throw new DesktopError("CONFLICT", `疑似重复，需核对：${segments.join("/")}；媒体库有 ${candidates.length} 个同字节大小候选，但作品、季集、格式无法唯一对应。候选：${join(candidates[0]!.grant.path, ...candidates[0]!.segments)}。请核对身份或显式重新同步`.slice(0, 500));
-    const candidate = choices[0]!, root = await SourceRoot.open(candidate.grant);
+    if (choices.length !== 1) throw new DesktopError("CONFLICT", `疑似重复，需核对：${segments.join("/").slice(-180)}；媒体库有 ${candidates.length} 个同字节大小候选，但作品、季集、格式无法唯一对应。候选：${join(candidates[0]!.grant.path, ...candidates[0]!.segments).slice(-180)}。请核对身份或显式重新同步`.slice(0, 500));
+    const candidate = choices[0]!, root = await this.openCandidate(candidate);
     try { if (!sameSnapshot(candidate.snapshot, await root.inspect(candidate.segments))) throw changed(); }
+    catch (error) { this.check(); if (error instanceof DesktopError) throw error; throw unavailable(join(candidate.grant.path, ...candidate.segments), error); }
     finally { await root.close(); }
     return { ...candidate, sha256: null, comparison: matching.length ? "MEDIA_SIZE" : "NAME_SIZE", identity, checkedAt: new Date().toISOString() };
   }
@@ -114,7 +120,7 @@ export class EmbyLibraryFiles {
     const target = this.targets().find((target) => target.target_root_id === file.targetId && target.connection_id === file.connectionId && target.version === file.connectionVersion && target.binding_json === file.binding);
     if (!target || JSON.stringify(managedRootGrantSchema.parse(JSON.parse(target.grant_json))) !== JSON.stringify(file.grant)) throw changed();
     this.valid(target, file.grant);
-    const root = await SourceRoot.open(file.grant);
+    const root = await this.openCandidate(file);
     try {
       if (!sameSnapshot(file.snapshot, await root.inspect(file.segments))) throw changed();
       if (file.comparison === "CONTENT" && (await this.digest(root, file.segments, file.snapshot, file.algorithm ?? "sha256")).sha256 !== file.sha256) throw changed();

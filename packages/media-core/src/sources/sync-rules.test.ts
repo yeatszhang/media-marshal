@@ -17,6 +17,7 @@ import { unavailableHost } from "../cloud/host-gateway.js";
 import { ConfigurationDirectories } from "./configuration-directories.js";
 import { SourceRoot } from "../files/source-root.js";
 import { libraryMediaIdentity } from "./library-media-identity.js";
+import { SyncReceipts } from "./sync-receipts.js";
 import { EmbyLibraryFiles } from "./emby-library-files.js";
 import { LocalSync } from "./local-sync.js";
 import { SyncRules } from "./sync-rules.js";
@@ -52,8 +53,7 @@ async function libraryFixture(f: Awaited<ReturnType<typeof fixture>>, content = 
   await mkdir(join(grant.path, "影片")); const path = join(grant.path, "影片/原片.mp4"); await writeFile(path, content);
   return { grant, path, binding, connectionId };
 }
-describe("同步优先检查 Emby 已有文件", () => {
-  async function cloudPreview(f: Awaited<ReturnType<typeof fixture>>) {
+async function cloudPreview(f: Awaited<ReturnType<typeof fixture>>) {
     const accounts = new CloudAccounts(f.db), prepared = accounts.dispatch("cloud.authorization.begin", { name: "测试网盘", requestKey: randomUUID(), implementationId: "test.drive" });
     accounts.dispatch("cloud.authorization.finish", { jobId: prepared.job.id, failure: null, capabilities: { authorizationMethods: ["cookie"], accountIdentity: "unavailable", objectIdentity: "path", reliableRevision: false, hashAlgorithms: [], rangeRead: "unknown", sourceKinds: ["webdav"] }, identityKey: null });
     const account = f.catalog.accounts()[0]!, candidate = prepared.candidate.binding, binding = { accountId: candidate.accountId, bindingId: candidate.bindingId, generation: candidate.generation };
@@ -66,7 +66,8 @@ describe("同步优先检查 Emby 已有文件", () => {
     let preview = await f.preview(source);
     for (let attempt = 0; preview.state === "BUILDING" && attempt < 100; attempt++) { await new Promise((resolve) => setTimeout(resolve, 5)); preview = f.rules.getPreview(preview.id); }
     expect(preview, preview.failure ?? undefined).toMatchObject({ state: "READY" }); return preview;
-  }
+}
+describe("同步优先检查 Emby 已有文件", () => {
   it("待执行网盘任务同时说明来源与全局暂停，逐项恢复后继续原任务", async () => {
     const f = await fixture(), preview = await cloudPreview(f);
     f.downloads.setPaused({ paused: true, requestKey: randomUUID() });
@@ -368,11 +369,108 @@ describe("改名视频的证据比较与会话成本", () => {
     expect(f.rules.previewFiles({ id: preview.id }).items[0]).toMatchObject({ state: "UNAVAILABLE", reason: expect.stringContaining("媒体库检查未完成") });
     expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 0 });
   });
+  it("摘要读取期间取消不会保存命中证据", async () => {
+    const f = await fixture(); await libraryFixture(f); const controller = new AbortController(), size = Buffer.byteLength(f.content);
+    const digest = SourceRoot.prototype.digest;
+    vi.spyOn(SourceRoot.prototype, "digest").mockImplementationOnce(async function (this: SourceRoot, handle, expectedSize, signal, consume) { controller.abort(); return digest.call(this, handle, expectedSize, signal, consume); });
+    await expect(new EmbyLibraryFiles(f.db, controller.signal).find("改名.mp4", size, undefined, { kind: "hash", algorithm: "sha256", value: createHash("sha256").update(f.content).digest("hex") })).rejects.toThrow(/中断/);
+  });
   it("扫描超限和取消不能解释成无候选", async () => {
     const f = await fixture(); await libraryFixture(f);
     vi.spyOn(SourceRoot.prototype, "discover").mockRejectedValueOnce(new Error("超过一万项"));
     await expect(new EmbyLibraryFiles(f.db).find("原片.mp4", Buffer.byteLength(f.content))).rejects.toThrow(/媒体库检查未完成/);
     const controller = new AbortController(), index = new EmbyLibraryFiles(f.db, controller.signal); controller.abort();
     await expect(index.find("原片.mp4", Buffer.byteLength(f.content))).rejects.toThrow(/核对已中断/);
+  });
+});
+
+
+describe("原网盘同步任务重新核对媒体库", () => {
+  async function queued() {
+    const f = await fixture(), preview = await cloudPreview(f), accepted = await f.rules.confirm({ previewId: preview.id, requestKey: randomUUID(), runOnce: true }); await f.rules.tick();
+    const jobId = accepted.jobId!, downloadJobId = f.rules.getJob(jobId).downloadJobId!;
+    return { ...f, jobId, downloadJobId, source: accepted.rule, cloudPreviewSnapshot: preview };
+  }
+  it("必须暂停，受理后阻止恢复和删除，后台命中仅撤销原需求且重放幂等", async () => {
+    const f = await queued(), input = { id: f.jobId, requestKey: randomUUID() };
+    expect(() => f.rules.recheckLibrary(input)).toThrow(/先暂停对应来源/);
+    const paused = await f.rules.control({ ...f.version(f.source), requestKey: randomUUID(), operation: "pause" });
+    const library = await libraryFixture(f);
+    expect(f.rules.recheckLibrary(input)).toMatchObject({ libraryRecheck: { state: "PENDING" } });
+    await expect(f.rules.control({ ...f.version(paused), requestKey: randomUUID(), operation: "resume" })).rejects.toThrow(/正在重新核对/);
+    expect(() => f.rules.removeJob({ id: f.jobId, requestKey: randomUUID() })).toThrow(/正在重新核对/);
+    expect(() => f.rules.retry({ id: f.jobId, requestKey: randomUUID() })).toThrow(/正在重新核对/);
+    await f.rules.tick();
+    expect(f.rules.getJob(f.jobId)).toMatchObject({ state: "DONE", inLibrary: 1, libraryRecheck: { state: "DONE", checked: 1, matched: 1, skippedBytes: Buffer.byteLength(f.content) } });
+    expect(f.rules.get(f.source.id).paused).toBe(true);
+    expect(f.rules.jobFiles({ id: f.jobId }).items[0]).toMatchObject({ state: "IN_LIBRARY", targetPath: library.path, reason: expect.stringContaining("弱比较") });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_job_item WHERE job_id=?").get(f.downloadJobId)).toEqual({ n: 0 });
+    expect(f.db.connection.prepare("SELECT state FROM download_item").get()).toEqual({ state: "CANCELLED" });
+    expect(f.rules.recheckLibrary(input)).toMatchObject({ libraryRecheck: { state: "DONE" } });
+    await f.rules.control({ ...f.version(f.rules.get(f.source.id)), requestKey: randomUUID(), operation: "resume" }); await f.rules.tick();
+    expect(f.rules.getJob(f.jobId).state).toBe("DONE"); expect(f.db.connection.prepare("SELECT count(*) AS n FROM sync_receipt").get()).toEqual({ n: 0 });
+  });
+  it("共享需求仍存在时保留另一个作业与物理下载", async () => {
+    const f = await queued(), secondDraft = f.rules.save({ id: randomUUID(), expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0, requestKey: randomUUID(), configuration: { ...f.source.draft, name: "另一共享来源" } }), secondPreview = await f.preview(secondDraft);
+    let ready = f.rules.getPreview(secondPreview.id); for (let i = 0; ready.state === "BUILDING" && i < 100; i++) { await new Promise((done) => setTimeout(done, 5)); ready = f.rules.getPreview(ready.id); }
+    const second = await f.rules.confirm({ previewId: ready.id, requestKey: randomUUID(), runOnce: true }); await f.rules.tick();
+    const secondDownloadId = f.rules.getJob(second.jobId!).downloadJobId!;
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_item").get()).toEqual({ n: 1 });
+    await f.rules.control({ ...f.version(f.rules.get(f.source.id)), requestKey: randomUUID(), operation: "pause" });
+    await libraryFixture(f); f.rules.recheckLibrary({ id: f.jobId, requestKey: randomUUID() }); await f.rules.tick();
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_job_item WHERE job_id=?").get(secondDownloadId)).toEqual({ n: 1 });
+    expect(f.db.connection.prepare("SELECT state FROM download_item").get()).toEqual({ state: "QUEUED" });
+    expect(f.rules.get(second.rule.id).paused).toBe(false);
+    expect(f.rules.jobFiles({ id: second.jobId! }).items[0]?.state).toBe("PENDING");
+  });
+  it("扫描失败、疑似重复或事务失败不部分撤销需求，失败原因持久可查", async () => {
+    const f = await queued(), library = await libraryFixture(f); await rename(library.path, join(library.grant.path, "影片/不明作品.mp4"));
+    await f.rules.control({ ...f.version(f.source), requestKey: randomUUID(), operation: "pause" });
+    f.rules.recheckLibrary({ id: f.jobId, requestKey: randomUUID() }); await f.rules.tick();
+    expect(f.rules.getJob(f.jobId)).toMatchObject({ inLibrary: 0, libraryRecheck: { state: "FAILED", matched: 0, failure: expect.stringContaining("疑似重复") } });
+    expect(f.rules.jobFiles({ id: f.jobId }).items[0]).toMatchObject({ state: "NEEDS_ATTENTION", reason: expect.stringContaining("疑似重复") });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_job_item WHERE job_id=?").get(f.downloadJobId)).toEqual({ n: 1 });
+    await rename(join(library.grant.path, "影片/不明作品.mp4"), library.path);
+    f.db.connection.exec("CREATE TRIGGER recheck_fault BEFORE DELETE ON download_job_item BEGIN SELECT RAISE(ABORT,'复核事务注入失败'); END");
+    f.rules.recheckLibrary({ id: f.jobId, requestKey: randomUUID() }); await f.rules.tick();
+    expect(f.rules.getJob(f.jobId)).toMatchObject({ inLibrary: 0, libraryRecheck: { state: "FAILED" } });
+    expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_job_item WHERE job_id=?").get(f.downloadJobId)).toEqual({ n: 1 });
+    f.db.connection.exec("DROP TRIGGER recheck_fault");
+    f.rules.recheckLibrary({ id: f.jobId, requestKey: randomUUID() }); await f.rules.tick(); expect(f.rules.getJob(f.jobId)).toMatchObject({ inLibrary: 1, libraryRecheck: { state: "DONE" } });
+  });
+  it("部分文件已完成时只跳过未完成视频，真实成功收据与文件保留", async () => {
+    const f = await queued(), cloud = f.downloads.previews.row((f.db.connection.prepare("SELECT preview_id FROM sync_job WHERE id=?").get(f.jobId) as { preview_id: string }).preview_id)!;
+    const snapshot = JSON.parse(cloud.snapshot_json), accountId = snapshot.binding.accountId, ref = randomUUID(), itemId = randomUUID(), root = f.roots.files.get(f.target.id);
+    const bytes = Buffer.from("已有真实完成成果与收据"), segments = ["已经完成.mp4"], version = { kind: "weak", size: bytes.length, modifiedAt: null }, versionKey = createHash("sha256").update(JSON.stringify(version)).digest("hex"), slot = root.slotKey(segments), attempt = randomUUID();
+    const stage = await root.prepareStage(attempt); await writeFile(join(stage, segments[0]!), bytes); const evidence = await root.verifyStage(attempt, segments, bytes.length); await root.commit(attempt, segments, evidence);
+    f.db.connection.prepare("INSERT INTO remote_entry(id,account_id,name,type,size,observed_at) VALUES(?,?,?,'file',?,'测试')").run(ref, accountId, segments[0], bytes.length);
+    f.db.connection.prepare("INSERT INTO download_item(id,account_id,remote_ref,version_key,version_json,target_root_id,target_path_key,target_segments_json,expected_size,state,local_sha256,completed_size,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'COMPLETED',?,?,?,?)").run(itemId, accountId, ref, versionKey, JSON.stringify(version), f.target.id, slot, JSON.stringify(segments), bytes.length, evidence.sha256, bytes.length, "测试", "测试");
+    f.db.connection.prepare("INSERT INTO download_item_runtime(item_id) VALUES(?)").run(itemId); f.db.connection.prepare("INSERT INTO download_job_item VALUES(?,?,?,'ACTIVE')").run(f.downloadJobId, itemId, accountId);
+    const receipt = new SyncReceipts(f.db).recordDownload(itemId, evidence);
+    snapshot.items.push({ ...snapshot.items[0], itemId, targetSegments: segments, targetPathKey: slot, expectedSize: bytes.length, versionKey, source: { binding: snapshot.binding, remoteRef: ref, locator: { kind: "path", segments }, expectedVersion: version } });
+    f.db.connection.prepare("UPDATE cloud_preview SET snapshot_json=? WHERE id=?").run(JSON.stringify(snapshot), cloud.id);
+    await f.rules.control({ ...f.version(f.source), requestKey: randomUUID(), operation: "pause" }); await libraryFixture(f);
+    f.rules.recheckLibrary({ id: f.jobId, requestKey: randomUUID() }); await f.rules.tick();
+    expect(f.rules.getJob(f.jobId)).toMatchObject({ state: "DONE", done: 1, inLibrary: 1, libraryRecheck: { state: "DONE", matched: 1 } });
+    expect(f.rules.jobFiles({ id: f.jobId }).items.map((file) => file.state)).toEqual(["IN_LIBRARY", "DONE"]);
+    expect(new SyncReceipts(f.db).get(receipt.id)).toEqual(receipt); expect(await readFile(join(f.target.path, "completed", segments[0]!))).toEqual(bytes);
+    expect(f.db.connection.prepare("SELECT item_id FROM download_job_item WHERE job_id=?").all(f.downloadJobId)).toEqual([{ item_id: itemId }]);
+  });
+  it("已完成文件保留成功事实，显式重同步拒绝普通复核", async () => {
+    const f = await queued();
+    f.db.connection.prepare("UPDATE download_item SET state='COMPLETED',local_sha256=?,completed_size=expected_size").run(createHash("sha256").update(f.content).digest("hex"));
+    await f.rules.control({ ...f.version(f.source), requestKey: randomUUID(), operation: "pause" });
+    expect(() => f.rules.recheckLibrary({ id: f.jobId, requestKey: randomUUID() })).toThrow(/安全点/);
+    const cloud = f.downloads.previews.row((f.db.connection.prepare("SELECT preview_id FROM sync_job WHERE id=?").get(f.jobId) as { preview_id: string }).preview_id)!;
+    const snapshot = JSON.parse(cloud.snapshot_json); snapshot.variant = "force:test"; f.db.connection.prepare("UPDATE cloud_preview SET snapshot_json=? WHERE id=?").run(JSON.stringify(snapshot), cloud.id);
+    expect(() => f.rules.recheckLibrary({ id: f.jobId, requestKey: randomUUID() })).toThrow(/显式重新同步/);
+    expect(f.db.connection.prepare("SELECT state,local_sha256 FROM download_item").get()).toMatchObject({ state: "COMPLETED", local_sha256: expect.any(String) });
+  });
+  it("重启恢复持久受理的复核，不依赖页面和新请求", async () => {
+    const f = await queued(); await f.rules.control({ ...f.version(f.source), requestKey: randomUUID(), operation: "pause" }); await libraryFixture(f);
+    f.rules.recheckLibrary({ id: f.jobId, requestKey: randomUUID() });
+    const reopenedLocal = new LocalSync(f.db, f.directories, f.roots, f.now), reopened = new SyncRules(f.db, f.directories, f.downloads, reopenedLocal, f.now); cleanup.push(() => reopened.close());
+    await reopened.tick(); expect(reopened.getJob(f.jobId)).toMatchObject({ inLibrary: 1, libraryRecheck: { state: "DONE", matched: 1 } });
+    await reopened.tick(); expect(f.db.connection.prepare("SELECT count(*) AS n FROM download_job_item WHERE job_id=?").get(f.downloadJobId)).toEqual({ n: 0 });
   });
 });
