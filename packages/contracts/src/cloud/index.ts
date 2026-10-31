@@ -1,18 +1,40 @@
 import { z } from "zod";
 import { syncFilterSchema } from "../sync-recognition.js";
-import { directoryIssueSchema, directoryIssueMessage, type DirectoryIssue } from "../directory-issues.js";
+import {
+  directoryIssueSchema,
+  directoryIssueMessage,
+  type DirectoryIssue,
+} from "../directory-issues.js";
 
 const id = z.uuid();
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const timestamp = z.iso.datetime({ offset: true });
-const opaqueKey = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const opaqueKey = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
 
 export const cloudErrorCodeSchema = z.enum([
-  "AUTH_REQUIRED", "RATE_LIMITED", "NETWORK_UNAVAILABLE", "REMOTE_CHANGED",
-  "REMOTE_NOT_FOUND", "LOCAL_UNAVAILABLE", "UNSUPPORTED_CAPABILITY",
-  "COMPONENT_UNAVAILABLE", "CONFLICT", "INVALID_REQUEST", "INTERRUPTED",
-  "TIMEOUT", "INTERNAL_ERROR", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED",
-  "FILE_EVIDENCE_MISMATCH", "LOCAL_FILE_MISSING", "RECEIPT_CONFLICT", "STOP_UNCONFIRMED",
+  "AUTH_REQUIRED",
+  "RATE_LIMITED",
+  "NETWORK_UNAVAILABLE",
+  "REMOTE_CHANGED",
+  "REMOTE_NOT_FOUND",
+  "LOCAL_UNAVAILABLE",
+  "UNSUPPORTED_CAPABILITY",
+  "COMPONENT_UNAVAILABLE",
+  "CONFLICT",
+  "INVALID_REQUEST",
+  "INTERRUPTED",
+  "TIMEOUT",
+  "INTERNAL_ERROR",
+  "TARGET_OCCUPIED",
+  "LOCAL_FILE_CHANGED",
+  "FILE_EVIDENCE_MISMATCH",
+  "LOCAL_FILE_MISSING",
+  "RECEIPT_CONFLICT",
+  "STOP_UNCONFIRMED",
 ]);
 export type CloudErrorCode = z.infer<typeof cloudErrorCodeSchema>;
 const messages: Record<CloudErrorCode, string> = {
@@ -25,10 +47,13 @@ const messages: Record<CloudErrorCode, string> = {
   UNSUPPORTED_CAPABILITY: "接入方式与传输能力不兼容",
   COMPONENT_UNAVAILABLE: "下载组件不可用",
   CONFLICT: "操作存在冲突，请查询当前状态",
-  TARGET_OCCUPIED: "完成位置被其他文件占用，请打开完成目录核对并移走占用文件，再重新核对；也可在来源中预览新的下载位置",
+  TARGET_OCCUPIED:
+    "完成位置被其他文件占用，请打开完成目录核对并移走占用文件，再重新核对；也可在来源中预览新的下载位置",
   LOCAL_FILE_CHANGED: "文件在校验期间发生变化，请停止其他程序对该文件的写入，再重新核对",
-  FILE_EVIDENCE_MISMATCH: "文件与原提交记录的大小、时间或摘要不一致，请保留现有文件并核对；需要重新获取时在来源中预览新的下载位置",
-  LOCAL_FILE_MISSING: "原提交文件缺失，请恢复原暂存文件或完成文件后重新核对；需要重新获取时在来源中预览新的下载位置",
+  FILE_EVIDENCE_MISMATCH:
+    "文件与原提交记录的大小、时间或摘要不一致，请保留现有文件并核对；需要重新获取时在来源中预览新的下载位置",
+  LOCAL_FILE_MISSING:
+    "原提交文件缺失，请恢复原暂存文件或完成文件后重新核对；需要重新获取时在来源中预览新的下载位置",
   RECEIPT_CONFLICT: "文件与已有同步收据不一致，请保留现有文件并查看诊断，不要重复下载或覆盖",
   STOP_UNCONFIRMED: "尚未取得原下载执行已停止的证据，请等待停止核对；持续未恢复时查看诊断",
   INVALID_REQUEST: "云端请求无效",
@@ -36,28 +61,59 @@ const messages: Record<CloudErrorCode, string> = {
   TIMEOUT: "等待超时，请查询状态后重试",
   INTERNAL_ERROR: "云端操作失败，请重试或查看诊断",
 };
-export const cloudFailureSchema = z.strictObject({
-  code: cloudErrorCodeSchema,
-  message: z.string().max(200),
-  retryable: z.boolean(),
-  retryAfterSeconds: z.number().int().min(1).max(3600).optional(),
-  directoryIssue: directoryIssueSchema.optional(),
-}).refine((failure) => failure.message === (failure.directoryIssue ? directoryIssueMessage(failure.directoryIssue) : messages[failure.code]), "错误消息必须经过归一化");
+export const cloudFailureSchema = z
+  .strictObject({
+    code: cloudErrorCodeSchema,
+    message: z.string().max(200),
+    retryable: z.boolean(),
+    retryAfterSeconds: z.number().int().min(1).max(3600).optional(),
+    directoryIssue: directoryIssueSchema.optional(),
+  })
+  .refine(
+    (failure) =>
+      failure.message ===
+      (failure.directoryIssue
+        ? directoryIssueMessage(failure.directoryIssue)
+        : messages[failure.code]),
+    "错误消息必须经过归一化",
+  );
 export type CloudFailure = z.infer<typeof cloudFailureSchema>;
 export class CloudError extends Error {
-  constructor(readonly code: CloudErrorCode, readonly retryAfterSeconds?: number, readonly directoryIssue?: DirectoryIssue) {
-    super(directoryIssue ? directoryIssueMessage(directoryIssueSchema.parse(directoryIssue)) : messages[code]);
+  constructor(
+    readonly code: CloudErrorCode,
+    readonly retryAfterSeconds?: number,
+    readonly directoryIssue?: DirectoryIssue,
+  ) {
+    super(
+      directoryIssue
+        ? directoryIssueMessage(directoryIssueSchema.parse(directoryIssue))
+        : messages[code],
+    );
     this.name = "CloudError";
   }
 }
 export function cloudFailure(error: unknown): CloudFailure {
   const code = error instanceof CloudError ? error.code : "INTERNAL_ERROR";
-  const retryable = ["RATE_LIMITED", "NETWORK_UNAVAILABLE", "COMPONENT_UNAVAILABLE", "TIMEOUT"].includes(code);
+  const retryable = [
+    "RATE_LIMITED",
+    "NETWORK_UNAVAILABLE",
+    "COMPONENT_UNAVAILABLE",
+    "TIMEOUT",
+  ].includes(code);
   const delay = error instanceof CloudError ? error.retryAfterSeconds : undefined;
   return {
-    code, message: error instanceof CloudError && error.directoryIssue ? directoryIssueMessage(error.directoryIssue) : messages[code], retryable,
-    ...(error instanceof CloudError && error.directoryIssue ? { directoryIssue: error.directoryIssue } : {}),
-    ...(code === "RATE_LIMITED" && Number.isInteger(delay) && delay! > 0 && delay! <= 3600 ? { retryAfterSeconds: delay } : {}),
+    code,
+    message:
+      error instanceof CloudError && error.directoryIssue
+        ? directoryIssueMessage(error.directoryIssue)
+        : messages[code],
+    retryable,
+    ...(error instanceof CloudError && error.directoryIssue
+      ? { directoryIssue: error.directoryIssue }
+      : {}),
+    ...(code === "RATE_LIMITED" && Number.isInteger(delay) && delay! > 0 && delay! <= 3600
+      ? { retryAfterSeconds: delay }
+      : {}),
   };
 }
 
@@ -78,138 +134,341 @@ export const versionEvidenceSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("weak"), size: count, modifiedAt: timestamp.nullable() }),
   // revisionKey 是实现归一化的非敏感比较键，不是上游授权或对象 ID。
   z.strictObject({ kind: z.literal("revision"), revisionKey: opaqueKey }),
-  z.strictObject({ kind: z.literal("hash"), algorithm: z.enum(["sha256", "sha1", "md5"]), value: z.string().regex(/^[a-f0-9]+$/) })
-    .refine((hash) => hash.value.length === { sha256: 64, sha1: 40, md5: 32 }[hash.algorithm], "摘要长度不匹配"),
+  z
+    .strictObject({
+      kind: z.literal("hash"),
+      algorithm: z.enum(["sha256", "sha1", "md5"]),
+      value: z.string().regex(/^[a-f0-9]+$/),
+    })
+    .refine(
+      (hash) => hash.value.length === { sha256: 64, sha1: 40, md5: 32 }[hash.algorithm],
+      "摘要长度不匹配",
+    ),
 ]);
 export type VersionEvidence = z.infer<typeof versionEvidenceSchema>;
 export const cloudAccountSchema = z.strictObject({
-  id, name: z.string().trim().min(1).max(100), providerKind: z.literal("quark"),
-  status: z.enum(["UNCONFIGURED", "READY", "AUTH_REQUIRED", "RESELECT_REQUIRED", "DISCONNECTED", "UNAVAILABLE"]),
+  id,
+  name: z.string().trim().min(1).max(100),
+  providerKind: z.literal("quark"),
+  status: z.enum([
+    "UNCONFIGURED",
+    "READY",
+    "AUTH_REQUIRED",
+    "RESELECT_REQUIRED",
+    "DISCONNECTED",
+    "UNAVAILABLE",
+  ]),
   capabilities: driveCapabilitiesSchema.nullable(),
   rootRef: id.nullable().default(null),
 });
 export type CloudAccount = z.infer<typeof cloudAccountSchema>;
 export const cloudAuthorizationSchema = z.strictObject({
-  id, requestKey: id, accountId: id,
+  id,
+  requestKey: id,
+  accountId: id,
   state: z.enum(["RUNNING", "SUCCEEDED", "FAILED", "INTERRUPTED"]),
-  failure: cloudFailureSchema.nullable(), updatedAt: timestamp,
+  failure: cloudFailureSchema.nullable(),
+  updatedAt: timestamp,
 });
 export type CloudAuthorization = z.infer<typeof cloudAuthorizationSchema>;
 export const cloudCredentialDraftSchema = z.strictObject({
-  accountId: id.optional(), name: z.string().trim().min(1).max(100), requestKey: id,
-  cookie: z.string().trim().min(1).max(32768).refine((value) => !/[\r\n\0]/.test(value)),
+  accountId: id.optional(),
+  name: z.string().trim().min(1).max(100),
+  requestKey: id,
+  cookie: z
+    .string()
+    .trim()
+    .min(1)
+    .max(32768)
+    .refine((value) => !/[\r\n\0]/.test(value)),
 });
 export type CloudCredentialDraft = z.infer<typeof cloudCredentialDraftSchema>;
 export const cloudLoginDraftSchema = cloudCredentialDraftSchema.omit({ cookie: true });
 export type CloudLoginDraft = z.infer<typeof cloudLoginDraftSchema>;
-export const managedDownloadRootSchema = z.strictObject({ id, path: z.string().max(4096), state: z.enum(["AVAILABLE", "UNAVAILABLE", "REVIEW_REQUIRED"]), availableBytes: count.nullable() });
+export const managedDownloadRootSchema = z.strictObject({
+  id,
+  path: z.string().max(4096),
+  state: z.enum(["AVAILABLE", "UNAVAILABLE", "REVIEW_REQUIRED"]),
+  availableBytes: count.nullable(),
+});
 export type ManagedDownloadRoot = z.infer<typeof managedDownloadRootSchema>;
 export const remoteEntrySchema = z.strictObject({
-  accountId: id, ref: id, parentRef: id.nullable(),
-  name: z.string().min(1).max(1024).refine((name) => !/[\0/]/.test(name) && name !== "." && name !== ".."),
-  type: z.enum(["file", "directory"]), size: count.nullable(),
-  modifiedAt: timestamp.nullable(), version: versionEvidenceSchema.nullable(),
+  accountId: id,
+  ref: id,
+  parentRef: id.nullable(),
+  name: z
+    .string()
+    .min(1)
+    .max(1024)
+    .refine((name) => !/[\0/]/.test(name) && name !== "." && name !== ".."),
+  type: z.enum(["file", "directory"]),
+  size: count.nullable(),
+  modifiedAt: timestamp.nullable(),
+  version: versionEvidenceSchema.nullable(),
 });
 export type RemoteEntry = z.infer<typeof remoteEntrySchema>;
-export const remotePageSchema = z.strictObject({
-  items: z.array(remoteEntrySchema).max(100), nextCursor: opaqueKey.nullable(),
-  total: count.nullable(), complete: z.boolean(),
-}).refine((page) => !page.complete || page.nextCursor === null, "完整分页不能保留游标");
+export const remotePageSchema = z
+  .strictObject({
+    items: z.array(remoteEntrySchema).max(100),
+    nextCursor: opaqueKey.nullable(),
+    total: count.nullable(),
+    complete: z.boolean(),
+  })
+  .refine((page) => !page.complete || page.nextCursor === null, "完整分页不能保留游标");
 export type RemotePage = z.infer<typeof remotePageSchema>;
 export const downloadStateSchema = z.enum([
-  "QUEUED", "RUNNING", "VERIFYING", "COMMITTING", "COMPLETED", "PAUSING", "PAUSED",
-  "CANCELLING", "CANCELLED", "RETRY_WAIT", "AUTH_REQUIRED", "FAILED", "BLOCKED_LOCAL", "RECONCILING",
+  "QUEUED",
+  "RUNNING",
+  "VERIFYING",
+  "COMMITTING",
+  "COMPLETED",
+  "PAUSING",
+  "PAUSED",
+  "CANCELLING",
+  "CANCELLED",
+  "RETRY_WAIT",
+  "AUTH_REQUIRED",
+  "FAILED",
+  "BLOCKED_LOCAL",
+  "RECONCILING",
 ]);
 export type DownloadState = z.infer<typeof downloadStateSchema>;
 export const downloadProgressSchema = z.strictObject({
-  bytes: count, totalBytes: count.nullable(), bytesPerSecond: z.number().min(0).finite(),
-  completedItems: count, totalItems: count.nullable(),
+  bytes: count,
+  totalBytes: count.nullable(),
+  bytesPerSecond: z.number().min(0).finite(),
+  completedItems: count,
+  totalItems: count.nullable(),
 });
 export type DownloadProgress = z.infer<typeof downloadProgressSchema>;
 export const cloudDiagnosticCountsSchema = z.strictObject({
-  pausedItems: count, authenticationRequiredAccounts: count, authenticationRequiredItems: count, componentFailedItems: count,
+  pausedItems: count,
+  authenticationRequiredAccounts: count,
+  authenticationRequiredItems: count,
+  componentFailedItems: count,
 });
 export type CloudDiagnosticCounts = z.infer<typeof cloudDiagnosticCountsSchema>;
 export const downloadItemIssueSchema = z.strictObject({
-  itemId: id, relativePath: z.string().min(1).max(32768), state: downloadStateSchema,
-  stage: z.enum(["TRANSFER", "COMMIT", "RECOVERY"]), failure: cloudFailureSchema,
-  checking: z.boolean(), canReconcile: z.boolean(), blockedReason: z.string().max(200).nullable(),
+  itemId: id,
+  relativePath: z.string().min(1).max(32768),
+  state: downloadStateSchema,
+  stage: z.enum(["TRANSFER", "COMMIT", "RECOVERY"]),
+  failure: cloudFailureSchema,
+  checking: z.boolean(),
+  canReconcile: z.boolean(),
+  blockedReason: z.string().max(200).nullable(),
 });
 export type DownloadItemIssue = z.infer<typeof downloadItemIssueSchema>;
 export const downloadJobSchema = z.strictObject({
-  id, accountId: id, name: z.string().max(1024), state: downloadStateSchema, progress: downloadProgressSchema,
+  id,
+  accountId: id,
+  name: z.string().max(1024),
+  state: downloadStateSchema,
+  progress: downloadProgressSchema,
   localRemovedFiles: count.optional(),
   localCleanedFiles: count.optional(),
   issueCount: count.optional(),
-  sourceId: id.nullable().optional(), sourceVersion: count.nullable().optional(),
-  ingestion: z.strictObject({ pending: count, candidates: count, organized: count, collected: count, needsAttention: count, organization: z.enum(["ENABLED", "NOT_ENABLED", "REVIEW_REQUIRED", "UNASSIGNED"]).optional() }).optional(),
-  failure: cloudFailureSchema.nullable(), updatedAt: timestamp,
+  sourceId: id.nullable().optional(),
+  sourceVersion: count.nullable().optional(),
+  ingestion: z
+    .strictObject({
+      pending: count,
+      candidates: count,
+      organized: count,
+      collected: count,
+      needsAttention: count,
+      organization: z.enum(["ENABLED", "NOT_ENABLED", "REVIEW_REQUIRED", "UNASSIGNED"]).optional(),
+    })
+    .optional(),
+  failure: cloudFailureSchema.nullable(),
+  updatedAt: timestamp,
 });
 export type DownloadJob = z.infer<typeof downloadJobSchema>;
-export const cloudFiltersSchema = z.strictObject({ extensions: z.array(z.string().trim().toLowerCase().regex(/^[a-z0-9]{1,12}$/)).max(32).default([]), names: z.array(z.string().min(1).max(1024).refine((name) => !/[\0/]/.test(name) && name !== "." && name !== "..")).max(100).default([]), rules: z.array(syncFilterSchema).max(200).optional() }).default({ extensions: [], names: [] });
+export const cloudFiltersSchema = z
+  .strictObject({
+    extensions: z
+      .array(
+        z
+          .string()
+          .trim()
+          .toLowerCase()
+          .regex(/^[a-z0-9]{1,12}$/),
+      )
+      .max(32)
+      .default([]),
+    names: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(1024)
+          .refine((name) => !/[\0/]/.test(name) && name !== "." && name !== ".."),
+      )
+      .max(100)
+      .default([]),
+    rules: z.array(syncFilterSchema).max(200).optional(),
+  })
+  .default({ extensions: [], names: [] });
 export const downloadPreviewSchema = z.strictObject({
-  id, accountId: id, remoteRef: id, targetGrantId: id,
-  files: count, bytes: count, complete: z.boolean(), weakComparison: z.boolean(),
+  id,
+  accountId: id,
+  remoteRef: id,
+  targetGrantId: id,
+  files: count,
+  bytes: count,
+  complete: z.boolean(),
+  weakComparison: z.boolean(),
   expiresAt: timestamp,
-  state: z.enum(["BUILDING", "READY", "FAILED", "EXPIRED", "CONFIRMED"]), failure: cloudFailureSchema.nullable(),
-  reuseFiles: count, localRemovedFiles: count.optional(), historyRestore: z.strictObject({ files: count.min(1), confirmed: z.boolean() }).optional(), conflicts: count, forceRedownload: z.boolean(), destinationPrefix: z.string().max(256), selectionPath: z.string().max(4096), layout: z.enum(["selection", "drive"]),
+  state: z.enum(["BUILDING", "READY", "FAILED", "EXPIRED", "CONFIRMED"]),
+  failure: cloudFailureSchema.nullable(),
+  reuseFiles: count,
+  localRemovedFiles: count.optional(),
+  historyRestore: z.strictObject({ files: count.min(1), confirmed: z.boolean() }).optional(),
+  conflicts: count,
+  forceRedownload: z.boolean(),
+  destinationPrefix: z.string().max(256),
+  selectionPath: z.string().max(4096),
+  layout: z.enum(["selection", "drive"]),
 });
 export type DownloadPreview = z.infer<typeof downloadPreviewSchema>;
 export const cloudSubscriptionSchema = z.strictObject({
-  id, accountId: id, remoteRef: id, targetGrantId: id, name: z.string().max(1024),
-  filters: cloudFiltersSchema, intervalSeconds: z.number().int().min(60).max(604800), enabled: z.boolean(), configurationVersion: z.number().int().positive(),
-  state: z.enum(["IDLE", "SCANNING", "RETRY_WAIT", "PAUSED", "AUTH_REQUIRED", "BLOCKED_LOCAL", "RESELECT_REQUIRED", "FAILED", "CANCELLED"]),
-  failure: cloudFailureSchema.nullable(), lastScanAt: timestamp.nullable(), nextScanAt: timestamp.nullable(),
-  lastResult: z.strictObject({ files: count, bytes: count, reused: count, conflicts: count, complete: z.boolean(), jobId: id.nullable() }).nullable(),
+  id,
+  accountId: id,
+  remoteRef: id,
+  targetGrantId: id,
+  name: z.string().max(1024),
+  filters: cloudFiltersSchema,
+  intervalSeconds: z.number().int().min(60).max(604800),
+  enabled: z.boolean(),
+  configurationVersion: z.number().int().positive(),
+  state: z.enum([
+    "IDLE",
+    "SCANNING",
+    "RETRY_WAIT",
+    "PAUSED",
+    "AUTH_REQUIRED",
+    "BLOCKED_LOCAL",
+    "RESELECT_REQUIRED",
+    "FAILED",
+    "CANCELLED",
+  ]),
+  failure: cloudFailureSchema.nullable(),
+  lastScanAt: timestamp.nullable(),
+  nextScanAt: timestamp.nullable(),
+  lastResult: z
+    .strictObject({
+      files: count,
+      bytes: count,
+      reused: count,
+      conflicts: count,
+      complete: z.boolean(),
+      jobId: id.nullable(),
+    })
+    .nullable(),
 });
 export type CloudSubscription = z.infer<typeof cloudSubscriptionSchema>;
 
 const empty = z.strictObject({});
 // 先定义契约；只有完成实现的动作才接入桌面 dispatch，不暴露通用代理。
 export const cloudActions = {
-  "cloud.downloads.pause-status": { input: empty, output: z.strictObject({ paused: z.boolean(), pausing: z.boolean() }) },
-  "cloud.downloads.set-paused": { input: z.strictObject({ paused: z.boolean(), requestKey: id }), output: z.strictObject({ paused: z.boolean(), pausing: z.boolean() }) },
+  "cloud.downloads.pause-status": {
+    input: empty,
+    output: z.strictObject({ paused: z.boolean(), pausing: z.boolean() }),
+  },
+  "cloud.downloads.set-paused": {
+    input: z.strictObject({ paused: z.boolean(), requestKey: id }),
+    output: z.strictObject({ paused: z.boolean(), pausing: z.boolean() }),
+  },
   "cloud.subscriptions.configure": {
-    input: z.strictObject({ subscriptionId: id.optional(), configurationVersion: z.number().int().positive().optional(), previewId: id, intervalSeconds: z.number().int().min(60).max(604800).default(900), requestKey: id }),
+    input: z.strictObject({
+      subscriptionId: id.optional(),
+      configurationVersion: z.number().int().positive().optional(),
+      previewId: id,
+      intervalSeconds: z.number().int().min(60).max(604800).default(900),
+      requestKey: id,
+    }),
     output: cloudSubscriptionSchema,
   },
   "cloud.subscriptions.list": {
-    input: z.strictObject({ page: z.number().int().min(1).max(10000).default(1), pageSize: z.number().int().min(1).max(100).default(25) }),
+    input: z.strictObject({
+      page: z.number().int().min(1).max(10000).default(1),
+      pageSize: z.number().int().min(1).max(100).default(25),
+    }),
     output: z.strictObject({ items: z.array(cloudSubscriptionSchema).max(100), total: count }),
   },
   "cloud.subscriptions.control": {
-    input: z.strictObject({ subscriptionId: id, operation: z.enum(["scan", "pause", "resume", "cancel"]), requestKey: id }),
+    input: z.strictObject({
+      subscriptionId: id,
+      operation: z.enum(["scan", "pause", "resume", "cancel"]),
+      requestKey: id,
+    }),
     output: cloudSubscriptionSchema,
   },
   "cloud.roots.list": { input: empty, output: z.array(managedDownloadRootSchema).max(100) },
   "cloud.accounts.list": { input: empty, output: z.array(cloudAccountSchema).max(100) },
-  "cloud.authorizations.get": { input: z.strictObject({ requestKey: id }), output: cloudAuthorizationSchema.nullable() },
+  "cloud.authorizations.get": {
+    input: z.strictObject({ requestKey: id }),
+    output: cloudAuthorizationSchema.nullable(),
+  },
   "cloud.remote.list": {
-    input: z.strictObject({ accountId: id, parentRef: id, cursor: opaqueKey.nullable().default(null), pageSize: z.number().int().min(1).max(100).default(50), refresh: z.boolean().default(false) }),
+    input: z.strictObject({
+      accountId: id,
+      parentRef: id,
+      cursor: opaqueKey.nullable().default(null),
+      pageSize: z.number().int().min(1).max(100).default(50),
+      refresh: z.boolean().default(false),
+    }),
     output: remotePageSchema,
   },
-  "cloud.remote.stat": { input: z.strictObject({ accountId: id, ref: id }), output: remoteEntrySchema },
+  "cloud.remote.stat": {
+    input: z.strictObject({ accountId: id, ref: id }),
+    output: remoteEntrySchema,
+  },
   "cloud.downloads.preview": {
-    input: z.strictObject({ accountId: id, remoteRef: id, targetGrantId: id, requestKey: id, filters: cloudFiltersSchema, forceRedownload: z.boolean().default(false), layout: z.enum(["selection", "drive"]).default("selection") }),
+    input: z.strictObject({
+      accountId: id,
+      remoteRef: id,
+      targetGrantId: id,
+      requestKey: id,
+      filters: cloudFiltersSchema,
+      forceRedownload: z.boolean().default(false),
+      layout: z.enum(["selection", "drive"]).default("selection"),
+    }),
     output: downloadPreviewSchema,
   },
-  "cloud.downloads.get-preview": { input: z.strictObject({ requestKey: id }), output: downloadPreviewSchema.nullable() },
+  "cloud.downloads.get-preview": {
+    input: z.strictObject({ requestKey: id }),
+    output: downloadPreviewSchema.nullable(),
+  },
   "cloud.downloads.confirm": {
-    input: z.strictObject({ previewId: id, requestKey: id }), output: z.strictObject({ jobId: id }),
+    input: z.strictObject({ previewId: id, requestKey: id }),
+    output: z.strictObject({ jobId: id }),
   },
   "cloud.downloads.list": {
-    input: z.strictObject({ page: z.number().int().min(1).max(1_000_000).default(1), pageSize: z.number().int().min(1).max(100).default(25) }),
+    input: z.strictObject({
+      page: z.number().int().min(1).max(1_000_000).default(1),
+      pageSize: z.number().int().min(1).max(100).default(25),
+    }),
     output: z.strictObject({ items: z.array(downloadJobSchema).max(100), total: count }),
   },
   "cloud.downloads.issues": {
-    input: z.strictObject({ jobId: id, page: z.number().int().min(1).max(1_000_000).default(1), pageSize: z.number().int().min(1).max(100).default(10) }),
+    input: z.strictObject({
+      jobId: id,
+      page: z.number().int().min(1).max(1_000_000).default(1),
+      pageSize: z.number().int().min(1).max(100).default(10),
+    }),
     output: z.strictObject({ items: z.array(downloadItemIssueSchema).max(100), total: count }),
   },
   "cloud.downloads.reconcile": {
-    input: z.strictObject({ jobId: id, itemId: id }), output: z.strictObject({ jobId: id }),
+    input: z.strictObject({ jobId: id, itemId: id }),
+    output: z.strictObject({ jobId: id }),
   },
   "cloud.downloads.control": {
-    input: z.strictObject({ jobId: id, operation: z.enum(["pause", "resume", "cancel", "retry"]), requestKey: id }),
+    input: z.strictObject({
+      jobId: id,
+      operation: z.enum(["pause", "resume", "cancel", "retry"]),
+      requestKey: id,
+    }),
     output: z.strictObject({ jobId: id }),
   },
 } as const;
@@ -217,7 +476,8 @@ export type CloudAction = keyof typeof cloudActions;
 export type CloudInput<K extends CloudAction> = z.input<(typeof cloudActions)[K]["input"]>;
 export type CloudOutput<K extends CloudAction> = z.output<(typeof cloudActions)[K]["output"]>;
 export const cloudRequestSchema = z.strictObject({
-  action: z.enum(Object.keys(cloudActions) as [CloudAction, ...CloudAction[]]), payload: z.unknown(),
+  action: z.enum(Object.keys(cloudActions) as [CloudAction, ...CloudAction[]]),
+  payload: z.unknown(),
 });
 export function parseCloudRequest(value: unknown) {
   const request = cloudRequestSchema.safeParse(value);

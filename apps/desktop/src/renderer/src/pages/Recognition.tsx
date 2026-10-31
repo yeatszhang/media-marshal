@@ -2,7 +2,12 @@ import { EditorSurface } from "../components/EditorSurface";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useService, useServiceState } from "@yeatz/app-framework/react";
-import { recognitionRuleConfigurationSchema, type CoreOutput, type RecognitionRule, type RecognitionRuleConfiguration } from "@media-marshal/contracts";
+import {
+  recognitionRuleConfigurationSchema,
+  type CoreOutput,
+  type RecognitionRule,
+  type RecognitionRuleConfiguration,
+} from "@media-marshal/contracts";
 import { RecognitionViewModel, recognitionVersions } from "../recognition-model";
 import { useRecognitionDraft } from "../recognition-draft-context";
 import { Button } from "../components/ui/button";
@@ -10,68 +15,793 @@ import { Header, ErrorNotice } from "../components/shared";
 import { SourceScansViewModel } from "../source-scans-model";
 import { SourceScansPanel } from "../components/SourceScansPanel";
 
-function ConfigurationPreview({ id, onClose, onApplied, onEdit }: { id: string; onClose(): void; onApplied(): void; onEdit(ruleId: string): void }) {
-  const model = useService(RecognitionViewModel), busy = useServiceState(model, (state) => state.busy), [preview, setPreview] = useState<CoreOutput<"recognition.get-preview"> | null>(null), [error, setError] = useState<string | null>(null), mutation = useRef(0);
-  useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const generation = mutation.current, value = await model.client.getRecognitionConfigurationPreview(id); if (live && generation === mutation.current) { setPreview(value); setError(null); } } catch (error) { if (live) setError(error instanceof Error ? error.message : "配置预览读取失败，请重新预览"); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, id]);
-  return <section className="panel sync-panel" aria-label="识别配置范围预览"><div className="cloud-browser-toolbar"><h2>识别配置范围预览</h2><Button variant="ghost" disabled={busy} onClick={onClose}>关闭识别配置预览</Button></div><ErrorNotice message={error} />{preview && <><p role="status">{{ READY: "待确认范围", APPLIED: "配置已确认", EXPIRED: "预览已过期，请重新预览" }[preview.state]} · 规则 v{preview.snapshot.ruleVersion}</p><p className="settings-mapping-path">输入：{preview.snapshot.inputDirectory.path}{preview.snapshot.inputMode === "managed-completed" ? "/completed（仅正式同步成果）" : "（普通已有目录，直接识别）"}</p>{preview.snapshot.configuration.targets.map((target) => <p className="settings-mapping-path" key={target.id}>{target.name} · {target.mediaType === "MOVIE" ? "电影" : "剧集"} → {preview.snapshot.targets.find((row) => row.targetId === target.id)?.directory.path} · {target.template ?? "默认命名模板"}</p>)}{!preview.snapshot.targets.length && <p className="notice">尚未设置媒体库目录，仍可接入和识别文件；请在设置中配置目录，再重新预览以启用文件整理。</p>}<p className="cloud-hint">确认这里只启用接入范围，不直接复制文件。{preview.snapshot.configuration.automatic ? "自动策略仍需在待处理核对首次样本并明确授权此规则版本。" : "文件整理逐项人工确认。"} 规则修改使未确认文件预览失效，原作业保留冻结计划。</p>{preview.state === "READY" && <Button disabled={busy} onClick={() => { void model.command("confirm:" + id, (requestKey) => model.client.confirmRecognitionRule({ previewId: id, requestKey })).then((value) => { if (value) { mutation.current++; setPreview((old) => old ? { ...old, state: "APPLIED" } : old); onApplied(); } }); }}>确认识别配置范围</Button>}{preview.state === "EXPIRED" && <Button variant="outline" disabled={busy} onClick={() => onEdit(preview.ruleId)}>编辑并重新预览</Button>}</>}</section>;
+function ConfigurationPreview({
+  id,
+  onClose,
+  onApplied,
+  onEdit,
+}: {
+  id: string;
+  onClose(): void;
+  onApplied(): void;
+  onEdit(ruleId: string): void;
+}) {
+  const model = useService(RecognitionViewModel),
+    busy = useServiceState(model, (state) => state.busy),
+    [preview, setPreview] = useState<CoreOutput<"recognition.get-preview"> | null>(null),
+    [error, setError] = useState<string | null>(null),
+    mutation = useRef(0);
+  useEffect(() => {
+    let live = true,
+      timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const generation = mutation.current,
+          value = await model.client.getRecognitionConfigurationPreview(id);
+        if (live && generation === mutation.current) {
+          setPreview(value);
+          setError(null);
+        }
+      } catch (error) {
+        if (live) setError(error instanceof Error ? error.message : "配置预览读取失败，请重新预览");
+      }
+      if (live)
+        timer = setTimeout(() => {
+          void poll();
+        }, 2000);
+    };
+    void poll();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [model, id]);
+  return (
+    <section className="panel sync-panel" aria-label="识别配置范围预览">
+      <div className="cloud-browser-toolbar">
+        <h2>识别配置范围预览</h2>
+        <Button variant="ghost" disabled={busy} onClick={onClose}>
+          关闭识别配置预览
+        </Button>
+      </div>
+      <ErrorNotice message={error} />
+      {preview && (
+        <>
+          <p role="status">
+            {
+              { READY: "待确认范围", APPLIED: "配置已确认", EXPIRED: "预览已过期，请重新预览" }[
+                preview.state
+              ]
+            }{" "}
+            · 规则 v{preview.snapshot.ruleVersion}
+          </p>
+          <p className="settings-mapping-path">
+            输入：{preview.snapshot.inputDirectory.path}
+            {preview.snapshot.inputMode === "managed-completed"
+              ? "/completed（仅正式同步成果）"
+              : "（普通已有目录，直接识别）"}
+          </p>
+          {preview.snapshot.configuration.targets.map((target) => (
+            <p className="settings-mapping-path" key={target.id}>
+              {target.name} · {target.mediaType === "MOVIE" ? "电影" : "剧集"} →{" "}
+              {preview.snapshot.targets.find((row) => row.targetId === target.id)?.directory.path} ·{" "}
+              {target.template ?? "默认命名模板"}
+            </p>
+          ))}
+          {!preview.snapshot.targets.length && (
+            <p className="notice">
+              尚未设置媒体库目录，仍可接入和识别文件；请在设置中配置目录，再重新预览以启用文件整理。
+            </p>
+          )}
+          <p className="cloud-hint">
+            确认这里只启用接入范围，不直接复制文件。
+            {preview.snapshot.configuration.automatic
+              ? "自动策略仍需在待处理核对首次样本并明确授权此规则版本。"
+              : "文件整理逐项人工确认。"}{" "}
+            规则修改使未确认文件预览失效，原作业保留冻结计划。
+          </p>
+          {preview.state === "READY" && (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                void model
+                  .command("confirm:" + id, (requestKey) =>
+                    model.client.confirmRecognitionRule({ previewId: id, requestKey }),
+                  )
+                  .then((value) => {
+                    if (value) {
+                      mutation.current++;
+                      setPreview((old) => (old ? { ...old, state: "APPLIED" } : old));
+                      onApplied();
+                    }
+                  });
+              }}
+            >
+              确认识别配置范围
+            </Button>
+          )}
+          {preview.state === "EXPIRED" && (
+            <Button variant="outline" disabled={busy} onClick={() => onEdit(preview.ruleId)}>
+              编辑并重新预览
+            </Button>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 function RuleFiles({ row }: { row: RecognitionRule }) {
-  const model = useService(RecognitionViewModel), [files, setFiles] = useState<CoreOutput<"ingestion.candidates"> | null>(null), [page, setPage] = useState(1), [error, setError] = useState<string | null>(null);
-  useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const value = row.runtime?.sourceId ? await model.client.listIngestionCandidates({ sourceId: row.runtime.sourceId, page }) : null; if (live) { setFiles(value); setError(null); } } catch (error) { if (live) setError(error instanceof Error ? error.message : "候选读取失败"); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, row.id, row.runtime?.sourceId, page]);
-  return <section className="panel sync-panel" aria-label="规则接入与文件任务"><h2>{row.snapshot?.configuration.name ?? row.draft.name} · 接入与文件任务</h2><ErrorNotice message={error} /><p className="cloud-hint">{files?.total ?? 0} 项。普通目录先观察文件就绪；受管输入逐项核对成功收据。复制与 Emby 收录在任务页分别记录。</p>{files?.items.map((file) => <article className="sync-files" key={file.id}><strong className="settings-mapping-path">{file.relativePath}</strong><p>{file.state === "READY" ? "可核对识别" : file.state === "PROCESSED" ? "文件整理完成" : file.state === "QUEUED" ? "已有识别任务" : file.state === "UNAVAILABLE" ? "等待原文件或目录恢复" : file.state === "SKIPPED" ? "已跳过" : "正在观察／核对"} · {file.reason}</p>{file.taskId ? <Link to={`/review?task=${file.taskId}`}>核对原文件任务</Link> : file.state === "READY" ? <Link to="/review">前往待处理识别</Link> : null}</article>)}{!!files && files.total > 100 && <div className="download-pagination"><Button variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页候选</Button><span>{page} / {Math.ceil(files.total / 100)}</span><Button variant="outline" disabled={page * 100 >= files.total} onClick={() => setPage(page + 1)}>下一页候选</Button></div>}</section>;
+  const model = useService(RecognitionViewModel),
+    [files, setFiles] = useState<CoreOutput<"ingestion.candidates"> | null>(null),
+    [page, setPage] = useState(1),
+    [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true,
+      timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const value = row.runtime?.sourceId
+          ? await model.client.listIngestionCandidates({ sourceId: row.runtime.sourceId, page })
+          : null;
+        if (live) {
+          setFiles(value);
+          setError(null);
+        }
+      } catch (error) {
+        if (live) setError(error instanceof Error ? error.message : "候选读取失败");
+      }
+      if (live)
+        timer = setTimeout(() => {
+          void poll();
+        }, 2000);
+    };
+    void poll();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [model, row.id, row.runtime?.sourceId, page]);
+  return (
+    <section className="panel sync-panel" aria-label="规则接入与文件任务">
+      <h2>{row.snapshot?.configuration.name ?? row.draft.name} · 接入与文件任务</h2>
+      <ErrorNotice message={error} />
+      <p className="cloud-hint">
+        {files?.total ?? 0} 项。普通目录先观察文件就绪；受管输入逐项核对成功收据。复制与 Emby
+        收录在任务页分别记录。
+      </p>
+      {files?.items.map((file) => (
+        <article className="sync-files" key={file.id}>
+          <strong className="settings-mapping-path">{file.relativePath}</strong>
+          <p>
+            {file.state === "READY"
+              ? "可核对识别"
+              : file.state === "PROCESSED"
+                ? "文件整理完成"
+                : file.state === "QUEUED"
+                  ? "已有识别任务"
+                  : file.state === "UNAVAILABLE"
+                    ? "等待原文件或目录恢复"
+                    : file.state === "SKIPPED"
+                      ? "已跳过"
+                      : "正在观察／核对"}{" "}
+            · {file.reason}
+          </p>
+          {file.taskId ? (
+            <Link to={`/review?task=${file.taskId}`}>核对原文件任务</Link>
+          ) : file.state === "READY" ? (
+            <Link to="/review">前往待处理识别</Link>
+          ) : null}
+        </article>
+      ))}
+      {!!files && files.total > 100 && (
+        <div className="download-pagination">
+          <Button variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+            上一页候选
+          </Button>
+          <span>
+            {page} / {Math.ceil(files.total / 100)}
+          </span>
+          <Button
+            variant="outline"
+            disabled={page * 100 >= files.total}
+            onClick={() => setPage(page + 1)}
+          >
+            下一页候选
+          </Button>
+        </div>
+      )}
+    </section>
+  );
 }
 export function RecognitionPage() {
-  const scans = useService(SourceScansViewModel), scanState = useServiceState(scans, (value) => value);
-  const model = useService(RecognitionViewModel), state = useServiceState(model, (value) => value), [draft, setDraft] = useRecognitionDraft(), [query, setQuery] = useSearchParams(), [error, setError] = useState<string | null>(null), [sample, setSample] = useState(query.get("sample") ?? ""), [accepted, setAccepted] = useState(false), [page, setPage] = useState(1), [removing, setRemoving] = useState<RecognitionRule | null>(null), dialog = useRef<HTMLDialogElement>(null), current = useRef(draft), live = useRef(true);
-  current.current = draft; useEffect(() => { live.current = true; return () => { live.current = false; }; }, []); useEffect(() => model.watch(), [model]);
-  const ruleId = query.get("rule"), opened = useRef<string | null>(null), selected = state.items.find((row) => row.id === ruleId && !row.deletedAt), deletedSelection = state.items.find((row) => row.id === ruleId && row.deletedAt);
+  const scans = useService(SourceScansViewModel),
+    scanState = useServiceState(scans, (value) => value);
+  const model = useService(RecognitionViewModel),
+    state = useServiceState(model, (value) => value),
+    [draft, setDraft] = useRecognitionDraft(),
+    [query, setQuery] = useSearchParams(),
+    [error, setError] = useState<string | null>(null),
+    [sample, setSample] = useState(query.get("sample") ?? ""),
+    [accepted, setAccepted] = useState(false),
+    [page, setPage] = useState(1),
+    [removing, setRemoving] = useState<RecognitionRule | null>(null),
+    dialog = useRef<HTMLDialogElement>(null),
+    current = useRef(draft),
+    live = useRef(true);
+  current.current = draft;
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  useEffect(() => model.watch(), [model]);
+  const ruleId = query.get("rule"),
+    opened = useRef<string | null>(null),
+    selected = state.items.find((row) => row.id === ruleId && !row.deletedAt),
+    deletedSelection = state.items.find((row) => row.id === ruleId && row.deletedAt);
 
   useEffect(() => {
     if (!deletedSelection) return;
     setQuery({}, { replace: true });
-    setDraft((old) => old?.id === deletedSelection.id ? null : old);
+    setDraft((old) => (old?.id === deletedSelection.id ? null : old));
     opened.current = null;
     setAccepted(false);
   }, [deletedSelection?.id]);
-  const open = (row: RecognitionRule) => { setDraft({ id: row.id, row, configuration: structuredClone(row.draft), rebind: false, revision: 0 }); setError(null); setAccepted(false); };
-  useEffect(() => { if (!ruleId) { opened.current = null; return; } if (query.has("sample") || query.has("configurationPreview") || query.has("view")) return; if (selected && opened.current !== ruleId) { opened.current = ruleId; open(selected); } }, [ruleId, selected, query]);
-  useEffect(() => { setSample(query.get("sample") ?? ""); setAccepted(false); }, [query.get("sample"), ruleId]);
-  const patch = (value: Partial<RecognitionRuleConfiguration>) => { setError(null); if (query.has("configurationPreview")) setQuery(ruleId ? { rule: ruleId } : {}); setDraft((old) => old ? { ...old, configuration: { ...old.configuration, ...value }, revision: old.revision + 1 } : old); };
+  const open = (row: RecognitionRule) => {
+    setDraft({
+      id: row.id,
+      row,
+      configuration: structuredClone(row.draft),
+      rebind: false,
+      revision: 0,
+    });
+    setError(null);
+    setAccepted(false);
+  };
+  useEffect(() => {
+    if (!ruleId) {
+      opened.current = null;
+      return;
+    }
+    if (query.has("sample") || query.has("configurationPreview") || query.has("view")) return;
+    if (selected && opened.current !== ruleId) {
+      opened.current = ruleId;
+      open(selected);
+    }
+  }, [ruleId, selected, query]);
+  useEffect(() => {
+    setSample(query.get("sample") ?? "");
+    setAccepted(false);
+  }, [query.get("sample"), ruleId]);
+  const patch = (value: Partial<RecognitionRuleConfiguration>) => {
+    setError(null);
+    if (query.has("configurationPreview")) setQuery(ruleId ? { rule: ruleId } : {});
+    setDraft((old) =>
+      old
+        ? { ...old, configuration: { ...old.configuration, ...value }, revision: old.revision + 1 }
+        : old,
+    );
+  };
   const settingsTargetIds = useRef(new Map<string, string>());
   const settingsTargets = (["MOVIE", "TV_SHOW"] as const).flatMap((mediaType) => {
     const library = state.libraries.find((row) => row.configuredMediaTypes?.includes(mediaType));
     if (!library) return [];
-    const previous = draft?.configuration.targets.find((row) => row.mediaType === mediaType && row.directoryId === library.targetId);
+    const previous = draft?.configuration.targets.find(
+      (row) => row.mediaType === mediaType && row.directoryId === library.targetId,
+    );
     const key = `${draft?.id}:${mediaType}:${library.targetId}`;
     let id = previous?.id ?? settingsTargetIds.current.get(key);
-    if (!id) { id = crypto.randomUUID(); settingsTargetIds.current.set(key, id); }
-    return [{ id, name: mediaType === "MOVIE" ? "电影媒体库" : "剧集媒体库", mediaType, directoryId: library.targetId, template: null }];
+    if (!id) {
+      id = crypto.randomUUID();
+      settingsTargetIds.current.set(key, id);
+    }
+    return [
+      {
+        id,
+        name: mediaType === "MOVIE" ? "电影媒体库" : "剧集媒体库",
+        mediaType,
+        directoryId: library.targetId,
+        template: null,
+      },
+    ];
   });
-  const save = async () => { if (!draft) return; if (!draft.configuration.name.trim()) { setError("请填写识别规则名称，便于在列表中识别此规则。"); return; } const parsed = recognitionRuleConfigurationSchema.safeParse({ ...draft.configuration, targets: settingsTargets, input: { kind: "default" }, client: "custom" }); if (!parsed.success) { setError(parsed.error.issues.map((issue) => issue.message).join("；")); return; } const original = draft, row = await model.save({ ...(draft.row ? recognitionVersions(draft.row) : { id: draft.id, expectedVersion: 0, expectedDraftRevision: 0, expectedLifecycleRevision: 0 }), configuration: parsed.data }); if (!row || !live.current) return; setDraft((old) => old?.id === row.id ? { ...old, row } : old); if (current.current?.id !== row.id || current.current.revision !== original.revision) return; const preview = await model.preview({ ...recognitionVersions(row), useCurrentDefault: true }); if (preview && live.current) { opened.current = row.id; setDraft(null); setQuery({ rule: row.id, configurationPreview: preview.id }); } };
-  useEffect(() => { if (!removing) return; const element = dialog.current!, original = document.activeElement; element.showModal(); return () => { element.close(); requestAnimationFrame(() => { if (original instanceof HTMLElement && original.isConnected) original.focus(); }); }; }, [removing?.id]);
-  const configuration = draft?.configuration, busy = state.busy, deletedItems = state.items.filter((row) => row.deletedAt), items = state.items.filter((row) => !row.deletedAt), currentPage = Math.min(page, Math.max(1, Math.ceil(items.length / 25)));
-  return <>
-    <Header title="识别与映射" description="识别本地下载目录中的已完成文件，按电影和剧集映射到媒体目标。同步与识别可分别暂停。"><Button variant="outline" disabled={busy} onClick={() => { void model.command("global-pause:" + !state.paused, (requestKey) => model.client.setOrganizePause({ paused: !state.paused, requestKey })); }}>{state.paused ? "恢复全部识别整理" : "暂停全部识别整理"}</Button><Button disabled={busy} onClick={() => { setQuery({}); opened.current = null; setDraft({ id: crypto.randomUUID(), row: null, configuration: { name: "", input: { kind: "default" }, client: "custom", ignoredFilePatterns: null, targets: [], operation: "COPY", automatic: false }, revision: 0, rebind: false }); }}>添加识别规则</Button></Header>
-    <ErrorNotice message={draft ? null : error ?? state.error ?? state.queryError} retry={() => { void model.refresh(true); }} />{state.paused && <p className="notice">全部识别整理已暂停，原计划和文件保留。来源同步与已提交文件的 Emby 交付仍各自处理。</p>}
-    {draft && configuration && <EditorSurface key={draft.id} title={draft.row ? "编辑识别规则" : "添加识别规则"} dirty={draft.row ? JSON.stringify(configuration) !== JSON.stringify(draft.row.draft) || draft.rebind : draft.revision > 0} busy={busy} onClose={() => { setDraft(null); setQuery({}); opened.current = null; }}>{(requestClose) => <section className="panel source-form configuration-editor" aria-label="识别规则表单"><div className="cloud-browser-toolbar"><h2>{draft.row ? "编辑识别规则" : "添加识别规则"}</h2><Button variant="ghost" disabled={busy} onClick={requestClose}>关闭识别表单</Button></div><ErrorNotice message={error ?? state.error ?? state.queryError} /><fieldset disabled={busy || !!draft.row?.deletedAt} className="source-rule-fields configuration-fields">
-      <label>规则名称<input aria-label="识别规则名称" value={configuration.name} maxLength={100} onChange={(event) => patch({ name: event.target.value })} /></label>
-      <section className="configuration-section" aria-label="识别输入"><h3>本地下载目录</h3><p className="settings-mapping-path">{state.defaults?.directory?.path ?? "尚未设置本地下载目录"}</p><Link className="source-inline-link" to="/settings">前往设置</Link><p className="cloud-hint">使用设置中的下载目录，识别已完成的同步文件。输入文件被删除后不会自动补下载。</p>
-      <label>忽略名称模式（每行一条）<textarea aria-label="识别忽略模式" value={configuration.ignoredFilePatterns?.join("\n") ?? ""} onChange={(event) => patch({ ignoredFilePatterns: event.target.value ? event.target.value.split("\n") : null })} placeholder="留空沿用默认忽略规则" /></label>
-      </section><section className="configuration-section" aria-label="按媒体类型映射"><h3>按媒体类型映射</h3><p className="cloud-hint">使用设置中的媒体库目录，按识别结果整理电影和剧集。</p>
-      {(["MOVIE", "TV_SHOW"] as const).map((mediaType) => {
-        const library = state.libraries.find((row) => row.configuredMediaTypes?.includes(mediaType));
-        return <div className="settings-row" key={mediaType}><span className="settings-field-label">{mediaType === "MOVIE" ? "电影" : "剧集"}</span><p className="settings-mapping-path">{library ? <>{library.path}{!library.available && "（原目录不可用，请恢复磁盘或前往设置核验）"}</> : "尚未设置媒体库目录"}</p></div>;
-      })}
-      <Link className="source-inline-link" to="/settings">前往设置修改媒体库目录</Link>
-      </section><section className="configuration-section" aria-label="执行策略"><h3>执行策略</h3><label className="sync-check"><input aria-label="启用有条件自动整理策略" type="checkbox" checked={configuration.automatic} onChange={(event) => patch({ automatic: event.target.checked })} />启用有条件自动整理策略</label><p className="cloud-hint">默认人工确认。自动策略只放行已授权规则版本、可信完成成果、唯一高置信作品与合法季集。普通客户端行为未完整验证时仍转人工，来源标签或文件稳定性不会代替完整性证据。</p>
-      </section><div className="form-actions configuration-footer"><Button variant="ghost" onClick={requestClose}>取消</Button><Button disabled={!!state.queryError || !state.defaults} onClick={() => { void save(); }}>保存识别草稿并预览</Button>{draft.row?.snapshot && <Button variant="outline" onClick={() => { void model.control(draft.row!, "reset").then((row) => { if (row && live.current) open(row); }); }}>重置为已生效识别配置</Button>}</div></fieldset></section>}</EditorSurface>}
-    {query.get("configurationPreview") && !deletedSelection && <ConfigurationPreview key={query.get("configurationPreview")!} id={query.get("configurationPreview")!} onClose={() => setQuery(ruleId ? { rule: ruleId } : {})} onApplied={() => setDraft(null)} onEdit={(id) => { const row = state.items.find((value) => value.id === id && !value.deletedAt); if (row) { opened.current = id; open(row); setQuery({ rule: id }); } }} />}
-    {selected?.snapshot?.configuration.automatic && selected.runtime?.claimed && <section className="panel sync-panel" aria-label="首次样本自动授权"><h2>首次样本自动授权</h2><p>{selected.runtime.automaticAuthorized ? `当前 v${selected.version} 已明确授权，证据不足的文件仍转人工。` : `当前 v${selected.version} 尚未授权自动执行。请先到待处理核对一个文件的作品、季集、目标与命名预览，再返回明确授权。`}</p><label>样本预览标识<input aria-label="自动授权样本预览标识" value={sample} onChange={(event) => { setSample(event.target.value); setAccepted(false); }} /></label><label className="sync-check"><input aria-label="已核对首次样本并授权当前规则版本" type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} />已核对首次样本并了解自动策略局限，授权当前规则版本</label><Button disabled={busy || !accepted || !sample} onClick={() => { void model.command("automatic:" + selected.id + ":" + selected.version + ":" + sample, (requestKey) => model.client.authorizeRecognitionAutomatic({ id: selected.id, expectedVersion: selected.version, samplePreviewId: sample, accepted: true, requestKey })).then((value) => { if (value) setAccepted(false); }); }}>确认首次样本自动授权</Button></section>}
-    <div className="source-list">{items.slice((currentPage - 1) * 25, currentPage * 25).map((row) => <article className="panel sync-panel" key={row.id} aria-label={`识别规则 ${row.draft.name}`}><h3>{row.draft.name}</h3><p>{row.version ? `已生效 v${row.version}` : "未确认草稿"} · {row.paused ? "识别已暂停" : "识别接入可用"} · {row.snapshot?.configuration.targets.length ?? 0} 个映射目标</p><p className="settings-mapping-path">输入：{row.snapshot?.inputDirectory.path ?? "等待配置范围预览"}{row.snapshot?.inputMode === "managed-completed" && "/completed（正式成果）"}</p><ErrorNotice message={row.runtime?.failure ?? null} />{!!row.runtime?.unavailableInputs && <p className="notice">{row.runtime.unavailableInputs} 项成果不可用，请补扫查看具体文件原因；不会自动补下载。</p>}{!!row.reviewReasons.length && <p className="notice">升级配置需要核对原输入、目标和旧任务后完整预览接管；自动授权不会沿用。</p>}<div className="download-controls"><Button variant="outline" disabled={busy} onClick={() => { opened.current = row.id; open(row); setQuery({ rule: row.id }); }}>编辑并预览识别规则</Button><Button variant="outline" disabled={busy || scanState.pending || row.paused || !row.runtime?.claimed || !!row.reviewReasons.length} onClick={() => { void scans.startRecognition(row); }}>重新扫描</Button><Button variant="ghost" disabled={busy || !row.runtime?.claimed} onClick={() => { void model.control(row, row.paused ? "resume" : "pause"); }}>{row.paused ? "恢复此识别规则" : "暂停此识别规则"}</Button><Button variant="ghost" disabled={busy || !row.paused} onClick={() => setRemoving(row)}>删除识别规则…</Button><Link className="source-inline-link" to={`/recognition?rule=${row.id}&view=files`}>查看接入与任务</Link></div>{(row.paused || !row.runtime?.claimed) && <p className="cloud-hint">{!row.runtime?.claimed ? "请先保存并确认识别配置范围，再重新扫描。" : "识别规则已暂停，请先恢复此规则再重新扫描。"}</p>}</article>)}</div>
-    {items.length > 25 && <div className="download-pagination"><Button variant="outline" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>上一页规则</Button><span>{currentPage} / {Math.ceil(items.length / 25)}</span><Button variant="outline" disabled={currentPage * 25 >= items.length} onClick={() => setPage(currentPage + 1)}>下一页规则</Button></div>}{!items.length && <p className="panel sync-panel">尚无识别规则。先在设置中配置本地下载目录和媒体库目录，再添加识别规则。</p>}
-    {selected?.runtime?.sourceId && <RuleFiles key={selected.id + selected.runtime.sourceId} row={selected} />}
-    {!!deletedItems.length && <details className="recognition-archive"><summary>已删除识别规则（{deletedItems.length}）</summary><p className="cloud-hint">仅保留恢复入口，已删除规则不再接入文件。恢复后仍保持暂停，原文件与任务历史保留。</p>{deletedItems.map((row) => <div className="download-controls" key={row.id}><span>{row.draft.name} · 原文件与计划保留，恢复后仍暂停</span><Button variant="outline" disabled={busy} onClick={() => { void model.control(row, "restore"); }}>恢复已删除识别规则</Button></div>)}</details>}
-    <SourceScansPanel sources={[]} recognitionRules={items} disabled={busy} /><p className="cloud-hint"><Link to="/review">待处理核对作品与文件计划</Link> · <Link to="/tasks">持久文件任务和独立 Emby 交付</Link> · <Link to="/settings">可选 Emby 关联</Link></p>
-    {removing && <dialog ref={dialog} className="source-lifecycle-dialog" aria-label="删除识别规则" onCancel={(event) => { event.preventDefault(); if (!busy) setRemoving(null); }}><h2>删除「{removing.draft.name}」？</h2><p>规则须暂停并到达文件操作安全点。原输入、媒体文件、冻结计划和任务历史保留；恢复后仍暂停。同步来源保持独立。</p><div className="form-actions"><Button variant="outline" disabled={busy} onClick={() => setRemoving(null)}>取消</Button><Button disabled={busy} onClick={() => { void model.control(removing, "remove").then((value) => { if (value) { setRemoving(null); if (draft?.id === value.id) setDraft(null); if (ruleId === value.id) { setQuery({}); opened.current = null; } } }); }}>确认删除识别规则</Button></div></dialog>}
-  </>;
+  const save = async () => {
+    if (!draft) return;
+    if (!draft.configuration.name.trim()) {
+      setError("请填写识别规则名称，便于在列表中识别此规则。");
+      return;
+    }
+    const parsed = recognitionRuleConfigurationSchema.safeParse({
+      ...draft.configuration,
+      targets: settingsTargets,
+      input: { kind: "default" },
+      client: "custom",
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues.map((issue) => issue.message).join("；"));
+      return;
+    }
+    const original = draft,
+      row = await model.save({
+        ...(draft.row
+          ? recognitionVersions(draft.row)
+          : {
+              id: draft.id,
+              expectedVersion: 0,
+              expectedDraftRevision: 0,
+              expectedLifecycleRevision: 0,
+            }),
+        configuration: parsed.data,
+      });
+    if (!row || !live.current) return;
+    setDraft((old) => (old?.id === row.id ? { ...old, row } : old));
+    if (current.current?.id !== row.id || current.current.revision !== original.revision) return;
+    const preview = await model.preview({ ...recognitionVersions(row), useCurrentDefault: true });
+    if (preview && live.current) {
+      opened.current = row.id;
+      setDraft(null);
+      setQuery({ rule: row.id, configurationPreview: preview.id });
+    }
+  };
+  useEffect(() => {
+    if (!removing) return;
+    const element = dialog.current!,
+      original = document.activeElement;
+    element.showModal();
+    return () => {
+      element.close();
+      requestAnimationFrame(() => {
+        if (original instanceof HTMLElement && original.isConnected) original.focus();
+      });
+    };
+  }, [removing?.id]);
+  const configuration = draft?.configuration,
+    busy = state.busy,
+    deletedItems = state.items.filter((row) => row.deletedAt),
+    items = state.items.filter((row) => !row.deletedAt),
+    currentPage = Math.min(page, Math.max(1, Math.ceil(items.length / 25)));
+  return (
+    <>
+      <Header
+        title="识别与映射"
+        description="识别本地下载目录中的已完成文件，按电影和剧集映射到媒体目标。同步与识别可分别暂停。"
+      >
+        <Button
+          variant="outline"
+          disabled={busy}
+          onClick={() => {
+            void model.command("global-pause:" + !state.paused, (requestKey) =>
+              model.client.setOrganizePause({ paused: !state.paused, requestKey }),
+            );
+          }}
+        >
+          {state.paused ? "恢复全部识别整理" : "暂停全部识别整理"}
+        </Button>
+        <Button
+          disabled={busy}
+          onClick={() => {
+            setQuery({});
+            opened.current = null;
+            setDraft({
+              id: crypto.randomUUID(),
+              row: null,
+              configuration: {
+                name: "",
+                input: { kind: "default" },
+                client: "custom",
+                ignoredFilePatterns: null,
+                targets: [],
+                operation: "COPY",
+                automatic: false,
+              },
+              revision: 0,
+              rebind: false,
+            });
+          }}
+        >
+          添加识别规则
+        </Button>
+      </Header>
+      <ErrorNotice
+        message={draft ? null : (error ?? state.error ?? state.queryError)}
+        retry={() => {
+          void model.refresh(true);
+        }}
+      />
+      {state.paused && (
+        <p className="notice">
+          全部识别整理已暂停，原计划和文件保留。来源同步与已提交文件的 Emby 交付仍各自处理。
+        </p>
+      )}
+      {draft && configuration && (
+        <EditorSurface
+          key={draft.id}
+          title={draft.row ? "编辑识别规则" : "添加识别规则"}
+          dirty={
+            draft.row
+              ? JSON.stringify(configuration) !== JSON.stringify(draft.row.draft) || draft.rebind
+              : draft.revision > 0
+          }
+          busy={busy}
+          onClose={() => {
+            setDraft(null);
+            setQuery({});
+            opened.current = null;
+          }}
+        >
+          {(requestClose) => (
+            <section className="panel source-form configuration-editor" aria-label="识别规则表单">
+              <div className="cloud-browser-toolbar">
+                <h2>{draft.row ? "编辑识别规则" : "添加识别规则"}</h2>
+                <Button variant="ghost" disabled={busy} onClick={requestClose}>
+                  关闭识别表单
+                </Button>
+              </div>
+              <ErrorNotice message={error ?? state.error ?? state.queryError} />
+              <fieldset
+                disabled={busy || !!draft.row?.deletedAt}
+                className="source-rule-fields configuration-fields"
+              >
+                <label>
+                  规则名称
+                  <input
+                    aria-label="识别规则名称"
+                    value={configuration.name}
+                    maxLength={100}
+                    onChange={(event) => patch({ name: event.target.value })}
+                  />
+                </label>
+                <section className="configuration-section" aria-label="识别输入">
+                  <h3>本地下载目录</h3>
+                  <p className="settings-mapping-path">
+                    {state.defaults?.directory?.path ?? "尚未设置本地下载目录"}
+                  </p>
+                  <Link className="source-inline-link" to="/settings">
+                    前往设置
+                  </Link>
+                  <p className="cloud-hint">
+                    使用设置中的下载目录，识别已完成的同步文件。输入文件被删除后不会自动补下载。
+                  </p>
+                  <label>
+                    忽略名称模式（每行一条）
+                    <textarea
+                      aria-label="识别忽略模式"
+                      value={configuration.ignoredFilePatterns?.join("\n") ?? ""}
+                      onChange={(event) =>
+                        patch({
+                          ignoredFilePatterns: event.target.value
+                            ? event.target.value.split("\n")
+                            : null,
+                        })
+                      }
+                      placeholder="留空沿用默认忽略规则"
+                    />
+                  </label>
+                </section>
+                <section className="configuration-section" aria-label="按媒体类型映射">
+                  <h3>按媒体类型映射</h3>
+                  <p className="cloud-hint">使用设置中的媒体库目录，按识别结果整理电影和剧集。</p>
+                  {(["MOVIE", "TV_SHOW"] as const).map((mediaType) => {
+                    const library = state.libraries.find((row) =>
+                      row.configuredMediaTypes?.includes(mediaType),
+                    );
+                    return (
+                      <div className="settings-row" key={mediaType}>
+                        <span className="settings-field-label">
+                          {mediaType === "MOVIE" ? "电影" : "剧集"}
+                        </span>
+                        <p className="settings-mapping-path">
+                          {library ? (
+                            <>
+                              {library.path}
+                              {!library.available && "（原目录不可用，请恢复磁盘或前往设置核验）"}
+                            </>
+                          ) : (
+                            "尚未设置媒体库目录"
+                          )}
+                        </p>
+                      </div>
+                    );
+                  })}
+                  <Link className="source-inline-link" to="/settings">
+                    前往设置修改媒体库目录
+                  </Link>
+                </section>
+                <section className="configuration-section" aria-label="执行策略">
+                  <h3>执行策略</h3>
+                  <label className="sync-check">
+                    <input
+                      aria-label="启用有条件自动整理策略"
+                      type="checkbox"
+                      checked={configuration.automatic}
+                      onChange={(event) => patch({ automatic: event.target.checked })}
+                    />
+                    启用有条件自动整理策略
+                  </label>
+                  <p className="cloud-hint">
+                    默认人工确认。自动策略只放行已授权规则版本、可信完成成果、唯一高置信作品与合法季集。普通客户端行为未完整验证时仍转人工，来源标签或文件稳定性不会代替完整性证据。
+                  </p>
+                </section>
+                <div className="form-actions configuration-footer">
+                  <Button variant="ghost" onClick={requestClose}>
+                    取消
+                  </Button>
+                  <Button
+                    disabled={!!state.queryError || !state.defaults}
+                    onClick={() => {
+                      void save();
+                    }}
+                  >
+                    保存识别草稿并预览
+                  </Button>
+                  {draft.row?.snapshot && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        void model.control(draft.row!, "reset").then((row) => {
+                          if (row && live.current) open(row);
+                        });
+                      }}
+                    >
+                      重置为已生效识别配置
+                    </Button>
+                  )}
+                </div>
+              </fieldset>
+            </section>
+          )}
+        </EditorSurface>
+      )}
+      {query.get("configurationPreview") && !deletedSelection && (
+        <ConfigurationPreview
+          key={query.get("configurationPreview")!}
+          id={query.get("configurationPreview")!}
+          onClose={() => setQuery(ruleId ? { rule: ruleId } : {})}
+          onApplied={() => setDraft(null)}
+          onEdit={(id) => {
+            const row = state.items.find((value) => value.id === id && !value.deletedAt);
+            if (row) {
+              opened.current = id;
+              open(row);
+              setQuery({ rule: id });
+            }
+          }}
+        />
+      )}
+      {selected?.snapshot?.configuration.automatic && selected.runtime?.claimed && (
+        <section className="panel sync-panel" aria-label="首次样本自动授权">
+          <h2>首次样本自动授权</h2>
+          <p>
+            {selected.runtime.automaticAuthorized
+              ? `当前 v${selected.version} 已明确授权，证据不足的文件仍转人工。`
+              : `当前 v${selected.version} 尚未授权自动执行。请先到待处理核对一个文件的作品、季集、目标与命名预览，再返回明确授权。`}
+          </p>
+          <label>
+            样本预览标识
+            <input
+              aria-label="自动授权样本预览标识"
+              value={sample}
+              onChange={(event) => {
+                setSample(event.target.value);
+                setAccepted(false);
+              }}
+            />
+          </label>
+          <label className="sync-check">
+            <input
+              aria-label="已核对首次样本并授权当前规则版本"
+              type="checkbox"
+              checked={accepted}
+              onChange={(event) => setAccepted(event.target.checked)}
+            />
+            已核对首次样本并了解自动策略局限，授权当前规则版本
+          </label>
+          <Button
+            disabled={busy || !accepted || !sample}
+            onClick={() => {
+              void model
+                .command(
+                  "automatic:" + selected.id + ":" + selected.version + ":" + sample,
+                  (requestKey) =>
+                    model.client.authorizeRecognitionAutomatic({
+                      id: selected.id,
+                      expectedVersion: selected.version,
+                      samplePreviewId: sample,
+                      accepted: true,
+                      requestKey,
+                    }),
+                )
+                .then((value) => {
+                  if (value) setAccepted(false);
+                });
+            }}
+          >
+            确认首次样本自动授权
+          </Button>
+        </section>
+      )}
+      <div className="source-list">
+        {items.slice((currentPage - 1) * 25, currentPage * 25).map((row) => (
+          <article
+            className="panel sync-panel"
+            key={row.id}
+            aria-label={`识别规则 ${row.draft.name}`}
+          >
+            <h3>{row.draft.name}</h3>
+            <p>
+              {row.version ? `已生效 v${row.version}` : "未确认草稿"} ·{" "}
+              {row.paused ? "识别已暂停" : "识别接入可用"} ·{" "}
+              {row.snapshot?.configuration.targets.length ?? 0} 个映射目标
+            </p>
+            <p className="settings-mapping-path">
+              输入：{row.snapshot?.inputDirectory.path ?? "等待配置范围预览"}
+              {row.snapshot?.inputMode === "managed-completed" && "/completed（正式成果）"}
+            </p>
+            <ErrorNotice message={row.runtime?.failure ?? null} />
+            {!!row.runtime?.unavailableInputs && (
+              <p className="notice">
+                {row.runtime.unavailableInputs}{" "}
+                项成果不可用，请补扫查看具体文件原因；不会自动补下载。
+              </p>
+            )}
+            {!!row.reviewReasons.length && (
+              <p className="notice">
+                升级配置需要核对原输入、目标和旧任务后完整预览接管；自动授权不会沿用。
+              </p>
+            )}
+            <div className="download-controls">
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  opened.current = row.id;
+                  open(row);
+                  setQuery({ rule: row.id });
+                }}
+              >
+                编辑并预览识别规则
+              </Button>
+              <Button
+                variant="outline"
+                disabled={
+                  busy ||
+                  scanState.pending ||
+                  row.paused ||
+                  !row.runtime?.claimed ||
+                  !!row.reviewReasons.length
+                }
+                onClick={() => {
+                  void scans.startRecognition(row);
+                }}
+              >
+                重新扫描
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy || !row.runtime?.claimed}
+                onClick={() => {
+                  void model.control(row, row.paused ? "resume" : "pause");
+                }}
+              >
+                {row.paused ? "恢复此识别规则" : "暂停此识别规则"}
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy || !row.paused}
+                onClick={() => setRemoving(row)}
+              >
+                删除识别规则…
+              </Button>
+              <Link className="source-inline-link" to={`/recognition?rule=${row.id}&view=files`}>
+                查看接入与任务
+              </Link>
+            </div>
+            {(row.paused || !row.runtime?.claimed) && (
+              <p className="cloud-hint">
+                {!row.runtime?.claimed
+                  ? "请先保存并确认识别配置范围，再重新扫描。"
+                  : "识别规则已暂停，请先恢复此规则再重新扫描。"}
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+      {items.length > 25 && (
+        <div className="download-pagination">
+          <Button
+            variant="outline"
+            disabled={currentPage <= 1}
+            onClick={() => setPage(currentPage - 1)}
+          >
+            上一页规则
+          </Button>
+          <span>
+            {currentPage} / {Math.ceil(items.length / 25)}
+          </span>
+          <Button
+            variant="outline"
+            disabled={currentPage * 25 >= items.length}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            下一页规则
+          </Button>
+        </div>
+      )}
+      {!items.length && (
+        <p className="panel sync-panel">
+          尚无识别规则。先在设置中配置本地下载目录和媒体库目录，再添加识别规则。
+        </p>
+      )}
+      {selected?.runtime?.sourceId && (
+        <RuleFiles key={selected.id + selected.runtime.sourceId} row={selected} />
+      )}
+      {!!deletedItems.length && (
+        <details className="recognition-archive">
+          <summary>已删除识别规则（{deletedItems.length}）</summary>
+          <p className="cloud-hint">
+            仅保留恢复入口，已删除规则不再接入文件。恢复后仍保持暂停，原文件与任务历史保留。
+          </p>
+          {deletedItems.map((row) => (
+            <div className="download-controls" key={row.id}>
+              <span>{row.draft.name} · 原文件与计划保留，恢复后仍暂停</span>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  void model.control(row, "restore");
+                }}
+              >
+                恢复已删除识别规则
+              </Button>
+            </div>
+          ))}
+        </details>
+      )}
+      <SourceScansPanel sources={[]} recognitionRules={items} disabled={busy} />
+      <p className="cloud-hint">
+        <Link to="/review">待处理核对作品与文件计划</Link> ·{" "}
+        <Link to="/tasks">持久文件任务和独立 Emby 交付</Link> ·{" "}
+        <Link to="/settings">可选 Emby 关联</Link>
+      </p>
+      {removing && (
+        <dialog
+          ref={dialog}
+          className="source-lifecycle-dialog"
+          aria-label="删除识别规则"
+          onCancel={(event) => {
+            event.preventDefault();
+            if (!busy) setRemoving(null);
+          }}
+        >
+          <h2>删除「{removing.draft.name}」？</h2>
+          <p>
+            规则须暂停并到达文件操作安全点。原输入、媒体文件、冻结计划和任务历史保留；恢复后仍暂停。同步来源保持独立。
+          </p>
+          <div className="form-actions">
+            <Button variant="outline" disabled={busy} onClick={() => setRemoving(null)}>
+              取消
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                void model.control(removing, "remove").then((value) => {
+                  if (value) {
+                    setRemoving(null);
+                    if (draft?.id === value.id) setDraft(null);
+                    if (ruleId === value.id) {
+                      setQuery({});
+                      opened.current = null;
+                    }
+                  }
+                });
+              }}
+            >
+              确认删除识别规则
+            </Button>
+          </div>
+        </dialog>
+      )}
+    </>
+  );
 }

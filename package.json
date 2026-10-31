@@ -33,7 +33,9 @@
     "check:framework": "node scripts/check-framework-package.mjs",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "format": "prettier --write --ignore-unknown apps/desktop packages scripts package.json tsconfig.base.json vitest.config.ts .prettierrc.json",
+    "format:check": "prettier --check --ignore-unknown apps/desktop packages scripts package.json tsconfig.base.json vitest.config.ts .prettierrc.json"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
@@ -43,6 +45,7 @@
     "@types/node": "22.19.15",
     "@vitejs/plugin-react": "6.1.2",
     "jsdom": "28.1.0",
+    "prettier": "3.9.10",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "typescript": "5.9.3",

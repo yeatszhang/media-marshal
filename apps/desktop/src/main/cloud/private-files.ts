@@ -42,7 +42,10 @@ Send-PrivateResult 'private'
 }
 `;
 export class PrivateFileError extends DesktopError {
-  constructor(readonly step: string, readonly systemCode?: string) {
+  constructor(
+    readonly step: string,
+    readonly systemCode?: string,
+  ) {
     super("STORAGE_ERROR", "无法建立当前用户的私有文件权限", true);
     this.name = "PrivateFileError";
   }
@@ -52,20 +55,48 @@ async function windowsPrivate(path: string, directory: boolean): Promise<void> {
   if (!systemRoot || !isAbsolute(systemRoot)) throw new Error();
   const executable = join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe");
   // 不继承宿主的 PSModulePath，防止 PowerShell 7 的模块环境污染系统 5.1 进程。
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "PSMODULEPATH"));
-  const script = windowsAclScript.replace("__PRIVATE_PATH_BASE64__", Buffer.from(path, "utf8").toString("base64")).replace("__PRIVATE_IS_DIRECTORY__", directory ? "$true" : "$false");
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "PSMODULEPATH"),
+  );
+  const script = windowsAclScript
+    .replace("__PRIVATE_PATH_BASE64__", Buffer.from(path, "utf8").toString("base64"))
+    .replace("__PRIVATE_IS_DIRECTORY__", directory ? "$true" : "$false");
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env: environment, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(
+      executable,
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ],
+      { env: environment, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
+    );
     let output = "";
-    const deadline = setTimeout(() => { child.kill(); reject(new Error()); }, 15000);
-    child.stdout.on("data", (chunk) => { output = (output + chunk).slice(0, 100); });
-    child.once("error", () => { clearTimeout(deadline); reject(new Error()); });
+    const deadline = setTimeout(() => {
+      child.kill();
+      reject(new Error());
+    }, 15000);
+    child.stdout.on("data", (chunk) => {
+      output = (output + chunk).slice(0, 100);
+    });
+    child.once("error", () => {
+      clearTimeout(deadline);
+      reject(new Error());
+    });
     child.once("close", (code) => {
       clearTimeout(deadline);
       if (code === 0 && output.trim() === "private") resolve();
       else {
-        const failure = output.trim().match(/^failed:(input|construct|apply|verify):(-?\d+):([A-Za-z0-9]+)$/);
-        reject(new PrivateFileError(failure?.[1] ?? "powershell-control", failure ? `${failure[2]}:${failure[3]}` : undefined));
+        const failure = output
+          .trim()
+          .match(/^failed:(input|construct|apply|verify):(-?\d+):([A-Za-z0-9]+)$/);
+        reject(
+          new PrivateFileError(
+            failure?.[1] ?? "powershell-control",
+            failure ? `${failure[2]}:${failure[3]}` : undefined,
+          ),
+        );
       }
     });
   });
@@ -74,14 +105,22 @@ async function secure(path: string, directory: boolean): Promise<void> {
   try {
     if (!isAbsolute(path)) throw new Error();
     const info = await lstat(path);
-    if (info.isSymbolicLink() || (directory ? !info.isDirectory() : !info.isFile())) throw new Error();
+    if (info.isSymbolicLink() || (directory ? !info.isDirectory() : !info.isFile()))
+      throw new Error();
     if (process.platform === "win32") await windowsPrivate(path, directory);
     else {
       await chmod(path, directory ? 0o700 : 0o600);
       const checked = await lstat(path);
-      if ((checked.mode & 0o777) !== (directory ? 0o700 : 0o600) || checked.uid !== process.getuid?.()) throw new Error();
+      if (
+        (checked.mode & 0o777) !== (directory ? 0o700 : 0o600) ||
+        checked.uid !== process.getuid?.()
+      )
+        throw new Error();
     }
-  } catch (error) { if (error instanceof PrivateFileError) throw error; throw new PrivateFileError("path-access"); }
+  } catch (error) {
+    if (error instanceof PrivateFileError) throw error;
+    throw new PrivateFileError("path-access");
+  }
 }
 export async function ensurePrivateDirectory(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });

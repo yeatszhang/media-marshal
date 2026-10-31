@@ -10,7 +10,7 @@ files:
   - resources/pinyin4j-NOTICE.txt
   - package.json
 asarUnpack:
-  - '**/*.node'
+  - "**/*.node"
 mac:
   category: public.app-category.video
   files:
@@ -20,7 +20,7 @@ mac:
     - resources/media-marshal.LICENSE
     - resources/pinyin4j-NOTICE.txt
     - package.json
-    - '!**/better-sqlite3/prebuilds/!(darwin-${arch}).node'
+    - "!**/better-sqlite3/prebuilds/!(darwin-${arch}).node"
     - from: resources/sidecars/darwin-${arch}
       to: resources/sidecars
       filter: [guardian.json, manifest.json, distribution.json]
@@ -33,16 +33,32 @@ mac:
   extraResources:
     - from: resources/native-files/darwin-${arch}
       to: native-files
-      filter: [manifest.json, distribution.json, rename-exclusive.node, SOURCE-NOTICE.txt, 'sources/**', 'licenses/**']
+      filter:
+        [
+          manifest.json,
+          distribution.json,
+          rename-exclusive.node,
+          SOURCE-NOTICE.txt,
+          "sources/**",
+          "licenses/**",
+        ]
     - from: resources/parser/darwin-${arch}/runtime
       to: parser
-      filter: ['**/*']
+      filter: ["**/*"]
     - from: resources/sidecars/darwin-${arch}/bin
       to: bin
       filter: [openlist, rclone, guardian]
     - from: resources/sidecars/darwin-${arch}
       to: sidecars
-      filter: [manifest.json, guardian.json, distribution.json, SOURCE-NOTICE.txt, 'licenses/**', 'sources/**']
+      filter:
+        [
+          manifest.json,
+          guardian.json,
+          distribution.json,
+          SOURCE-NOTICE.txt,
+          "licenses/**",
+          "sources/**",
+        ]
   target:
     - target: dmg
       arch: [arm64, x64]
@@ -54,7 +70,7 @@ win:
     - resources/media-marshal.LICENSE
     - resources/pinyin4j-NOTICE.txt
     - package.json
-    - '!**/better-sqlite3/prebuilds/!(win32-${arch}).node'
+    - "!**/better-sqlite3/prebuilds/!(win32-${arch}).node"
     - from: resources/sidecars/win32-${arch}
       to: resources/sidecars
       filter: [guardian.json, manifest.json, distribution.json]
@@ -64,13 +80,21 @@ win:
   extraResources:
     - from: resources/parser/win32-${arch}/runtime
       to: parser
-      filter: ['**/*']
+      filter: ["**/*"]
     - from: resources/sidecars/win32-${arch}/bin
       to: bin
       filter: [openlist.exe, rclone.exe, guardian.exe]
     - from: resources/sidecars/win32-${arch}
       to: sidecars
-      filter: [manifest.json, guardian.json, distribution.json, SOURCE-NOTICE.txt, 'licenses/**', 'sources/**']
+      filter:
+        [
+          manifest.json,
+          guardian.json,
+          distribution.json,
+          SOURCE-NOTICE.txt,
+          "licenses/**",
+          "sources/**",
+        ]
   target:
     - target: nsis
       arch: [x64]

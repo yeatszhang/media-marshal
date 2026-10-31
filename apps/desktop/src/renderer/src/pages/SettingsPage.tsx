@@ -1,13 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useService, useServiceState } from "@yeatz/app-framework/react";
-import {
-  SlidersHorizontal,
-  ShieldCheck,
-  Check,
-  Activity,
-  ArchiveRestore,
-} from "lucide-react";
+import { SlidersHorizontal, ShieldCheck, Check, Activity, ArchiveRestore } from "lucide-react";
 import { SettingsViewModel } from "../services";
 import { Header, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
@@ -28,7 +22,8 @@ export function SettingsPage() {
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState<string | null>(null);
   const edited = useRef({ embyUrl: false, tmdbProxy: false });
-  const current = useRef({ embyUrl, tmdbProxy }); current.current = { embyUrl, tmdbProxy };
+  const current = useRef({ embyUrl, tmdbProxy });
+  current.current = { embyUrl, tmdbProxy };
   useEffect(() => model.watch(), [model]);
   useEffect(() => {
     if (settings) {
@@ -86,7 +81,11 @@ export function SettingsPage() {
                   type="url"
                   placeholder="http://localhost:8096"
                   value={embyUrl}
-                  onChange={(e) => { edited.current.embyUrl = true; setEmbyUrl(e.target.value); setNotice(null); }}
+                  onChange={(e) => {
+                    edited.current.embyUrl = true;
+                    setEmbyUrl(e.target.value);
+                    setNotice(null);
+                  }}
                 />
               </div>
               <div className="settings-row">
@@ -96,9 +95,15 @@ export function SettingsPage() {
                   type="url"
                   placeholder="http://127.0.0.1:7890"
                   value={tmdbProxy}
-                  onChange={(e) => { edited.current.tmdbProxy = true; setProxy(e.target.value); setNotice(null); }}
+                  onChange={(e) => {
+                    edited.current.tmdbProxy = true;
+                    setProxy(e.target.value);
+                    setNotice(null);
+                  }}
                 />
-                <small className="settings-description settings-proxy-help">仅用于 TMDB 查询，支持 HTTP(S) 代理。留空表示直连；地址不包含账号、密码或子路径。</small>
+                <small className="settings-description settings-proxy-help">
+                  仅用于 TMDB 查询，支持 HTTP(S) 代理。留空表示直连；地址不包含账号、密码或子路径。
+                </small>
               </div>
               <div className="settings-row">
                 <label htmlFor="settings-language">{t("language")}</label>
@@ -121,10 +126,7 @@ export function SettingsPage() {
               </Button>
             </div>
           </form>
-          <section
-            className="panel settings-card"
-            aria-labelledby="settings-keys-title"
-          >
+          <section className="panel settings-card" aria-labelledby="settings-keys-title">
             <div className="settings-card-heading">
               <ShieldCheck size={19} aria-hidden="true" />
               <h2 id="settings-keys-title">API Key</h2>
@@ -141,11 +143,7 @@ export function SettingsPage() {
                       className={`settings-key-status${settings?.[kind === "tmdb" ? "tmdbKeyConfigured" : "embyKeyConfigured"] ? " is-configured" : ""}`}
                     >
                       {t(
-                        settings?.[
-                          kind === "tmdb"
-                            ? "tmdbKeyConfigured"
-                            : "embyKeyConfigured"
-                        ]
+                        settings?.[kind === "tmdb" ? "tmdbKeyConfigured" : "embyKeyConfigured"]
                           ? "configured"
                           : "notConfigured",
                       )}
@@ -158,9 +156,7 @@ export function SettingsPage() {
                       type="password"
                       autoComplete="off"
                       value={keys[kind]}
-                      onChange={(e) =>
-                        setKeys({ ...keys, [kind]: e.target.value })
-                      }
+                      onChange={(e) => setKeys({ ...keys, [kind]: e.target.value })}
                     />
                     <Button
                       variant="outline"
@@ -186,10 +182,7 @@ export function SettingsPage() {
           </section>
           <LibrarySetup />
           <HostSettingsPanel />
-          <section
-            className="panel settings-card"
-            aria-labelledby="settings-diagnostics-title"
-          >
+          <section className="panel settings-card" aria-labelledby="settings-diagnostics-title">
             <div className="settings-card-heading">
               <Activity size={19} aria-hidden="true" />
               <h2 id="settings-diagnostics-title">{t("diagnosticsTitle")}</h2>

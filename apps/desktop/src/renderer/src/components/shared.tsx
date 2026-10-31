@@ -3,13 +3,7 @@ import { useTranslation } from "react-i18next";
 import { TriangleAlert } from "lucide-react";
 import { Button } from "./ui/button";
 
-export function ErrorNotice({
-  message,
-  retry,
-}: {
-  message: string | null;
-  retry?: () => void;
-}) {
+export function ErrorNotice({ message, retry }: { message: string | null; retry?: () => void }) {
   const { t } = useTranslation();
   return message ? (
     <div className="notice notice-error" role="alert">

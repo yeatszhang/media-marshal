@@ -1,4 +1,12 @@
-import { hostPreferencesDraftSchema, licenseIdSchema, type HostPreferencesDraft, type HostPreferences, type DesktopAbout, type LicenseId, type LicenseText } from "./desktop-host.js";
+import {
+  hostPreferencesDraftSchema,
+  licenseIdSchema,
+  type HostPreferencesDraft,
+  type HostPreferences,
+  type DesktopAbout,
+  type LicenseId,
+  type LicenseText,
+} from "./desktop-host.js";
 export * from "./desktop-host.js";
 export * from "./renderer-lifecycle.js";
 export * from "./download-cleanup.js";
@@ -8,7 +16,25 @@ import { recognitionSettingsSchema, codexActions } from "./codex-recognition.js"
 export * from "./codex-recognition.js";
 import { directoryIssueSchema, type DirectoryIssue } from "./directory-issues.js";
 export * from "./directory-issues.js";
-import { cloudActions, cloudCredentialDraftSchema, cloudLoginDraftSchema, cloudDiagnosticCountsSchema, CloudError, cloudFailure, type CloudAccount, type CloudAuthorization, type CloudCredentialDraft, type CloudLoginDraft, type RemotePage, type RemoteEntry, type ManagedDownloadRoot, type CloudInput, type DownloadPreview, type CloudOutput, type CloudSubscription } from "./cloud/index.js";
+import {
+  cloudActions,
+  cloudCredentialDraftSchema,
+  cloudLoginDraftSchema,
+  cloudDiagnosticCountsSchema,
+  CloudError,
+  cloudFailure,
+  type CloudAccount,
+  type CloudAuthorization,
+  type CloudCredentialDraft,
+  type CloudLoginDraft,
+  type RemotePage,
+  type RemoteEntry,
+  type ManagedDownloadRoot,
+  type CloudInput,
+  type DownloadPreview,
+  type CloudOutput,
+  type CloudSubscription,
+} from "./cloud/index.js";
 export * from "./cloud/index.js";
 import { ingestionActions, ingestionConfigureSchema } from "./ingestion.js";
 export * from "./ingestion.js";
@@ -41,9 +67,21 @@ export const errorCodeSchema = z.enum([
   "CONFLICT",
   "UNSAFE_PATH",
   "STORAGE_ERROR",
-  "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "LOCAL_FILE_MISSING", "RECEIPT_CONFLICT", "STOP_UNCONFIRMED",
+  "TARGET_OCCUPIED",
+  "LOCAL_FILE_CHANGED",
+  "FILE_EVIDENCE_MISMATCH",
+  "LOCAL_FILE_MISSING",
+  "RECEIPT_CONFLICT",
+  "STOP_UNCONFIRMED",
   "INTERNAL_ERROR",
-  "AUTH_REQUIRED", "RATE_LIMITED", "NETWORK_UNAVAILABLE", "REMOTE_CHANGED", "REMOTE_NOT_FOUND", "LOCAL_UNAVAILABLE", "UNSUPPORTED_CAPABILITY", "COMPONENT_UNAVAILABLE",
+  "AUTH_REQUIRED",
+  "RATE_LIMITED",
+  "NETWORK_UNAVAILABLE",
+  "REMOTE_CHANGED",
+  "REMOTE_NOT_FOUND",
+  "LOCAL_UNAVAILABLE",
+  "UNSUPPORTED_CAPABILITY",
+  "COMPONENT_UNAVAILABLE",
 ]);
 export type ErrorCode = z.infer<typeof errorCodeSchema>;
 export const rpcErrorSchema = z.strictObject({
@@ -91,10 +129,32 @@ export const sourceSchema = sourceDraftSchema.extend({
 });
 export type DesktopSource = z.infer<typeof sourceSchema>;
 
-const serviceAddressSchema = (proxy: boolean) => z.string().max(2048, "服务地址不能超过 2048 字符").refine((value) => {
-  if (!value) return true;
-  try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash && (!proxy || url.pathname === "/"); } catch { return false; }
-}, proxy ? "TMDB 代理只支持不含凭据、路径、查询或片段的 HTTP(S) 地址；留空表示直连" : "Emby 地址只支持不含凭据、查询或片段的 HTTP(S) 地址；密钥请单独保存").default("");
+const serviceAddressSchema = (proxy: boolean) =>
+  z
+    .string()
+    .max(2048, "服务地址不能超过 2048 字符")
+    .refine(
+      (value) => {
+        if (!value) return true;
+        try {
+          const url = new URL(value);
+          return (
+            ["http:", "https:"].includes(url.protocol) &&
+            !url.username &&
+            !url.password &&
+            !url.search &&
+            !url.hash &&
+            (!proxy || url.pathname === "/")
+          );
+        } catch {
+          return false;
+        }
+      },
+      proxy
+        ? "TMDB 代理只支持不含凭据、路径、查询或片段的 HTTP(S) 地址；留空表示直连"
+        : "Emby 地址只支持不含凭据、查询或片段的 HTTP(S) 地址；密钥请单独保存",
+    )
+    .default("");
 export const settingsDraftSchema = z.strictObject({
   language: z.enum(["zh-CN", "en"]).default("zh-CN"),
   embyUrl: serviceAddressSchema(false),
@@ -221,15 +281,9 @@ export const coreActions = {
   "settings.save": { input: settingsDraftSchema, output: settingsDraftSchema },
 } as const;
 export type CoreAction = keyof typeof coreActions;
-export type CoreInput<K extends CoreAction> = z.input<
-  (typeof coreActions)[K]["input"]
->;
-export type CoreOutput<K extends CoreAction> = z.output<
-  (typeof coreActions)[K]["output"]
->;
-export const coreActionSchema = z.enum(
-  Object.keys(coreActions) as [CoreAction, ...CoreAction[]],
-);
+export type CoreInput<K extends CoreAction> = z.input<(typeof coreActions)[K]["input"]>;
+export type CoreOutput<K extends CoreAction> = z.output<(typeof coreActions)[K]["output"]>;
+export const coreActionSchema = z.enum(Object.keys(coreActions) as [CoreAction, ...CoreAction[]]);
 export const requestSchema = z.strictObject({
   kind: z.literal("request"),
   protocolVersion: z.literal(PROTOCOL_VERSION),
@@ -260,7 +314,9 @@ export const credentialSchema = z.strictObject({
   value: z.string().trim().max(1024),
 });
 export const nativeActions = {
-  "desktop.configuration.choose-directory": z.strictObject({ kind: z.enum(["ordinary", "managed", "media"]) }),
+  "desktop.configuration.choose-directory": z.strictObject({
+    kind: z.enum(["ordinary", "managed", "media"]),
+  }),
   "desktop.host-preferences.get": empty,
   "desktop.host-preferences.save": hostPreferencesDraftSchema,
   "desktop.about": empty,
@@ -289,79 +345,147 @@ export const nativeActions = {
 export type NativeAction = keyof typeof nativeActions;
 
 export interface DesktopApi {
-  listRecognitionRules(input?: CoreInput<"recognition.list">): Promise<CoreOutput<"recognition.list">>;
-  saveRecognitionRule(input: CoreInput<"recognition.save">): Promise<CoreOutput<"recognition.save">>;
-  previewRecognitionRule(input: CoreInput<"recognition.preview">): Promise<CoreOutput<"recognition.preview">>;
+  listRecognitionRules(
+    input?: CoreInput<"recognition.list">,
+  ): Promise<CoreOutput<"recognition.list">>;
+  saveRecognitionRule(
+    input: CoreInput<"recognition.save">,
+  ): Promise<CoreOutput<"recognition.save">>;
+  previewRecognitionRule(
+    input: CoreInput<"recognition.preview">,
+  ): Promise<CoreOutput<"recognition.preview">>;
   getRecognitionConfigurationPreview(id: string): Promise<CoreOutput<"recognition.get-preview">>;
-  confirmRecognitionRule(input: CoreInput<"recognition.confirm">): Promise<CoreOutput<"recognition.confirm">>;
-  controlRecognitionRule(input: CoreInput<"recognition.control">): Promise<CoreOutput<"recognition.control">>;
-  scanRecognitionRule(input: CoreInput<"recognition.scan">): Promise<CoreOutput<"recognition.scan">>;
-  authorizeRecognitionAutomatic(input: CoreInput<"recognition.authorize-automatic">): Promise<CoreOutput<"recognition.authorize-automatic">>;
+  confirmRecognitionRule(
+    input: CoreInput<"recognition.confirm">,
+  ): Promise<CoreOutput<"recognition.confirm">>;
+  controlRecognitionRule(
+    input: CoreInput<"recognition.control">,
+  ): Promise<CoreOutput<"recognition.control">>;
+  scanRecognitionRule(
+    input: CoreInput<"recognition.scan">,
+  ): Promise<CoreOutput<"recognition.scan">>;
+  authorizeRecognitionAutomatic(
+    input: CoreInput<"recognition.authorize-automatic">,
+  ): Promise<CoreOutput<"recognition.authorize-automatic">>;
   getRecognitionTaskTargets(taskId: string): Promise<CoreOutput<"recognition.task-targets">>;
   listSyncSources(input?: CoreInput<"sync.list">): Promise<CoreOutput<"sync.list">>;
   saveSyncSource(input: CoreInput<"sync.save">): Promise<CoreOutput<"sync.save">>;
   previewSyncSource(input: CoreInput<"sync.preview">): Promise<CoreOutput<"sync.preview">>;
   getSyncPreview(id: string): Promise<CoreOutput<"sync.get-preview">>;
-  listSyncPreviewFiles(input: CoreInput<"sync.preview-files">): Promise<CoreOutput<"sync.preview-files">>;
+  listSyncPreviewFiles(
+    input: CoreInput<"sync.preview-files">,
+  ): Promise<CoreOutput<"sync.preview-files">>;
   confirmSyncSource(input: CoreInput<"sync.confirm">): Promise<CoreOutput<"sync.confirm">>;
   controlSyncSource(input: CoreInput<"sync.control">): Promise<CoreOutput<"sync.control">>;
   listSyncJobs(input?: CoreInput<"sync.jobs">): Promise<CoreOutput<"sync.jobs">>;
   getSyncJob(id: string): Promise<CoreOutput<"sync.job">>;
   listSyncJobFiles(input: CoreInput<"sync.job-files">): Promise<CoreOutput<"sync.job-files">>;
-  resolveSyncLibraryReview(input: CoreInput<"sync.resolve-library-review">): Promise<CoreOutput<"sync.resolve-library-review">>;
-  recheckSyncJobLibrary(input: CoreInput<"sync.recheck-library">): Promise<CoreOutput<"sync.recheck-library">>;
+  resolveSyncLibraryReview(
+    input: CoreInput<"sync.resolve-library-review">,
+  ): Promise<CoreOutput<"sync.resolve-library-review">>;
+  recheckSyncJobLibrary(
+    input: CoreInput<"sync.recheck-library">,
+  ): Promise<CoreOutput<"sync.recheck-library">>;
   removeSyncJob(input: CoreInput<"sync.remove-job">): Promise<CoreOutput<"sync.remove-job">>;
   retrySyncJob(input: CoreInput<"sync.retry">): Promise<CoreOutput<"sync.retry">>;
   listConfigurationDirectories(): Promise<CoreOutput<"configuration.directories">>;
   listDownloadCleanup(input: CoreInput<"cleanup.list">): Promise<CoreOutput<"cleanup.list">>;
   getDownloadCleanupScope(input: CoreInput<"cleanup.scope">): Promise<CoreOutput<"cleanup.scope">>;
-  previewDownloadCleanup(input: CoreInput<"cleanup.preview">): Promise<CoreOutput<"cleanup.preview">>;
+  previewDownloadCleanup(
+    input: CoreInput<"cleanup.preview">,
+  ): Promise<CoreOutput<"cleanup.preview">>;
   getDownloadCleanupPreview(id: string): Promise<CoreOutput<"cleanup.get-preview">>;
   confirmDownloadCleanup(id: string): Promise<CoreOutput<"cleanup.confirm">>;
   cancelDownloadCleanupPreview(id: string): Promise<CoreOutput<"cleanup.cancel-preview">>;
   retryDownloadCleanup(id: string): Promise<CoreOutput<"cleanup.retry">>;
   getDefaultDownloadDirectory(): Promise<CoreOutput<"configuration.default">>;
-  setDefaultDownloadDirectory(input: CoreInput<"configuration.set-default">): Promise<CoreOutput<"configuration.set-default">>;
-  chooseConfigurationDirectory(kind: "ordinary" | "managed" | "media"): Promise<z.infer<typeof configurationDirectorySchema> | null>;
-  checkLocalSourceHealth(input: CoreInput<"source-rules.local-health">): Promise<CoreOutput<"source-rules.local-health">>;
+  setDefaultDownloadDirectory(
+    input: CoreInput<"configuration.set-default">,
+  ): Promise<CoreOutput<"configuration.set-default">>;
+  chooseConfigurationDirectory(
+    kind: "ordinary" | "managed" | "media",
+  ): Promise<z.infer<typeof configurationDirectorySchema> | null>;
+  checkLocalSourceHealth(
+    input: CoreInput<"source-rules.local-health">,
+  ): Promise<CoreOutput<"source-rules.local-health">>;
   onBeforeReload(listener: () => Promise<void>): () => void;
   getHostPreferences(): Promise<HostPreferences>;
   saveHostPreferences(input: HostPreferencesDraft): Promise<HostPreferences>;
   getDesktopAbout(): Promise<DesktopAbout>;
   getLicenseText(id: LicenseId): Promise<LicenseText>;
-  getCorrectionScope(input: CoreInput<"corrections.scope">): Promise<CoreOutput<"corrections.scope">>;
-  previewCorrectionBatch(input: CoreInput<"corrections.preview-batch">): Promise<CoreOutput<"corrections.preview-batch">>;
-  confirmCorrectionBatch(input: CoreInput<"corrections.confirm-batch">): Promise<CoreOutput<"corrections.confirm-batch">>;
-  cancelCorrectionBatch(input: CoreInput<"corrections.cancel-batch">): Promise<CoreOutput<"corrections.cancel-batch">>;
-  listCorrectionBatches(input: CoreInput<"corrections.batches">): Promise<CoreOutput<"corrections.batches">>;
-  getCorrectionBatch(input: CoreInput<"corrections.batch">): Promise<CoreOutput<"corrections.batch">>;
+  getCorrectionScope(
+    input: CoreInput<"corrections.scope">,
+  ): Promise<CoreOutput<"corrections.scope">>;
+  previewCorrectionBatch(
+    input: CoreInput<"corrections.preview-batch">,
+  ): Promise<CoreOutput<"corrections.preview-batch">>;
+  confirmCorrectionBatch(
+    input: CoreInput<"corrections.confirm-batch">,
+  ): Promise<CoreOutput<"corrections.confirm-batch">>;
+  cancelCorrectionBatch(
+    input: CoreInput<"corrections.cancel-batch">,
+  ): Promise<CoreOutput<"corrections.cancel-batch">>;
+  listCorrectionBatches(
+    input: CoreInput<"corrections.batches">,
+  ): Promise<CoreOutput<"corrections.batches">>;
+  getCorrectionBatch(
+    input: CoreInput<"corrections.batch">,
+  ): Promise<CoreOutput<"corrections.batch">>;
   getCorrectionTask(taskId: string): Promise<CoreOutput<"corrections.task">>;
-  previewCorrection(input: CoreInput<"corrections.preview">): Promise<CoreOutput<"corrections.preview">>;
+  previewCorrection(
+    input: CoreInput<"corrections.preview">,
+  ): Promise<CoreOutput<"corrections.preview">>;
   getCorrectionPreview(id: string): Promise<CoreOutput<"corrections.get-preview">>;
-  confirmCorrection(input: CoreInput<"corrections.confirm">): Promise<CoreOutput<"corrections.confirm">>;
+  confirmCorrection(
+    input: CoreInput<"corrections.confirm">,
+  ): Promise<CoreOutput<"corrections.confirm">>;
   getCorrectionPreparation(id: string): Promise<CoreOutput<"corrections.preparation">>;
   cancelCorrectionPreparation(id: string): Promise<CoreOutput<"corrections.cancel-preparation">>;
   listCorrections(input: CoreInput<"corrections.list">): Promise<CoreOutput<"corrections.list">>;
   getCorrection(id: string): Promise<CoreOutput<"corrections.get">>;
   retryCorrection(id: string): Promise<CoreOutput<"corrections.retry">>;
-  previewSourceExecution(input: CoreInput<"source-rules.preview-execution">): Promise<CoreOutput<"source-rules.preview-execution">>;
+  previewSourceExecution(
+    input: CoreInput<"source-rules.preview-execution">,
+  ): Promise<CoreOutput<"source-rules.preview-execution">>;
   getSourceExecutionPreview(id: string): Promise<CoreOutput<"source-rules.get-execution-preview">>;
-  executeSourcePreview(input: CoreInput<"source-rules.execute">): Promise<CoreOutput<"source-rules.execute">>;
-  controlSourceRule(input: CoreInput<"source-rules.control">): Promise<CoreOutput<"source-rules.control">>;
-  runSourceOnce(input: CoreInput<"source-rules.run-once">): Promise<CoreOutput<"source-rules.run-once">>;
+  executeSourcePreview(
+    input: CoreInput<"source-rules.execute">,
+  ): Promise<CoreOutput<"source-rules.execute">>;
+  controlSourceRule(
+    input: CoreInput<"source-rules.control">,
+  ): Promise<CoreOutput<"source-rules.control">>;
+  runSourceOnce(
+    input: CoreInput<"source-rules.run-once">,
+  ): Promise<CoreOutput<"source-rules.run-once">>;
   listSourceRuns(input: CoreInput<"source-rules.runs">): Promise<CoreOutput<"source-rules.runs">>;
   getOrganizePause(): Promise<CoreOutput<"ingestion.pause-status">>;
-  setOrganizePause(input: CoreInput<"ingestion.set-paused">): Promise<CoreOutput<"ingestion.set-paused">>;
-  resolveSourceLegacy(input: CoreInput<"source-rules.resolve-legacy">): Promise<CoreOutput<"source-rules.resolve-legacy">>;
-  listSourceLegacy(input: CoreInput<"source-rules.legacy">): Promise<CoreOutput<"source-rules.legacy">>;
-  configureSourceRule(input: CoreInput<"source-rules.configure">): Promise<CoreOutput<"source-rules.configure">>;
+  setOrganizePause(
+    input: CoreInput<"ingestion.set-paused">,
+  ): Promise<CoreOutput<"ingestion.set-paused">>;
+  resolveSourceLegacy(
+    input: CoreInput<"source-rules.resolve-legacy">,
+  ): Promise<CoreOutput<"source-rules.resolve-legacy">>;
+  listSourceLegacy(
+    input: CoreInput<"source-rules.legacy">,
+  ): Promise<CoreOutput<"source-rules.legacy">>;
+  configureSourceRule(
+    input: CoreInput<"source-rules.configure">,
+  ): Promise<CoreOutput<"source-rules.configure">>;
   listSourceRules(input?: CoreInput<"source-rules.list">): Promise<CoreOutput<"source-rules.list">>;
-  removeSourceRule(input: CoreInput<"source-rules.remove">): Promise<CoreOutput<"source-rules.remove">>;
-  restoreSourceRule(input: CoreInput<"source-rules.restore">): Promise<CoreOutput<"source-rules.restore">>;
+  removeSourceRule(
+    input: CoreInput<"source-rules.remove">,
+  ): Promise<CoreOutput<"source-rules.remove">>;
+  restoreSourceRule(
+    input: CoreInput<"source-rules.restore">,
+  ): Promise<CoreOutput<"source-rules.restore">>;
   getSourceRule(id: string): Promise<CoreOutput<"source-rules.get">>;
-  previewSourceRule(input: CoreInput<"source-rules.preview">): Promise<CoreOutput<"source-rules.preview">>;
+  previewSourceRule(
+    input: CoreInput<"source-rules.preview">,
+  ): Promise<CoreOutput<"source-rules.preview">>;
   getSourceRulePreview(id: string): Promise<CoreOutput<"source-rules.get-preview">>;
-  applySourceRule(input: CoreInput<"source-rules.apply">): Promise<CoreOutput<"source-rules.apply">>;
+  applySourceRule(
+    input: CoreInput<"source-rules.apply">,
+  ): Promise<CoreOutput<"source-rules.apply">>;
   listMediaLibraries(): Promise<CoreOutput<"media.libraries">>;
   chooseMediaTarget(mediaType: "MOVIE" | "TV_SHOW"): Promise<CoreOutput<"media.libraries">>;
   getEmbyConfiguration(): Promise<CoreOutput<"emby.configuration">>;
@@ -370,54 +494,108 @@ export interface DesktopApi {
   connectEmby(input: CoreInput<"emby.connect">): Promise<CoreOutput<"emby.connect">>;
   retryEmby(taskId: string): Promise<void>;
   openEmby(taskId: string): Promise<void>;
-  configureManagedIngestion(input: z.input<typeof ingestionConfigureSchema>): Promise<DesktopSource>;
-  listIngestionCandidates(input: CoreInput<"ingestion.candidates">): Promise<CoreOutput<"ingestion.candidates">>;
+  configureManagedIngestion(
+    input: z.input<typeof ingestionConfigureSchema>,
+  ): Promise<DesktopSource>;
+  listIngestionCandidates(
+    input: CoreInput<"ingestion.candidates">,
+  ): Promise<CoreOutput<"ingestion.candidates">>;
   scanIngestion(sourceId: string, requestKey: string): Promise<CoreOutput<"ingestion.scan">>;
   listIngestionScans(input: CoreInput<"ingestion.scans">): Promise<CoreOutput<"ingestion.scans">>;
-  getIngestionScan(input: CoreInput<"ingestion.scan-job">): Promise<CoreOutput<"ingestion.scan-job">>;
-  reviewIngestionContent(input: CoreInput<"ingestion.review-content">): Promise<CoreOutput<"ingestion.review-content">>;
-  listContentReviews(input: CoreInput<"ingestion.content-reviews">): Promise<CoreOutput<"ingestion.content-reviews">>;
-  listContentReviewFiles(input: CoreInput<"ingestion.content-review-files">): Promise<CoreOutput<"ingestion.content-review-files">>;
+  getIngestionScan(
+    input: CoreInput<"ingestion.scan-job">,
+  ): Promise<CoreOutput<"ingestion.scan-job">>;
+  reviewIngestionContent(
+    input: CoreInput<"ingestion.review-content">,
+  ): Promise<CoreOutput<"ingestion.review-content">>;
+  listContentReviews(
+    input: CoreInput<"ingestion.content-reviews">,
+  ): Promise<CoreOutput<"ingestion.content-reviews">>;
+  listContentReviewFiles(
+    input: CoreInput<"ingestion.content-review-files">,
+  ): Promise<CoreOutput<"ingestion.content-review-files">>;
   cancelContentReview(id: string): Promise<CoreOutput<"ingestion.cancel-content-review">>;
-  previewOrganizeBatch(input: CoreInput<"ingestion.preview-organize-batch">): Promise<CoreOutput<"ingestion.preview-organize-batch">>;
-  listOrganizeBatches(input: CoreInput<"ingestion.organize-batches">): Promise<CoreOutput<"ingestion.organize-batches">>;
-  getOrganizeBatch(input: CoreInput<"ingestion.organize-batch">): Promise<CoreOutput<"ingestion.organize-batch">>;
-  getOrganizeBatchAssets(input: CoreInput<"ingestion.organize-batch-assets">): Promise<CoreOutput<"ingestion.organize-batch-assets">>;
-  confirmOrganizeBatch(input: CoreInput<"ingestion.confirm-organize-batch">): Promise<CoreOutput<"ingestion.confirm-organize-batch">>;
+  previewOrganizeBatch(
+    input: CoreInput<"ingestion.preview-organize-batch">,
+  ): Promise<CoreOutput<"ingestion.preview-organize-batch">>;
+  listOrganizeBatches(
+    input: CoreInput<"ingestion.organize-batches">,
+  ): Promise<CoreOutput<"ingestion.organize-batches">>;
+  getOrganizeBatch(
+    input: CoreInput<"ingestion.organize-batch">,
+  ): Promise<CoreOutput<"ingestion.organize-batch">>;
+  getOrganizeBatchAssets(
+    input: CoreInput<"ingestion.organize-batch-assets">,
+  ): Promise<CoreOutput<"ingestion.organize-batch-assets">>;
+  confirmOrganizeBatch(
+    input: CoreInput<"ingestion.confirm-organize-batch">,
+  ): Promise<CoreOutput<"ingestion.confirm-organize-batch">>;
   cancelOrganizeBatch(id: string): Promise<CoreOutput<"ingestion.cancel-organize-batch">>;
-  listIngestionSeasons(input: CoreInput<"ingestion.seasons">): Promise<CoreOutput<"ingestion.seasons">>;
+  listIngestionSeasons(
+    input: CoreInput<"ingestion.seasons">,
+  ): Promise<CoreOutput<"ingestion.seasons">>;
   getIngestionSeason(input: CoreInput<"ingestion.season">): Promise<CoreOutput<"ingestion.season">>;
-  listIngestionDirectories(input: CoreInput<"ingestion.directories">): Promise<CoreOutput<"ingestion.directories">>;
-  getIngestionDirectory(input: CoreInput<"ingestion.directory">): Promise<CoreOutput<"ingestion.directory">>;
-  recognizeIngestionBatch(input: CoreInput<"ingestion.recognize-batch">): Promise<CoreOutput<"ingestion.recognize-batch">>;
-  listRecognitionBatches(input: CoreInput<"ingestion.recognition-batches">): Promise<CoreOutput<"ingestion.recognition-batches">>;
+  listIngestionDirectories(
+    input: CoreInput<"ingestion.directories">,
+  ): Promise<CoreOutput<"ingestion.directories">>;
+  getIngestionDirectory(
+    input: CoreInput<"ingestion.directory">,
+  ): Promise<CoreOutput<"ingestion.directory">>;
+  recognizeIngestionBatch(
+    input: CoreInput<"ingestion.recognize-batch">,
+  ): Promise<CoreOutput<"ingestion.recognize-batch">>;
+  listRecognitionBatches(
+    input: CoreInput<"ingestion.recognition-batches">,
+  ): Promise<CoreOutput<"ingestion.recognition-batches">>;
   rematchWithCodex(input: CoreInput<"codex.rematch">): Promise<CoreOutput<"codex.rematch">>;
-  recognizeDirectoryWithCodex(input: CoreInput<"codex.prepare-directory">): Promise<CoreOutput<"codex.prepare-directory">>;
+  recognizeDirectoryWithCodex(
+    input: CoreInput<"codex.prepare-directory">,
+  ): Promise<CoreOutput<"codex.prepare-directory">>;
   getCodexUsage(): Promise<CoreOutput<"codex.usage">>;
   listCodexJobs(input: CoreInput<"codex.jobs">): Promise<CoreOutput<"codex.jobs">>;
   getCodexJob(id: string): Promise<CoreOutput<"codex.job">>;
   cancelCodexJob(id: string): Promise<CoreOutput<"codex.cancel">>;
-  listRecognitionBatchItems(input: CoreInput<"ingestion.recognition-batch-items">): Promise<CoreOutput<"ingestion.recognition-batch-items">>;
+  listRecognitionBatchItems(
+    input: CoreInput<"ingestion.recognition-batch-items">,
+  ): Promise<CoreOutput<"ingestion.recognition-batch-items">>;
   cancelRecognitionBatch(id: string): Promise<CoreOutput<"ingestion.cancel-recognition-batch">>;
-  recognizeIngestion(input: CoreInput<"ingestion.recognize">): Promise<CoreOutput<"ingestion.recognize">>;
-  previewRecognitionEdit(input: CoreInput<"ingestion.preview-recognition-edit">): Promise<CoreOutput<"ingestion.preview-recognition-edit">>;
-  saveRecognitionEdit(input: CoreInput<"ingestion.save-recognition-edit">): Promise<CoreOutput<"ingestion.save-recognition-edit">>;
+  recognizeIngestion(
+    input: CoreInput<"ingestion.recognize">,
+  ): Promise<CoreOutput<"ingestion.recognize">>;
+  previewRecognitionEdit(
+    input: CoreInput<"ingestion.preview-recognition-edit">,
+  ): Promise<CoreOutput<"ingestion.preview-recognition-edit">>;
+  saveRecognitionEdit(
+    input: CoreInput<"ingestion.save-recognition-edit">,
+  ): Promise<CoreOutput<"ingestion.save-recognition-edit">>;
   getIngestionTask(taskId: string): Promise<CoreOutput<"ingestion.task">>;
   previewOrganize(input: CoreInput<"ingestion.preview">): Promise<CoreOutput<"ingestion.preview">>;
   confirmOrganize(input: CoreInput<"ingestion.confirm">): Promise<CoreOutput<"ingestion.confirm">>;
   retryOrganize(taskId: string): Promise<void>;
   getCloudDownloadPause(): Promise<CloudOutput<"cloud.downloads.pause-status">>;
-  setCloudDownloadPause(input: CloudInput<"cloud.downloads.set-paused">): Promise<CloudOutput<"cloud.downloads.set-paused">>;
-  configureCloudSubscription(input: CloudInput<"cloud.subscriptions.configure">): Promise<CloudSubscription>;
-  listCloudSubscriptions(input: CloudInput<"cloud.subscriptions.list">): Promise<CloudOutput<"cloud.subscriptions.list">>;
-  controlCloudSubscription(input: CloudInput<"cloud.subscriptions.control">): Promise<CloudSubscription>;
+  setCloudDownloadPause(
+    input: CloudInput<"cloud.downloads.set-paused">,
+  ): Promise<CloudOutput<"cloud.downloads.set-paused">>;
+  configureCloudSubscription(
+    input: CloudInput<"cloud.subscriptions.configure">,
+  ): Promise<CloudSubscription>;
+  listCloudSubscriptions(
+    input: CloudInput<"cloud.subscriptions.list">,
+  ): Promise<CloudOutput<"cloud.subscriptions.list">>;
+  controlCloudSubscription(
+    input: CloudInput<"cloud.subscriptions.control">,
+  ): Promise<CloudSubscription>;
   listDownloadRoots(): Promise<ManagedDownloadRoot[]>;
   chooseDownloadRoot(): Promise<ManagedDownloadRoot | null>;
   previewDownload(input: CloudInput<"cloud.downloads.preview">): Promise<DownloadPreview>;
   getDownloadPreview(requestKey: string): Promise<DownloadPreview | null>;
   confirmDownload(input: CloudInput<"cloud.downloads.confirm">): Promise<{ jobId: string }>;
-  listDownloads(input: CloudInput<"cloud.downloads.list">): Promise<CloudOutput<"cloud.downloads.list">>;
-  listDownloadIssues(input: CloudInput<"cloud.downloads.issues">): Promise<CloudOutput<"cloud.downloads.issues">>;
+  listDownloads(
+    input: CloudInput<"cloud.downloads.list">,
+  ): Promise<CloudOutput<"cloud.downloads.list">>;
+  listDownloadIssues(
+    input: CloudInput<"cloud.downloads.issues">,
+  ): Promise<CloudOutput<"cloud.downloads.issues">>;
   reconcileDownload(input: CloudInput<"cloud.downloads.reconcile">): Promise<{ jobId: string }>;
   controlDownload(input: CloudInput<"cloud.downloads.control">): Promise<{ jobId: string }>;
   openDownloadDirectory(jobId: string): Promise<void>;
@@ -428,7 +606,13 @@ export interface DesktopApi {
   getCloudAuthorization(requestKey: string): Promise<CloudAuthorization | null>;
   disconnectCloudAccount(accountId: string): Promise<void>;
   restoreCloudAccounts(): Promise<void>;
-  listRemote(input: { accountId: string; parentRef: string; cursor?: string | null; pageSize?: number; refresh?: boolean }): Promise<RemotePage>;
+  listRemote(input: {
+    accountId: string;
+    parentRef: string;
+    cursor?: string | null;
+    pageSize?: number;
+    refresh?: boolean;
+  }): Promise<RemotePage>;
   statRemote(accountId: string, ref: string): Promise<RemoteEntry>;
   getRuntime(): Promise<DesktopRuntime>;
   listSources(): Promise<DesktopSource[]>;
@@ -446,10 +630,7 @@ export interface DesktopApi {
   exportDiagnostics(): Promise<boolean>;
 }
 
-export function checkMessageSize(
-  value: unknown,
-  maximum = MAX_MESSAGE_BYTES,
-): void {
+export function checkMessageSize(value: unknown, maximum = MAX_MESSAGE_BYTES): void {
   let json: string | undefined;
   try {
     json = JSON.stringify(value);
@@ -469,13 +650,9 @@ export function parseCoreRequest(value: unknown): CoreRequest {
   )
     throw new DesktopError("PROTOCOL_MISMATCH", "组件协议版本不兼容");
   const request = requestSchema.safeParse(value);
-  if (!request.success)
-    throw new DesktopError("INVALID_REQUEST", "业务动作或请求格式无效");
-  const payload = coreActions[request.data.action].input.safeParse(
-    request.data.payload,
-  );
-  if (!payload.success)
-    throw new DesktopError("INVALID_REQUEST", "业务参数无效");
+  if (!request.success) throw new DesktopError("INVALID_REQUEST", "业务动作或请求格式无效");
+  const payload = coreActions[request.data.action].input.safeParse(request.data.payload);
+  if (!payload.success) throw new DesktopError("INVALID_REQUEST", "业务参数无效");
   return { ...request.data, payload: payload.data };
 }
 export function publicError(error: unknown): RpcError {
@@ -485,8 +662,14 @@ export function publicError(error: unknown): RpcError {
       code: error.code,
       message: error.message,
       retryable: error.retryable,
-      ...(error.directoryIssue ? { directoryIssue: directoryIssueSchema.parse(error.directoryIssue) } : {}),
-      ...(error.code === "RATE_LIMITED" && error.retryAfterSeconds && error.retryAfterSeconds <= 3600 ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+      ...(error.directoryIssue
+        ? { directoryIssue: directoryIssueSchema.parse(error.directoryIssue) }
+        : {}),
+      ...(error.code === "RATE_LIMITED" &&
+      error.retryAfterSeconds &&
+      error.retryAfterSeconds <= 3600
+        ? { retryAfterSeconds: error.retryAfterSeconds }
+        : {}),
     };
   // 文件系统、数据库和网络原始错误可能包含个人路径或凭据。
   return {

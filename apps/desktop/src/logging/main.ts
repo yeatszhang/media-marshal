@@ -6,9 +6,15 @@ import { createStream } from "rotating-file-stream";
 import { createProcessLogger, setRootLogger } from "./node";
 import { logLevel, type LogLevel } from "./shared";
 
-export async function configureMainLogging(directory: string, options: {
-  level?: LogLevel; console?: DestinationStream; size?: string; onFailure?: () => void;
-} = {}) {
+export async function configureMainLogging(
+  directory: string,
+  options: {
+    level?: LogLevel;
+    console?: DestinationStream;
+    size?: string;
+    onFailure?: () => void;
+  } = {},
+) {
   const level = options.level ?? logLevel(process.env.MARSHAL_LOG_LEVEL, "info");
   const consoleStream = options.console ?? process.stdout;
   const consoleLogger = createProcessLogger("main", consoleStream, level);
@@ -16,7 +22,10 @@ export async function configureMainLogging(directory: string, options: {
   const reportFailure = () => {
     if (reported) return;
     reported = true;
-    consoleLogger.error({ scope: "logging" }, "本地日志写入失败，请检查日志目录权限或可用空间；控制台日志仍可用");
+    consoleLogger.error(
+      { scope: "logging" },
+      "本地日志写入失败，请检查日志目录权限或可用空间；控制台日志仍可用",
+    );
     options.onFailure?.();
   };
   const path = join(directory, "desktop.log");
@@ -25,32 +34,69 @@ export async function configureMainLogging(directory: string, options: {
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700);
-    file = createStream("desktop.log", { path: directory, size: options.size ?? "10M", rotate: 5, mode: 0o600 });
-    file.on("error", () => { available = false; reportFailure(); });
+    file = createStream("desktop.log", {
+      path: directory,
+      size: options.size ?? "10M",
+      rotate: 5,
+      mode: 0o600,
+    });
+    file.on("error", () => {
+      available = false;
+      reportFailure();
+    });
     file.on("warning", reportFailure);
-  } catch { available = false; reportFailure(); }
-  const fileStream: DestinationStream = { write(chunk) {
-    if (!available || !file || file.destroyed) return;
-    // Pino 的多目标写入不等待背压，限制慢磁盘上的队列，防止常驻进程无限占用内存。
-    if (file.writableLength > 1024 * 1024) { reportFailure(); return; }
-    file.write(chunk);
-  } };
-  const logger = createProcessLogger("main", pino.multistream([
-    { level: "trace", stream: consoleStream }, { level: "trace", stream: fileStream },
-  ]), level);
+  } catch {
+    available = false;
+    reportFailure();
+  }
+  const fileStream: DestinationStream = {
+    write(chunk) {
+      if (!available || !file || file.destroyed) return;
+      // Pino 的多目标写入不等待背压，限制慢磁盘上的队列，防止常驻进程无限占用内存。
+      if (file.writableLength > 1024 * 1024) {
+        reportFailure();
+        return;
+      }
+      file.write(chunk);
+    },
+  };
+  const logger = createProcessLogger(
+    "main",
+    pino.multistream([
+      { level: "trace", stream: consoleStream },
+      { level: "trace", stream: fileStream },
+    ]),
+    level,
+  );
   setRootLogger(logger);
   let closing: Promise<void> | undefined;
-  return { logger, path, close: () => closing ??= (async () => {
-    if (!file || file.destroyed) return;
-    const stream = file;
-    available = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        finished(stream).catch(reportFailure),
-        new Promise<void>((resolve) => { timer = setTimeout(() => { reportFailure(); stream.destroy(); resolve(); }, 3000); }),
-        new Promise<void>((resolve) => { stream.end(() => resolve()); }),
-      ]);
-    } finally { if (timer) clearTimeout(timer); available = false; }
-  })() };
+  return {
+    logger,
+    path,
+    close: () =>
+      (closing ??= (async () => {
+        if (!file || file.destroyed) return;
+        const stream = file;
+        available = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            finished(stream).catch(reportFailure),
+            new Promise<void>((resolve) => {
+              timer = setTimeout(() => {
+                reportFailure();
+                stream.destroy();
+                resolve();
+              }, 3000);
+            }),
+            new Promise<void>((resolve) => {
+              stream.end(() => resolve());
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+          available = false;
+        }
+      })()),
+  };
 }

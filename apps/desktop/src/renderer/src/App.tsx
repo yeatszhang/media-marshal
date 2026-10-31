@@ -27,7 +27,11 @@ import { ErrorNotice, Empty } from "./components/shared";
 import { Overview } from "./pages/Overview";
 import { Sources } from "./pages/Sources";
 import { Tasks } from "./pages/Tasks";
-import { CorrectionBatchDraftPage, CorrectionBatchPage, CorrectionBatchJobsPage } from "./pages/CorrectionBatches";
+import {
+  CorrectionBatchDraftPage,
+  CorrectionBatchPage,
+  CorrectionBatchJobsPage,
+} from "./pages/CorrectionBatches";
 import { CorrectionPage, CorrectionJobsPage } from "./pages/Corrections";
 import { Ingestion } from "./pages/Ingestion";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -67,11 +71,27 @@ function Shell() {
     { to: "/downloads", name: "cloud.downloads", Icon: Download },
     { to: "/settings", name: "settings", group: "navPreferences", Icon: Settings },
   ];
-  const currentPage = links.find((link) => link.to !== "/" && (pathname === link.to || pathname.startsWith(`${link.to}/`)))?.name
-    ?? (pathname.startsWith("/corrections") ? "tasks" : pathname.startsWith("/subscriptions") ? "sources" : "overview");
+  const currentPage =
+    links.find(
+      (link) => link.to !== "/" && (pathname === link.to || pathname.startsWith(`${link.to}/`)),
+    )?.name ??
+    (pathname.startsWith("/corrections")
+      ? "tasks"
+      : pathname.startsWith("/subscriptions")
+        ? "sources"
+        : "overview");
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>{t("skipToContent")}</a>
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(event) => {
+          event.preventDefault();
+          document.getElementById("main-content")?.focus();
+        }}
+      >
+        {t("skipToContent")}
+      </a>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-icon">
@@ -86,11 +106,11 @@ function Shell() {
           {links.map(({ to, name, group, Icon }) => (
             <Fragment key={to}>
               {group && <div className="nav-label">{t(group)}</div>}
-            <NavLink to={to} end={to === "/"}>
-              <Icon size={18} />
-              <span>{t(name)}</span>
-              <ChevronRight size={13} />
-            </NavLink>
+              <NavLink to={to} end={to === "/"}>
+                <Icon size={18} />
+                <span>{t(name)}</span>
+                <ChevronRight size={13} />
+              </NavLink>
             </Fragment>
           ))}
         </nav>
@@ -119,7 +139,10 @@ function Shell() {
             }}
           />
           <details className="release-note">
-            <summary>{t("stageTitle")}<span>{t("stageDisclosure")}</span></summary>
+            <summary>
+              {t("stageTitle")}
+              <span>{t("stageDisclosure")}</span>
+            </summary>
             <p>{t("stageHelp")}</p>
           </details>
           {ready ? (
@@ -135,7 +158,10 @@ function Shell() {
               <Route path="/subscriptions/:id" element={<Subscriptions />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/tasks/:taskId/correction" element={<CorrectionPage />} />
-              <Route path="/tasks/:taskId/correction/batch" element={<CorrectionBatchDraftPage />} />
+              <Route
+                path="/tasks/:taskId/correction/batch"
+                element={<CorrectionBatchDraftPage />}
+              />
               <Route path="/corrections/batches" element={<CorrectionBatchJobsPage />} />
               <Route path="/corrections/batches/:batchId" element={<CorrectionBatchPage />} />
               <Route path="/corrections" element={<CorrectionJobsPage />} />
@@ -174,8 +200,14 @@ function Shell() {
 }
 export function App() {
   return (
-    <SourceDraftProvider><SyncDraftProvider><RecognitionDraftProvider><HashRouter>
-      <Shell />
-    </HashRouter></RecognitionDraftProvider></SyncDraftProvider></SourceDraftProvider>
+    <SourceDraftProvider>
+      <SyncDraftProvider>
+        <RecognitionDraftProvider>
+          <HashRouter>
+            <Shell />
+          </HashRouter>
+        </RecognitionDraftProvider>
+      </SyncDraftProvider>
+    </SourceDraftProvider>
   );
 }

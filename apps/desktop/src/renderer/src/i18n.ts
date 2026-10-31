@@ -64,8 +64,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
         startDetail:
           "连接网盘并选择下载范围，或接入本地目录；按需开启整理，再映射到已有 Emby 媒体库。",
         addSource: "添加来源",
-        sourceHelp:
-          "统一管理网盘与本地目录来源、下载位置、周期扫描和可选整理。",
+        sourceHelp: "统一管理网盘与本地目录来源、下载位置、周期扫描和可选整理。",
         sourceName: "来源名称",
         sourceKind: "来源类型",
         sourcePath: "下载来源",
@@ -85,7 +84,12 @@ export const i18nReady = i18n.use(initReactI18next).init({
         available: "目录可访问",
         unavailable: "目录不可用",
         cancel: "取消",
-        editor: { discardTitle: "放弃未保存的修改？", discardHelp: "本次未保存的内容将丢失，已保存的配置不受影响。", continue: "继续编辑", discard: "放弃修改" },
+        editor: {
+          discardTitle: "放弃未保存的修改？",
+          discardHelp: "本次未保存的内容将丢失，已保存的配置不受影响。",
+          continue: "继续编辑",
+          discard: "放弃修改",
+        },
         save: "保存",
         saving: "正在保存…",
         required: "请填写名称并选择来源、目标目录。",
@@ -157,7 +161,8 @@ export const i18nReady = i18n.use(initReactI18next).init({
         skipToContent: "Skip to content",
         stageDisclosure: "Usage notes",
         overviewFlow: "Bring files into your library",
-        overviewFlowHelp: "Connect downloads and organizing in three steps. Return here to continue setup at any time.",
+        overviewFlowHelp:
+          "Connect downloads and organizing in three steps. Return here to continue setup at any time.",
         flowSource: "Connect a file source",
         flowSourceHelp: "Choose a local folder or cloud drive and set the download location.",
         flowRecognition: "Set up recognition and mapping",
@@ -176,7 +181,8 @@ export const i18nReady = i18n.use(initReactI18next).init({
         statusUnavailable: "Statistics are unavailable. Refresh the connection and try again.",
 
         diagnosticsTitle: "Diagnostics",
-        diagnosticsHelp: "Exports versions and component status without accounts, paths, credentials or raw logs.",
+        diagnosticsHelp:
+          "Exports versions and component status without accounts, paths, credentials or raw logs.",
         diagnosticsExport: "Export diagnostics",
         diagnosticsSaved: "Diagnostics exported",
         tasks: "Tasks",
@@ -201,8 +207,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
         startDetail:
           "Download with your cloud drive app, then choose a local download folder and an Emby destination.",
         addSource: "Add source",
-        sourceHelp:
-          "Use a Quark, Baidu or Alipan download folder, or any local folder.",
+        sourceHelp: "Use a Quark, Baidu or Alipan download folder, or any local folder.",
         sourceName: "Source name",
         sourceKind: "Source type",
         sourcePath: "Download folder",
@@ -222,7 +227,12 @@ export const i18nReady = i18n.use(initReactI18next).init({
         available: "Folder accessible",
         unavailable: "Folder unavailable",
         cancel: "Cancel",
-        editor: { discardTitle: "Discard unsaved changes?", discardHelp: "Your unsaved changes will be lost. Saved settings will remain unchanged.", continue: "Keep editing", discard: "Discard changes" },
+        editor: {
+          discardTitle: "Discard unsaved changes?",
+          discardHelp: "Your unsaved changes will be lost. Saved settings will remain unchanged.",
+          continue: "Keep editing",
+          discard: "Discard changes",
+        },
         save: "Save",
         saving: "Saving…",
         required: "Enter a name and choose both folders.",
@@ -231,8 +241,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
         noTasks: "No organization tasks yet",
         noTasksDetail:
           "Choose an input in Recognition & Mapping. Ready files appear in Needs attention; review matches and file plans before copying.",
-        reviewHelp:
-          "Resolve identification, file readiness and conflicts here.",
+        reviewHelp: "Resolve identification, file readiness and conflicts here.",
         noReview: "Nothing to review",
         noReviewDetail:
           "Items needing your decision stay here. Files are unchanged until confirmation.",
@@ -253,8 +262,7 @@ export const i18nReady = i18n.use(initReactI18next).init({
         stageHelp:
           "Downloads, file organization and Emby delivery are tracked separately. Organization requires confirmation by default; check server collection results separately.",
         coreTitle: "Local core",
-        coreDetail:
-          "Business data stays on your computer. The interface uses restricted actions.",
+        coreDetail: "Business data stays on your computer. The interface uses restricted actions.",
         schema: "Data version",
         parserUnavailable: "Offline parser is not connected yet",
         loading: "Loading…",

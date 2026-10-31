@@ -2,7 +2,8 @@
 version: 1
 slug: "apps-desktop-src-renderer-src-app-tsx"
 primary_target: "apps/desktop/src/renderer/src/App.tsx"
-related_targets: ["apps/desktop/src/renderer/src/pages/Overview.tsx","apps/desktop/src/renderer/src/styles.css"]
+related_targets:
+  ["apps/desktop/src/renderer/src/pages/Overview.tsx", "apps/desktop/src/renderer/src/styles.css"]
 ---
 
 # 桌面工作台视觉改造

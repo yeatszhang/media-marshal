@@ -31,8 +31,14 @@ BEGIN SELECT RAISE(ABORT,'成功收据的授权关联不可修改'); END;
 export function migrateSyncHistory(db: Database.Database) {
   let cursor = "";
   for (;;) {
-    const rows = db.prepare("SELECT id,source_namespace,source_object_key FROM sync_receipt WHERE source_kind='cloud' AND id>? ORDER BY id LIMIT 250").all(cursor) as { id: string; source_namespace: string; source_object_key: string }[];
-    if (!rows.length) break; cursor = rows.at(-1)!.id;
-    for (const row of rows) recordCloudReceiptOrigins(db, row.id, row.source_namespace, row.source_object_key);
+    const rows = db
+      .prepare(
+        "SELECT id,source_namespace,source_object_key FROM sync_receipt WHERE source_kind='cloud' AND id>? ORDER BY id LIMIT 250",
+      )
+      .all(cursor) as { id: string; source_namespace: string; source_object_key: string }[];
+    if (!rows.length) break;
+    cursor = rows.at(-1)!.id;
+    for (const row of rows)
+      recordCloudReceiptOrigins(db, row.id, row.source_namespace, row.source_object_key);
   }
 }

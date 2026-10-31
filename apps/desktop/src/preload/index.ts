@@ -59,7 +59,8 @@ const api: DesktopApi = {
   listConfigurationDirectories: () => invoke("configuration.directories", {}),
   getDefaultDownloadDirectory: () => invoke("configuration.default", {}),
   setDefaultDownloadDirectory: (input) => invoke("configuration.set-default", input),
-  chooseConfigurationDirectory: (kind) => invoke("desktop.configuration.choose-directory", { kind }),
+  chooseConfigurationDirectory: (kind) =>
+    invoke("desktop.configuration.choose-directory", { kind }),
   checkLocalSourceHealth: (input) => invoke("source-rules.local-health", input),
   onBeforeReload: rendererReloadBridge(ipcRenderer),
   getHostPreferences: () => invoke("desktop.host-preferences.get", {}),
@@ -105,9 +106,15 @@ const api: DesktopApi = {
   listEmbyLibraries: () => invoke("emby.libraries", {}),
   discoverEmbyTargets: (input) => invoke("emby.discover", input),
   connectEmby: (input) => invoke("emby.connect", input),
-  retryEmby: async (taskId) => { await invoke("emby.retry", { taskId }); },
-  openEmby: async (taskId) => { await invoke("desktop.emby.open", { taskId }); },
-  configureManagedIngestion: async () => { throw new DesktopError("CONFLICT", "整理绑定已并入来源配置，请在来源页重新预览确认"); },
+  retryEmby: async (taskId) => {
+    await invoke("emby.retry", { taskId });
+  },
+  openEmby: async (taskId) => {
+    await invoke("desktop.emby.open", { taskId });
+  },
+  configureManagedIngestion: async () => {
+    throw new DesktopError("CONFLICT", "整理绑定已并入来源配置，请在来源页重新预览确认");
+  },
   listIngestionCandidates: (input) => invoke("ingestion.candidates", input),
   scanIngestion: (sourceId, requestKey) => invoke("ingestion.scan", { sourceId, requestKey }),
   listIngestionScans: (input) => invoke("ingestion.scans", input),
@@ -142,26 +149,40 @@ const api: DesktopApi = {
   getIngestionTask: (taskId) => invoke("ingestion.task", { taskId }),
   previewOrganize: (input) => invoke("ingestion.preview", input),
   confirmOrganize: (input) => invoke("ingestion.confirm", input),
-  retryOrganize: async (taskId) => { await invoke("ingestion.retry", { taskId }); },
+  retryOrganize: async (taskId) => {
+    await invoke("ingestion.retry", { taskId });
+  },
   getCloudDownloadPause: () => invoke("cloud.downloads.pause-status", {}),
   setCloudDownloadPause: (input) => invoke("cloud.downloads.set-paused", input),
-  configureCloudSubscription: async () => { throw new DesktopError("CONFLICT", "周期扫描已并入来源配置，请在来源页重新预览确认"); },
+  configureCloudSubscription: async () => {
+    throw new DesktopError("CONFLICT", "周期扫描已并入来源配置，请在来源页重新预览确认");
+  },
   listCloudSubscriptions: (input) => invoke("cloud.subscriptions.list", input),
-  controlCloudSubscription: async () => { throw new DesktopError("CONFLICT", "请在来源配置中控制扫描和来源暂停"); },
+  controlCloudSubscription: async () => {
+    throw new DesktopError("CONFLICT", "请在来源配置中控制扫描和来源暂停");
+  },
   listDownloadRoots: () => invoke("cloud.roots.list", {}),
   chooseDownloadRoot: () => invoke("desktop.cloud.choose-root", {}),
-  previewDownload: async () => { throw new DesktopError("CONFLICT", "下载预览已并入来源配置，请在来源页预览当前范围"); },
+  previewDownload: async () => {
+    throw new DesktopError("CONFLICT", "下载预览已并入来源配置，请在来源页预览当前范围");
+  },
   getDownloadPreview: (requestKey) => invoke("cloud.downloads.get-preview", { requestKey }),
-  confirmDownload: async () => { throw new DesktopError("CONFLICT", "下载执行已并入来源配置，请确认来源执行预览"); },
+  confirmDownload: async () => {
+    throw new DesktopError("CONFLICT", "下载执行已并入来源配置，请确认来源执行预览");
+  },
   listDownloads: (input) => invoke("cloud.downloads.list", input),
   listDownloadIssues: (input) => invoke("cloud.downloads.issues", input),
   reconcileDownload: (input) => invoke("cloud.downloads.reconcile", input),
   controlDownload: (input) => invoke("cloud.downloads.control", input),
-  openDownloadDirectory: async (jobId) => { await invoke("desktop.cloud.open-completed", { jobId }); },
+  openDownloadDirectory: async (jobId) => {
+    await invoke("desktop.cloud.open-completed", { jobId });
+  },
   listCloudAccounts: () => invoke("cloud.accounts.list", {}),
   authorizeCloudAccount: (input) => invoke("desktop.cloud.authorize", input),
   loginCloudAccount: (input) => invoke("desktop.cloud.login", input),
-  cancelCloudLogin: async (requestKey) => { await invoke("desktop.cloud.cancel-login", { requestKey }); },
+  cancelCloudLogin: async (requestKey) => {
+    await invoke("desktop.cloud.cancel-login", { requestKey });
+  },
   getCloudAuthorization: (requestKey) => invoke("cloud.authorizations.get", { requestKey }),
   disconnectCloudAccount: (accountId) => invoke("desktop.cloud.disconnect", { accountId }),
   restoreCloudAccounts: () => invoke("desktop.cloud.restore", {}),
@@ -169,8 +190,12 @@ const api: DesktopApi = {
   statRemote: (accountId, ref) => invoke("cloud.remote.stat", { accountId, ref }),
   getRuntime: () => invoke("desktop.runtime", {}),
   listSources: () => invoke("sources.list", {}),
-  saveSource: async () => { throw new DesktopError("CONFLICT", "来源保存已并入统一来源配置，请重新预览确认"); },
-  pauseSource: async () => { throw new DesktopError("CONFLICT", "请在统一来源配置中暂停或恢复来源"); },
+  saveSource: async () => {
+    throw new DesktopError("CONFLICT", "来源保存已并入统一来源配置，请重新预览确认");
+  },
+  pauseSource: async () => {
+    throw new DesktopError("CONFLICT", "请在统一来源配置中暂停或恢复来源");
+  },
   listTasks: (input) => invoke("tasks.list", input),
   listJobs: () => invoke("jobs.list", {}),
   getSettings: () => invoke("desktop.settings", {}),
@@ -182,8 +207,12 @@ const api: DesktopApi = {
   restartCore: async () => {
     await invoke("desktop.restart-core", {});
   },
-  prepareDesktopUpgrade: async () => { await invoke("desktop.upgrade.prepare", {}); },
-  restoreDesktopUpgrade: async () => { await invoke("desktop.upgrade.restore", {}); },
+  prepareDesktopUpgrade: async () => {
+    await invoke("desktop.upgrade.prepare", {});
+  },
+  restoreDesktopUpgrade: async () => {
+    await invoke("desktop.upgrade.restore", {});
+  },
   exportDiagnostics: () => invoke("desktop.diagnostics.export", {}),
 };
 contextBridge.exposeInMainWorld("desktopApi", api);

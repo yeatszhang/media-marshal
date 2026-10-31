@@ -2,7 +2,12 @@
 version: 1
 slug: "apps-desktop-src-renderer-src-pages-ingestion-tsx"
 primary_target: "apps/desktop/src/renderer/src/pages/Ingestion.tsx"
-related_targets: ["apps/desktop/src/renderer/src/pages/recognition-workspace.css","apps/desktop/src/renderer/src/components/DirectoryQueuePanel.tsx","apps/desktop/src/renderer/src/components/FileRecognitionQueue.tsx"]
+related_targets:
+  [
+    "apps/desktop/src/renderer/src/pages/recognition-workspace.css",
+    "apps/desktop/src/renderer/src/components/DirectoryQueuePanel.tsx",
+    "apps/desktop/src/renderer/src/components/FileRecognitionQueue.tsx",
+  ]
 ---
 
 # 识别与人工确认工作台

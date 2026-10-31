@@ -1,107 +1,343 @@
 import { randomUUID } from "node:crypto";
 import { silentLogger, type CoreLogger } from "../application/logger.js";
-import { DesktopError, CloudError, cloudFailure, cloudFiltersSchema, compileSyncFilters, type SyncFilter, type CloudFailure, type DownloadPreview, type CloudInput, type RemoteEntry } from "@media-marshal/contracts";
-import { localFileEvidenceSchema, type BindingRef, type TransferItem } from "@media-marshal/contracts/internal";
+import {
+  DesktopError,
+  CloudError,
+  cloudFailure,
+  cloudFiltersSchema,
+  compileSyncFilters,
+  type SyncFilter,
+  type CloudFailure,
+  type DownloadPreview,
+  type CloudInput,
+  type RemoteEntry,
+} from "@media-marshal/contracts";
+import {
+  localFileEvidenceSchema,
+  type BindingRef,
+  type TransferItem,
+} from "@media-marshal/contracts/internal";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { RemoteCatalog } from "./catalog.js";
 import type { CloudRoots } from "./roots.js";
 import { planOnce } from "./planning.js";
-import { EmbyLibraryFiles, LibraryReviewRequired, type LibraryReview, type LibraryFileEvidence } from "../sources/emby-library-files.js";
+import {
+  EmbyLibraryFiles,
+  LibraryReviewRequired,
+  type LibraryReview,
+  type LibraryFileEvidence,
+} from "../sources/emby-library-files.js";
 import { SyncReceipts } from "../sources/sync-receipts.js";
 
 export interface PreviewSnapshot {
-  binding: BindingRef; name: string; complete: boolean; failure: CloudFailure | null;
-  rootType?: "file" | "directory"; variant?: string; filters?: { extensions: string[]; names?: string[]; rules?: SyncFilter[] }; layout?: "selection" | "drive"; selectionPath?: string;
-  items: (TransferItem & { versionKey: string; targetPathKey: string; reuseItemId?: string; existingItemId?: string; receiptId?: string; libraryFile?: LibraryFileEvidence; libraryIssue?: string; libraryReview?: LibraryReview; libraryDecision?: "DOWNLOAD"; historyPending?: boolean; localRemoved?: boolean; issue?: CloudFailure })[];
+  binding: BindingRef;
+  name: string;
+  complete: boolean;
+  failure: CloudFailure | null;
+  rootType?: "file" | "directory";
+  variant?: string;
+  filters?: { extensions: string[]; names?: string[]; rules?: SyncFilter[] };
+  layout?: "selection" | "drive";
+  selectionPath?: string;
+  items: (TransferItem & {
+    versionKey: string;
+    targetPathKey: string;
+    reuseItemId?: string;
+    existingItemId?: string;
+    receiptId?: string;
+    libraryFile?: LibraryFileEvidence;
+    libraryIssue?: string;
+    libraryReview?: LibraryReview;
+    libraryDecision?: "DOWNLOAD";
+    historyPending?: boolean;
+    localRemoved?: boolean;
+    issue?: CloudFailure;
+  })[];
   policy: { maxAttempts: number; retryBaseMs: number };
 }
-export interface PreviewRow { id: string; account_id: string; remote_root_ref: string; target_root_id: string; request_key: string; state: string; expires_at: string; snapshot_json: string }
+export interface PreviewRow {
+  id: string;
+  account_id: string;
+  remote_root_ref: string;
+  target_root_id: string;
+  request_key: string;
+  state: string;
+  expires_at: string;
+  snapshot_json: string;
+}
 export class DownloadPreviews {
   private libraries = new Map<string, EmbyLibraryFiles>();
-  private flights = new Map<string, Promise<unknown>>(); private cancelled = new Set<string>(); private closed = false;
-  constructor(private readonly database: CoreDatabase, private readonly catalog: RemoteCatalog, private readonly roots: CloudRoots, private readonly now = Date.now, private readonly logger: CoreLogger = silentLogger) {
-    database.connection.prepare("UPDATE cloud_preview SET state='EXPIRED' WHERE state='BUILDING'").run();
+  private flights = new Map<string, Promise<unknown>>();
+  private cancelled = new Set<string>();
+  private closed = false;
+  constructor(
+    private readonly database: CoreDatabase,
+    private readonly catalog: RemoteCatalog,
+    private readonly roots: CloudRoots,
+    private readonly now = Date.now,
+    private readonly logger: CoreLogger = silentLogger,
+  ) {
+    database.connection
+      .prepare("UPDATE cloud_preview SET state='EXPIRED' WHERE state='BUILDING'")
+      .run();
   }
-  row(id: string) { return this.database.connection.prepare("SELECT * FROM cloud_preview WHERE id=?").get(id) as PreviewRow | undefined; }
+  row(id: string) {
+    return this.database.connection.prepare("SELECT * FROM cloud_preview WHERE id=?").get(id) as
+      PreviewRow | undefined;
+  }
   get(requestKey: string) {
-    const row = this.database.connection.prepare("SELECT * FROM cloud_preview WHERE request_key=?").get(requestKey) as PreviewRow | undefined;
+    const row = this.database.connection
+      .prepare("SELECT * FROM cloud_preview WHERE request_key=?")
+      .get(requestKey) as PreviewRow | undefined;
     return row ? this.dto(row) : null;
   }
   private dto(row: PreviewRow): DownloadPreview {
     const snapshot: PreviewSnapshot = JSON.parse(row.snapshot_json);
-    const localRemovedFiles = snapshot.items.filter((item) => item.localRemoved).length, historyFiles = snapshot.items.filter((item) => item.historyPending).length;
-    const historyRestore = historyFiles ? { files: historyFiles, confirmed: !!this.database.connection.prepare("SELECT 1 FROM sync_history_confirmation WHERE preview_id=?").get(row.id) } : undefined;
-    const historyExpired = historyFiles > 0 && !this.database.connection.prepare("SELECT 1 FROM provider_binding b JOIN cloud_account a ON a.id=b.account_id WHERE b.id=? AND b.account_id=? AND b.generation=? AND b.state='ACTIVE' AND a.status IN ('READY','RESELECT_REQUIRED')").get(snapshot.binding.bindingId, row.account_id, snapshot.binding.generation);
-    return { id: row.id, accountId: row.account_id, remoteRef: row.remote_root_ref, targetGrantId: row.target_root_id, files: snapshot.items.length, bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0), complete: snapshot.complete, weakComparison: snapshot.items.some((item) => item.source.expectedVersion?.kind === "weak" || !!item.libraryFile && item.libraryFile.comparison !== "CONTENT"), expiresAt: row.expires_at, state: snapshot.failure ? "FAILED" : row.state === "CONFIRMED" ? "CONFIRMED" : historyExpired || row.expires_at <= new Date(this.now()).toISOString() ? "EXPIRED" : row.state as DownloadPreview["state"], failure: snapshot.failure, reuseFiles: snapshot.items.filter((item) => item.reuseItemId || item.receiptId).length, conflicts: snapshot.items.filter((item) => item.issue).length, forceRedownload: !!snapshot.variant, destinationPrefix: snapshot.variant ? `completed/redownload-${row.id}` : "completed", selectionPath: snapshot.selectionPath ?? snapshot.name, layout: snapshot.layout ?? "selection", ...(localRemovedFiles ? { localRemovedFiles } : {}), ...(historyRestore ? { historyRestore } : {}) };
+    const localRemovedFiles = snapshot.items.filter((item) => item.localRemoved).length,
+      historyFiles = snapshot.items.filter((item) => item.historyPending).length;
+    const historyRestore = historyFiles
+      ? {
+          files: historyFiles,
+          confirmed: !!this.database.connection
+            .prepare("SELECT 1 FROM sync_history_confirmation WHERE preview_id=?")
+            .get(row.id),
+        }
+      : undefined;
+    const historyExpired =
+      historyFiles > 0 &&
+      !this.database.connection
+        .prepare(
+          "SELECT 1 FROM provider_binding b JOIN cloud_account a ON a.id=b.account_id WHERE b.id=? AND b.account_id=? AND b.generation=? AND b.state='ACTIVE' AND a.status IN ('READY','RESELECT_REQUIRED')",
+        )
+        .get(snapshot.binding.bindingId, row.account_id, snapshot.binding.generation);
+    return {
+      id: row.id,
+      accountId: row.account_id,
+      remoteRef: row.remote_root_ref,
+      targetGrantId: row.target_root_id,
+      files: snapshot.items.length,
+      bytes: snapshot.items.reduce((sum, item) => sum + item.expectedSize, 0),
+      complete: snapshot.complete,
+      weakComparison: snapshot.items.some(
+        (item) =>
+          item.source.expectedVersion?.kind === "weak" ||
+          (!!item.libraryFile && item.libraryFile.comparison !== "CONTENT"),
+      ),
+      expiresAt: row.expires_at,
+      state: snapshot.failure
+        ? "FAILED"
+        : row.state === "CONFIRMED"
+          ? "CONFIRMED"
+          : historyExpired || row.expires_at <= new Date(this.now()).toISOString()
+            ? "EXPIRED"
+            : (row.state as DownloadPreview["state"]),
+      failure: snapshot.failure,
+      reuseFiles: snapshot.items.filter((item) => item.reuseItemId || item.receiptId).length,
+      conflicts: snapshot.items.filter((item) => item.issue).length,
+      forceRedownload: !!snapshot.variant,
+      destinationPrefix: snapshot.variant ? `completed/redownload-${row.id}` : "completed",
+      selectionPath: snapshot.selectionPath ?? snapshot.name,
+      layout: snapshot.layout ?? "selection",
+      ...(localRemovedFiles ? { localRemovedFiles } : {}),
+      ...(historyRestore ? { historyRestore } : {}),
+    };
   }
   start(input: CloudInput<"cloud.downloads.preview">, library?: EmbyLibraryFiles): DownloadPreview {
     if (this.closed) throw new CloudError("INTERRUPTED");
-    const previous = this.database.connection.prepare("SELECT * FROM cloud_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
-    const filters = cloudFiltersSchema.parse(input.filters); filters.extensions = [...new Set(filters.extensions)].sort(); filters.names = [...new Set(filters.names)].sort();
+    const previous = this.database.connection
+      .prepare("SELECT * FROM cloud_preview WHERE request_key=?")
+      .get(input.requestKey) as PreviewRow | undefined;
+    const filters = cloudFiltersSchema.parse(input.filters);
+    filters.extensions = [...new Set(filters.extensions)].sort();
+    filters.names = [...new Set(filters.names)].sort();
     if (previous) {
       const snapshot: PreviewSnapshot = JSON.parse(previous.snapshot_json);
-      if (previous.account_id !== input.accountId || previous.remote_root_ref !== input.remoteRef || previous.target_root_id !== input.targetGrantId || JSON.stringify(cloudFiltersSchema.parse(snapshot.filters)) !== JSON.stringify(filters) || !!snapshot.variant !== !!input.forceRedownload || (snapshot.layout ?? "selection") !== (input.layout ?? "selection")) throw new CloudError("CONFLICT");
+      if (
+        previous.account_id !== input.accountId ||
+        previous.remote_root_ref !== input.remoteRef ||
+        previous.target_root_id !== input.targetGrantId ||
+        JSON.stringify(cloudFiltersSchema.parse(snapshot.filters)) !== JSON.stringify(filters) ||
+        !!snapshot.variant !== !!input.forceRedownload ||
+        (snapshot.layout ?? "selection") !== (input.layout ?? "selection")
+      )
+        throw new CloudError("CONFLICT");
       return this.dto(previous);
     }
     if (this.flights.size >= 4) throw new CloudError("CONFLICT");
-    const root = this.roots.files.get(input.targetGrantId), source = this.catalog.source(input.accountId, input.remoteRef), id = randomUUID(), now = new Date(this.now()).toISOString();
-    const snapshot: PreviewSnapshot = { binding: source.binding, name: "", items: [], complete: false, failure: null, variant: input.forceRedownload ? `force:${id}` : "", filters, layout: input.layout ?? "selection", policy: { maxAttempts: 3, retryBaseMs: 1000 } };
-    const row: PreviewRow = { id, account_id: input.accountId, remote_root_ref: input.remoteRef, target_root_id: input.targetGrantId, request_key: input.requestKey, state: "BUILDING", expires_at: new Date(this.now() + 15 * 60 * 1000).toISOString(), snapshot_json: JSON.stringify(snapshot) };
-    this.database.connection.prepare("INSERT INTO cloud_preview(id,account_id,remote_root_ref,target_root_id,request_key,snapshot_json,state,configuration_version,created_at,expires_at) VALUES(?,?,?,?,?,?,'BUILDING',1,?,?)")
-      .run(id, input.accountId, input.remoteRef, input.targetGrantId, input.requestKey, row.snapshot_json, now, row.expires_at);
+    const root = this.roots.files.get(input.targetGrantId),
+      source = this.catalog.source(input.accountId, input.remoteRef),
+      id = randomUUID(),
+      now = new Date(this.now()).toISOString();
+    const snapshot: PreviewSnapshot = {
+      binding: source.binding,
+      name: "",
+      items: [],
+      complete: false,
+      failure: null,
+      variant: input.forceRedownload ? `force:${id}` : "",
+      filters,
+      layout: input.layout ?? "selection",
+      policy: { maxAttempts: 3, retryBaseMs: 1000 },
+    };
+    const row: PreviewRow = {
+      id,
+      account_id: input.accountId,
+      remote_root_ref: input.remoteRef,
+      target_root_id: input.targetGrantId,
+      request_key: input.requestKey,
+      state: "BUILDING",
+      expires_at: new Date(this.now() + 15 * 60 * 1000).toISOString(),
+      snapshot_json: JSON.stringify(snapshot),
+    };
+    this.database.connection
+      .prepare(
+        "INSERT INTO cloud_preview(id,account_id,remote_root_ref,target_root_id,request_key,snapshot_json,state,configuration_version,created_at,expires_at) VALUES(?,?,?,?,?,?,'BUILDING',1,?,?)",
+      )
+      .run(
+        id,
+        input.accountId,
+        input.remoteRef,
+        input.targetGrantId,
+        input.requestKey,
+        row.snapshot_json,
+        now,
+        row.expires_at,
+      );
     if (library) this.libraries.set(id, library);
-    const task = this.scan(row, snapshot, root, library); this.flights.set(id, task); void task.finally(() => { this.flights.delete(id); this.cancelled.delete(id); this.libraries.delete(id); }).catch(() => {});
+    const task = this.scan(row, snapshot, root, library);
+    this.flights.set(id, task);
+    void task
+      .finally(() => {
+        this.flights.delete(id);
+        this.cancelled.delete(id);
+        this.libraries.delete(id);
+      })
+      .catch(() => {});
     return this.dto(row);
   }
-  private async scan(row: PreviewRow, snapshot: PreviewSnapshot, root: ReturnType<CloudRoots["files"]["get"]>, library?: EmbyLibraryFiles) {
-    this.logger.info({ event: "download.preview.started", previewId: row.id }, "正在扫描下载范围并生成计划");
-    const save = (state: string) => this.database.connection.prepare("UPDATE cloud_preview SET snapshot_json=?,state=? WHERE id=?").run(JSON.stringify(snapshot), state, row.id);
+  private async scan(
+    row: PreviewRow,
+    snapshot: PreviewSnapshot,
+    root: ReturnType<CloudRoots["files"]["get"]>,
+    library?: EmbyLibraryFiles,
+  ) {
+    this.logger.info(
+      { event: "download.preview.started", previewId: row.id },
+      "正在扫描下载范围并生成计划",
+    );
+    const save = (state: string) =>
+      this.database.connection
+        .prepare("UPDATE cloud_preview SET snapshot_json=?,state=? WHERE id=?")
+        .run(JSON.stringify(snapshot), state, row.id);
     try {
-      const selected = await this.catalog.stat(row.account_id, row.remote_root_ref); snapshot.name = selected.name; snapshot.rootType = selected.type;
-      const prefix = snapshot.variant ? [`redownload-${row.id}`] : [], selection = snapshot.layout === "drive" ? this.catalog.relativePath(row.account_id, selected.ref) : [selected.name]; snapshot.selectionPath = selection.join("/");
+      const selected = await this.catalog.stat(row.account_id, row.remote_root_ref);
+      snapshot.name = selected.name;
+      snapshot.rootType = selected.type;
+      const prefix = snapshot.variant ? [`redownload-${row.id}`] : [],
+        selection =
+          snapshot.layout === "drive"
+            ? this.catalog.relativePath(row.account_id, selected.ref)
+            : [selected.name];
+      snapshot.selectionPath = selection.join("/");
       const includes = compileSyncFilters(snapshot.filters?.rules ?? []);
-      const queue: { entry: RemoteEntry; parts: string[] }[] = [{ entry: selected, parts: [...prefix, ...selection] }], seen = new Set<string>(); let bytes = 0, requiredBytes = 0, snapshotBytes = Buffer.byteLength(JSON.stringify(snapshot)) + 4096;
+      const queue: { entry: RemoteEntry; parts: string[] }[] = [
+          { entry: selected, parts: [...prefix, ...selection] },
+        ],
+        seen = new Set<string>();
+      let bytes = 0,
+        requiredBytes = 0,
+        snapshotBytes = Buffer.byteLength(JSON.stringify(snapshot)) + 4096;
       while (queue.length) {
         if (this.closed || this.cancelled.has(row.id)) throw new CloudError("INTERRUPTED");
         const current = queue.shift()!;
-        if (seen.has(current.entry.ref) || seen.size >= 10000) throw new CloudError("UNSUPPORTED_CAPABILITY"); seen.add(current.entry.ref);
+        if (seen.has(current.entry.ref) || seen.size >= 10000)
+          throw new CloudError("UNSUPPORTED_CAPABILITY");
+        seen.add(current.entry.ref);
         if (current.parts.length) root.segments(current.parts);
         if (current.entry.type === "file") {
-          const filterPath = selected.type === "file" ? selected.name : current.parts.slice(prefix.length + selection.length).join("/");
+          const filterPath =
+            selected.type === "file"
+              ? selected.name
+              : current.parts.slice(prefix.length + selection.length).join("/");
           if (!includes(filterPath)) continue;
           const extensions = snapshot.filters?.extensions ?? [];
-          if (extensions.length && !extensions.includes(current.entry.name.split(".").at(-1)!.toLowerCase())) continue;
-          if (snapshot.filters?.names?.length && !snapshot.filters.names.includes(current.entry.name)) continue;
+          if (
+            extensions.length &&
+            !extensions.includes(current.entry.name.split(".").at(-1)!.toLowerCase())
+          )
+            continue;
+          if (
+            snapshot.filters?.names?.length &&
+            !snapshot.filters.names.includes(current.entry.name)
+          )
+            continue;
           const source = this.catalog.source(row.account_id, current.entry.ref);
-          if (source.binding.generation !== snapshot.binding.generation) throw new CloudError("INTERRUPTED");
-          const plan = planOnce({ jobId: row.id, requestKey: row.request_key, attemptId: randomUUID(), binding: snapshot.binding, targetGrantId: row.target_root_id, files: [{ entry: current.entry, locator: source.locator, mapping: { segments: current.parts, slotKey: root.slotKey(current.parts) } }] });
+          if (source.binding.generation !== snapshot.binding.generation)
+            throw new CloudError("INTERRUPTED");
+          const plan = planOnce({
+            jobId: row.id,
+            requestKey: row.request_key,
+            attemptId: randomUUID(),
+            binding: snapshot.binding,
+            targetGrantId: row.target_root_id,
+            files: [
+              {
+                entry: current.entry,
+                locator: source.locator,
+                mapping: { segments: current.parts, slotKey: root.slotKey(current.parts) },
+              },
+            ],
+          });
           const item = { ...plan.items[0]! } as PreviewSnapshot["items"][number];
           let libraryFile: LibraryFileEvidence | undefined;
-          try { libraryFile = !snapshot.variant ? await library?.find(current.entry.name, item.expectedSize, undefined, item.source.expectedVersion ?? undefined, item.targetSegments) : undefined; }
-          catch (error) {
+          try {
+            libraryFile = !snapshot.variant
+              ? await library?.find(
+                  current.entry.name,
+                  item.expectedSize,
+                  undefined,
+                  item.source.expectedVersion ?? undefined,
+                  item.targetSegments,
+                )
+              : undefined;
+          } catch (error) {
             if (!(error instanceof DesktopError)) throw error;
             if (error.code === "INTERRUPTED") throw new CloudError("INTERRUPTED");
-            if (error instanceof LibraryReviewRequired) await this.checkDownloadCandidate(row, snapshot, item, root, true);
+            if (error instanceof LibraryReviewRequired)
+              await this.checkDownloadCandidate(row, snapshot, item, root, true);
             if (!item.receiptId && !item.reuseItemId && !item.issue) {
               item.libraryIssue = error.message.slice(0, 500);
               if (error instanceof LibraryReviewRequired) item.libraryReview = error.review;
-              item.issue = cloudFailure(new CloudError(error.code === "LOCAL_UNAVAILABLE" ? "LOCAL_UNAVAILABLE" : "CONFLICT"));
+              item.issue = cloudFailure(
+                new CloudError(
+                  error.code === "LOCAL_UNAVAILABLE" ? "LOCAL_UNAVAILABLE" : "CONFLICT",
+                ),
+              );
             }
           }
-          if (item.libraryIssue) { /* 检查失败须保留逐项原因，不能降级成待下载。 */ }
-          else if (libraryFile) { item.libraryFile = libraryFile; }
-          else if (!item.receiptId && !item.reuseItemId && !item.issue) await this.checkDownloadCandidate(row, snapshot, item, root);
-          if (!item.libraryFile && !item.reuseItemId && !item.receiptId && !item.issue) requiredBytes += current.entry.size!;
+          if (item.libraryIssue) {
+            /* 检查失败须保留逐项原因，不能降级成待下载。 */
+          } else if (libraryFile) {
+            item.libraryFile = libraryFile;
+          } else if (!item.receiptId && !item.reuseItemId && !item.issue)
+            await this.checkDownloadCandidate(row, snapshot, item, root);
+          if (!item.libraryFile && !item.reuseItemId && !item.receiptId && !item.issue)
+            requiredBytes += current.entry.size!;
           snapshotBytes += Buffer.byteLength(JSON.stringify(item)) + 1;
           if (snapshotBytes > 16 * 1024 * 1024) throw new CloudError("UNSUPPORTED_CAPABILITY");
-          snapshot.items.push(item); bytes += current.entry.size!;
+          snapshot.items.push(item);
+          bytes += current.entry.size!;
           if (!Number.isSafeInteger(bytes)) throw new CloudError("UNSUPPORTED_CAPABILITY");
         } else {
           let cursor: string | null = null;
           do {
             if (this.closed || this.cancelled.has(row.id)) throw new CloudError("INTERRUPTED");
-            const page = await this.catalog.list({ accountId: row.account_id, parentRef: current.entry.ref, cursor, pageSize: 100 }, row.id);
-            for (const entry of page.items) queue.push({ entry, parts: [...current.parts, entry.name] });
+            const page = await this.catalog.list(
+              { accountId: row.account_id, parentRef: current.entry.ref, cursor, pageSize: 100 },
+              row.id,
+            );
+            for (const entry of page.items)
+              queue.push({ entry, parts: [...current.parts, entry.name] });
             if (queue.length + seen.size > 10000) throw new CloudError("UNSUPPORTED_CAPABILITY");
             cursor = page.nextCursor;
             if (!cursor && !page.complete) throw new CloudError("NETWORK_UNAVAILABLE");
@@ -113,70 +349,223 @@ export class DownloadPreviews {
       root.assertMappings(snapshot.items.map((item) => item.targetSegments));
       await this.roots.budget(row.target_root_id, requiredBytes);
       if (this.closed || this.cancelled.has(row.id)) throw new CloudError("INTERRUPTED");
-      snapshot.complete = true; save("READY");
-      this.logger.info({ event: "download.preview.ready", previewId: row.id, fileCount: snapshot.items.length, failedCount: snapshot.items.filter((item) => item.issue).length }, "下载计划已生成，请核对逐项结果后确认");
-    } catch (error) { snapshot.failure = cloudFailure(error); snapshot.complete = false; save("EXPIRED"); this.logger.warn({ event: "download.preview.failed", previewId: row.id, errorCode: snapshot.failure.code, error }, "下载计划扫描未完成"); }
+      snapshot.complete = true;
+      save("READY");
+      this.logger.info(
+        {
+          event: "download.preview.ready",
+          previewId: row.id,
+          fileCount: snapshot.items.length,
+          failedCount: snapshot.items.filter((item) => item.issue).length,
+        },
+        "下载计划已生成，请核对逐项结果后确认",
+      );
+    } catch (error) {
+      snapshot.failure = cloudFailure(error);
+      snapshot.complete = false;
+      save("EXPIRED");
+      this.logger.warn(
+        {
+          event: "download.preview.failed",
+          previewId: row.id,
+          errorCode: snapshot.failure.code,
+          error,
+        },
+        "下载计划扫描未完成",
+      );
+    }
   }
-  private async checkDownloadCandidate(row: PreviewRow, snapshot: PreviewSnapshot, item: PreviewSnapshot["items"][number], root: ReturnType<CloudRoots["files"]["get"]>, historyOnly = false) {
+  private async checkDownloadCandidate(
+    row: PreviewRow,
+    snapshot: PreviewSnapshot,
+    item: PreviewSnapshot["items"][number],
+    root: ReturnType<CloudRoots["files"]["get"]>,
+    historyOnly = false,
+  ) {
     const db = this.database.connection;
-    const previous = db.prepare("SELECT i.id,i.state,c.file_evidence_json FROM download_item i LEFT JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.account_id=? AND i.remote_ref=? AND i.version_key=? AND i.request_variant=? AND i.target_root_id=? AND i.target_path_key=?").get(row.account_id, item.source.remoteRef, item.versionKey, snapshot.variant ?? "", row.target_root_id, item.targetPathKey) as { id: string; state: string; file_evidence_json: string | null } | undefined;
+    const previous = db
+      .prepare(
+        "SELECT i.id,i.state,c.file_evidence_json FROM download_item i LEFT JOIN download_commit_intent c ON c.item_id=i.id AND c.state='RECORDED' WHERE i.account_id=? AND i.remote_ref=? AND i.version_key=? AND i.request_variant=? AND i.target_root_id=? AND i.target_path_key=?",
+      )
+      .get(
+        row.account_id,
+        item.source.remoteRef,
+        item.versionKey,
+        snapshot.variant ?? "",
+        row.target_root_id,
+        item.targetPathKey,
+      ) as { id: string; state: string; file_evidence_json: string | null } | undefined;
     if (previous) item.existingItemId = previous.id;
-    const receipts = new SyncReceipts(this.database, this.now), existingReceipt = !snapshot.variant && item.source.expectedVersion ? receipts.findCloud(row.account_id, item.source.remoteRef, item.source.expectedVersion, row.target_root_id, item.targetPathKey, snapshot.binding.bindingId) : undefined;
-    const pendingReceipt = !existingReceipt && !snapshot.variant && item.source.expectedVersion ? receipts.pendingCloudHistory(row.account_id, item.source.remoteRef, item.source.expectedVersion, row.target_root_id, item.targetPathKey, snapshot.binding.bindingId) : undefined;
+    const receipts = new SyncReceipts(this.database, this.now),
+      existingReceipt =
+        !snapshot.variant && item.source.expectedVersion
+          ? receipts.findCloud(
+              row.account_id,
+              item.source.remoteRef,
+              item.source.expectedVersion,
+              row.target_root_id,
+              item.targetPathKey,
+              snapshot.binding.bindingId,
+            )
+          : undefined;
+    const pendingReceipt =
+      !existingReceipt && !snapshot.variant && item.source.expectedVersion
+        ? receipts.pendingCloudHistory(
+            row.account_id,
+            item.source.remoteRef,
+            item.source.expectedVersion,
+            row.target_root_id,
+            item.targetPathKey,
+            snapshot.binding.bindingId,
+          )
+        : undefined;
     const receipt = existingReceipt ?? pendingReceipt;
     if (receipt) {
       const state = await receipts.observe(receipt, root);
       if (state === "PRESENT" || state === "REMOVED") {
-        item.receiptId = receipt.id; item.localRemoved = state === "REMOVED"; if (pendingReceipt) item.historyPending = true;
-        if (db.prepare("SELECT 1 FROM download_item WHERE id=?").get(receipt.result_id)) item.reuseItemId = receipt.result_id;
+        item.receiptId = receipt.id;
+        item.localRemoved = state === "REMOVED";
+        if (pendingReceipt) item.historyPending = true;
+        if (db.prepare("SELECT 1 FROM download_item WHERE id=?").get(receipt.result_id))
+          item.reuseItemId = receipt.result_id;
       } else {
-        item.issue = cloudFailure(new CloudError(state === "UNAVAILABLE" ? "LOCAL_UNAVAILABLE" : "CONFLICT"));
-        if (state === "CONFLICT") db.prepare("UPDATE download_item SET state='RECONCILING',failure_code='CONFLICT',updated_at=? WHERE id=? AND state='COMPLETED'").run(new Date(this.now()).toISOString(), receipt.result_id);
+        item.issue = cloudFailure(
+          new CloudError(state === "UNAVAILABLE" ? "LOCAL_UNAVAILABLE" : "CONFLICT"),
+        );
+        if (state === "CONFLICT")
+          db.prepare(
+            "UPDATE download_item SET state='RECONCILING',failure_code='CONFLICT',updated_at=? WHERE id=? AND state='COMPLETED'",
+          ).run(new Date(this.now()).toISOString(), receipt.result_id);
       }
     } else if (previous?.state === "COMPLETED") {
       try {
         if (!previous.file_evidence_json) throw new CloudError("CONFLICT");
-        const before = localFileEvidenceSchema.parse(JSON.parse(previous.file_evidence_json)), after = await root.inspectCompleted(item.targetSegments);
-        if (before.volumeId !== after.volumeId || before.inode !== after.inode || before.birthtimeNs !== after.birthtimeNs || before.sha256 !== after.sha256 || before.size !== after.size) throw new CloudError("CONFLICT");
+        const before = localFileEvidenceSchema.parse(JSON.parse(previous.file_evidence_json)),
+          after = await root.inspectCompleted(item.targetSegments);
+        if (
+          before.volumeId !== after.volumeId ||
+          before.inode !== after.inode ||
+          before.birthtimeNs !== after.birthtimeNs ||
+          before.sha256 !== after.sha256 ||
+          before.size !== after.size
+        )
+          throw new CloudError("CONFLICT");
         item.reuseItemId = previous.id;
         // 摘要及归属仍吻合时，允许更新无内容变化的时间戳证据。
-        db.prepare("UPDATE download_commit_intent SET file_evidence_json=?,updated_at=? WHERE item_id=? AND state='RECORDED'").run(JSON.stringify(after), new Date(this.now()).toISOString(), previous.id);
+        db.prepare(
+          "UPDATE download_commit_intent SET file_evidence_json=?,updated_at=? WHERE item_id=? AND state='RECORDED'",
+        ).run(JSON.stringify(after), new Date(this.now()).toISOString(), previous.id);
       } catch {
         item.issue = cloudFailure(new CloudError("CONFLICT"));
-        db.prepare("UPDATE download_item SET state='RECONCILING',failure_code='CONFLICT',updated_at=? WHERE id=? AND state='COMPLETED'").run(new Date(this.now()).toISOString(), previous.id);
+        db.prepare(
+          "UPDATE download_item SET state='RECONCILING',failure_code='CONFLICT',updated_at=? WHERE id=? AND state='COMPLETED'",
+        ).run(new Date(this.now()).toISOString(), previous.id);
       }
-    } else if (previous && ["RUNNING", "VERIFYING", "COMMITTING", "QUEUED", "RETRY_WAIT", "PAUSED"].includes(previous.state)) {
+    } else if (
+      previous &&
+      ["RUNNING", "VERIFYING", "COMMITTING", "QUEUED", "RETRY_WAIT", "PAUSED"].includes(
+        previous.state,
+      )
+    ) {
       // 重叠范围共享已存在的需求，不把在途占位解释为目标冲突。
     } else if (!historyOnly) {
-      try { await root.assertVacant(item.targetSegments); } catch (error) { item.issue = cloudFailure(error); }
+      try {
+        await root.assertVacant(item.targetSegments);
+      } catch (error) {
+        item.issue = cloudFailure(error);
+      }
     }
   }
-  async resolveLibraryReview(previewId: string, relativePath: string, decision: "USE_LIBRARY" | "DOWNLOAD", candidateId?: string) {
-    const row = this.row(previewId); if (!row) throw new DesktopError("CONFLICT", "原预览不存在，请重新预览");
+  async resolveLibraryReview(
+    previewId: string,
+    relativePath: string,
+    decision: "USE_LIBRARY" | "DOWNLOAD",
+    candidateId?: string,
+  ) {
+    const row = this.row(previewId);
+    if (!row) throw new DesktopError("CONFLICT", "原预览不存在，请重新预览");
     const snapshot = JSON.parse(row.snapshot_json) as PreviewSnapshot;
-    if (this.closed || row.state !== "READY" || !snapshot.complete || snapshot.variant || row.expires_at <= new Date(this.now()).toISOString()) throw new DesktopError("CONFLICT", "预览已过期或尚未完成，请重新预览后核对");
-    const bindingCurrent = () => !!this.database.connection.prepare("SELECT 1 FROM provider_binding WHERE id=? AND account_id=? AND generation=? AND state='ACTIVE'").get(snapshot.binding.bindingId, row.account_id, snapshot.binding.generation);
+    if (
+      this.closed ||
+      row.state !== "READY" ||
+      !snapshot.complete ||
+      snapshot.variant ||
+      row.expires_at <= new Date(this.now()).toISOString()
+    )
+      throw new DesktopError("CONFLICT", "预览已过期或尚未完成，请重新预览后核对");
+    const bindingCurrent = () =>
+      !!this.database.connection
+        .prepare(
+          "SELECT 1 FROM provider_binding WHERE id=? AND account_id=? AND generation=? AND state='ACTIVE'",
+        )
+        .get(snapshot.binding.bindingId, row.account_id, snapshot.binding.generation);
     if (!bindingCurrent()) throw new DesktopError("CONFLICT", "网盘授权已变化，请重新预览后核对");
     const item = snapshot.items.find((file) => file.targetSegments.join("/") === relativePath);
-    if (!item?.libraryReview) throw new DesktopError("CONFLICT", "该文件已处理或不属于本次重复核对，请刷新预览");
+    if (!item?.libraryReview)
+      throw new DesktopError("CONFLICT", "该文件已处理或不属于本次重复核对，请刷新预览");
     if (decision === "USE_LIBRARY") {
       const candidate = item.libraryReview.candidates.find((value) => value.id === candidateId);
-      if (!candidate || candidate.file.snapshot.size !== item.expectedSize) throw new DesktopError("CONFLICT", "候选不属于此文件的预览，请刷新清单后重新选择");
+      if (!candidate || candidate.file.snapshot.size !== item.expectedSize)
+        throw new DesktopError("CONFLICT", "候选不属于此文件的预览，请刷新清单后重新选择");
       await new EmbyLibraryFiles(this.database).verify(candidate.file);
-      item.libraryFile = { ...candidate.file, comparison: "USER_CONFIRMED", checkedAt: new Date(this.now()).toISOString() };
-      delete item.issue; delete item.libraryIssue; delete item.libraryReview;
+      item.libraryFile = {
+        ...candidate.file,
+        comparison: "USER_CONFIRMED",
+        checkedAt: new Date(this.now()).toISOString(),
+      };
+      delete item.issue;
+      delete item.libraryIssue;
+      delete item.libraryReview;
     } else {
-      delete item.issue; delete item.libraryIssue; delete item.libraryReview;
-      await this.checkDownloadCandidate(row, snapshot, item, this.roots.files.get(row.target_root_id));
+      delete item.issue;
+      delete item.libraryIssue;
+      delete item.libraryReview;
+      await this.checkDownloadCandidate(
+        row,
+        snapshot,
+        item,
+        this.roots.files.get(row.target_root_id),
+      );
       item.libraryDecision = "DOWNLOAD";
     }
-    await this.roots.budget(row.target_root_id, snapshot.items.reduce((sum, file) => sum + (!file.libraryFile && !file.reuseItemId && !file.receiptId && !file.issue ? file.expectedSize : 0), 0));
+    await this.roots.budget(
+      row.target_root_id,
+      snapshot.items.reduce(
+        (sum, file) =>
+          sum +
+          (!file.libraryFile && !file.reuseItemId && !file.receiptId && !file.issue
+            ? file.expectedSize
+            : 0),
+        0,
+      ),
+    );
     return () => {
-      if (!bindingCurrent()) throw new DesktopError("CONFLICT", "核对期间网盘授权已变化，请重新预览");
-      if (this.closed || this.row(previewId)?.snapshot_json !== row.snapshot_json || this.row(previewId)?.state !== "READY" || row.expires_at <= new Date(this.now()).toISOString()) throw new DesktopError("CONFLICT", "核对期间原预览已变化，请刷新后重试");
-      this.database.connection.prepare("UPDATE cloud_preview SET snapshot_json=? WHERE id=?").run(JSON.stringify(snapshot), previewId);
+      if (!bindingCurrent())
+        throw new DesktopError("CONFLICT", "核对期间网盘授权已变化，请重新预览");
+      if (
+        this.closed ||
+        this.row(previewId)?.snapshot_json !== row.snapshot_json ||
+        this.row(previewId)?.state !== "READY" ||
+        row.expires_at <= new Date(this.now()).toISOString()
+      )
+        throw new DesktopError("CONFLICT", "核对期间原预览已变化，请刷新后重试");
+      this.database.connection
+        .prepare("UPDATE cloud_preview SET snapshot_json=? WHERE id=?")
+        .run(JSON.stringify(snapshot), previewId);
     };
   }
-  cancel(id: string) { this.libraries.get(id)?.cancel(); if (this.flights.has(id)) this.cancelled.add(id); this.database.connection.prepare("UPDATE cloud_preview SET state='EXPIRED' WHERE id=? AND state IN ('BUILDING','READY')").run(id); }
-  async close() { this.closed = true; for (const library of this.libraries.values()) library.cancel(); await Promise.allSettled([...this.flights.values()]); }
+  cancel(id: string) {
+    this.libraries.get(id)?.cancel();
+    if (this.flights.has(id)) this.cancelled.add(id);
+    this.database.connection
+      .prepare(
+        "UPDATE cloud_preview SET state='EXPIRED' WHERE id=? AND state IN ('BUILDING','READY')",
+      )
+      .run(id);
+  }
+  async close() {
+    this.closed = true;
+    for (const library of this.libraries.values()) library.cancel();
+    await Promise.allSettled([...this.flights.values()]);
+  }
 }

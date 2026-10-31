@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./internal/core": { "types": "./dist/internal/core.d.ts", "import": "./dist/internal/core.js" },
+    "./internal/core": {
+      "types": "./dist/internal/core.d.ts",
+      "import": "./dist/internal/core.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"

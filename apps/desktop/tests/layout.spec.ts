@@ -1,4 +1,11 @@
-import { expect, test, _electron, type ElectronApplication, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  _electron,
+  type ElectronApplication,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { mkdtemp, mkdir, realpath, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -8,9 +15,16 @@ let directory: string;
 
 test.beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "marshal-layout-"));
-  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`], env });
+  application = await _electron.launch({
+    args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
+    env,
+  });
 });
 
 test.afterEach(async () => {
@@ -20,23 +34,43 @@ test.afterEach(async () => {
 
 async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  const overflowing = await page.locator("main .panel, main input, main select, main textarea, main .button").evaluateAll((elements) => elements.filter((element) => {
-    const box = element.getBoundingClientRect();
-    return box.width > 0 && (box.right > innerWidth + 1 || box.left < 0);
-  }).map((element) => element.textContent?.slice(0, 60) || element.getAttribute("aria-label") || element.tagName));
+  const overflowing = await page
+    .locator("main .panel, main input, main select, main textarea, main .button")
+    .evaluateAll((elements) =>
+      elements
+        .filter((element) => {
+          const box = element.getBoundingClientRect();
+          return box.width > 0 && (box.right > innerWidth + 1 || box.left < 0);
+        })
+        .map(
+          (element) =>
+            element.textContent?.slice(0, 60) ||
+            element.getAttribute("aria-label") ||
+            element.tagName,
+        ),
+    );
   expect(overflowing).toEqual([]);
 }
 
 async function adjacentCheckboxes(scope: Locator) {
-  const gaps = await scope.locator('label:has(> input[type="checkbox"])').evaluateAll((labels) => labels.map((label) => {
-    const input = label.querySelector("input")!.getBoundingClientRect();
-    const text = Array.from(label.childNodes).find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
-    if (!text) throw new Error("此检查要求复选框标签包含直接文本");
-    const range = document.createRange();
-    range.selectNodeContents(text);
-    const caption = range.getBoundingClientRect();
-    return { width: input.width, height: input.height, gap: caption.left - input.right, offset: Math.abs(caption.top - input.top) };
-  }));
+  const gaps = await scope.locator('label:has(> input[type="checkbox"])').evaluateAll((labels) =>
+    labels.map((label) => {
+      const input = label.querySelector("input")!.getBoundingClientRect();
+      const text = Array.from(label.childNodes).find(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+      );
+      if (!text) throw new Error("此检查要求复选框标签包含直接文本");
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const caption = range.getBoundingClientRect();
+      return {
+        width: input.width,
+        height: input.height,
+        gap: caption.left - input.right,
+        offset: Math.abs(caption.top - input.top),
+      };
+    }),
+  );
   expect(gaps.length).toBeGreaterThan(0);
   for (const gap of gaps) {
     expect(gap.width).toBeGreaterThanOrEqual(16);
@@ -53,22 +87,39 @@ test("全部主导航与账号、设置在常用和最小窗口保持布局与�
   await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "主导航" });
   const links = await nav.getByRole("link").allTextContents();
-  const headings: Record<string, string> = { 总览: "让好内容，回到你的媒体库。", 来源: "来源同步", 待处理: "识别与人工确认" };
+  const headings: Record<string, string> = {
+    总览: "让好内容，回到你的媒体库。",
+    来源: "来源同步",
+    待处理: "识别与人工确认",
+  };
   for (const width of [1240, 920]) {
-    await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
+    await application.evaluate(
+      ({ BrowserWindow }, width) =>
+        BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820),
+      width,
+    );
     for (const name of links) {
       await nav.getByRole("link", { name: name.trim(), exact: true }).click();
       await expect(page.locator("main h1")).toHaveText(headings[name.trim()] ?? name.trim());
-      await expect(nav.getByRole("link", { name: name.trim(), exact: true })).toHaveAttribute("aria-current", "page");
+      await expect(nav.getByRole("link", { name: name.trim(), exact: true })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
       if (name.trim() === "设置") await expect(page.locator("#settings-emby-url")).toBeVisible();
       await page.evaluate(() => scrollTo(0, 0));
       await noOverflow(page);
-      await page.screenshot({ path: `test-results/desktop/layout-${width}-${new URL(page.url()).hash.slice(2) || "overview"}.png`, fullPage: true });
+      await page.screenshot({
+        path: `test-results/desktop/layout-${width}-${new URL(page.url()).hash.slice(2) || "overview"}.png`,
+        fullPage: true,
+      });
     }
     await nav.getByRole("link", { name: "网盘账号", exact: true }).click();
     await page.getByRole("button", { name: "连接夸克账号", exact: true }).click();
     await noOverflow(page);
-    await page.screenshot({ path: `test-results/desktop/layout-account-form-${width}.png`, fullPage: true });
+    await page.screenshot({
+      path: `test-results/desktop/layout-account-form-${width}.png`,
+      fullPage: true,
+    });
     await page.getByRole("button", { name: "取消", exact: true }).click();
   }
 });
@@ -79,16 +130,28 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   const page = await application.firstWindow();
   await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
   const canonical = await realpath(directory);
-  const input = join(canonical, "输入 中文_".repeat(12)), target = join(canonical, "下载目标 中文_".repeat(10)), media = join(canonical, "电影媒体目标 中文_".repeat(8));
+  const input = join(canonical, "输入 中文_".repeat(12)),
+    target = join(canonical, "下载目标 中文_".repeat(10)),
+    media = join(canonical, "电影媒体目标 中文_".repeat(8));
   for (const path of [input, target, media]) await mkdir(path);
-  await application.evaluate(({ dialog }, paths) => {
-    let index = 0;
-    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog;
-  }, [target, input, media]);
+  await application.evaluate(
+    ({ dialog }, paths) => {
+      let index = 0;
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: [paths[index++]!],
+      })) as typeof dialog.showOpenDialog;
+    },
+    [target, input, media],
+  );
   await page.evaluate(async () => {
     const directory = await window.desktopApi.chooseConfigurationDirectory("managed");
     const defaults = await window.desktopApi.getDefaultDownloadDirectory();
-    await window.desktopApi.setDefaultDownloadDirectory({ directoryId: directory!.id, expectedVersion: defaults.version, requestKey: crypto.randomUUID() });
+    await window.desktopApi.setDefaultDownloadDirectory({
+      directoryId: directory!.id,
+      expectedVersion: defaults.version,
+      requestKey: crypto.randomUUID(),
+    });
   });
   const nav = page.getByRole("navigation", { name: "主导航" });
   await nav.getByRole("link", { name: "来源", exact: true }).click();
@@ -97,19 +160,27 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click();
   for (let index = 1; index <= 2; index++) {
     await page.getByRole("button", { name: "添加过滤规则", exact: true }).click();
-    await page.getByLabel(`规则 ${index} 表达式`, { exact: true }).fill(index === 1 ? "目录/**/*.mp4" : "**");
+    await page
+      .getByLabel(`规则 ${index} 表达式`, { exact: true })
+      .fill(index === 1 ? "目录/**/*.mp4" : "**");
   }
   await page.getByLabel("规则 2 动作", { exact: true }).selectOption("exclude");
   await page.getByRole("checkbox", { name: "启用周期扫描", exact: true }).check();
   const form = page.getByRole("region", { name: "同步来源表单", exact: true });
   for (const width of [1240, 920]) {
-    await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
+    await application.evaluate(
+      ({ BrowserWindow }, width) =>
+        BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820),
+      width,
+    );
     await noOverflow(page);
     await adjacentCheckboxes(form);
     await page.screenshot({ path: `test-results/desktop/layout-sync-form-${width}.png` });
     const actions = form.getByRole("region", { name: "按顺序过滤文件", exact: true });
     const expression = await actions.getByLabel("规则 1 表达式").boundingBox();
-    const remove = await actions.getByRole("button", { name: "删除规则 1", exact: true }).boundingBox();
+    const remove = await actions
+      .getByRole("button", { name: "删除规则 1", exact: true })
+      .boundingBox();
     expect(expression!.width).toBeGreaterThan(180);
     expect(remove!.y).toBeGreaterThanOrEqual(expression!.y);
   }
@@ -124,29 +195,48 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await page.getByRole("button", { name: "关闭同步表单", exact: true }).click();
   await page.getByRole("button", { name: "放弃修改", exact: true }).click();
   await page.evaluate(async (target) => {
-    const directory = (await window.desktopApi.listConfigurationDirectories()).find((row) => row.path === target)!;
+    const directory = (await window.desktopApi.listConfigurationDirectories()).find(
+      (row) => row.path === target,
+    )!;
     const defaults = await window.desktopApi.getDefaultDownloadDirectory();
-    await window.desktopApi.setDefaultDownloadDirectory({ directoryId: directory.id, expectedVersion: defaults.version, requestKey: crypto.randomUUID() });
+    await window.desktopApi.setDefaultDownloadDirectory({
+      directoryId: directory.id,
+      expectedVersion: defaults.version,
+      requestKey: crypto.randomUUID(),
+    });
     await window.desktopApi.chooseMediaTarget("MOVIE");
   }, target);
   await nav.getByRole("link", { name: "识别与映射", exact: true }).click();
   await page.getByRole("button", { name: "添加识别规则", exact: true }).click();
   await page.getByLabel("识别规则名称").fill("布局检查：电影与剧集映射");
-  await expect(page.getByRole("region", { name: "按媒体类型映射", exact: true })).toContainText(media);
-  await expect(page.getByRole("region", { name: "按媒体类型映射", exact: true })).toContainText("尚未设置媒体库目录");
+  await expect(page.getByRole("region", { name: "按媒体类型映射", exact: true })).toContainText(
+    media,
+  );
+  await expect(page.getByRole("region", { name: "按媒体类型映射", exact: true })).toContainText(
+    "尚未设置媒体库目录",
+  );
   await expect(page.getByRole("button", { name: "添加映射目标目录", exact: true })).toHaveCount(0);
   await page.getByRole("checkbox", { name: "启用有条件自动整理策略", exact: true }).check();
   const recognition = page.getByRole("region", { name: "识别规则表单", exact: true });
   for (const width of [1240, 920]) {
-    await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820), width);
+    await application.evaluate(
+      ({ BrowserWindow }, width) =>
+        BrowserWindow.getAllWindows()[0]!.setSize(width, width === 920 ? 640 : 820),
+      width,
+    );
     await noOverflow(page);
     await adjacentCheckboxes(recognition);
     await page.screenshot({ path: `test-results/desktop/layout-recognition-form-${width}.png` });
   }
   await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click();
-  await expect(page.getByRole("region", { name: "识别配置范围预览", exact: true })).toContainText("待确认范围");
+  await expect(page.getByRole("region", { name: "识别配置范围预览", exact: true })).toContainText(
+    "待确认范围",
+  );
   await noOverflow(page);
-  const card = page.getByRole("article", { name: "识别规则 布局检查：电影与剧集映射", exact: true });
+  const card = page.getByRole("article", {
+    name: "识别规则 布局检查：电影与剧集映射",
+    exact: true,
+  });
   await card.screenshot({ path: "test-results/desktop/layout-recognition-card-920.png" });
   await card.getByRole("button", { name: "编辑并预览识别规则", exact: true }).click();
   await expect(page.getByLabel("识别规则名称")).toHaveValue("布局检查：电影与剧集映射");
@@ -162,7 +252,9 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await expect(scans.getByText("扫描完成", { exact: true })).toBeVisible();
   await expect(scans).toContainText("本次核对媒体项 0");
   await scans.getByRole("button", { name: "重新扫描", exact: true }).click();
-  await expect.poll(async () => (await page.evaluate(() => window.desktopApi.listIngestionScans({}))).total).toBe(2);
+  await expect
+    .poll(async () => (await page.evaluate(() => window.desktopApi.listIngestionScans({}))).total)
+    .toBe(2);
   await scans.screenshot({ path: "test-results/desktop/recognition-rescan-panel-920.png" });
 
   await updatedCard.getByRole("button", { name: "编辑并预览识别规则", exact: true }).click();
@@ -170,7 +262,10 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await page.getByLabel("识别规则名称").fill("第二次编辑的识别规则");
   await page.getByRole("button", { name: "保存识别草稿并预览", exact: true }).click();
   const ruleId = (await page.evaluate(() => window.desktopApi.listRecognitionRules()))[0]!.id;
-  const editedCard = page.getByRole("article", { name: "识别规则 第二次编辑的识别规则", exact: true });
+  const editedCard = page.getByRole("article", {
+    name: "识别规则 第二次编辑的识别规则",
+    exact: true,
+  });
   await editedCard.getByRole("button", { name: "暂停此识别规则", exact: true }).click();
   const preview = page.getByRole("region", { name: "识别配置范围预览", exact: true });
   await expect(preview.getByRole("button", { name: "编辑并重新预览", exact: true })).toBeVisible();
@@ -183,93 +278,149 @@ test("同步和识别表单的长路径、分组、复选文字与过滤行适�
   await expect(page.getByRole("region", { name: "首次样本自动授权", exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
-  await page.evaluate((hash) => { location.hash = hash; }, staleLink);
+  await page.evaluate((hash) => {
+    location.hash = hash;
+  }, staleLink);
   await expect.poll(() => new URL(page.url()).hash).toBe("#/recognition");
   await expect(recognition).toHaveCount(0);
   await expect(preview).toHaveCount(0);
   await page.evaluate(() => scrollTo(0, 0));
-  await page.screenshot({ path: "test-results/desktop/layout-recognition-deleted-920.png", fullPage: true });
+  await page.screenshot({
+    path: "test-results/desktop/layout-recognition-deleted-920.png",
+    fullPage: true,
+  });
   await page.locator(".recognition-archive > summary").click();
   await page.getByRole("button", { name: "恢复已删除识别规则", exact: true }).click();
   await expect(editedCard).toContainText("识别已暂停");
-  expect((await page.evaluate(() => window.desktopApi.listRecognitionRules()))[0]).toMatchObject({ id: ruleId, paused: true, deletedAt: null });
+  expect((await page.evaluate(() => window.desktopApi.listRecognitionRules()))[0]).toMatchObject({
+    id: ruleId,
+    paused: true,
+    deletedAt: null,
+  });
   expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
-  expect(await page.evaluate(() => window.desktopApi.listTasks({ page: 1, pageSize: 100 }))).toMatchObject({ total: 0 });
+  expect(
+    await page.evaluate(() => window.desktopApi.listTasks({ page: 1, pageSize: 100 })),
+  ).toMatchObject({ total: 0 });
 });
-
 
 test("全新来源删除后直接移除信息，重载和旧链接不再显示，保留原文件且不创建文件任务", async () => {
   test.skip(process.platform !== "darwin");
   const page = await application.firstWindow();
   await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
-  const canonical = await realpath(directory), input = join(canonical, "保留原文件"), target = join(canonical, "下载目标");
-  await mkdir(input); await mkdir(target); await writeFile(join(input, "原片.mp4"), "删除来源不能修改原文件");
-  await application.evaluate(({ dialog }, paths) => { let index = 0; dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths[index++]!] })) as typeof dialog.showOpenDialog; }, [input, target]);
-  await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "来源", exact: true }).click();
+  const canonical = await realpath(directory),
+    input = join(canonical, "保留原文件"),
+    target = join(canonical, "下载目标");
+  await mkdir(input);
+  await mkdir(target);
+  await writeFile(join(input, "原片.mp4"), "删除来源不能修改原文件");
+  await application.evaluate(
+    ({ dialog }, paths) => {
+      let index = 0;
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: [paths[index++]!],
+      })) as typeof dialog.showOpenDialog;
+    },
+    [input, target],
+  );
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "来源", exact: true })
+    .click();
   await page.getByRole("button", { name: "添加同步来源", exact: true }).click();
   await page.getByLabel("来源名称", { exact: true }).fill("全新来源删除验证");
   await page.getByRole("button", { name: "选择本地输入目录", exact: true }).click();
   await page.evaluate(async () => {
     const target = await window.desktopApi.chooseConfigurationDirectory("managed");
-    await window.desktopApi.setDefaultDownloadDirectory({ directoryId: target!.id, expectedVersion: 0, requestKey: crypto.randomUUID() });
+    await window.desktopApi.setDefaultDownloadDirectory({
+      directoryId: target!.id,
+      expectedVersion: 0,
+      requestKey: crypto.randomUUID(),
+    });
   });
   await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
   await page.getByRole("button", { name: "确认配置范围", exact: true }).click();
   const card = page.getByRole("article", { name: "同步来源 全新来源删除验证", exact: true });
   await card.getByRole("button", { name: "暂停来源同步", exact: true }).click();
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.setSize(920, 640),
+  );
   await card.getByRole("button", { name: "删除同步来源…", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "删除同步来源", exact: true });
   await expect(dialog.getByRole("button", { name: "取消", exact: true })).toBeFocused();
-  await page.keyboard.press("Escape"); await expect(dialog).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
   await expect(card.getByRole("button", { name: "删除同步来源…", exact: true })).toBeFocused();
   await card.getByRole("button", { name: "删除同步来源…", exact: true }).click();
   await dialog.screenshot({ path: "test-results/desktop/sync-remove-confirm.png" });
   await dialog.getByRole("button", { name: "确认删除同步来源", exact: true }).click();
-  await expect(dialog).toHaveCount(0); await expect(card).toHaveCount(0);
+  await expect(dialog).toHaveCount(0);
+  await expect(card).toHaveCount(0);
   await expect(page.getByRole("region", { name: "同步预览", exact: true })).toHaveCount(0);
-  await page.reload(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.desktopApi.listSyncSources())).toEqual([]);
-  const deleted = (await page.evaluate(() => window.desktopApi.listSyncSources({ includeDeleted: true })))[0]!;
-  expect(deleted).toMatchObject({ paused: true, runtime: { claimed: true } }); expect(deleted.deletedAt).not.toBeNull();
+  const deleted = (
+    await page.evaluate(() => window.desktopApi.listSyncSources({ includeDeleted: true }))
+  )[0]!;
+  expect(deleted).toMatchObject({ paused: true, runtime: { claimed: true } });
+  expect(deleted.deletedAt).not.toBeNull();
   await expect(page.getByText("已删除同步来源", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "恢复已删除来源", exact: true })).toHaveCount(0);
   await expect(page.getByText("全新来源删除验证", { exact: true })).toHaveCount(0);
-  await page.evaluate((id) => { window.location.hash = `/sources?source=${id}`; }, deleted.id);
-  await page.reload(); await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
+  await page.evaluate((id) => {
+    window.location.hash = `/sources?source=${id}`;
+  }, deleted.id);
+  await page.reload();
+  await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "添加同步来源", exact: true })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "编辑同步来源", exact: true })).toHaveCount(0);
   await expect(card).toHaveCount(0);
   expect(await readFile(join(input, "原片.mp4"), "utf8")).toBe("删除来源不能修改原文件");
   await page.screenshot({ path: "test-results/desktop/sync-removed.png", fullPage: true });
   expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
-  expect(await page.evaluate(() => window.desktopApi.listDownloads({ page: 1, pageSize: 25 }))).toMatchObject({ total: 0 });
-  expect(await page.evaluate(() => window.desktopApi.listTasks({ page: 1, pageSize: 100 }))).toMatchObject({ total: 0 });
+  expect(
+    await page.evaluate(() => window.desktopApi.listDownloads({ page: 1, pageSize: 25 })),
+  ).toMatchObject({ total: 0 });
+  expect(
+    await page.evaluate(() => window.desktopApi.listTasks({ page: 1, pageSize: 100 })),
+  ).toMatchObject({ total: 0 });
 });
 
 test("编辑抽屉隔离背景、保护草稿并恢复焦点", async () => {
   const page = await application.firstWindow();
   await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
-  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));
-  await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "来源", exact: true }).click();
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.setSize(920, 640),
+  );
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "来源", exact: true })
+    .click();
   const trigger = page.getByRole("button", { name: "添加同步来源", exact: true });
   await trigger.click();
   const drawer = page.getByRole("dialog", { name: "添加同步来源", exact: true });
   await expect(page.getByLabel("来源名称", { exact: true })).toBeFocused();
-  await expect(drawer.getByRole("button", { name: "保存草稿并预览", exact: true })).toBeInViewport();
+  await expect(
+    drawer.getByRole("button", { name: "保存草稿并预览", exact: true }),
+  ).toBeInViewport();
   await page.keyboard.press("Escape");
-  await expect(drawer).toHaveCount(0); await expect(trigger).toBeFocused();
-  await trigger.click(); await page.getByLabel("来源名称", { exact: true }).fill("未保存的来源");
+  await expect(drawer).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.getByLabel("来源名称", { exact: true }).fill("未保存的来源");
   await page.keyboard.press("Escape");
   const confirm = page.getByRole("dialog", { name: "放弃未保存的修改？", exact: true });
   await expect(confirm.getByRole("button", { name: "继续编辑" })).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(confirm).toHaveCount(0); await expect(page.getByLabel("来源名称", { exact: true })).toHaveValue("未保存的来源");
+  await expect(confirm).toHaveCount(0);
+  await expect(page.getByLabel("来源名称", { exact: true })).toHaveValue("未保存的来源");
   await drawer.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
   await expect(drawer.getByRole("alert")).toContainText("请选择本地输入目录");
   await expect(drawer.getByRole("alert")).toBeInViewport();
   await page.screenshot({ path: "test-results/desktop/drawer-validation-920.png" });
   await drawer.getByRole("button", { name: "关闭同步表单", exact: true }).click();
   await confirm.getByRole("button", { name: "放弃修改", exact: true }).click();
-  await expect(drawer).toHaveCount(0); await expect(trigger).toBeFocused();
+  await expect(drawer).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 });

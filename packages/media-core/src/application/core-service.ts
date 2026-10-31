@@ -20,17 +20,15 @@ import { embyFailureMessage } from "../ingestion/emby-failure.js";
 import { pathsOverlap } from "../files/index.js";
 import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
 
-export const DatabaseToken = createIdentifier<CoreDatabase>(
-  "media-core.database",
-);
-export interface CoreComponents { parserReady(): boolean; correctionFilesReady?(): boolean }
+export const DatabaseToken = createIdentifier<CoreDatabase>("media-core.database");
+export interface CoreComponents {
+  parserReady(): boolean;
+  correctionFilesReady?(): boolean;
+}
 export const ComponentsToken = createIdentifier<CoreComponents>("media-core.components");
 function contains(parent: string, child: string): boolean {
   const rest = relative(parent, child);
-  return (
-    rest === "" ||
-    (rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest))
-  );
+  return rest === "" || (rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest));
 }
 interface SourceRow {
   mode?: "local" | "managed";
@@ -50,7 +48,8 @@ interface SourceRow {
 function sourceDto(row: SourceRow): DesktopSource {
   return sourceSchema.parse({
     id: row.id,
-    mode: row.mode ?? "local", downloadRootId: row.download_root_id ?? null,
+    mode: row.mode ?? "local",
+    downloadRootId: row.download_root_id ?? null,
     name: row.name,
     kind: row.kind,
     sourcePath: row.source_path,
@@ -68,37 +67,79 @@ function sourceDto(row: SourceRow): DesktopSource {
 @injectable()
 export class CoreService {
   private accepting = true;
-  constructor(@inject(DatabaseToken) private readonly database: CoreDatabase, @inject(ComponentsToken) private readonly components: CoreComponents = { parserReady: () => false }) {}
+  constructor(
+    @inject(DatabaseToken) private readonly database: CoreDatabase,
+    @inject(ComponentsToken)
+    private readonly components: CoreComponents = { parserReady: () => false },
+  ) {}
   quiesce(): void {
     this.accepting = false;
   }
   private writable(): void {
     if (!this.accepting)
-      throw new DesktopError(
-        "INTERRUPTED",
-        "核心正在停止，尚未接收此操作",
-        true,
-      );
+      throw new DesktopError("INTERRUPTED", "核心正在停止，尚未接收此操作", true);
   }
   private checkManagedRoots(paths: string[]) {
-    const roots = this.database.connection.prepare("SELECT canonical_path,volume_identity FROM managed_download_root").all() as { canonical_path: string; volume_identity: string }[];
-    if (roots.some((root) => paths.some((path) => pathsOverlap(root.canonical_path, path, JSON.parse(root.volume_identity) as ManagedRootGrant["volume"])))) throw new DesktopError("UNSAFE_PATH", "目录与受管下载目录重叠");
-    const targets = this.database.connection.prepare("SELECT grant_json FROM media_target_root").all() as { grant_json: string }[];
-    if (targets.some((row) => { const grant = JSON.parse(row.grant_json) as ManagedRootGrant; return pathsOverlap(paths[0]!, grant.path, grant.volume) || (paths[1] !== grant.path && pathsOverlap(paths[1]!, grant.path, grant.volume)); })) throw new DesktopError("UNSAFE_PATH", "目录与媒体目标或历史操作目录重叠");
+    const roots = this.database.connection
+      .prepare("SELECT canonical_path,volume_identity FROM managed_download_root")
+      .all() as { canonical_path: string; volume_identity: string }[];
+    if (
+      roots.some((root) =>
+        paths.some((path) =>
+          pathsOverlap(
+            root.canonical_path,
+            path,
+            JSON.parse(root.volume_identity) as ManagedRootGrant["volume"],
+          ),
+        ),
+      )
+    )
+      throw new DesktopError("UNSAFE_PATH", "目录与受管下载目录重叠");
+    const targets = this.database.connection
+      .prepare("SELECT grant_json FROM media_target_root")
+      .all() as { grant_json: string }[];
+    if (
+      targets.some((row) => {
+        const grant = JSON.parse(row.grant_json) as ManagedRootGrant;
+        return (
+          pathsOverlap(paths[0]!, grant.path, grant.volume) ||
+          (paths[1] !== grant.path && pathsOverlap(paths[1]!, grant.path, grant.volume))
+        );
+      })
+    )
+      throw new DesktopError("UNSAFE_PATH", "目录与媒体目标或历史操作目录重叠");
   }
   getRuntime(): CoreStatus {
     const count = (table: "source_rule" | "media_task") =>
       (
         this.database.connection
-          .prepare(`SELECT count(*) AS count FROM ${table}${table === "source_rule" ? " WHERE deleted_at IS NULL" : ""}`)
+          .prepare(
+            `SELECT count(*) AS count FROM ${table}${table === "source_rule" ? " WHERE deleted_at IS NULL" : ""}`,
+          )
           .get() as { count: number }
       ).count;
     return {
       schemaVersion: this.database.schemaVersion,
-      sourceCount: (this.database.connection.prepare("SELECT count(*) AS n FROM (SELECT id FROM sync_source_rule WHERE deleted_at IS NULL UNION SELECT s.id FROM source_rule s WHERE s.deleted_at IS NULL AND (s.type='cloud' OR NOT EXISTS(SELECT 1 FROM legacy_configuration_owner o WHERE o.source_id=s.id AND o.recognition_claimed=1)))").get() as { n: number }).n,
-      recognitionCount: (this.database.connection.prepare("SELECT count(*) AS n FROM recognition_rule WHERE deleted_at IS NULL").get() as { n: number }).n,
+      sourceCount: (
+        this.database.connection
+          .prepare(
+            "SELECT count(*) AS n FROM (SELECT id FROM sync_source_rule WHERE deleted_at IS NULL UNION SELECT s.id FROM source_rule s WHERE s.deleted_at IS NULL AND (s.type='cloud' OR NOT EXISTS(SELECT 1 FROM legacy_configuration_owner o WHERE o.source_id=s.id AND o.recognition_claimed=1)))",
+          )
+          .get() as { n: number }
+      ).n,
+      recognitionCount: (
+        this.database.connection
+          .prepare("SELECT count(*) AS n FROM recognition_rule WHERE deleted_at IS NULL")
+          .get() as { n: number }
+      ).n,
       taskCount: count("media_task"),
-      mode: this.database.connection.prepare("SELECT 1 FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.deleted_at IS NULL AND s.review_required=0 AND json_extract(v.configuration_json,'$.organization.automatic')=1 AND NOT EXISTS(SELECT 1 FROM legacy_configuration_owner o WHERE o.source_id=s.id AND o.recognition_claimed=1) UNION ALL SELECT 1 FROM recognition_rule r JOIN recognition_runtime t ON t.rule_id=r.id JOIN recognition_rule_version v ON v.rule_id=r.id AND v.version=r.version JOIN recognition_automatic_consent c ON c.rule_id=r.id AND c.rule_version=r.version WHERE r.deleted_at IS NULL AND t.claimed=1 AND json_extract(v.snapshot_json,'$.configuration.automatic')=1 LIMIT 1").get() ? "automatic-enabled" : "manual-only",
+      mode: this.database.connection
+        .prepare(
+          "SELECT 1 FROM source_rule s JOIN source_rule_version v ON v.source_id=s.id AND v.version=s.version WHERE s.deleted_at IS NULL AND s.review_required=0 AND json_extract(v.configuration_json,'$.organization.automatic')=1 AND NOT EXISTS(SELECT 1 FROM legacy_configuration_owner o WHERE o.source_id=s.id AND o.recognition_claimed=1) UNION ALL SELECT 1 FROM recognition_rule r JOIN recognition_runtime t ON t.rule_id=r.id JOIN recognition_rule_version v ON v.rule_id=r.id AND v.version=r.version JOIN recognition_automatic_consent c ON c.rule_id=r.id AND c.rule_version=r.version WHERE r.deleted_at IS NULL AND t.claimed=1 AND json_extract(v.snapshot_json,'$.configuration.automatic')=1 LIMIT 1",
+        )
+        .get()
+        ? "automatic-enabled"
+        : "manual-only",
       parser: this.components.parserReady() ? "ready" : "unavailable",
       correctionFiles: this.components.correctionFilesReady?.() ? "ready" : "unavailable",
     };
@@ -114,7 +155,15 @@ export class CoreService {
   }
   async saveSource(input: SourceDraft): Promise<DesktopSource> {
     this.writable();
-    if (input.id && this.database.connection.prepare("SELECT 1 FROM source_rule_version WHERE local_source_id=? OR ingestion_source_id=? LIMIT 1").get(input.id, input.id)) throw new DesktopError("CONFLICT", "请通过统一来源配置修改此规则");
+    if (
+      input.id &&
+      this.database.connection
+        .prepare(
+          "SELECT 1 FROM source_rule_version WHERE local_source_id=? OR ingestion_source_id=? LIMIT 1",
+        )
+        .get(input.id, input.id)
+    )
+      throw new DesktopError("CONFLICT", "请通过统一来源配置修改此规则");
     if (
       !isAbsolute(input.sourcePath) ||
       !isAbsolute(input.targetPath) ||
@@ -128,19 +177,12 @@ export class CoreService {
         realpath(input.sourcePath),
         realpath(input.targetPath),
       ]);
-      if (
-        !(await stat(sourcePath)).isDirectory() ||
-        !(await stat(targetPath)).isDirectory()
-      )
+      if (!(await stat(sourcePath)).isDirectory() || !(await stat(targetPath)).isDirectory())
         throw new Error();
       await access(sourcePath, constants.R_OK);
       await access(targetPath, constants.W_OK);
     } catch {
-      throw new DesktopError(
-        "UNSAFE_PATH",
-        "目录不可访问，请检查挂载或重新选择",
-        true,
-      );
+      throw new DesktopError("UNSAFE_PATH", "目录不可访问，请检查挂载或重新选择", true);
     }
     if (contains(sourcePath, targetPath) || contains(targetPath, sourcePath))
       throw new DesktopError("UNSAFE_PATH", "来源与目标不能相同或互相包含");
@@ -189,16 +231,8 @@ export class CoreService {
         .prepare(
           "UPDATE desktop_source SET name=?, kind=?, source_path=?, target_path=?, media_type=?, version=version+1 WHERE id=?",
         )
-        .run(
-          input.name,
-          input.kind,
-          sourcePath,
-          targetPath,
-          input.mediaType,
-          id,
-        );
-      if (!result.changes)
-        throw new DesktopError("CONFLICT", "来源已不存在，请刷新");
+        .run(input.name, input.kind, sourcePath, targetPath, input.mediaType, id);
+      if (!result.changes) throw new DesktopError("CONFLICT", "来源已不存在，请刷新");
     } else {
       if (this.listSources().length >= 1000)
         throw new DesktopError("CONFLICT", "来源数量已达到上限");
@@ -215,15 +249,18 @@ export class CoreService {
         new Date().toISOString(),
       );
     }
-    return sourceDto(
-      db
-        .prepare("SELECT * FROM desktop_source WHERE id=?")
-        .get(id) as SourceRow,
-    );
+    return sourceDto(db.prepare("SELECT * FROM desktop_source WHERE id=?").get(id) as SourceRow);
   }
   pauseSource(id: string, paused: boolean): DesktopSource {
     this.writable();
-    if (this.database.connection.prepare("SELECT 1 FROM source_rule WHERE local_source_id=? OR ingestion_source_id=? LIMIT 1").get(id, id)) throw new DesktopError("CONFLICT", "请通过统一来源控制暂停状态");
+    if (
+      this.database.connection
+        .prepare(
+          "SELECT 1 FROM source_rule WHERE local_source_id=? OR ingestion_source_id=? LIMIT 1",
+        )
+        .get(id, id)
+    )
+      throw new DesktopError("CONFLICT", "请通过统一来源控制暂停状态");
     if (
       !this.database.connection
         .prepare("UPDATE desktop_source SET paused=? WHERE id=?")
@@ -252,8 +289,8 @@ export class CoreService {
         url.username ||
         url.password ||
         url.search ||
-        url.hash
-        || (address === input.tmdbProxy && url.pathname !== "/")
+        url.hash ||
+        (address === input.tmdbProxy && url.pathname !== "/")
       )
         throw new DesktopError(
           "INVALID_REQUEST",
@@ -279,13 +316,21 @@ export class CoreService {
       .prepare(
         `SELECT id,source_id AS sourceId,coalesce((SELECT json_extract(o.plan_json,'$.recognitionSnapshot.ruleId') FROM ingestion_operation o WHERE o.task_id=media_task.id),(SELECT x.rule_id FROM media_correction_operation o JOIN recognition_target_identity x ON x.id=json_extract(o.plan_json,'$.logicalTargetId') WHERE o.new_task_id=media_task.id),(SELECT ri.rule_id FROM recognition_input ri WHERE ri.source_id=media_task.source_id)) AS recognitionRuleId,source_path AS sourcePath,title,status,delivery_status AS deliveryStatus,target_path AS targetPath,corrected_from_id AS correctedFromId,corrected_to_id AS correctedToId,(SELECT o.id FROM media_correction_operation o WHERE (o.original_task_id=media_task.id OR o.new_task_id=media_task.id) AND (o.phase!='RECORDED' OR EXISTS(SELECT 1 FROM app_setting s WHERE s.key='correction.restore.audit.'||o.id)) ORDER BY o.created_at DESC LIMIT 1) AS activeCorrectionId,updated_at AS updatedAt FROM media_task${where} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`,
       )
-      .all(
-        ...params,
-        input.pageSize,
-        (input.page - 1) * input.pageSize,
-      ) as TaskPage["items"];
-    const delivery = this.database.connection.prepare("SELECT last_failure FROM emby_delivery WHERE task_id=?");
-    return { items: items.map((item) => { const failure = delivery.get(item.id) as { last_failure: string | null } | undefined; return failure?.last_failure ? { ...item, deliveryFailure: embyFailureMessage(failure.last_failure) } : item; }), total, page: input.page, pageSize: input.pageSize };
+      .all(...params, input.pageSize, (input.page - 1) * input.pageSize) as TaskPage["items"];
+    const delivery = this.database.connection.prepare(
+      "SELECT last_failure FROM emby_delivery WHERE task_id=?",
+    );
+    return {
+      items: items.map((item) => {
+        const failure = delivery.get(item.id) as { last_failure: string | null } | undefined;
+        return failure?.last_failure
+          ? { ...item, deliveryFailure: embyFailureMessage(failure.last_failure) }
+          : item;
+      }),
+      total,
+      page: input.page,
+      pageSize: input.pageSize,
+    };
   }
   listJobs(): DesktopJob[] {
     return this.database.connection

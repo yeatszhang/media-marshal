@@ -7,7 +7,9 @@ import { createInterface } from "node:readline";
 import { existsSync, statfsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
-const { identify, matches, children } = createRequire(import.meta.url)("../tools/desktop-sidecars/process-identity.cjs");
+const { identify, matches, children } = createRequire(import.meta.url)(
+  "../tools/desktop-sidecars/process-identity.cjs",
+);
 import { performance } from "node:perf_hooks";
 
 if (platform() !== "darwin")
@@ -30,37 +32,78 @@ let osMetrics;
 function processSnapshot(mainPid) {
   const main = identify(mainPid);
   if (!main || !main.command.includes(temporary)) throw new Error("测量主进程归属未确认");
-  const owned = new Map(), queue = [main];
+  const owned = new Map(),
+    queue = [main];
   for (const entry of queue) {
     if (owned.has(entry.pid)) continue;
-    if (owned.size >= 128 || !matches(entry, entry.command)) throw new Error("测量进程树变化，请重试本次测量");
-    owned.set(entry.pid, entry); queue.push(...children(entry.pid));
+    if (owned.size >= 128 || !matches(entry, entry.command))
+      throw new Error("测量进程树变化，请重试本次测量");
+    owned.set(entry.pid, entry);
+    queue.push(...children(entry.pid));
   }
-  const rows = execFileSync("/bin/ps", ["-p", [...owned.keys()].join(","), "-o", "pid=", "-o", "time=", "-o", "rss="], { encoding: "utf8", timeout: 3000 }).trim().split("\n").map(line => {
-    const [pid, time, rss] = line.trim().split(/\s+/), entry = owned.get(Number(pid));
-    if (!entry || !matches(entry, entry.command) || !/^(?:\d+:){1,2}\d+(?:\.\d+)?$/.test(time) || !/^\d+$/.test(rss)) throw new Error("测量进程指标无法核对");
-    return { identity: entry, cpuMs: time.split(":").reduce((total, value) => total * 60 + Number(value), 0) * 1000, residentKiB: Number(rss) };
-  });
+  const rows = execFileSync(
+    "/bin/ps",
+    ["-p", [...owned.keys()].join(","), "-o", "pid=", "-o", "time=", "-o", "rss="],
+    { encoding: "utf8", timeout: 3000 },
+  )
+    .trim()
+    .split("\n")
+    .map((line) => {
+      const [pid, time, rss] = line.trim().split(/\s+/),
+        entry = owned.get(Number(pid));
+      if (
+        !entry ||
+        !matches(entry, entry.command) ||
+        !/^(?:\d+:){1,2}\d+(?:\.\d+)?$/.test(time) ||
+        !/^\d+$/.test(rss)
+      )
+        throw new Error("测量进程指标无法核对");
+      return {
+        identity: entry,
+        cpuMs: time.split(":").reduce((total, value) => total * 60 + Number(value), 0) * 1000,
+        residentKiB: Number(rss),
+      };
+    });
   if (rows.length !== owned.size) throw new Error("测量期间进程树变化，请重试本次测量");
   return { at: performance.now(), rows };
 }
 function compareProcesses(before, after) {
   const elapsed = after.at - before.at;
-  const rows = after.rows.map(row => {
-    const previous = before.rows.find(old => old.identity.pid === row.identity.pid && old.identity.created === row.identity.created && old.identity.command === row.identity.command);
-    const metric = metrics.find(item => item.pid === row.identity.pid);
-    return { name: metric?.name ?? (row.identity.command.includes(parserExecutable) ? "冻结解析器" : "其他自有子进程"), cpuPercent: previous && row.cpuMs >= previous.cpuMs ? Math.round((row.cpuMs - previous.cpuMs) / elapsed * 10000) / 100 : null, residentKiB: row.residentKiB };
+  const rows = after.rows.map((row) => {
+    const previous = before.rows.find(
+      (old) =>
+        old.identity.pid === row.identity.pid &&
+        old.identity.created === row.identity.created &&
+        old.identity.command === row.identity.command,
+    );
+    const metric = metrics.find((item) => item.pid === row.identity.pid);
+    return {
+      name:
+        metric?.name ??
+        (row.identity.command.includes(parserExecutable) ? "冻结解析器" : "其他自有子进程"),
+      cpuPercent:
+        previous && row.cpuMs >= previous.cpuMs
+          ? Math.round(((row.cpuMs - previous.cpuMs) / elapsed) * 10000) / 100
+          : null,
+      residentKiB: row.residentKiB,
+    };
   });
-  if (!rows.some(row => row.name === "冻结解析器")) throw new Error("当前 Core 的冻结解析器未进入进程树采样");
-  return { intervalMs: Math.round(elapsed), processes: rows, totalCpuPercent: rows.every(row => row.cpuPercent !== null) ? rows.reduce((sum, row) => sum + row.cpuPercent, 0) : null, totalResidentMiB: Math.round(rows.reduce((sum, row) => sum + row.residentKiB, 0) / 1024 * 100) / 100 };
+  if (!rows.some((row) => row.name === "冻结解析器"))
+    throw new Error("当前 Core 的冻结解析器未进入进程树采样");
+  return {
+    intervalMs: Math.round(elapsed),
+    processes: rows,
+    totalCpuPercent: rows.every((row) => row.cpuPercent !== null)
+      ? rows.reduce((sum, row) => sum + row.cpuPercent, 0)
+      : null,
+    totalResidentMiB:
+      Math.round((rows.reduce((sum, row) => sum + row.residentKiB, 0) / 1024) * 100) / 100,
+  };
 }
 function distribution(values) {
   const sorted = [...values].sort((a, b) => a - b);
   const percentile = (q) =>
-    Math.round(
-      sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)] *
-        100,
-    ) / 100;
+    Math.round(sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)] * 100) / 100;
   return {
     samplesMs: values.map((value) => Math.round(value * 100) / 100),
     n: values.length,
@@ -84,19 +127,18 @@ async function launch(dataDirectory, capture = false) {
     const duration = performance.now() - start;
     if (capture) {
       await application.evaluate(({ app }) => app.getAppMetrics());
-      const mainPid = await application.evaluate(() => process.pid), before = processSnapshot(mainPid);
+      const mainPid = await application.evaluate(() => process.pid),
+        before = processSnapshot(mainPid);
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const after = processSnapshot(mainPid);
       metrics = await application.evaluate(({ app }) =>
-        app
-          .getAppMetrics()
-          .map((metric) => ({
-            pid: metric.pid,
-            type: metric.type,
-            name: metric.name ?? metric.serviceName ?? metric.type,
-            cpuPercent: metric.cpu.percentCPUUsage,
-            workingSetKiB: metric.memory.workingSetSize,
-          })),
+        app.getAppMetrics().map((metric) => ({
+          pid: metric.pid,
+          type: metric.type,
+          name: metric.name ?? metric.serviceName ?? metric.type,
+          cpuPercent: metric.cpu.percentCPUUsage,
+          workingSetKiB: metric.memory.workingSetSize,
+        })),
       );
       osMetrics = compareProcesses(before, after);
     }
@@ -111,7 +153,7 @@ async function parserBenchmark() {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...env, PATH: "", PYTHONHOME: "", PYTHONPATH: "" },
   });
-  const closed = new Promise(resolve => process.once("close", resolve));
+  const closed = new Promise((resolve) => process.once("close", resolve));
   const lines = createInterface({ input: process.stdout });
   let sequence = 0;
   const pending = new Map();
@@ -159,9 +201,7 @@ async function parserBenchmark() {
       const start = performance.now();
       await request(
         "parse",
-        index % 2
-          ? "Breaking.Bad.S03E07.1080p.mkv"
-          : "The.Dark.Knight.2008.1080p.BluRay.x264.mkv",
+        index % 2 ? "Breaking.Bad.S03E07.1080p.mkv" : "The.Dark.Knight.2008.1080p.BluRay.x264.mkv",
       );
       samples.push(performance.now() - start);
     }
@@ -173,8 +213,14 @@ async function parserBenchmark() {
   } finally {
     lines.close();
     process.stdin.end();
-    const deadline = setTimeout(() => { if (process.exitCode === null && process.signalCode === null) process.kill("SIGKILL"); }, 1000);
-    try { await closed; } finally { clearTimeout(deadline); }
+    const deadline = setTimeout(() => {
+      if (process.exitCode === null && process.signalCode === null) process.kill("SIGKILL");
+    }, 1000);
+    try {
+      await closed;
+    } finally {
+      clearTimeout(deadline);
+    }
   }
 }
 async function activationBenchmark() {
@@ -189,15 +235,12 @@ async function activationBenchmark() {
     const page = await application.firstWindow();
     await page.getByText("核心已连接", { exact: true }).waitFor();
     for (let index = 0; index < 5; index++) {
-      await application.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].hide(),
-      );
+      await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide());
       const start = performance.now();
-      const secondary = spawn(
-        executable,
-        [`--user-data-dir=${dataDirectory}`],
-        { env, stdio: "ignore" },
-      );
+      const secondary = spawn(executable, [`--user-data-dir=${dataDirectory}`], {
+        env,
+        stdio: "ignore",
+      });
       const exited = new Promise((resolve) => secondary.once("exit", resolve));
       const timer = setTimeout(() => secondary.kill(), 5000);
       try {
@@ -206,8 +249,7 @@ async function activationBenchmark() {
             BrowserWindow.getAllWindows()[0].isVisible(),
           ))
         ) {
-          if (performance.now() - start > 5000)
-            throw new Error("重复启动未唤起已有窗口");
+          if (performance.now() - start > 5000) throw new Error("重复启动未唤起已有窗口");
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
         await page.getByRole("link", { name: "来源", exact: true }).click();
@@ -236,9 +278,7 @@ try {
   const activation = await activationBenchmark();
   const parser = await parserBenchmark();
   const diskKiB = (path) =>
-    Number(
-      execFileSync("du", ["-sk", path], { encoding: "utf8" }).split(/\s/)[0],
-    );
+    Number(execFileSync("du", ["-sk", path], { encoding: "utf8" }).split(/\s/)[0]);
   const report = {
     capturedAt: new Date().toISOString(),
     environment: {
@@ -253,8 +293,12 @@ try {
     },
     build: "未正式签名的当前目录包，Core 与冻结解析器已接入",
     artifact: {
-      asarSha256: createHash("sha256").update(await readFile(join(appDirectory, "Contents/Resources/app.asar"))).digest("hex"),
-      parserSha256: createHash("sha256").update(await readFile(parserExecutable)).digest("hex"),
+      asarSha256: createHash("sha256")
+        .update(await readFile(join(appDirectory, "Contents/Resources/app.asar")))
+        .digest("hex"),
+      parserSha256: createHash("sha256")
+        .update(await readFile(parserExecutable))
+        .digest("hex"),
     },
     definition:
       "启动耗时从创建进程开始，到核心已连接且来源页可以点击打开；首次/复用均为新进程，未清空 OS 磁盘缓存。复用目录先进行一次不计入结果的初始化。",
@@ -269,17 +313,18 @@ try {
       definition:
         "隔离空资料目录、无账号或媒体作业。从本次 Main 递归核对自有 OS 子进程，包括 Core 与冻结解析器；CPU 为两次 ps 累计 CPU 时间之差除以实际采样间隔，RSS 为末次快照。Electron 指标单列，不能与 OS 快照重复相加。",
       ...osMetrics,
-      electron: { processes: metrics.map(({ pid, ...value }) => value), totalCpuPercent: metrics.reduce((sum, item) => sum + item.cpuPercent, 0), totalWorkingSetMiB: Math.round(metrics.reduce((sum, item) => sum + item.workingSetKiB, 0) / 1024 * 100) / 100 },
+      electron: {
+        processes: metrics.map(({ pid, ...value }) => value),
+        totalCpuPercent: metrics.reduce((sum, item) => sum + item.cpuPercent, 0),
+        totalWorkingSetMiB:
+          Math.round((metrics.reduce((sum, item) => sum + item.workingSetKiB, 0) / 1024) * 100) /
+          100,
+      },
     },
     size: {
       definition: "du -sk 目录占用，非 DMG/NSIS 下载体积",
       appMiB: Math.round((diskKiB(appDirectory) / 1024) * 100) / 100,
-      bundledParserMiB:
-        Math.round(
-          (diskKiB(parserDirectory) /
-            1024) *
-            100,
-        ) / 100,
+      bundledParserMiB: Math.round((diskKiB(parserDirectory) / 1024) * 100) / 100,
     },
     bundledParser: parser,
     limitations: [
@@ -291,10 +336,7 @@ try {
     ],
   };
   await mkdir("test-results/desktop", { recursive: true });
-  await writeFile(
-    "test-results/desktop/benchmark.json",
-    JSON.stringify(report, null, 2) + "\n",
-  );
+  await writeFile("test-results/desktop/benchmark.json", JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify(report, null, 2));
 } finally {
   await rm(temporary, { recursive: true, force: true });
