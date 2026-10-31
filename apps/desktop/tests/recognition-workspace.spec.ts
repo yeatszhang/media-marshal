@@ -87,18 +87,10 @@ test("识别工作台目录优先、目录内连续核对、扫描问题分离�
       seed,
       `
 import { CoreDatabase } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/infrastructure/database.js")).href)};
-import { normalizeParse } from ${JSON.stringify(pathToFileURL(resolve("packages/media-core/dist/domain/media.js")).href)};
-import { randomUUID } from 'node:crypto'; import { join } from 'node:path';
-const db=await CoreDatabase.open(join(process.argv[2],'desktop.sqlite3')),sql=db.connection,stamp=new Date().toISOString();
-for (const candidate of sql.prepare('SELECT * FROM ingestion_candidate ORDER BY relative_json').all()) {
- const parts=JSON.parse(candidate.relative_json),name=parts.at(-1),episode=Number(/E0?(\\d+)/.exec(name)[1]),id=randomUUID(),root=sql.prepare('SELECT source_path FROM desktop_source WHERE id=?').get(candidate.source_id).source_path;
- sql.prepare("INSERT INTO media_task(id,source_id,source_path,title,status,parsed_json,created_at,updated_at) VALUES(?,?,?,'翠鸟谋杀案','AWAITING_CONFIRMATION',?,?,?)").run(id,candidate.source_id,join(root,...parts),JSON.stringify(normalizeParse({title:'翠鸟谋杀案',type:'episode',season:1,episode,year:2026},name)),stamp,stamp);
- sql.prepare("UPDATE ingestion_candidate SET task_id=?,state='QUEUED' WHERE id=?").run(id,candidate.id);
- sql.prepare("INSERT INTO task_candidate VALUES(?,?,?,?)").run(randomUUID(),id,JSON.stringify({tmdbId:7,mediaType:'TV_SHOW',title:'翠鸟谋杀案',originalTitle:'Marble Hall Murders',year:2026,score:{confidence:0.92,titleScore:1,yearScore:1},evidence:'both',parentOnlyCapped:false}),0.92);
-}
-const source=sql.prepare('SELECT id FROM desktop_source LIMIT 1').get().id, scan=randomUUID();
-sql.prepare("INSERT INTO ingestion_source_scan(id,source_id,physical_source_id,source_name,context,state,discovered,failure,created_at,updated_at) VALUES(?,?,?,?,?,'PARTIAL_FAILED',6,?,?,?)").run(scan,source,source,'隔离交互夹具','{}','部分文件未能核对，请检查文件权限后重新扫描',stamp,stamp);
-sql.prepare('INSERT INTO ingestion_source_scan_issue VALUES(?,?,?)').run(scan,'翠鸟谋杀案 (2026)/poster.jpg','文件暂不可读，请检查原文件、磁盘和读取权限后重新扫描');
+import { seedRecognitionReview, seedScanIssue } from ${JSON.stringify(pathToFileURL(resolve("apps/desktop/tests/support/recognition-review.mjs")).href)};
+import { join } from 'node:path';
+const db = await CoreDatabase.open(join(process.argv[2], 'desktop.sqlite3'));
+seedRecognitionReview(db); seedScanIssue(db);
 db.close();`,
     );
     await new Promise<void>((done, fail) =>
