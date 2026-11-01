@@ -5,6 +5,7 @@ import { agentFile, agentRunHome } from "./paths.ts";
 import { atomicJson } from "./build.ts";
 import { identify } from "./process.ts";
 import { ToolError } from "./protocol.ts";
+import { ownEvidence } from "./evidence-owner.ts";
 import {
   artifactKinds,
   evidenceChecksum,
@@ -37,7 +38,7 @@ export async function readEvidence(root: string, runId: string): Promise<Evidenc
 }
 export async function lockEvidenceWriter(
   directory: string,
-  name: ".manifest.lock" | ".actions.lock" = ".manifest.lock",
+  name: ".manifest.lock" | ".actions.lock" | ".storage.lock" = ".manifest.lock",
 ) {
   const path = join(directory, name),
     deadline = Date.now() + 1000;
@@ -73,10 +74,18 @@ export async function updateEvidence(
   runId: string,
   mutate: (value: EvidenceManifest) => void,
 ) {
+  await ownEvidence(root, runId);
   const directory = await agentFile(root, agentRunHome(root, runId)),
     unlock = await lockEvidenceWriter(directory);
   try {
     const value = await readEvidence(root, runId);
+    if (value.retention?.reclaimedAt)
+      throw new ToolError(
+        "EVIDENCE_RETIRED",
+        "该运行证据已按保留策略回收",
+        "使用新 runId 重跑，不覆盖旧记录",
+        "blocked",
+      );
     mutate(value);
     value.updatedAt = new Date().toISOString();
     const checked = manifestContent.parse(value);
@@ -94,11 +103,14 @@ export async function initializeEvidence(
   identity: RunIdentity,
   producer: "controller" | "test" = identity.producer ?? "controller",
 ) {
+  await ownEvidence(root, identity.runId);
   const directory = await agentFile(root, agentRunHome(root, identity.runId)),
     unlock = await lockEvidenceWriter(directory);
   try {
     try {
       const current = await readEvidence(root, identity.runId);
+      if (current.retention?.reclaimedAt)
+        throw new ToolError("EVIDENCE_RETIRED", "该运行证据已回收", "使用新 runId 重跑", "blocked");
       if (
         current.sessionId !== identity.sessionId ||
         current.generation !== identity.generation ||

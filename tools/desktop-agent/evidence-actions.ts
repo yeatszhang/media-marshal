@@ -2,15 +2,17 @@ import { open, constants } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { agentFile, agentRunHome } from "./paths.ts";
-import { lockEvidenceWriter } from "./evidence-store.ts";
+import { lockEvidenceWriter, updateEvidence } from "./evidence-store.ts";
 import { recordArtifact, recordFailure } from "./evidence-artifacts.ts";
 import { ToolError } from "./protocol.ts";
 import type { ActionReceipt } from "./action-store.ts";
+import { reserveEvidence } from "./storage-reservation.ts";
 async function append(root: string, runId: string, source: "dom" | "test", value: object) {
   let unlock: (() => Promise<void>) | undefined;
+  let release: ((written?: number) => Promise<void>) | undefined;
+  let written = 0;
   try {
     const directory = await agentFile(root, agentRunHome(root, runId));
-    unlock = await lockEvidenceWriter(directory, ".actions.lock");
     const line = Buffer.from(
       JSON.stringify({
         id: randomUUID(),
@@ -22,6 +24,9 @@ async function append(root: string, runId: string, source: "dom" | "test", value
     );
     if (line.length > 8192)
       throw new ToolError("ACTION_EVIDENCE_LIMIT", "单条动作摘要超出预算", "缩小摘要", "blocked");
+    release = await reserveEvidence(root, runId, line.length);
+    unlock = await lockEvidenceWriter(directory, ".actions.lock");
+    await updateEvidence(root, runId, () => {});
     const file = await open(
       join(directory, "actions.jsonl"),
       constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0),
@@ -38,6 +43,7 @@ async function append(root: string, runId: string, source: "dom" | "test", value
         );
       if ((await file.write(line)).bytesWritten !== line.length)
         throw new Error("动作摘要写入不完整");
+      written = line.length;
       await file.sync();
     } finally {
       await file.close();
@@ -63,6 +69,8 @@ async function append(root: string, runId: string, source: "dom" | "test", value
       await unlock?.();
     } catch {
       return { status: "missing" as const, reason: "ACTION_EVIDENCE_UNLOCK_UNKNOWN" };
+    } finally {
+      await release?.(written);
     }
   }
 }

@@ -1,7 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicJson } from "./build.ts";
 import { agentFile } from "./paths.ts";
 import { agentRunHome as runHome } from "./paths.ts";
 import type { RunIdentity } from "./evidence-model.ts";
@@ -9,6 +7,8 @@ import { ToolError, type Input } from "./protocol.ts";
 import type { SnapshotHandle } from "./gui-types.ts";
 import { maskInputs, unmaskInputs } from "./gui-mask.ts";
 import { captureExisting, captureArtifact } from "./evidence-capture.ts";
+import { initializeEvidence } from "./evidence-store.ts";
+import { writeEvidence, writeEvidenceJson } from "./evidence-write.ts";
 interface SnapshotObserver {
   current(snapshotId: string): Promise<SnapshotHandle>;
 }
@@ -67,6 +67,7 @@ export async function captureImage(
     windowId: handle.snapshot.window.windowId,
   };
   try {
+    await initializeEvidence(root, session);
     const clip = imageClip(handle, input);
     await observer.current(handle.snapshot.snapshotId);
     let bytes: Buffer;
@@ -88,7 +89,7 @@ export async function captureImage(
     const path = join(directory, `image-${imageId}.png`);
     const width = bytes.readUInt32BE(16),
       height = bytes.readUInt32BE(20);
-    await writeFile(path, bytes, { flag: "wx", mode: 0o600 });
+    await writeEvidence(root, session.runId, `image-${imageId}.png`, bytes);
     const result = {
       ...evidence,
       status: "available" as const,
@@ -108,18 +109,20 @@ export async function captureImage(
       masked: "all-input-values",
       layoutMatched: true,
     };
-    await atomicJson(join(directory, `image-${imageId}.json`), result);
+    await writeEvidenceJson(root, session.runId, `image-${imageId}.json`, result);
     const index = await captureExisting(root, session, path, {
       kind: "image",
       source: "dom",
       snapshotId: evidence.snapshotId,
       windowId: evidence.windowId,
+      privacy: "masked",
     });
     await captureExisting(root, session, join(directory, `image-${imageId}.json`), {
       kind: "image",
       source: "dom",
       snapshotId: evidence.snapshotId,
       windowId: evidence.windowId,
+      privacy: "metadata",
     });
     return { ...result, evidence: index };
   } catch (error) {
@@ -129,7 +132,11 @@ export async function captureImage(
       layoutMatched: false,
       reason: error instanceof ToolError ? error.code : "GUI_IMAGE_FAILED",
     };
-    await atomicJson(join(directory, `image-${imageId}.json`), result);
+    try {
+      await writeEvidenceJson(root, session.runId, `image-${imageId}.json`, result);
+    } catch {
+      // 空间或写入权不足时只返回缺失，不绕过预算补写侧车。
+    }
     await captureArtifact(root, session, {
       kind: "image",
       source: "dom",

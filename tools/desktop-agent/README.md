@@ -86,3 +86,13 @@ macOS helper 构建使用 `npm run desktop:agent:native:build`。构建生成私
 主测试配置现已启用 reporter，所有手动 Electron E2E 使用 `apps/desktop/tests/support/test-electron.ts`；Node 控制协议仍不提供任意 evaluate、SQL 或 IPC。`test:desktop` 先构建当前源码并保存指纹；`test:packaged` 默认先构建当前目录包、检查资源，再运行用例，可追加用例筛选。显式安装路径必须匹配本轮目录包的全体文件、摘要和内部链接；历史安装夹具单独声明目标局部身份，不认领当前源码构建。CLI 场景、E2E 的 test-fixture 和纯结果 test-result 有独立标签。
 
 actions.jsonl 区分工具动作收据与测试 API 步骤摘要，后者不冒充逐条业务提交；两者均不记录输入值，容量耗尽或未知写入权返回缺失。完整 trace 只供受版本管理的无账号合成流程，默认敏感上下文阻断；包括 iframe 的来源不确定会丢弃整段。关闭前健康查询的 150ms 预算不改变应用退出期限。新 runId 不复用旧目录，旧图片／断言文件不覆盖。2.14 已完成；前述阶段性“尚未接入”说明保留为实施历史，当前未完成的是 2.15 导出过滤、固定失败和自动回收，以及原生前台剩余验收。
+
+证据导出使用 `collect --session UUID --input 导出参数.json --json`，或在输入中指定 `runId` 读取该会话的历史运行；同时指定时必须属于同一 session。`kinds` 可选择 build／scenario／action／log／health／aria／image／trace／assertion／observation／reproduction，省略时选择全部。`pin:true` 固定该运行和它的导出包，`pin:false` 显式解除；省略 pin 保持原值。断言、启动、崩溃或采集失败自动固定，后续新失败会再次固定。完整性以 result.complete 和包内清单为准；省略、受阻、截断或未采集项使 status=partial，CLI 退出码为 2，但保留可用包路径。historyComplete 始终为 false，不能据此宣称完整业务历史。
+
+导出包只包含选中且已登记、摘要未变的结构化证据，以及带遮罩／合成声明、窗口与快照关联的 PNG；完整 trace 还必须来自 safe-synthetic 上下文。未知旧图片／trace 留在本地并明确省略。JSON／JSONL 清除 Cookie、Authorization、令牌、秘密输入及私人路径；trace 在有界解压后复核敏感标记和条目路径，命中则整段拒绝。单文件最多 16 MiB、单次导出净内容最多 64 MiB；归档最多 512 项、解压总量最多 64 MiB。不会打包数据库、凭据配置、任意 userData 或自动上传。包保存在 `test-results/agent/exports/`，带登记侧车、字节数及摘要。
+
+`gc --input 回收参数.json --json` 默认执行回收；`{"dryRun":true}` 仅给出计划。默认保留 7 天，证据预算为 500 MiB；达到预算时限制新增采集，不自动删除固定失败。预算统计 UUID 运行目录的直接文件及 exports，运行资料子目录和 builds 不计入证据配额，也不由此清空。回收只删除终止运行中已登记、普通、非链接、摘要仍一致的文件及登记导出包，保留 manifest、原失败、未登记文件和运行资料。活跃或未知写入者、未知所有权、固定运行和变化文件均保护；空间仍不足返回 blocked。结果明确列出预算范围、回收量和受保护项目，runtimeDataDeleted=false。
+
+采集与导出先在跨进程锁下预留容量；观察事件有独立上限，控制元数据预留少量余量，以便空间不足时仍能保留失败与缺失原因。写入者登记使用 PID／创建时间／命令摘要，不保存原始参数；回收不接管或终止这些进程。已回收运行不能继续补写成新成功记录。trace 先收口到工具新建的临时目录，核实大小并取得证据预算后才落入运行目录；临时目录由本次调用清理。
+
+同源扫码／画布、iframe 及显式敏感标记由 DOM／截图／trace 共用规则阻断。完整 trace 录制前安装页面守卫，短暂敏感节点或敏感转场也丢弃整段；守卫安装失败不开始录制，收口前再次核对。守卫只通知敏感状态，不读取或传出账号内容。原阶段中关于 2.15“尚未接入”的描述为实施历史；当前 collect／gc 已接入，具体验收见桌面重构验证记录。

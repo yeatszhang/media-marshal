@@ -24,6 +24,10 @@ async function fixture(start = async () => {}, stop?: () => Promise<void>) {
     url: () => url,
     mainFrame: () => main,
     frames: () => [main],
+    exposeBinding: async () => {},
+    addInitScript: async () => {},
+    evaluate: async () => false,
+    locator: () => ({ count: async () => 0 }),
   });
   const calls: { path?: string }[] = [];
   const context = Object.assign(new EventEmitter(), {

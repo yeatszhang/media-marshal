@@ -2,7 +2,6 @@ import type { ElectronApplication } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { ToolError, type Input } from "./protocol.ts";
-import { atomicJson } from "./build.ts";
 import { agentFile } from "./paths.ts";
 import { agentRunHome as runHome } from "./paths.ts";
 import type { RunIdentity } from "./evidence-model.ts";
@@ -11,7 +10,9 @@ import { documentState, sameObservation, staleSnapshot } from "./gui-document.ts
 import { normalizeAria } from "./gui-normalize.ts";
 import type { GuiSnapshot, SnapshotHandle } from "./gui-types.ts";
 import { captureImage, type AvailableImage } from "./gui-image.ts";
-import { captureExisting } from "./evidence-capture.ts";
+import { captureExisting, collectionFailure } from "./evidence-capture.ts";
+import { initializeEvidence } from "./evidence-store.ts";
+import { writeEvidenceJson } from "./evidence-write.ts";
 export class GuiObserver {
   readonly windows: GuiWindows;
   private snapshots = new Map<string, SnapshotHandle>();
@@ -108,13 +109,23 @@ export class GuiObserver {
       await agentFile(this.root, runHome(this.root, this.session.runId)),
       `aria-${snapshot.snapshotId}.json`,
     );
-    await atomicJson(path, snapshot);
-    snapshot.evidence = await captureExisting(this.root, this.session, path, {
-      kind: "aria",
-      source: "dom",
-      snapshotId: snapshot.snapshotId,
-      windowId: window.windowId,
-    });
+    try {
+      await initializeEvidence(this.root, this.session);
+      await writeEvidenceJson(
+        this.root,
+        this.session.runId,
+        `aria-${snapshot.snapshotId}.json`,
+        snapshot,
+      );
+      snapshot.evidence = await captureExisting(this.root, this.session, path, {
+        kind: "aria",
+        source: "dom",
+        snapshotId: snapshot.snapshotId,
+        windowId: window.windowId,
+      });
+    } catch (error) {
+      snapshot.evidence = await collectionFailure(this.root, this.session, error);
+    }
     this.snapshots.set(snapshot.snapshotId, handle);
     while (this.snapshots.size > 8) this.snapshots.delete(this.snapshots.keys().next().value!);
     return handle;

@@ -1,8 +1,9 @@
 import type { Page } from "@playwright/test";
 import type { AgentDocumentContext } from "./gui-document.ts";
 import { ToolError } from "./protocol.ts";
+import { sensitiveSelector } from "./sensitive-context.ts";
 export async function maskInputs(page: Page) {
-  const blocked = await page.locator("canvas, img[alt*='二维码'], [aria-label*='二维码']").count();
+  const blocked = await page.locator(sensitiveSelector).count();
   if (blocked)
     throw new ToolError(
       "GUI_IMAGE_SENSITIVE",

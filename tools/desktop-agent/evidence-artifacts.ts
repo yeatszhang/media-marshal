@@ -87,6 +87,7 @@ export async function recordFailure(
         "blocked",
       );
     value.failures.push(failure);
+    value.retention = { pinned: true, reason: "failure", updatedAt: new Date().toISOString() };
     if (input.kind !== "collection" && !value.primaryFailureId) value.primaryFailureId = failure.id;
     if (input.kind === "assertion") value.assertions = "failed";
   });

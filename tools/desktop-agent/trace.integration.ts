@@ -6,6 +6,31 @@ import { TraceSession } from "./trace-session.ts";
 import { guiRoot as root, setupGui, closeGui, observeInput } from "./gui-test-support.ts";
 import { readEvidence } from "./evidence-store.ts";
 import { runHome } from "./session-store.ts";
+import { exportBundle } from "./export-bundle.ts";
+import { unzipSync, strFromU8 } from "fflate";
+async function checkExport(runId: string) {
+  const exported = await exportBundle(root, runId, { kinds: ["trace", "image", "aria"] });
+  const files = unzipSync(await readFile(exported.path));
+  const index = JSON.parse(strFromU8(files["manifest.json"]!));
+  assert.equal(index.rawUserDataIncluded, false);
+  assert.equal(index.historyComplete, false);
+  assert.ok(
+    index.artifacts.some(
+      (item: { kind: string; status: string }) =>
+        item.kind === "trace" && ["available", "partial"].includes(item.status),
+    ),
+    JSON.stringify(index),
+  );
+  assert.ok(Object.keys(files).some((name) => name.endsWith(".png")));
+  for (const [name, bytes] of Object.entries(files)) {
+    if (!name.endsWith(".zip")) continue;
+    const trace = unzipSync(bytes);
+    for (const [key, value] of Object.entries(trace))
+      if (/\.(trace|network|stacks)$/.test(key))
+        assert.equal(strFromU8(value).includes(root), false);
+  }
+  console.log(JSON.stringify({ runId, exported }));
+}
 
 test(
   "手动 Electron context 显式生成真实 trace，敏感窗口转场整段丢弃",
@@ -31,6 +56,7 @@ test(
       const bytes = await readFile(join(directory, artifact.name));
       assert.equal(bytes.subarray(0, 4).toString("hex"), "504b0304");
       assert.ok(bytes.length > 1000);
+      await checkExport(context.session.runId);
       assert.equal((await sensitive.start("safe-synthetic")).status, "recording");
       const opened = context.app.waitForEvent("window");
       await context.app.evaluate(({ BrowserWindow }) => {

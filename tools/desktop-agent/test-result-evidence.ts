@@ -3,12 +3,12 @@ import { mkdir } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { z } from "zod";
 import type { TestCase, TestResult, TestStep } from "@playwright/test/reporter";
-import { agentFile, agentRunHome } from "./paths.ts";
-import { atomicJson } from "./build.ts";
+import { agentRunHome } from "./paths.ts";
 import { initializeEvidence, readEvidence, updateEvidence } from "./evidence-store.ts";
 import { recordArtifact, recordFailure } from "./evidence-artifacts.ts";
 import type { RunIdentity, EvidenceManifest } from "./evidence-model.ts";
 import { recordTestActions } from "./evidence-actions.ts";
+import { writeEvidenceJson } from "./evidence-write.ts";
 export const RUN_ANNOTATION = "media-marshal.run";
 export const STARTUP_ANNOTATION = "media-marshal.startup-failed";
 const annotation = z.strictObject({ runId: z.uuid(), sessionId: z.uuid() });
@@ -103,35 +103,6 @@ function assertionState(manifest: EvidenceManifest, result: TestResult) {
 export async function recordTestResult(root: string, test: TestCase, result: TestResult) {
   const linked = await runs(root, test);
   for (const run of linked) {
-    const directory = await agentFile(root, agentRunHome(root, run.runId));
-    const name = `assertion-${randomUUID()}.json`;
-    const value = {
-      testId: testKey(test.id),
-      location: location(root, test.location),
-      status: result.status,
-      expectedStatus: test.expectedStatus,
-      retry: result.retry,
-      durationMs: result.duration,
-      errorCount: result.errors.length,
-      steps: steps(root, result.steps),
-      rawErrorRecorded: false,
-      historyComplete: false,
-    };
-    await atomicJson(join(directory, name), value);
-    await recordArtifact(root, run.runId, {
-      kind: "assertion",
-      source: "test",
-      status: "available",
-      name,
-    });
-    const api = value.steps.items.filter((item) => item.category === "pw:api");
-    if (api.length)
-      await recordTestActions(root, run.runId, {
-        testId: value.testId,
-        apiSteps: api.length,
-        failedSteps: api.filter((item) => item.failed).length,
-        truncated: value.steps.truncated,
-      });
     const startup = test.annotations.some(
       (item) =>
         item.type === STARTUP_ANNOTATION && (!item.description || item.description === run.runId),
@@ -152,6 +123,34 @@ export async function recordTestResult(root: string, test: TestCase, result: Tes
       if (!test.annotations.some((item) => item.type === RUN_ANNOTATION))
         manifest.lifecycle = startup ? "failed" : "closed";
     });
+    const name = `assertion-${randomUUID()}.json`;
+    const value = {
+      testId: testKey(test.id),
+      location: location(root, test.location),
+      status: result.status,
+      expectedStatus: test.expectedStatus,
+      retry: result.retry,
+      durationMs: result.duration,
+      errorCount: result.errors.length,
+      steps: steps(root, result.steps),
+      rawErrorRecorded: false,
+      historyComplete: false,
+    };
+    await writeEvidenceJson(root, run.runId, name, value);
+    await recordArtifact(root, run.runId, {
+      kind: "assertion",
+      source: "test",
+      status: "available",
+      name,
+    });
+    const api = value.steps.items.filter((item) => item.category === "pw:api");
+    if (api.length)
+      await recordTestActions(root, run.runId, {
+        testId: value.testId,
+        apiSteps: api.length,
+        failedSteps: api.filter((item) => item.failed).length,
+        truncated: value.steps.truncated,
+      });
   }
   return linked.map((run) => run.runId);
 }

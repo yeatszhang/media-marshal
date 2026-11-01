@@ -1,11 +1,11 @@
+import { agentRunHome } from "./paths.ts";
 import { randomUUID } from "node:crypto";
 import { join, basename, resolve } from "node:path";
-import { agentFile, agentRunHome } from "./paths.ts";
-import { atomicJson } from "./build.ts";
 import { initializeEvidence, updateEvidence } from "./evidence-store.ts";
 import { recordArtifact, recordFailure, type ArtifactInput } from "./evidence-artifacts.ts";
 import { ToolError } from "./protocol.ts";
 import type { RunIdentity, EvidenceManifest, Failure } from "./evidence-model.ts";
+import { writeEvidenceJson } from "./evidence-write.ts";
 
 export async function collectionFailure(root: string, run: RunIdentity, error: unknown) {
   const reason = error instanceof ToolError ? error.code : "EVIDENCE_COLLECTION_FAILED";
@@ -47,9 +47,8 @@ export async function captureJson(
 ) {
   try {
     await initializeEvidence(root, run);
-    const directory = await agentFile(root, agentRunHome(root, run.runId));
     const name = `${input.kind}-${randomUUID()}.json`;
-    await atomicJson(join(directory, name), value);
+    await writeEvidenceJson(root, run.runId, name, value);
     return { ...(await captureArtifact(root, run, { ...input, name, status: "available" })), name };
   } catch (error) {
     return collectionFailure(root, run, error);

@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { rename, unlink } from "node:fs/promises";
+import { mkdtemp, rm, open, constants } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type { BrowserContext, Page, Frame } from "@playwright/test";
 import { trustedPage } from "./collector.ts";
-import { agentFile, agentRunHome } from "./paths.ts";
 import { initializeEvidence } from "./evidence-store.ts";
 import { recordArtifact, recordFailure } from "./evidence-artifacts.ts";
 import type { RunIdentity } from "./evidence-model.ts";
+import { writeEvidence } from "./evidence-write.ts";
+import { ToolError } from "./protocol.ts";
+import { watchSensitive, sensitivePage } from "./sensitive-context.ts";
 
 export type TracePolicy = "sensitive" | "safe-synthetic";
 /** 完整 trace 只供版本管理中的无账号合成流程；任一敏感转场使整段作废。 */
@@ -21,6 +24,7 @@ export class TraceSession {
   private reason?: string;
   private pending: Promise<unknown> = Promise.resolve();
   private pages = new Map<Page, (frame?: Frame) => void>();
+  private guards = new Map<Page, () => void>();
   private onPage: (page: Page) => void;
   constructor(
     root: string,
@@ -70,6 +74,7 @@ export class TraceSession {
         status,
         reason,
         name,
+        ...(status === "available" ? { privacy: "safe-synthetic" } : {}),
       });
     } catch {
       this.state = "missing";
@@ -87,11 +92,25 @@ export class TraceSession {
     page.on("framenavigated", check);
     // 新窗口的来源尚不确定也不能先录制再猜测。
     check();
+    this.pending = this.pending.then(async () => {
+      if (this.reason) return;
+      try {
+        const detach = await watchSensitive(page, () => {
+          void this.discard("SENSITIVE_CONTEXT");
+        });
+        if (this.reason) detach();
+        else this.guards.set(page, detach);
+      } catch {
+        void this.discard("SENSITIVE_GUARD_UNAVAILABLE");
+      }
+    });
   }
   private detach() {
     this.context.off("page", this.onPage);
     for (const [page, listener] of this.pages) page.off("framenavigated", listener);
     this.pages.clear();
+    for (const detach of this.guards.values()) detach();
+    this.guards.clear();
   }
   async start(policy: TracePolicy = "sensitive") {
     if (this.state !== "idle") return this.summary();
@@ -150,7 +169,11 @@ export class TraceSession {
   }
   async stop() {
     this.pending = this.pending.then(async () => {
-      for (const check of this.pages.values()) check();
+      for (const [page, check] of this.pages) {
+        check();
+        if (!this.reason && (await sensitivePage(page).catch(() => true)))
+          void this.discard("SENSITIVE_CONTEXT");
+      }
       if (this.state !== "recording" || !this.recording) return this.summary();
       this.state = "stopping";
       return this.save();
@@ -159,21 +182,33 @@ export class TraceSession {
     return this.summary();
   }
   private async save() {
+    let temporaryDirectory: string | undefined;
     try {
-      const directory = await agentFile(this.root, agentRunHome(this.root, this.run.runId));
+      temporaryDirectory = await mkdtemp(join(tmpdir(), "marshal-trace-save-"));
       const name = `trace-${randomUUID()}.zip`,
-        temporary = join(directory, ".pending-" + name);
+        temporary = join(temporaryDirectory, name);
       await this.context.tracing.stop({ path: temporary });
       this.recording = false;
       if (this.reason) {
-        await unlink(await agentFile(this.root, temporary));
         return this.artifact("blocked", this.reason);
       }
-      await rename(temporary, join(directory, name));
+      const file = await open(temporary, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      try {
+        if ((await file.stat()).size > 16 * 1024 * 1024)
+          throw new ToolError(
+            "TRACE_CAPACITY_LIMIT",
+            "trace 超过单文件预算",
+            "缩小录制范围",
+            "blocked",
+          );
+        await writeEvidence(this.root, this.run.runId, name, await file.readFile());
+      } finally {
+        await file.close();
+      }
       this.state = "stopped";
       this.detach();
       return this.artifact("available", undefined, name);
-    } catch {
+    } catch (error) {
       try {
         await this.context.tracing.stop();
       } catch {
@@ -181,7 +216,7 @@ export class TraceSession {
       }
       this.recording = false;
       this.state = "missing";
-      this.reason = "TRACE_STOP_FAILED";
+      this.reason = error instanceof ToolError ? error.code : "TRACE_STOP_FAILED";
       this.detach();
       try {
         await recordFailure(this.root, this.run.runId, { kind: "collection", code: this.reason });
@@ -189,6 +224,8 @@ export class TraceSession {
         /* 原失败不覆盖。 */
       }
       return this.artifact("missing", this.reason);
+    } finally {
+      if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
     }
   }
 }

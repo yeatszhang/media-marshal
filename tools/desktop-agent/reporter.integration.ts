@@ -42,7 +42,9 @@ test(
       }
       assert.equal(exitCode, 1, "失败探针必须保留测试失败退出码");
       assert.ok(stderr.includes("evidence.reporter.collection.failed"));
-      const runs = await readdir(join(directory, "test-results/agent"));
+      const runs = (await readdir(join(directory, "test-results/agent"))).filter((id) =>
+        /^[a-f0-9-]{36}$/.test(id),
+      );
       const manifests = await Promise.all(runs.map((id) => readEvidence(directory, id)));
       assert.equal(manifests.length, 5);
       assert.equal(manifests.filter((value) => value.assertions === "failed").length, 2);

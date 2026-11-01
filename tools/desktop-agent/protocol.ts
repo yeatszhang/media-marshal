@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
+import { artifactKinds } from "./evidence-kinds.ts";
 
 export const TOOL_PROTOCOL_VERSION = 1 as const;
 const uuid = z.uuid();
@@ -121,8 +122,12 @@ export const commands = {
       .max(1000)
       .optional(),
   }),
-  collect: z.strictObject({ pin: z.boolean().default(false) }),
-  gc: z.strictObject({}),
+  collect: z.strictObject({
+    runId: uuid.optional(),
+    pin: z.boolean().optional(),
+    kinds: z.array(z.enum(artifactKinds)).nonempty().max(11).optional(),
+  }),
+  gc: z.strictObject({ dryRun: z.boolean().default(false) }),
 } as const;
 export type Command = keyof typeof commands;
 export type Input<C extends Command> = z.output<(typeof commands)[C]>;

@@ -7,6 +7,8 @@ import { readLogs } from "./log-reader.ts";
 import { diagnoseSession } from "./diagnose.ts";
 import { startSession, sessionCommand } from "./session.ts";
 import { actionStatus } from "./action-store.ts";
+import { collect } from "./collect.ts";
+import { gcEvidence } from "./evidence-retention.ts";
 import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -66,6 +68,8 @@ export async function requestFromArgs(args: string[]): Promise<Request> {
 }
 export async function dispatch(request: Request): Promise<unknown> {
   const root = resolve(import.meta.dirname, "../..");
+  if (request.command === "collect") return collect(root, request);
+  if (request.command === "gc") return gcEvidence(root, (request.payload as Input<"gc">).dryRun);
   if (request.command === "scenario") {
     const input = request.payload as Input<"scenario">;
     if (input.mode === "list") return { version: SCENARIO_VERSION, scenarios };
@@ -138,6 +142,8 @@ export async function dispatch(request: Request): Promise<unknown> {
         "diagnose",
         "stop",
         "restart",
+        "collect",
+        "gc",
       ],
     };
   throw new ToolError(
@@ -154,7 +160,7 @@ export async function main(args: string[]) {
     const value = await dispatch(request);
     const response = result(request, value);
     if (
-      ["build", "status", "start", "restart", "stop", "scenario", "act"].includes(
+      ["build", "status", "start", "restart", "stop", "scenario", "act", "collect", "gc"].includes(
         request.command,
       ) &&
       value &&
@@ -162,7 +168,7 @@ export async function main(args: string[]) {
       "status" in value
     ) {
       response.status = String(value.status);
-      if (["failed", "blocked", "unknown"].includes(response.status))
+      if (["failed", "blocked", "unknown", "partial"].includes(response.status))
         process.exitCode = response.status === "failed" ? 1 : 2;
     }
     if (request.command === "doctor" && (value as { status: string }).status !== "ready") {

@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { DocumentState } from "./gui-types.ts";
 import { ToolError } from "./protocol.ts";
 import { trustedPage } from "./collector.ts";
+import { sensitiveSelector } from "./sensitive-context.ts";
 export interface AgentDocumentContext {
   __marshalAgentDocument?: {
     id: string;
@@ -102,7 +103,7 @@ function readBrowserDocument(): DocumentState {
 export async function documentState(page: Page): Promise<DocumentState> {
   if (!trustedPage(page))
     throw new ToolError("GUI_ORIGIN_BLOCKED", "窗口来源不可观察", "选择自有主窗口", "blocked");
-  if (await page.locator("iframe, [data-agent-sensitive='true']").count())
+  if (await page.locator(sensitiveSelector).count())
     throw new ToolError(
       "GUI_SENSITIVE_CONTEXT",
       "嵌入页面或明确敏感上下文禁止采集",

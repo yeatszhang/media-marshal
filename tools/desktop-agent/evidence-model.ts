@@ -1,22 +1,11 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import type { Input } from "./protocol.ts";
+import { artifactKinds } from "./evidence-kinds.ts";
+export { artifactKinds } from "./evidence-kinds.ts";
 const uuid = z.uuid(),
   time = z.iso.datetime();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
-export const artifactKinds = [
-  "build",
-  "scenario",
-  "action",
-  "log",
-  "health",
-  "aria",
-  "image",
-  "trace",
-  "assertion",
-  "observation",
-  "reproduction",
-] as const;
 export const sourceSchema = z.enum(["dom", "native", "stub", "tool", "test"]);
 export const reasonSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,95}$/);
 export const artifactSchema = z
@@ -38,6 +27,7 @@ export const artifactSchema = z
     snapshotId: uuid.optional(),
     windowId: z.string().max(120).optional(),
     operationId: z.string().max(120).optional(),
+    privacy: z.enum(["metadata", "masked", "safe-synthetic"]).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.status === "available" && (!value.name || !value.sha256 || value.bytes === undefined))
@@ -72,6 +62,14 @@ export const manifestContent = z.strictObject({
   primaryFailureId: uuid.optional(),
   historyComplete: z.literal(false),
   assertions: z.enum(["not-run", "passed", "failed", "blocked", "unknown"]),
+  retention: z
+    .strictObject({
+      pinned: z.boolean(),
+      reason: z.enum(["manual", "failure", "expired", "budget"]),
+      updatedAt: time,
+      reclaimedAt: time.optional(),
+    })
+    .optional(),
 });
 export const manifestSchema = manifestContent.extend({ checksum: digest });
 export type EvidenceManifest = z.output<typeof manifestContent>;

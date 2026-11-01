@@ -10,6 +10,7 @@ import { agentFile } from "./paths.ts";
 import { projectLog } from "./log-record.ts";
 import { initializeEvidence } from "./evidence-store.ts";
 import { recordArtifact, recordFailure } from "./evidence-artifacts.ts";
+import { reserveEvidence } from "./storage-reservation.ts";
 
 export const trustedPage = (page: Page) => {
   try {
@@ -45,6 +46,7 @@ export class EventCollector {
   private session: RunIdentity;
   private directory: string;
   private root: string;
+  private release: (written?: number) => Promise<void> = async () => {};
   private constructor(file: FileHandle, session: RunIdentity, directory: string, root: string) {
     this.file = file;
     this.session = session;
@@ -53,9 +55,17 @@ export class EventCollector {
   }
   static async create(root: string, session: RunIdentity) {
     await initializeEvidence(root, session);
-    const directory = await agentFile(root, runHome(root, session.runId)),
-      file = await open(join(directory, "observations.jsonl"), "wx", 0o600);
-    return new EventCollector(file, { ...session }, directory, root);
+    const release = await reserveEvidence(root, session.runId, 1024 * 1024 + 8192);
+    try {
+      const directory = await agentFile(root, runHome(root, session.runId)),
+        file = await open(join(directory, "observations.jsonl"), "wx", 0o600);
+      const collector = new EventCollector(file, { ...session }, directory, root);
+      collector.release = release;
+      return collector;
+    } catch (error) {
+      await release();
+      throw error;
+    }
   }
   record(event: string, fields: Record<string, unknown> = {}) {
     if (this.closed || !this.available || this.pending >= 256) {
@@ -183,6 +193,10 @@ export class EventCollector {
       this.available = false;
     });
     await this.file.close();
-    await atomicJson(join(this.directory, "collector.json"), this.snapshot());
+    try {
+      await atomicJson(join(this.directory, "collector.json"), this.snapshot());
+    } finally {
+      await this.release(this.bytes + 8192);
+    }
   }
 }
