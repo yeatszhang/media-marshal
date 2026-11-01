@@ -1,4 +1,4 @@
-import { expect, test, _electron } from "@playwright/test";
+import { expect, test, launchElectron } from "./support/test-electron";
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, realpath, mkdir, writeFile, rm } from "node:fs/promises";
@@ -19,7 +19,7 @@ test("Codex配置、目录入口、缺少CLI的持久错误、用量及重启恢
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const args = [resolve("apps/desktop"), `--user-data-dir=${data}`];
-  let app = await _electron.launch({ args, env });
+  let app = await launchElectron({ args, env });
   try {
     let page = await app.firstWindow();
     await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
@@ -93,7 +93,7 @@ for(const c of sql.prepare('SELECT * FROM ingestion_candidate ORDER BY relative_
         (error) => (error ? fail(error) : done()),
       ),
     );
-    app = await _electron.launch({ args, env });
+    app = await launchElectron({ args, env });
     page = await app.firstWindow();
     await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
     await page.getByRole("link", { name: "待处理", exact: true }).click();
@@ -134,7 +134,7 @@ for(const c of sql.prepare('SELECT * FROM ingestion_candidate ORDER BY relative_
       fullPage: true,
     });
     await app.close();
-    app = await _electron.launch({ args, env });
+    app = await launchElectron({ args, env });
     page = await app.firstWindow();
     await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
     await page.getByRole("link", { name: "待处理", exact: true }).click();

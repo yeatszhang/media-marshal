@@ -1,6 +1,24 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, dirname, join } from "node:path";
+
+const buildEnv = { ...process.env };
+delete buildEnv.ELECTRON_RUN_AS_NODE;
+// 外部只读映像必须沿用生成它时的当前构建清单，不能先重建一个不同的参考包。
+if (!process.env.MARSHAL_APP_PATH) {
+  const built = spawnSync(
+    process.execPath,
+    [
+      "--disable-warning=ExperimentalWarning",
+      "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+      "--experimental-strip-types",
+      "tools/desktop-agent/test-build.ts",
+      "packaged",
+    ],
+    { env: buildEnv, stdio: "inherit" },
+  );
+  if (built.status !== 0) process.exit(built.status ?? 1);
+}
 
 const relative =
   process.platform === "win32"
@@ -15,11 +33,27 @@ const env = {
   ...process.env,
   MARSHAL_APP_PATH: executable,
   MARSHAL_EXECUTABLE: "1",
+  MARSHAL_ARTIFACT_RESOURCES:
+    process.env.MARSHAL_ARTIFACT_RESOURCES ??
+    (process.platform === "darwin"
+      ? resolve(dirname(executable), "../Resources")
+      : join(dirname(executable), "resources")),
 };
 delete env.ELECTRON_RUN_AS_NODE;
+const checked = spawnSync(process.execPath, ["scripts/check-desktop-artifact.mjs"], {
+  env,
+  stdio: "inherit",
+});
+if (checked.status !== 0) process.exit(checked.status ?? 1);
 const result = spawnSync(
   process.execPath,
-  ["node_modules/@playwright/test/cli.js", "test", "--config", "apps/desktop/playwright.config.ts"],
+  [
+    "node_modules/@playwright/test/cli.js",
+    "test",
+    "--config",
+    "apps/desktop/playwright.config.ts",
+    ...process.argv.slice(2),
+  ],
   { env, stdio: "inherit" },
 );
 process.exitCode = result.status ?? 1;

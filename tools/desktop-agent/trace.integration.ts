@@ -14,6 +14,7 @@ test(
     const context = await setupGui();
     const trace = new TraceSession(root, context.session, context.app.context());
     const sensitive = new TraceSession(root, context.session, context.app.context());
+    const embedded = new TraceSession(root, context.session, context.app.context());
     try {
       assert.equal((await trace.start("safe-synthetic")).status, "recording");
       await context.page.getByRole("link", { name: "设置", exact: true }).click();
@@ -36,9 +37,20 @@ test(
         const window = new BrowserWindow({ show: false, focusable: false });
         void window.loadURL("about:blank");
       });
-      await opened;
+      const foreign = await opened;
       await sensitive.stop();
       assert.equal(sensitive.summary().status, "blocked");
+      const closed = foreign.waitForEvent("close");
+      await (await context.app.browserWindow(foreign)).evaluate((window) => window.destroy());
+      await closed;
+      assert.equal((await embedded.start("safe-synthetic")).status, "recording");
+      await context.page.evaluate(() => {
+        const frame = document.createElement("iframe");
+        frame.srcdoc = "<p>合成子页面，不采集其内容</p>";
+        document.body.append(frame);
+      });
+      await embedded.stop();
+      assert.equal(embedded.summary().status, "blocked");
       const after = await readEvidence(root, context.session.runId);
       assert.ok(
         after.artifacts.some(
@@ -56,6 +68,7 @@ test(
         }),
       );
     } finally {
+      await embedded.stop();
       await sensitive.stop();
       await trace.stop();
       await closeGui(context);

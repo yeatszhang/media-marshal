@@ -82,3 +82,7 @@ macOS helper 构建使用 `npm run desktop:agent:native:build`。构建生成私
 控制器会自动写入 `test-results/agent/<runId>/manifest.json`，登记构建、场景、复现、ARIA／图片及坐标侧车、动作、只读诊断、关闭时日志尾部与采集器结果。默认 historyComplete=false，业务断言保持 not-run；采集失败单独登记并返回 missing，不覆盖启动／崩溃原失败。动作最终状态在证据处理后发布，后续生命周期请求不会因这一段收尾而误报 busy。restart 为新 run 建立索引，旧 run 不覆盖；截图返回的 evidence 字段说明是否已登记，不能仅以 PNG 文件存在推断索引完整。Playwright reporter 和 trace 的接入仍属于未完成的 2.14。
 
 结果 reporter 通过 `media-marshal.run` 注解中的 runId／sessionId 关联已登记上下文，保留断言、超时／中断、启动失败和跳过状态，原始错误和断言值不进入汇总。TraceSession 是内部驱动 API，默认 sensitive 不录制；safe-synthetic 只供受版本管理的无账号流程，敏感转场丢弃整个录制段。敏感输入前 await discard，关闭 context 前 await stop；正常停止的 ZIP 才登记为 available。`reporter-probe.config.ts` 是显式失败采集探针，必须由对应 integration 验收调用，内部失败不作为产品测试通过。主测试入口及全体手动上下文迁移仍在 2.14 中继续。
+
+主测试配置现已启用 reporter，所有手动 Electron E2E 使用 `apps/desktop/tests/support/test-electron.ts`；Node 控制协议仍不提供任意 evaluate、SQL 或 IPC。`test:desktop` 先构建当前源码并保存指纹；`test:packaged` 默认先构建当前目录包、检查资源，再运行用例，可追加用例筛选。显式安装路径必须匹配本轮目录包的全体文件、摘要和内部链接；历史安装夹具单独声明目标局部身份，不认领当前源码构建。CLI 场景、E2E 的 test-fixture 和纯结果 test-result 有独立标签。
+
+actions.jsonl 区分工具动作收据与测试 API 步骤摘要，后者不冒充逐条业务提交；两者均不记录输入值，容量耗尽或未知写入权返回缺失。完整 trace 只供受版本管理的无账号合成流程，默认敏感上下文阻断；包括 iframe 的来源不确定会丢弃整段。关闭前健康查询的 150ms 预算不改变应用退出期限。新 runId 不复用旧目录，旧图片／断言文件不覆盖。2.14 已完成；前述阶段性“尚未接入”说明保留为实施历史，当前未完成的是 2.15 导出过滤、固定失败和自动回收，以及原生前台剩余验收。

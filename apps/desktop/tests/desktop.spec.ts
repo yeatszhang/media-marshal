@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { test, expect, _electron, type Page, type ElectronApplication } from "@playwright/test";
+import {
+  test,
+  expect,
+  launchElectron,
+  type Page,
+  type ElectronApplication,
+} from "./support/test-electron";
 import {
   mkdtemp,
   mkdir,
@@ -58,7 +64,7 @@ test.beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "marshal-electron-"));
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
     args: [
       ...(process.env.MARSHAL_EXECUTABLE
@@ -156,7 +162,7 @@ async function completedCorrectionFixture(mediaType: "MOVIE" | "TV_SHOW" = "MOVI
     };
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
     args: [
       ...(process.env.MARSHAL_EXECUTABLE
@@ -359,7 +365,7 @@ test("成功同步的本地移除状态经固定 IPC 展示，重载与核心重
     ),
   );
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
     args: [
       ...(process.env.MARSHAL_EXECUTABLE
@@ -459,7 +465,7 @@ test("重新登录的历史确认在真实窗口默认未勾选，取消和重�
     ),
   );
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
     args: [
       ...(process.env.MARSHAL_EXECUTABLE
@@ -1834,7 +1840,7 @@ db.close(); console.log(JSON.stringify({localId,subscriptionId}));
   );
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
     args: [
       ...(process.env.MARSHAL_EXECUTABLE
@@ -1946,7 +1952,7 @@ test("服务密钥经系统保险箱注入，窗口／核心／整应用重启�
     await application.close();
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    application = await _electron.launch({
+    application = await launchElectron({
       ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}),
       args: [
         ...(process.env.MARSHAL_EXECUTABLE
@@ -2376,7 +2382,7 @@ db.close();
       (error) => (error ? fail(error) : done()),
     ),
   );
-  application = await _electron.launch({
+  application = await launchElectron({
     args: [resolve("apps/desktop"), `--user-data-dir=${profile}`],
   });
   const window = await application.firstWindow();
@@ -2447,7 +2453,7 @@ db.close();
   );
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
     args: [
       ...(process.env.MARSHAL_EXECUTABLE
@@ -2527,7 +2533,7 @@ db.close();
       (error) => (error ? fail(error) : done()),
     ),
   );
-  application = await _electron.launch({
+  application = await launchElectron({
     args: [resolve("apps/desktop"), `--user-data-dir=${profile}`],
   });
   const window = await application.firstWindow();
@@ -2693,7 +2699,7 @@ test("升级备份失败阻断接入和核心重试，修复私有目录后才�
   const databaseBefore = await readFile(join(profile, "desktop.sqlite3"));
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}),
     args: [
       ...(process.env.MARSHAL_EXECUTABLE
@@ -2779,7 +2785,7 @@ test("整包升级停写备份和原生恢复保留现存文件，重开核对�
   const launchAgain = async () => {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    application = await _electron.launch({
+    application = await launchElectron({
       ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}),
       args: [
         ...(process.env.MARSHAL_EXECUTABLE
@@ -3100,7 +3106,7 @@ test("启动后立即退出与加载窗口期间退出均不残留后启动的�
           stopVerified(identity, identity.command);
     }
     if (phase === "立即退出")
-      application = await _electron.launch({
+      application = await launchElectron({
         args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "second-start")}`],
       });
   }
@@ -3412,7 +3418,7 @@ db.close();
   );
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
     args: [
       ...(process.env.MARSHAL_EXECUTABLE
@@ -4653,7 +4659,7 @@ test("独立同步、识别映射与 Emby 路径绑定经真实窗口完成三�
   );
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: process.env.MARSHAL_EXECUTABLE ? process.env.MARSHAL_APP_PATH : undefined,
     args: [
       ...(process.env.MARSHAL_EXECUTABLE

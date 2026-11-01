@@ -1,4 +1,4 @@
-import { expect, test, _electron } from "@playwright/test";
+import { expect, test, launchElectron } from "./support/test-electron";
 import { mkdtemp, mkdir, realpath, rm, writeFile, readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ test("同步预览高亮冲突并在确认按钮旁解释拦截原因", async ()
     ),
   );
   delete env.ELECTRON_RUN_AS_NODE;
-  const app = await _electron.launch({
+  const app = await launchElectron({
     args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
     env,
   });
@@ -130,7 +130,7 @@ test("同步优先复核 Emby 目录已有文件，窗口标记已在媒体库�
     ),
   );
   delete env.ELECTRON_RUN_AS_NODE;
-  const app = await _electron.launch({
+  const app = await launchElectron({
     args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
     env,
   });
@@ -333,7 +333,7 @@ test("暂停网盘任务显式复核改名视频，失败可见且重载保留�
   );
   delete env.ELECTRON_RUN_AS_NODE;
   const launch = () =>
-    _electron.launch({
+    launchElectron({
       args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
       env,
     });
@@ -517,7 +517,7 @@ for (const decision of ["USE_LIBRARY", "DOWNLOAD"] as const)
     );
     delete env.ELECTRON_RUN_AS_NODE;
     const launch = () =>
-      _electron.launch({
+      launchElectron({
         args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
         env,
       });

@@ -4,9 +4,12 @@ import { StringDecoder } from "node:string_decoder";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { sanitizeLogValue } from "../../apps/desktop/src/logging/shared.ts";
 import { atomicJson } from "./build.ts";
-import { runHome, type Session } from "./session-store.ts";
+import { agentRunHome as runHome } from "./paths.ts";
+import type { RunIdentity } from "./evidence-model.ts";
 import { agentFile } from "./paths.ts";
 import { projectLog } from "./log-record.ts";
+import { initializeEvidence } from "./evidence-store.ts";
+import { recordArtifact, recordFailure } from "./evidence-artifacts.ts";
 
 export const trustedPage = (page: Page) => {
   try {
@@ -39,17 +42,20 @@ export class EventCollector {
   private available = true;
   private closed = false;
   private pages = new WeakMap<Page, string>();
-  private session: Session;
+  private session: RunIdentity;
   private directory: string;
-  private constructor(file: FileHandle, session: Session, directory: string) {
+  private root: string;
+  private constructor(file: FileHandle, session: RunIdentity, directory: string, root: string) {
     this.file = file;
     this.session = session;
     this.directory = directory;
+    this.root = root;
   }
-  static async create(root: string, session: Session) {
+  static async create(root: string, session: RunIdentity) {
+    await initializeEvidence(root, session);
     const directory = await agentFile(root, runHome(root, session.runId)),
       file = await open(join(directory, "observations.jsonl"), "wx", 0o600);
-    return new EventCollector(file, { ...session }, directory);
+    return new EventCollector(file, { ...session }, directory, root);
   }
   record(event: string, fields: Record<string, unknown> = {}) {
     if (this.closed || !this.available || this.pending >= 256) {
@@ -109,7 +115,28 @@ export class EventCollector {
         trustedPage(page) ? { windowId: id, error } : { windowId: id },
       ),
     );
-    page.on("crash", () => this.record("renderer.crashed", { windowId: id }));
+    page.on("crash", () => {
+      this.record("renderer.crashed", { windowId: id });
+      this.tail = this.tail
+        .then(async () => {
+          await recordFailure(this.root, this.session.runId, {
+            kind: "crash",
+            code: "RENDERER_CRASHED",
+          });
+          for (const kind of ["aria", "image"] as const)
+            await recordArtifact(this.root, this.session.runId, {
+              kind,
+              source: "dom",
+              status: "missing",
+              reason: "WINDOW_CRASHED",
+              windowId: id,
+            });
+        })
+        .catch(() => {
+          this.available = false;
+          this.dropped++;
+        });
+    });
     page.on("close", () => this.record("window.closed", { windowId: id }));
     page.on("framenavigated", (frame) => {
       if (frame === page.mainFrame())

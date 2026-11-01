@@ -10,6 +10,18 @@ console.log(
 );
 const env = { ...process.env, MARSHAL_E2E_MODE: mode };
 delete env.ELECTRON_RUN_AS_NODE;
+const build = spawnSync(
+  process.execPath,
+  [
+    "--disable-warning=ExperimentalWarning",
+    "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+    "--experimental-strip-types",
+    "tools/desktop-agent/test-build.ts",
+    "development",
+  ],
+  { env, stdio: "inherit" },
+);
+if (build.status !== 0) process.exit(build.status ?? 1);
 const result = spawnSync(
   process.execPath,
   [

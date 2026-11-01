@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { ToolError, type Input } from "./protocol.ts";
 import { atomicJson } from "./build.ts";
 import { agentFile } from "./paths.ts";
-import { runHome, type Session } from "./session-store.ts";
+import { agentRunHome as runHome } from "./paths.ts";
+import type { RunIdentity } from "./evidence-model.ts";
 import { GuiWindows } from "./gui-windows.ts";
 import { documentState, sameObservation, staleSnapshot } from "./gui-document.ts";
 import { normalizeAria } from "./gui-normalize.ts";
@@ -16,8 +17,8 @@ export class GuiObserver {
   private snapshots = new Map<string, SnapshotHandle>();
   private images = new Map<string, AvailableImage>();
   private root: string;
-  private session: Session;
-  constructor(root: string, app: ElectronApplication, session: Session) {
+  private session: RunIdentity;
+  constructor(root: string, app: ElectronApplication, session: RunIdentity) {
     this.root = root;
     this.session = session;
     this.windows = new GuiWindows(app);

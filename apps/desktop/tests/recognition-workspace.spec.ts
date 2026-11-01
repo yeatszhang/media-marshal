@@ -1,4 +1,4 @@
-import { expect, test, _electron } from "@playwright/test";
+import { expect, test, launchElectron } from "./support/test-electron";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -13,7 +13,7 @@ test("识别工作台目录优先、目录内连续核对、扫描问题分离�
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const args = [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`];
-  let application = await _electron.launch({ args, env });
+  let application = await launchElectron({ args, env });
   try {
     let page = await application.firstWindow();
     await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
@@ -101,7 +101,7 @@ db.close();`,
         (error) => (error ? fail(error) : done()),
       ),
     );
-    application = await _electron.launch({ args, env });
+    application = await launchElectron({ args, env });
     page = await application.firstWindow();
     await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
     await page.getByRole("link", { name: "待处理", exact: true }).click();

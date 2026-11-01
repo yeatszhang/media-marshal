@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { launchDesktop } from "./support/electron";
+import { launchDesktop } from "./support/test-electron";
 
 let application: ElectronApplication, directory: string;
 test.beforeEach(async () => {

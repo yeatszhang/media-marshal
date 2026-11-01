@@ -1,4 +1,4 @@
-import { expect, test, _electron } from "@playwright/test";
+import { expect, test, launchElectron } from "./support/test-electron";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -55,7 +55,7 @@ test("下载清理长路径、失败重试、历史范围与重载及 Core 重�
   );
   delete env.ELECTRON_RUN_AS_NODE;
   const launch = () =>
-    _electron.launch({
+    launchElectron({
       args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
       env,
     });

@@ -5,13 +5,14 @@ export interface LaunchOptions {
   dataDir: string;
   mode: "background" | "foreground";
   target: "development" | "packaged";
+  executablePath?: string;
   diagnostics?: { sessionId: string; runId: string; buildId: string };
 }
 /** CLI 与 E2E 共用启动方式；调用者负责独立目录与构建身份。 */
-export async function launchDesktop(
+export async function desktopLaunchOptions(
   root: string,
   options: LaunchOptions,
-): Promise<ElectronApplication> {
+): Promise<NonNullable<Parameters<typeof _electron.launch>[0]>> {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -31,14 +32,15 @@ export async function launchDesktop(
   }
   const executablePath =
     options.target === "packaged"
-      ? process.platform === "darwin"
-        ? join(
-            root,
-            `apps/desktop/release/${process.arch === "arm64" ? "mac-arm64" : "mac"}/Media Marshal.app/Contents/MacOS/Media Marshal`,
-          )
-        : join(root, "apps/desktop/release/win-unpacked/Media Marshal.exe")
+      ? (options.executablePath ??
+        (process.platform === "darwin"
+          ? join(
+              root,
+              `apps/desktop/release/${process.arch === "arm64" ? "mac-arm64" : "mac"}/Media Marshal.app/Contents/MacOS/Media Marshal`,
+            )
+          : join(root, "apps/desktop/release/win-unpacked/Media Marshal.exe")))
       : undefined;
-  return _electron.launch({
+  return {
     executablePath,
     args: [
       ...(executablePath ? [] : [resolve(root, "apps/desktop")]),
@@ -47,5 +49,11 @@ export async function launchDesktop(
     cwd: root,
     env,
     timeout: 20000,
-  });
+  };
+}
+export async function launchDesktop(
+  root: string,
+  options: LaunchOptions,
+): Promise<ElectronApplication> {
+  return _electron.launch(await desktopLaunchOptions(root, options));
 }

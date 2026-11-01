@@ -3,6 +3,7 @@ productName: Media Marshal
 directories:
   output: release
 files:
+  - "!**/node_modules/**/tsconfig*.json"
   - out/**
   - resources/framework-origin.json
   - resources/app-framework.LICENSE
@@ -14,6 +15,7 @@ asarUnpack:
 mac:
   category: public.app-category.video
   files:
+    - "!**/node_modules/**/tsconfig*.json"
     - out/**
     - resources/framework-origin.json
     - resources/app-framework.LICENSE
@@ -64,6 +66,7 @@ mac:
       arch: [arm64, x64]
 win:
   files:
+    - "!**/node_modules/**/tsconfig*.json"
     - out/**
     - resources/framework-origin.json
     - resources/app-framework.LICENSE

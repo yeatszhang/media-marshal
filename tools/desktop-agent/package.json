@@ -1,0 +1,5 @@
+{
+  "name": "@media-marshal/desktop-agent",
+  "private": true,
+  "type": "module"
+}

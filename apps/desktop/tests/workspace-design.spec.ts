@@ -1,4 +1,4 @@
-import { expect, test, _electron } from "@playwright/test";
+import { expect, test, launchElectron } from "./support/test-electron";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -11,7 +11,7 @@ test("工作台键盘入口、使用说明和英文长导航在最小窗口可�
     ),
   );
   delete env.ELECTRON_RUN_AS_NODE;
-  const application = await _electron.launch({
+  const application = await launchElectron({
     args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
     env,
   });

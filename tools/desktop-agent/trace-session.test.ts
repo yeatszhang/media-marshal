@@ -19,7 +19,12 @@ async function fixture(start = async () => {}, stop?: () => Promise<void>) {
   });
   await initializeEvidence(root, run);
   let url = "marshal://app/index.html";
-  const page = Object.assign(new EventEmitter(), { url: () => url });
+  const main = {};
+  const page = Object.assign(new EventEmitter(), {
+    url: () => url,
+    mainFrame: () => main,
+    frames: () => [main],
+  });
   const calls: { path?: string }[] = [];
   const context = Object.assign(new EventEmitter(), {
     pages: () => [page],
@@ -42,6 +47,7 @@ async function fixture(start = async () => {}, stop?: () => Promise<void>) {
       url = "https://login.example.invalid/?token=不保存";
       page.emit("framenavigated");
     },
+    subframe: () => page.emit("framenavigated", {}),
   };
 }
 test("敏感默认不启动；启动中的敏感转场丢弃整段且不保存 ZIP", async () => {
@@ -103,5 +109,21 @@ test("并发停止只产生一份证据，采集失败不覆盖原断言失败",
   } finally {
     await rm(available.root, { recursive: true, force: true });
     await rm(failed.root, { recursive: true, force: true });
+  }
+});
+test("可信主页面中的子 frame 也使完整 trace 作废，不读取子页面内容", async () => {
+  const value = await fixture();
+  try {
+    await value.trace.start("safe-synthetic");
+    value.subframe();
+    await value.trace.stop();
+    assert.equal(value.trace.summary().status, "blocked");
+    assert.deepEqual(value.calls, [{}]);
+    assert.equal(
+      (await readdir(runHome(value.root, value.run.runId))).some((name) => name.endsWith(".zip")),
+      false,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
   }
 });

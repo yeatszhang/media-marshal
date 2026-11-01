@@ -1,4 +1,4 @@
-import { test, expect, _electron, type ElectronApplication } from "@playwright/test";
+import { test, expect, launchElectron, type ElectronApplication } from "./support/test-electron";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,7 +9,7 @@ test.beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "marshal-quark-login-"));
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
     env,
   });

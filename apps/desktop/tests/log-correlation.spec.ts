@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { launchDesktop } from "./support/electron";
+import { launchDesktop } from "./support/test-electron";
 import { currentBuild } from "./support/current-build";
 
 type Record = {

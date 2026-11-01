@@ -35,8 +35,11 @@ export async function readEvidence(root: string, runId: string): Promise<Evidenc
     await file.close();
   }
 }
-async function lockManifest(directory: string) {
-  const path = join(directory, ".manifest.lock"),
+export async function lockEvidenceWriter(
+  directory: string,
+  name: ".manifest.lock" | ".actions.lock" = ".manifest.lock",
+) {
+  const path = join(directory, name),
     deadline = Date.now() + 1000;
   while (true) {
     try {
@@ -58,7 +61,7 @@ async function lockManifest(directory: string) {
         throw new ToolError(
           "EVIDENCE_WRITER_UNKNOWN",
           "证据写入权未确认释放",
-          "核对 .manifest.lock 的原进程；不删除未知写入者记录",
+          `核对 ${name} 的原进程；不删除未知写入者记录`,
           "unknown",
         );
       await new Promise((done) => setTimeout(done, 20));
@@ -71,7 +74,7 @@ export async function updateEvidence(
   mutate: (value: EvidenceManifest) => void,
 ) {
   const directory = await agentFile(root, agentRunHome(root, runId)),
-    unlock = await lockManifest(directory);
+    unlock = await lockEvidenceWriter(directory);
   try {
     const value = await readEvidence(root, runId);
     mutate(value);
@@ -89,10 +92,10 @@ export async function updateEvidence(
 export async function initializeEvidence(
   root: string,
   identity: RunIdentity,
-  producer: "controller" | "test" = "controller",
+  producer: "controller" | "test" = identity.producer ?? "controller",
 ) {
   const directory = await agentFile(root, agentRunHome(root, identity.runId)),
-    unlock = await lockManifest(directory);
+    unlock = await lockEvidenceWriter(directory);
   try {
     try {
       const current = await readEvidence(root, identity.runId);

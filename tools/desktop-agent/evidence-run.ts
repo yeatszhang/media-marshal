@@ -9,7 +9,8 @@ import {
   lifecycleEvidence,
 } from "./evidence-capture.ts";
 import { recentLogs } from "./log-reader.ts";
-import { readHealth } from "./health.ts";
+import { healthWithin } from "./health-budget.ts";
+import { ToolError } from "./protocol.ts";
 import type { ElectronApplication } from "@playwright/test";
 
 export async function beginEvidence(root: string, session: Session, manifest?: string) {
@@ -50,14 +51,14 @@ export async function healthEvidence(root: string, session: Session, app?: Elect
       root,
       session,
       { kind: "health", source: "tool" },
-      await readHealth(app),
+      await healthWithin(app),
     );
-  } catch {
+  } catch (error) {
     return captureArtifact(root, session, {
       kind: "health",
       source: "tool",
       status: "missing",
-      reason: "HEALTH_UNAVAILABLE",
+      reason: error instanceof ToolError ? error.code : "HEALTH_UNAVAILABLE",
     });
   }
 }

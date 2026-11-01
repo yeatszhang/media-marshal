@@ -1,11 +1,11 @@
 import {
   expect,
   test,
-  _electron,
+  launchElectron,
   type ElectronApplication,
   type Locator,
   type Page,
-} from "@playwright/test";
+} from "./support/test-electron";
 import { mkdtemp, mkdir, realpath, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,7 +21,7 @@ test.beforeEach(async () => {
     ),
   );
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
     env,
   });

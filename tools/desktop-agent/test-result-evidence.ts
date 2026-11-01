@@ -8,6 +8,7 @@ import { atomicJson } from "./build.ts";
 import { initializeEvidence, readEvidence, updateEvidence } from "./evidence-store.ts";
 import { recordArtifact, recordFailure } from "./evidence-artifacts.ts";
 import type { RunIdentity, EvidenceManifest } from "./evidence-model.ts";
+import { recordTestActions } from "./evidence-actions.ts";
 export const RUN_ANNOTATION = "media-marshal.run";
 export const STARTUP_ANNOTATION = "media-marshal.startup-failed";
 const annotation = z.strictObject({ runId: z.uuid(), sessionId: z.uuid() });
@@ -15,12 +16,18 @@ export const testKey = (id: string) => createHash("sha256").update(id).digest("h
 export async function testRun(root: string, seed: string) {
   const runId = randomUUID();
   const identity: RunIdentity = {
+    producer: "test",
     sessionId: randomUUID(),
     runId,
     profileRunId: runId,
     generation: 1,
     createdAt: new Date().toISOString(),
-    options: { scenario: "empty", seed: testKey(seed), mode: "background", target: "development" },
+    options: {
+      scenario: "test-result",
+      seed: testKey(seed),
+      mode: "background",
+      target: "development",
+    },
   };
   await mkdir(agentRunHome(root, runId), { recursive: true, mode: 0o700 });
   await initializeEvidence(root, identity, "test");
@@ -117,7 +124,18 @@ export async function recordTestResult(root: string, test: TestCase, result: Tes
       status: "available",
       name,
     });
-    const startup = test.annotations.some((item) => item.type === STARTUP_ANNOTATION);
+    const api = value.steps.items.filter((item) => item.category === "pw:api");
+    if (api.length)
+      await recordTestActions(root, run.runId, {
+        testId: value.testId,
+        apiSteps: api.length,
+        failedSteps: api.filter((item) => item.failed).length,
+        truncated: value.steps.truncated,
+      });
+    const startup = test.annotations.some(
+      (item) =>
+        item.type === STARTUP_ANNOTATION && (!item.description || item.description === run.runId),
+    );
     if (["failed", "timedOut", "interrupted"].includes(result.status))
       await recordFailure(root, run.runId, {
         kind: startup ? "startup" : "assertion",

@@ -1,4 +1,4 @@
-import { test, expect, _electron } from "@playwright/test";
+import { test, expect, launchElectron } from "./support/test-electron";
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, rm, writeFile, rename, readFile, stat } from "node:fs/promises";
@@ -17,7 +17,7 @@ test("逐文件提交异常支持分页、持久反馈及原提交恢复，窄�
   );
   delete env.ELECTRON_RUN_AS_NODE;
   const launch = () =>
-    _electron.launch({
+    launchElectron({
       args: [resolve("apps/desktop"), `--user-data-dir=${join(directory, "data")}`],
       env,
     });

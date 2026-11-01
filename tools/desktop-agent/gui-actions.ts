@@ -16,6 +16,7 @@ import { uniqueTarget } from "./gui-target.ts";
 import { executeCoordinate } from "./gui-coordinates.ts";
 import { observeAfter } from "./gui-after.ts";
 import { captureJson } from "./evidence-capture.ts";
+import { recordActionReceipt } from "./evidence-actions.ts";
 export class GuiActions {
   busy = false;
   private root: string;
@@ -110,6 +111,8 @@ export class GuiActions {
       },
       receipt,
     );
+    const actions = await recordActionReceipt(this.root, receipt);
+    if (actions.status === "missing") receipt.evidence = actions;
   }
   private async execute(input: Input<"act">, receipt: ActionReceipt, persist: () => Promise<void>) {
     const build = await assertBuild(this.root, this.session.options.target);

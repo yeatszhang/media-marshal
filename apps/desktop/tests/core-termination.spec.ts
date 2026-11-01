@@ -1,4 +1,4 @@
-import { test, expect, _electron, type ElectronApplication } from "@playwright/test";
+import { test, expect, launchElectron, type ElectronApplication } from "./support/test-electron";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
@@ -14,7 +14,7 @@ test.beforeEach(async () => {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   delete env.ELECTRON_RUN_AS_NODE;
-  application = await _electron.launch({
+  application = await launchElectron({
     ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}),
     args: [
       ...(process.env.MARSHAL_EXECUTABLE ? [] : [resolve("apps/desktop")]),

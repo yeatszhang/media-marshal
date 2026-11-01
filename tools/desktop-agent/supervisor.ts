@@ -6,6 +6,7 @@ import { prepareScenario } from "./scenario-prepare.ts";
 import { checkScenario } from "./scenario-check.ts";
 import { GuiObserver } from "./gui-observe.ts";
 import { GuiActions } from "./gui-actions.ts";
+import { TraceSession } from "./trace-session.ts";
 import { assertController } from "./controller-identity.ts";
 import { EventCollector } from "./collector.ts";
 import { readHealth } from "./health.ts";
@@ -36,6 +37,7 @@ interface Runtime {
   collector?: EventCollector;
   gui?: GuiObserver;
   actions?: GuiActions;
+  trace?: TraceSession;
   toolIdentity?: string;
 }
 async function openApplication(runtime: Runtime) {
@@ -58,6 +60,8 @@ async function openApplication(runtime: Runtime) {
   });
   runtime.app = app;
   runtime.collector.attach(app);
+  runtime.trace = new TraceSession(root, session, app.context());
+  await runtime.trace.start();
   session.application = identify(app.process().pid!);
   if (!session.application || !session.application.command.includes(`--user-data-dir=${dataDir}`))
     throw new ToolError(
@@ -117,6 +121,7 @@ async function closeApplication(runtime: Runtime) {
       "unknown",
     );
   await healthEvidence(runtime.root, session, app);
+  await runtime.trace?.stop();
   await Promise.race([
     app.close().catch((error) => {
       if (!session.application || identify(session.application.pid)) throw error;
@@ -148,6 +153,7 @@ async function closeApplication(runtime: Runtime) {
   runtime.app = undefined;
   runtime.gui = undefined;
   runtime.actions = undefined;
+  runtime.trace = undefined;
   delete session.application;
 }
 async function transition(runtime: Runtime, restart: boolean) {

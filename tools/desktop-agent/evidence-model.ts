@@ -78,13 +78,14 @@ export type EvidenceManifest = z.output<typeof manifestContent>;
 export type Artifact = z.output<typeof artifactSchema>;
 export type Failure = z.output<typeof failureSchema>;
 export interface RunIdentity {
+  producer?: "controller" | "test";
   sessionId: string;
   runId: string;
   profileRunId: string;
   generation: number;
   createdAt: string;
   buildId?: string;
-  options: Input<"start">;
+  options: Omit<Input<"start">, "scenario"> & { scenario: string };
 }
 export const evidenceChecksum = (value: EvidenceManifest) =>
   createHash("sha256")

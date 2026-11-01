@@ -1,4 +1,4 @@
-import { test, expect, _electron, type ElectronApplication } from "@playwright/test";
+import { test, expect, launchElectron, type ElectronApplication } from "./support/test-electron";
 import {
   cp,
   mkdtemp,
@@ -35,7 +35,7 @@ const launch = async (path: string, profile: string) => {
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.NODE_OPTIONS;
   delete env.NODE_PATH;
-  application = await _electron.launch({
+  application = await launchElectron({
     executablePath: path,
     args: [`--user-data-dir=${profile}`],
     env,

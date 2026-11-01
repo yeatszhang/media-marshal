@@ -76,6 +76,10 @@ Main、Core、Sidecar、Preload 和 Renderer 构建均生成带源码内容的 `
 
 `npm run test:desktop` 默认使用后台模式。它保留真实 Electron 主窗口、登录子窗口、DOM 和截图能力，但窗口不显示、不请求焦点、不出现在任务栏或 macOS Dock；隐藏窗口关闭后台节流。测试仍使用各自隔离的用户数据目录，不连接正在使用的开发实例。
 
+测试入口现在先通过开发工具构建当前源码并保存指纹，再启动 Playwright；直接调用 Playwright 需要已有有效的当前构建清单。所有手动 Electron E2E 通过 `tests/support/test-electron.ts` 启动，统一关联运行身份、日志、动作摘要、受限 trace 与断言。`test:packaged` 默认同样先生成当前平台目录包并检查资源，可追加用例路径筛选；显式提供 `MARSHAL_APP_PATH` 时沿用生成该映像的构建清单，并核对整个包副本，不能用旧包匹配当前源码。工具文件、原生 GUI helper 和依赖内的 TypeScript 开发配置不进入目录包。
+
+完整 trace 仅为明确登记的无账号合成用例开启，其余上下文记录敏感阻断；iframe 或来源变化使整段 trace 作废。关闭前的健康采集最多等待 150ms，超时单独记录缺失，不占用应用自己的退出期限。结果写入 `test-results/agent/<runId>/manifest.json`；E2E 的 `test-fixture`／纯结果 `test-result` 与 CLI 注册场景分开标记。工具使用说明见仓库 `tools/desktop-agent/README.md`，证据与范围见[本轮验证记录](../development/desktop-refactor-validation.md)。
+
 ```bash
 npm run test:desktop -- apps/desktop/tests/presentation.spec.ts
 npm run test:desktop:background -- apps/desktop/tests/layout.spec.ts

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { rename, unlink } from "node:fs/promises";
-import type { BrowserContext, Page } from "@playwright/test";
+import type { BrowserContext, Page, Frame } from "@playwright/test";
 import { trustedPage } from "./collector.ts";
 import { agentFile, agentRunHome } from "./paths.ts";
 import { initializeEvidence } from "./evidence-store.ts";
@@ -20,13 +20,13 @@ export class TraceSession {
   private recording = false;
   private reason?: string;
   private pending: Promise<unknown> = Promise.resolve();
-  private pages = new Map<Page, () => void>();
+  private pages = new Map<Page, (frame?: Frame) => void>();
   private onPage: (page: Page) => void;
   constructor(
     root: string,
     run: RunIdentity,
     context: BrowserContext,
-    producer: "controller" | "test" = "controller",
+    producer: "controller" | "test" = run.producer ?? "controller",
   ) {
     this.root = root;
     const { sessionId, runId, profileRunId, generation, createdAt, buildId, options } = run;
@@ -50,6 +50,13 @@ export class TraceSession {
       historyComplete: false,
     };
   }
+  private async settled() {
+    let current: Promise<unknown>;
+    do {
+      current = this.pending;
+      await current;
+    } while (current !== this.pending);
+  }
   private async artifact(
     status: "available" | "blocked" | "missing",
     reason?: string,
@@ -72,8 +79,9 @@ export class TraceSession {
   }
   private watch(page: Page) {
     if (this.pages.has(page)) return;
-    const check = () => {
-      if (!trustedPage(page)) void this.discard("SENSITIVE_CONTEXT");
+    const check = (frame?: Frame) => {
+      if (!trustedPage(page) || page.frames().length !== 1 || (frame && frame !== page.mainFrame()))
+        void this.discard("SENSITIVE_CONTEXT");
     };
     this.pages.set(page, check);
     page.on("framenavigated", check);
@@ -113,7 +121,7 @@ export class TraceSession {
         await this.artifact("missing", this.reason);
       }
     });
-    await this.pending;
+    await this.settled();
     return this.summary();
   }
   async discard(reason = "SENSITIVE_INPUT") {
@@ -142,11 +150,12 @@ export class TraceSession {
   }
   async stop() {
     this.pending = this.pending.then(async () => {
+      for (const check of this.pages.values()) check();
       if (this.state !== "recording" || !this.recording) return this.summary();
       this.state = "stopping";
       return this.save();
     });
-    await this.pending;
+    await this.settled();
     return this.summary();
   }
   private async save() {

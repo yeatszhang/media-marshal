@@ -1,4 +1,4 @@
-import { expect, test, _electron, type ElectronApplication } from "@playwright/test";
+import { expect, test, launchElectron, type ElectronApplication } from "./support/test-electron";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,7 +20,7 @@ test("构建后的 Main、Core、Sidecar 错误映射到 TypeScript，页面和 
   delete env.ELECTRON_RUN_AS_NODE;
   // 不依赖开发者终端的 Node 参数，覆盖应用自身的启用流程。
   delete env.NODE_OPTIONS;
-  application = await _electron.launch({
+  application = await launchElectron({
     ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}),
     args: [
       ...(process.env.MARSHAL_EXECUTABLE

@@ -14,6 +14,17 @@ const resources = process.env.MARSHAL_ARTIFACT_RESOURCES
   : resolve("apps/desktop/release", directory);
 const archive = join(resources, "app.asar");
 const files = listPackage(archive);
+const developmentControl = (path) =>
+  /(?:^|[\\/])(?:desktop-agent|native-helper|native-manifest\.json)(?:[\\/]|$)/.test(path);
+assert(!files.some(developmentControl), "产物 ASAR 包含开发控制工具或原生 GUI helper");
+function rejectDevelopmentResources(directory) {
+  for (const item of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, item.name);
+    assert(!developmentControl(path), "发行资源包含开发控制工具或原生 GUI helper");
+    if (item.isDirectory() && !item.isSymbolicLink()) rejectDevelopmentResources(path);
+  }
+}
+rejectDevelopmentResources(resources);
 for (const file of [
   "/resources/framework-origin.json",
   "/resources/app-framework.LICENSE",

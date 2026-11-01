@@ -1,4 +1,4 @@
-import { expect, test, _electron } from "@playwright/test";
+import { expect, test, launchElectron } from "./support/test-electron";
 import { mkdtemp, mkdir, realpath, rename, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,7 +17,7 @@ test("同步预览恢复启动时离线的原目录，并拒绝同路径替代�
   );
   delete env.ELECTRON_RUN_AS_NODE;
   const launch = () =>
-    _electron.launch({ args: [resolve("apps/desktop"), `--user-data-dir=${data}`], env });
+    launchElectron({ args: [resolve("apps/desktop"), `--user-data-dir=${data}`], env });
   let app = await launch();
   try {
     let page = await app.firstWindow();

@@ -1,4 +1,4 @@
-import { expect, test, _electron, type ElectronApplication } from "@playwright/test";
+import { expect, test, launchElectron, type ElectronApplication } from "./support/test-electron";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -19,7 +19,7 @@ test("统一日志把 Main、Core 和沙盒页面同时写入控制台及本地�
   );
   delete env.ELECTRON_RUN_AS_NODE;
   env.MARSHAL_LOG_LEVEL = "debug";
-  application = await _electron.launch({
+  application = await launchElectron({
     ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}),
     args: [
       ...(process.env.MARSHAL_EXECUTABLE ? [] : [resolve("apps/desktop")]),

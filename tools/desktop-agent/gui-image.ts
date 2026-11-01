@@ -3,7 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicJson } from "./build.ts";
 import { agentFile } from "./paths.ts";
-import { runHome, type Session } from "./session-store.ts";
+import { agentRunHome as runHome } from "./paths.ts";
+import type { RunIdentity } from "./evidence-model.ts";
 import { ToolError, type Input } from "./protocol.ts";
 import type { SnapshotHandle } from "./gui-types.ts";
 import { maskInputs, unmaskInputs } from "./gui-mask.ts";
@@ -50,7 +51,7 @@ export function imageClip(handle: SnapshotHandle, input: Input<"observe">) {
 }
 export async function captureImage(
   root: string,
-  session: Session,
+  session: RunIdentity,
   observer: SnapshotObserver,
   handle: SnapshotHandle,
   input: Input<"observe">,

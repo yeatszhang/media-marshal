@@ -1,4 +1,4 @@
-import { expect, test, _electron, type ElectronApplication } from "@playwright/test";
+import { expect, test, launchElectron, type ElectronApplication } from "./support/test-electron";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -44,7 +44,7 @@ test("远端目录加载、失败重试与范围选择在最小窗口可操作",
       ),
     );
     delete env.ELECTRON_RUN_AS_NODE;
-    application = await _electron.launch({
+    application = await launchElectron({
       args: [bootstrap, `--user-data-dir=${join(directory, "data")}`],
       env,
     });
