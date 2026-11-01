@@ -23,6 +23,10 @@
 
 ## 行为回归入口
 
+2026-11-01 按用户要求移除依赖应用菜单名称的原生菜单／快捷键／隐藏恢复用例；不再以该用例阻塞第 3 组实施。任务 2.12／2.13 保留未完成，目录选择问题仍为失败，未计为通过。用于探索系统面板服务归属与键盘转发的未验证改动已撤回，保持原有 PID 拒绝边界。
+
+同步事务基础能力已落到 `storage/public.ts` 和 `storage/transactions.ts`：业务只持有不透明 token，连接解析仅供组装与 persistence 注入，原有业务 SQL 后续分模块接入。4 项内存 SQLite 测试通过，覆盖跨所有者故障回滚、嵌套共用 token 及吞错回滚、异步回调与异步续写拒绝、伪造／跨库／过期 token 和外部事务拒绝。工作区类型检查、架构检查（8 项规则测试，390 项既有例外）、文档构建及 OpenSpec 严格校验通过；规则变更仅允许导入公开事务类型，运行时导入及原始实现 type-only 导入仍有拒绝反例。本单元不修改业务 schema 或真实文件。
+
 | 范围 | 当前入口 |
 | --- | --- |
 | 请求、启动回滚与关闭顺序 | `packages/media-core/src/modules/application.test.ts`、`application/request-executions.test.ts`、Main supervisor 测试 |

@@ -24,6 +24,14 @@ npm run check:architecture
 
 静态检查不能证明任意 SQL 的写集合，也不能证明文件恢复正确。跨所有者写入、事务边界、授权和幂等仍须代码审查及故障回归。不要把 SQL 关键词匹配包装成完整 SQL 语义分析。
 
+### 同步事务作用域
+
+`storage/public.ts` 只声明 `Transactions` 与不透明的 `TransactionScope`；业务模块仅可通过 type-only 导入这些类型。组装入口通过 `storage/transactions.ts` 创建事务边界，向业务流程注入 `transactions`，向各模块的 persistence 单独注入 `connectionFor`。模块公开接口不返回此连接解析能力，业务端口使用具体操作及业务参数，不接收 SQL。
+
+跨所有者记账由流程在 `transactions.run(scope => ...)` 内依次调用各所有者端口，并将同一 scope 传递下去。嵌套调用复用原 scope，不另建事务；任一嵌套调用失败后，即使上层捕获错误，最外层仍整体回滚。scope 仅在本数据库当前同步事务内有效，不能跨库、跨请求或在事务结束后复用，也不能接管其他入口已开启的 SQLite 事务。
+
+网络、文件操作及其等待须在事务外完成。异步函数在调用前拒绝；普通函数返回 Promise／thenable 时回滚，后续异步操作使用原 scope 会被拒绝。测试入口为 `npm test -- packages/media-core/src/storage/transactions.test.ts`，使用内存库验证两个所有者端口的整体提交／回滚，不处理个人数据。现有业务 SQL 按后续模块任务逐步接入，此基础能力本身不切换数据格式。
+
 ## 结构预算与存量例外
 
 预算按标准格式化后的结构测量：活跃可执行文件 600 个非空非纯注释行、函数 100 行、类 20 个方法。纯声明数据不按函数统计；修改排版不能规避预算。超限先审视状态所有权，不按行数机械拆分。

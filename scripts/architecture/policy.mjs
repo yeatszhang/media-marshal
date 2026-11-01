@@ -105,6 +105,7 @@ export function edgeReason(from, to, typeOnly = false) {
     b === "core:storage" &&
     a.startsWith("core:") &&
     !["core:bootstrap", "core:storage"].includes(a) &&
+    !(typeOnly && to === "packages/media-core/src/storage/public.ts") &&
     !from.includes("/persistence/")
   )
     return "原始数据库仅供 storage 与业务 persistence 使用";

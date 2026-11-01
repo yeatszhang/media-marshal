@@ -24,6 +24,9 @@ test("依赖矩阵接受公开入口，拒绝深层、反向、共享反向与�
     /反向/,
   );
   assert.match(edgeReason(from, "packages/media-core/src/storage/database.ts", true), /数据库/);
+  assert.equal(edgeReason(from, "packages/media-core/src/storage/public.ts", true), undefined);
+  assert.match(edgeReason(from, "packages/media-core/src/storage/public.ts"), /数据库/);
+  assert.match(edgeReason(from, "packages/media-core/src/storage/transactions.ts", true), /数据库/);
   assert.equal(
     edgeReason(
       from.replace("service", "persistence/store"),
