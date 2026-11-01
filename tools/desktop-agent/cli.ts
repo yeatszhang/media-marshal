@@ -98,6 +98,7 @@ export async function dispatch(request: Request): Promise<unknown> {
     return readLogs(root, request.sessionId, request.payload as Input<"logs">);
   }
   if (request.command === "start") return startSession(root, request);
+  if (request.command === "observe") return sessionCommand(root, request);
   if (
     ["status", "stop", "restart"].includes(request.command) &&
     !(request.payload as Input<"status">).jobId
@@ -123,6 +124,7 @@ export async function dispatch(request: Request): Promise<unknown> {
         "status",
         "start",
         "scenario",
+        "observe",
         "logs",
         "diagnose",
         "stop",

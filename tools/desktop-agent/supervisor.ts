@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ElectronApplication } from "@playwright/test";
 import { prepareScenario } from "./scenario-prepare.ts";
 import { checkScenario } from "./scenario-check.ts";
+import { GuiObserver } from "./gui-observe.ts";
 import { EventCollector } from "./collector.ts";
 import { readHealth } from "./health.ts";
 import type { Server } from "node:net";
@@ -20,7 +21,7 @@ import {
   sessionsHome,
   type Session,
 } from "./session-store.ts";
-import { ToolError, failure, type Request } from "./protocol.ts";
+import { ToolError, failure, type Request, type Input } from "./protocol.ts";
 
 interface Runtime {
   root: string;
@@ -29,6 +30,7 @@ interface Runtime {
   server?: Server;
   busy: boolean;
   collector?: EventCollector;
+  gui?: GuiObserver;
 }
 async function openApplication(runtime: Runtime) {
   const { root, session } = runtime;
@@ -75,6 +77,7 @@ async function openApplication(runtime: Runtime) {
       buildId: session.buildId,
     });
   session.status = "running";
+  runtime.gui = new GuiObserver(root, app, session);
   delete session.error;
   await saveSession(root, session);
 }
@@ -122,6 +125,7 @@ async function closeApplication(runtime: Runtime) {
       "unknown",
     );
   runtime.app = undefined;
+  runtime.gui = undefined;
   delete session.application;
 }
 async function transition(runtime: Runtime, restart: boolean) {
@@ -225,6 +229,15 @@ function dispatcher(runtime: Runtime) {
   let queue = Promise.resolve<unknown>(undefined);
   return (request: Request) => {
     if (request.command === "status") return Promise.resolve(publicSession(runtime.session));
+    if (request.command === "observe") {
+      const result = queue.then(() => {
+        if (!runtime.gui || runtime.busy || runtime.session.status !== "running")
+          throw new ToolError("GUI_UNAVAILABLE", "会话界面尚不可观察", "先查询会话状态", "blocked");
+        return runtime.gui.observe(request.payload as Input<"observe">);
+      });
+      queue = result.catch(() => undefined);
+      return result;
+    }
     if (request.command === "diagnose" && runtime.app && !runtime.busy)
       return readHealth(runtime.app).then((health) => ({
         health,

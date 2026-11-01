@@ -26,6 +26,8 @@ export const commands = {
   restart: z.strictObject({}),
   stop: z.strictObject({}),
   observe: page.extend({
+    mode: z.enum(["windows", "snapshot"]).default("snapshot"),
+    snapshotId: uuid.optional(),
     limit: bounded.max(500).default(100),
     cursor: z.number().int().nonnegative().default(0),
     regionRef: z.string().max(120).optional(),

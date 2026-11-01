@@ -52,3 +52,7 @@ macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其�
 `diagnose --session <sessionId> --json` 汇总受限只读业务查询、宿主进程列表、最近警告与异常采集；不直接打开运行中的业务 SQLite，不触发重试、补扫、复制或清理。分页摘要会标记截断，组件缺失返回 unavailable。诊断完成只说明查询已结束，`assertions` 始终标记未执行，不据此断言业务成功。
 
 每个 run 自动保留 `observations.jsonl`，采集受信任主页面 pageerror、窗口崩溃、组件退出和日志文件失败；其他来源的登录窗口只记录不可观察，不采集其异常正文。未标记控制台不保存。采集队列最多 256 条、文件最多 1 MiB，丢弃数量和缺失总结均明确报告；正常停止保存 collector.json，异常退出不能假定最后记录完整。日志记录的 dropBatchId／dropReason 按批次分组，dropCount 取最大计数；batchComplete 为 false 时只是下界，不能重复相加。所有查询均保留 historyComplete=false，范围是当前可用历史或有界尾部。
+
+`observe --session <sessionId> --json` 读取当前可信主窗口的归一化 ARIA 快照；参数 `{"mode":"windows"}` 只枚举窗口元数据。非可信窗口不读取标题、URL 和内容。多窗口时须明确 windowId，工具不会选择第一个。快照记录 sessionId／runId／buildId、windowId／窗口代际、文档身份／变化序号和几何状态；控件包含角色、可访问名称、状态、CSS 视口坐标及区域关系。输入内容统一遮罩，匿名控件保持不可操作；同名控件保留独立 ref 和 duplicateName 提示。
+
+快照最多 4000 个节点并明确截断，每页默认 100、最多 500；继续查询使用 `{"snapshotId":"上一页身份","cursor":100}`，可带 regionRef 查询子树。焦点、dialog／alert 引用始终关联完整快照。控制器只保留最近 8 份可续用快照，归一化证据保存在本 run 的 `aria-<snapshotId>.json`，不保存原始 ARIA 数据。页面导航、重载、窗口替换／移动／缩放、焦点或 DOM 变化均拒绝续用旧快照；重新观察不会自动重放操作。嵌入页面及 `data-agent-sensitive="true"` 区域存在时整次观察受阻。截图和动作按后续任务接入，当前语义观察不能代替截图或原生验证。
