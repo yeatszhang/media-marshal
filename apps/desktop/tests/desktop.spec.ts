@@ -1,3 +1,4 @@
+import { chooseSettingsDownload, editSavedSyncDraft } from "./support/download-directory";
 import { randomUUID } from "node:crypto";
 import {
   test,
@@ -184,7 +185,7 @@ async function independentSyncDraft(window: Page, name: string) {
   await window.getByRole("button", { name: "添加同步来源", exact: true }).click();
   await window.getByLabel("来源名称", { exact: true }).fill(name);
   await window.getByRole("button", { name: "选择本地输入目录", exact: true }).click();
-  await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
+  await chooseSettingsDownload(window);
   await window.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
   await expect
     .poll(() =>
@@ -272,9 +273,9 @@ test("独立本地同步在无账号窗口完成就绪、精确复制、移除�
   await page.getByLabel("规则 2 表达式").fill("**");
   await page.getByLabel("规则 2 动作").selectOption("exclude");
   await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("默认本地下载目录");
+  await expect(page.getByRole("alert")).toContainText("尚未设置本地下载目录");
   expect(await page.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
-  await page.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
+  await chooseSettingsDownload(page);
   await page.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
   const preview = page.getByRole("region", { name: "同步预览", exact: true });
   await expect(preview).toContainText("完整范围 · 1 项");
@@ -1495,6 +1496,7 @@ test("全量内容复核经实际 IPC 保存逐项失败，重载和 Core 重启
   await rename(missing, missing + ".保留");
   const targetBefore = await readdir(target);
   await window.getByRole("link", { name: "待处理", exact: true }).click();
+  await window.getByRole("button", { name: "扫描与问题", exact: true }).click();
   const panel = window.getByRole("region", { name: "全量内容复核", exact: true });
   await expect(panel).toBeVisible();
   await panel.getByRole("button", { name: "开始全量内容复核", exact: true }).click();
@@ -1520,6 +1522,7 @@ test("全量内容复核经实际 IPC 保存逐项失败，重载和 Core 重启
   ).toBe(true);
   await panel.screenshot({ path: "test-results/desktop/content-review-partial-minimum.png" });
   await window.reload();
+  await window.getByRole("button", { name: "扫描与问题", exact: true }).click();
   await expect(panel).toContainText("部分文件未完成");
   expect((await window.evaluate(() => window.desktopApi.listContentReviews({}))).items[0]!.id).toBe(
     firstId,
@@ -1568,9 +1571,12 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
     [input, target],
   );
   await independentSyncDraft(window, "独立同步表单");
+  await editSavedSyncDraft(window, "独立同步表单");
   const form = window.getByRole("region", { name: "同步来源表单", exact: true });
   await expect(form).toContainText("从哪里同步");
-  await expect(form).toContainText("复制到哪里");
+  await expect(form.getByRole("region", { name: "本地下载目录", exact: true })).toContainText(
+    target,
+  );
   await expect(form).not.toContainText("媒体类型");
   await expect(form).not.toContainText("下载后整理");
   await window.getByRole("checkbox", { name: "启用周期扫描", exact: true }).check();
@@ -1583,7 +1589,7 @@ test("来源表单按文件去向分组，长路径与最小窗口下开关文�
   expect(await window.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
     true,
   );
-  await form.screenshot({ path: "test-results/desktop/source-form-independent-minimum.png" });
+  await window.screenshot({ path: "test-results/desktop/source-form-independent-minimum.png" });
   expect(await window.evaluate(() => window.desktopApi.listSyncJobs())).toMatchObject({ total: 0 });
 });
 
@@ -1780,7 +1786,7 @@ test("本地来源重叠在界面定位原规则，改选独立目录后可重�
   );
   await independentSyncDraft(window, "待修复同步范围");
   await expect(window.getByRole("alert")).toContainText(/重叠|包含/);
-  await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
+  await chooseSettingsDownload(window);
   await window.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
   await window.getByRole("button", { name: "确认配置范围", exact: true }).click();
   await expect
@@ -2336,8 +2342,11 @@ test("Emby 显式路径转换经真实 IPC 保存，多库根发现与重载不�
     expect(refreshes).toBe(1);
     roots = ["/container", "/container/movies"];
     await window.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click();
-    await expect(window.getByText(/匹配多个库根/)).toBeVisible();
-    await expect(select).toHaveValue("");
+    await expect(select).toHaveValue(JSON.stringify(["movies", "/container/movies"]));
+    expect(await window.evaluate(() => window.desktopApi.getEmbyConfiguration())).toEqual(
+      configuration,
+    );
+    expect(refreshes).toBe(1);
     type = "tvshows";
     await window.getByRole("button", { name: "读取 Emby 媒体库", exact: true }).click();
     await expect(window.getByText(/媒体类型不兼容/)).toBeVisible();
@@ -2467,7 +2476,8 @@ db.close();
   await expect(window.getByText("核心已连接", { exact: true })).toBeVisible();
   const inspect = async () => {
     await window.getByRole("link", { name: "待处理", exact: true }).click();
-    await window.locator(".ingestion-candidates tbody tr").getByRole("button").click();
+    await window.getByRole("button", { name: "逐个处理", exact: true }).click();
+    await window.getByRole("button", { name: "查看识别", exact: true }).click();
     await expect(window.locator(".recognition-matches")).toContainText(
       "季集预检：S1 E26–28（按真实分集唯一换季）",
     );
@@ -3785,14 +3795,15 @@ test("来源 React 草稿跨账号页保留，完整重载只读回核心草稿�
   await window.getByLabel("来源类型", { exact: true }).selectOption("local");
   await window.getByLabel("来源名称", { exact: true }).fill("核心保存的同步草稿");
   await window.getByRole("button", { name: "选择本地输入目录", exact: true }).click();
-  await window.getByRole("button", { name: "选择本地下载目录", exact: true }).click();
+  await chooseSettingsDownload(window);
   await window.getByRole("button", { name: "保存草稿并预览", exact: true }).click();
   await expect(window.getByRole("region", { name: "同步预览", exact: true })).toBeVisible();
   const saved = (await window.evaluate(() => window.desktopApi.listSyncSources()))[0]!;
+  await editSavedSyncDraft(window, "核心保存的同步草稿");
   await window.getByLabel("来源名称", { exact: true }).fill("未保存名称");
   await window
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: "设置", exact: true })
+    .getByRole("region", { name: "本地下载目录", exact: true })
+    .getByRole("link", { name: "前往设置", exact: true })
     .click();
   await window.getByRole("link", { name: "来源", exact: true }).click();
   await expect(window.getByLabel("来源名称", { exact: true })).toHaveValue("未保存名称");
@@ -3862,6 +3873,7 @@ test("菜单与快捷键受控重载先清理 React，保留同一后台核心�
     [source, target],
   );
   const saved = await independentSyncDraft(window, "重载保留核心草稿");
+  await editSavedSyncDraft(window, "重载保留核心草稿");
   const corePid = await application.evaluate(
     ({ app }) => app.getAppMetrics().find((row) => row.name === "Media Marshal Core")!.pid,
   );
