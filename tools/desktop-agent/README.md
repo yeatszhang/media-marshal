@@ -55,8 +55,16 @@ macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其�
 
 `observe --session <sessionId> --json` 读取当前可信主窗口的归一化 ARIA 快照；参数 `{"mode":"windows"}` 只枚举窗口元数据。非可信窗口不读取标题、URL 和内容。多窗口时须明确 windowId，工具不会选择第一个。快照记录 sessionId／runId／buildId、windowId／窗口代际、文档身份／变化序号和几何状态；控件包含角色、可访问名称、状态、CSS 视口坐标及区域关系。输入内容统一遮罩，匿名控件保持不可操作；同名控件保留独立 ref 和 duplicateName 提示。
 
-快照最多 4000 个节点并明确截断，每页默认 100、最多 500；继续查询使用 `{"snapshotId":"上一页身份","cursor":100}`，可带 regionRef 查询子树。焦点、dialog／alert 引用始终关联完整快照。控制器只保留最近 8 份可续用快照，归一化证据保存在本 run 的 `aria-<snapshotId>.json`，不保存原始 ARIA 数据。页面导航、重载、窗口替换／移动／缩放、焦点或 DOM 变化均拒绝续用旧快照；重新观察不会自动重放操作。嵌入页面及 `data-agent-sensitive="true"` 区域存在时整次观察受阻。动作按后续任务接入，语义观察不能代替原生验证。
+快照最多 4000 个节点并明确截断，每页默认 100、最多 500；继续查询使用 `{"snapshotId":"上一页身份","cursor":100}`，可带 regionRef 查询子树。焦点、dialog／alert 引用始终关联完整快照。控制器只保留最近 8 份可续用快照，归一化证据保存在本 run 的 `aria-<snapshotId>.json`，不保存原始 ARIA 数据。页面导航、重载、窗口替换／移动／缩放、焦点或 DOM 变化均拒绝续用旧快照；重新观察不会自动重放操作。嵌入页面及 `data-agent-sensitive="true"` 区域存在时整次观察受阻。语义观察不能代替原生验证。
 
 观察参数 `{"image":true}` 同时取得关联截图，默认覆盖 CSS 视口；regionRef 对应元素的可见区域，也可使用 `{"clip":{"x":0,"y":0,"width":320,"height":200}}` 指定视口矩形，两者只能选一个。范围不完整可见时图片明确缺失，不自动滚动改变现场。`scale` 为 css（默认，每 CSS 像素一个 PNG 像素）或 device。工具保存 PNG 与 image manifest，返回真实路径、sha256、裁剪起点、像素大小、CSS 转换比例、页面 DPR、窗口 zoomFactor 和 deviceScaleFactor；页面 DPR 包含页面缩放，Electron device 截图使用显示设备比例，因此坐标转换必须使用实际 PNG 的 pixelsPerCss。
 
 截图前后重新核对同一快照身份与几何状态，并对最多 6000 个 DOM 元素的位置生成布局摘要；超出核验预算会受阻。输入区域使用临时自有遮罩，图像采集失败或布局变化不保存无法关联的 PNG，仍保存 status=missing 及原因；完整性不能从命令 completed 推断。画布、二维码或敏感上下文禁止截图。此能力只捕获自有 Renderer 视口，不需要屏幕录制权限，也不代表菜单、系统对话框或其他原生窗口已验证。
+
+`act --session <sessionId> --input 动作参数.json --request UUID --json` 使用当前 snapshotId 和 targetRef，或 `target:{"role":"button","name":"确认"}` 的精确语义目标；二者必须选一个。同名目标拒绝并返回候选引用，不选择第一个。控件必须有可信名称、可操作角色且可见／可用；scroll 可选择命名区域。当前支持 click、fill、select、check、key、scroll；fill／select 的 value 为字符串，check 为布尔值，scroll 方向为 up／down／left／right。key 只允许导航／编辑按键及 ControlOrMeta+A，坐标操作尚未接入。调用前核对当前构建及快照，页面重载后旧 ref 不会指向新的同名控件。
+
+动作立即返回持久 jobId（同 requestId）；使用 `status --session UUID --input 作业参数.json` 和 `{"jobId":"原身份"}` 查询。先持久受理记录，再持久标记 sending，才发送输入；发送／等待超时返回 unknown，重复原请求只能续查，不再执行。不同参数复用请求 ID 会拒绝；重启后和停止后保留原收据。每会话最多 512 份收据，容量满时拒绝新动作，不自动淘汰确认身份。收据使用 HMAC 绑定请求但不保存输入明文或条件期望值。
+
+动作可带 after 条件，例如 `{"target":{"role":"heading","name":"设置"},"state":"visible"}`；timeoutMs 默认 5000、最多 10000。独立 `wait` 同样需要当前 snapshotId、唯一目标和条件，等待期间允许同一文档内容变化，跨文档重载拒绝。条件包括 visible／hidden／enabled／disabled／checked／text／value；text 是包含匹配，value 是精确匹配，checked 使用布尔期望值。动作收据区分输入发送、界面条件、后续观察和业务断言；界面条件通过不代表持久业务已成功，businessAssertion 仍为 not-run。控件结果未知时应查询 diagnose／业务任务，不能再点一次确认。
+
+DOM 变化判断会合并同一批次内原值重复写入及写后恢复，避免 React 重渲染临时修改 input name／type 导致误判；真实属性／文本／节点变化、输入及焦点事件仍使快照失效。快照过期原因只记录变化类别，不记录属性旧值或输入内容。动作要求实例 buildId 与当前成功构建相同，旧实例不能借用新清单验收。应用代码更新后可安全 restart；控制工具、契约或共享驱动更新后，旧控制进程仍持有旧模块，必须 stop 后新建场景，旧数据和证据保留。

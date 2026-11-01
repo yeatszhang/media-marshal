@@ -29,13 +29,37 @@ export class GuiObserver {
     )
       throw staleSnapshot();
     const current = await this.windows.select(handle.snapshot.window.windowId);
+    const document = await documentState(handle.page);
     if (
       current.page !== handle.page ||
       !sameObservation(current.window, handle.snapshot.window) ||
-      !sameObservation(await documentState(handle.page), handle.snapshot.document)
+      !sameObservation(document, handle.snapshot.document)
+    )
+      throw staleSnapshot(
+        current.page !== handle.page
+          ? "窗口替换"
+          : !sameObservation(current.window, handle.snapshot.window)
+            ? "窗口状态"
+            : Object.keys(document)
+                .filter(
+                  (key) =>
+                    !sameObservation(
+                      document[key as keyof typeof document],
+                      handle.snapshot.document[key as keyof typeof document],
+                    ),
+                )
+                .join("、") + `:${document.changeReason}`,
+      );
+    return handle;
+  }
+  async sameDocument(handle: SnapshotHandle) {
+    const current = await this.windows.select(handle.snapshot.window.windowId);
+    if (
+      handle.snapshot.runId !== this.session.runId ||
+      current.page !== handle.page ||
+      (await documentState(handle.page)).documentId !== handle.snapshot.document.documentId
     )
       throw staleSnapshot();
-    return handle;
   }
   async capture(windowId?: string): Promise<SnapshotHandle> {
     const { page, window } = await this.windows.select(windowId);

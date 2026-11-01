@@ -12,6 +12,36 @@ export const scenario = z.enum([
   "recovery-pending",
 ]);
 const bounded = z.number().int().positive();
+const semanticTarget = z.strictObject({
+  role: z.enum([
+    "button",
+    "link",
+    "textbox",
+    "searchbox",
+    "checkbox",
+    "radio",
+    "switch",
+    "tab",
+    "menuitem",
+    "option",
+    "slider",
+    "combobox",
+    "spinbutton",
+    "heading",
+    "alert",
+    "status",
+    "dialog",
+    "region",
+    "main",
+  ]),
+  name: z.string().min(1).max(500),
+});
+const condition = z.strictObject({
+  targetRef: z.string().max(120).optional(),
+  target: semanticTarget.optional(),
+  state: z.enum(["visible", "hidden", "enabled", "disabled", "checked", "text", "value"]),
+  value: z.union([z.string().max(500), z.boolean()]).optional(),
+});
 export const commands = {
   help: z.strictObject({}),
   doctor: z.strictObject({ native: z.boolean().default(false) }),
@@ -45,14 +75,19 @@ export const commands = {
   act: page.extend({
     snapshotId: uuid,
     targetRef: z.string().max(120).optional(),
+    target: semanticTarget.optional(),
     action: z.enum(["click", "fill", "select", "check", "key", "scroll"]),
     value: z.union([z.string().max(4096), z.boolean()]).optional(),
     position: z.strictObject({ x: z.number().finite(), y: z.number().finite() }).optional(),
+    timeoutMs: bounded.max(10000).default(5000),
+    after: condition.optional(),
   }),
   wait: page.extend({
+    snapshotId: uuid,
     targetRef: z.string().max(120).optional(),
-    state: z.enum(["visible", "hidden", "enabled", "disabled", "text"]),
-    value: z.string().max(500).optional(),
+    target: semanticTarget.optional(),
+    state: condition.shape.state,
+    value: condition.shape.value,
     timeoutMs: bounded.max(10000).default(5000),
   }),
   logs: z.strictObject({

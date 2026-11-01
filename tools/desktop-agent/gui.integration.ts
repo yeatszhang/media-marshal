@@ -82,6 +82,15 @@ test(
 test("布局、跨窗口身份与敏感上下文拒绝，CLI 只观察自有会话", { timeout: 60000 }, async () => {
   const { app, page, session, gui } = await setup();
   try {
+    await page.evaluate(() => document.body.setAttribute("data-observation-probe", "initial"));
+    const unchanged = await gui.capture();
+    await page.evaluate(() => {
+      document.body.setAttribute("data-observation-probe", "temporary");
+      document.body.setAttribute("data-observation-probe", "initial");
+    });
+    await gui.current(unchanged.snapshot.snapshotId);
+    await page.evaluate(() => document.body.setAttribute("data-observation-probe", "changed"));
+    await assert.rejects(gui.current(unchanged.snapshot.snapshotId), /旧引用失效/);
     const first = await gui.capture();
     await assert.rejects(gui.current(first.snapshot.snapshotId, "其他窗口"), /旧引用失效/);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(920, 640));

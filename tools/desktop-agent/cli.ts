@@ -6,6 +6,7 @@ import { scenarios, SCENARIO_VERSION } from "./scenarios.ts";
 import { readLogs } from "./log-reader.ts";
 import { diagnoseSession } from "./diagnose.ts";
 import { startSession, sessionCommand } from "./session.ts";
+import { actionStatus } from "./action-store.ts";
 import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -98,7 +99,13 @@ export async function dispatch(request: Request): Promise<unknown> {
     return readLogs(root, request.sessionId, request.payload as Input<"logs">);
   }
   if (request.command === "start") return startSession(root, request);
-  if (request.command === "observe") return sessionCommand(root, request);
+  if (["observe", "act", "wait"].includes(request.command)) return sessionCommand(root, request);
+  if (
+    request.command === "status" &&
+    request.sessionId &&
+    (request.payload as Input<"status">).jobId
+  )
+    return actionStatus(root, request.sessionId, (request.payload as Input<"status">).jobId!);
   if (
     ["status", "stop", "restart"].includes(request.command) &&
     !(request.payload as Input<"status">).jobId
@@ -125,6 +132,8 @@ export async function dispatch(request: Request): Promise<unknown> {
         "start",
         "scenario",
         "observe",
+        "act",
+        "wait",
         "logs",
         "diagnose",
         "stop",
@@ -145,7 +154,9 @@ export async function main(args: string[]) {
     const value = await dispatch(request);
     const response = result(request, value);
     if (
-      ["build", "status", "start", "restart", "stop", "scenario"].includes(request.command) &&
+      ["build", "status", "start", "restart", "stop", "scenario", "act"].includes(
+        request.command,
+      ) &&
       value &&
       typeof value === "object" &&
       "status" in value

@@ -13,6 +13,7 @@ export interface GuiWindow {
 export interface DocumentState {
   documentId: string;
   revision: number;
+  changeReason: string;
   layoutDigest: string;
   layoutComplete: boolean;
   url: string;

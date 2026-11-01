@@ -5,6 +5,8 @@ import type { ElectronApplication } from "@playwright/test";
 import { prepareScenario } from "./scenario-prepare.ts";
 import { checkScenario } from "./scenario-check.ts";
 import { GuiObserver } from "./gui-observe.ts";
+import { GuiActions } from "./gui-actions.ts";
+import { assertController } from "./controller-identity.ts";
 import { EventCollector } from "./collector.ts";
 import { readHealth } from "./health.ts";
 import type { Server } from "node:net";
@@ -31,10 +33,13 @@ interface Runtime {
   busy: boolean;
   collector?: EventCollector;
   gui?: GuiObserver;
+  actions?: GuiActions;
+  toolIdentity?: string;
 }
 async function openApplication(runtime: Runtime) {
   const { root, session } = runtime;
   const build = await assertBuild(root, session.options.target);
+  runtime.toolIdentity = await assertController(build.manifest, runtime.toolIdentity);
   const directory = runHome(root, session.runId);
   const dataDir = join(runHome(root, session.profileRunId), "data");
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -78,6 +83,7 @@ async function openApplication(runtime: Runtime) {
     });
   session.status = "running";
   runtime.gui = new GuiObserver(root, app, session);
+  runtime.actions = new GuiActions(root, session, runtime.gui);
   delete session.error;
   await saveSession(root, session);
 }
@@ -126,6 +132,7 @@ async function closeApplication(runtime: Runtime) {
     );
   runtime.app = undefined;
   runtime.gui = undefined;
+  runtime.actions = undefined;
   delete session.application;
 }
 async function transition(runtime: Runtime, restart: boolean) {
@@ -162,7 +169,7 @@ async function lifecycle(runtime: Runtime, request: Request) {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  if (runtime.busy)
+  if (runtime.busy || runtime.actions?.busy)
     throw new ToolError(
       "SESSION_BUSY",
       "会话正在启动或停止",
@@ -170,7 +177,10 @@ async function lifecycle(runtime: Runtime, request: Request) {
       "blocked",
     );
   const restart = request.command === "restart";
-  if (restart) await assertBuild(runtime.root, runtime.session.options.target);
+  if (restart) {
+    const build = await assertBuild(runtime.root, runtime.session.options.target);
+    await assertController(build.manifest, runtime.toolIdentity);
+  }
   // 先持久化受理状态，再进行关闭或启动；控制客户端断开不取消操作。
   const intent = {
     signature,
@@ -229,10 +239,20 @@ function dispatcher(runtime: Runtime) {
   let queue = Promise.resolve<unknown>(undefined);
   return (request: Request) => {
     if (request.command === "status") return Promise.resolve(publicSession(runtime.session));
-    if (request.command === "observe") {
-      const result = queue.then(() => {
+    if (["observe", "act", "wait"].includes(request.command)) {
+      const result = queue.then<unknown>(() => {
         if (!runtime.gui || runtime.busy || runtime.session.status !== "running")
           throw new ToolError("GUI_UNAVAILABLE", "会话界面尚不可观察", "先查询会话状态", "blocked");
+        if (request.command === "act") return runtime.actions!.start(request);
+        if (runtime.actions?.busy)
+          throw new ToolError(
+            "GUI_ACTION_BUSY",
+            "动作执行中，观察请先查询收据",
+            "等待原动作收敛",
+            "blocked",
+          );
+        if (request.command === "wait")
+          return runtime.actions!.wait(request.payload as Input<"wait">);
         return runtime.gui.observe(request.payload as Input<"observe">);
       });
       queue = result.catch(() => undefined);
