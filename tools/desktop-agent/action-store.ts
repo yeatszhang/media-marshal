@@ -16,6 +16,7 @@ export interface ActionReceipt {
   status: "running" | "completed" | "failed" | "blocked" | "unknown";
   inputStatus: "not-sent" | "sending" | "sent" | "unknown";
   inputValueRecorded: false;
+  evidence?: { status: "indexed" | "missing"; reason?: string; name?: string; artifactId?: string };
   result?: unknown;
   error?: unknown;
 }

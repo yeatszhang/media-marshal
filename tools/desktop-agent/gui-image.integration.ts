@@ -2,12 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { guiRoot as root, observeInput as input, setupGui } from "./gui-test-support.ts";
+import { closeGui, guiRoot as root, observeInput as input, setupGui } from "./gui-test-support.ts";
 import { captureImage } from "./gui-image.ts";
-import { runHome, saveSession } from "./session-store.ts";
+import { runHome } from "./session-store.ts";
 
 test("真实常用／最小窗口截图、元素与矩形裁剪，缩放身份绑定", { timeout: 60000 }, async () => {
-  const { app, page, session, gui } = await setupGui();
+  const { app, page, session, gui, collector } = await setupGui();
   try {
     const common = await gui.capture();
     const image = await captureImage(root, session, gui, common, input({ image: true }));
@@ -72,14 +72,12 @@ test("真实常用／最小窗口截图、元素与矩形裁剪，缩放身份�
       }),
     );
   } finally {
-    await app.close();
-    session.status = "stopped";
-    await saveSession(root, session);
+    await closeGui({ app, page, session, gui, collector });
   }
 });
 
 test("输入截图使用自有遮罩，工具遮罩不改变业务布局代际", { timeout: 60000 }, async () => {
-  const { app, page, session, gui } = await setupGui();
+  const { app, page, session, gui, collector } = await setupGui();
   try {
     await page.evaluate(() => {
       const section = document.createElement("div");
@@ -98,13 +96,11 @@ test("输入截图使用自有遮罩，工具遮罩不改变业务布局代际",
     assert.equal(await page.getByLabel("截图隔离输入").inputValue(), "fixture-image-secret");
     console.log(JSON.stringify({ maskedInput: result }));
   } finally {
-    await app.close();
-    session.status = "stopped";
-    await saveSession(root, session);
+    await closeGui({ app, page, session, gui, collector });
   }
 });
 test("截图期间布局变化或采集失败保存缺失，不写入无法匹配的图片", { timeout: 60000 }, async () => {
-  const { app, page, session, gui } = await setupGui();
+  const { app, page, session, gui, collector } = await setupGui();
   const screenshot = page.screenshot.bind(page);
   try {
     const handle = await gui.capture();
@@ -141,8 +137,6 @@ test("截图期间布局变化或采集失败保存缺失，不写入无法匹�
     );
   } finally {
     page.screenshot = screenshot;
-    await app.close();
-    session.status = "stopped";
-    await saveSession(root, session);
+    await closeGui({ app, page, session, gui, collector });
   }
 });

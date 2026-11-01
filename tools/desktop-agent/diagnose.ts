@@ -4,6 +4,7 @@ import { callController } from "./transport.ts";
 import { recentLogs } from "./log-reader.ts";
 import { ToolError, failure, type Request } from "./protocol.ts";
 import { sanitizeLogValue } from "../../apps/desktop/src/logging/shared.ts";
+import { captureJson } from "./evidence-capture.ts";
 
 export async function diagnoseSession(root: string, request: Request) {
   if (!request.sessionId)
@@ -19,7 +20,7 @@ export async function diagnoseSession(root: string, request: Request) {
     }
   }
   const failures = await recentLogs(root, session.sessionId, { level: "warn", limit: 30 });
-  return sanitizeLogValue({
+  const value = sanitizeLogValue({
     session: publicSession(session),
     health: live && typeof live === "object" && "health" in live ? live.health : live,
     collection:
@@ -29,4 +30,11 @@ export async function diagnoseSession(root: string, request: Request) {
     assertions: "未执行；健康查询不代表业务成功",
     historyComplete: false,
   });
+  const evidence = await captureJson(
+    root,
+    session,
+    { kind: "health", source: "tool", requestId: request.requestId },
+    value,
+  );
+  return { ...(value as Record<string, unknown>), evidence };
 }

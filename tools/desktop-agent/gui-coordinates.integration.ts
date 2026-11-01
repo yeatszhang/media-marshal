@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { guiRoot as root, setupGui, observeInput } from "./gui-test-support.ts";
+import { closeGui, guiRoot as root, setupGui, observeInput } from "./gui-test-support.ts";
 import { GuiActions } from "./gui-actions.ts";
 import { actionStatus } from "./action-store.ts";
 import { saveSession, runHome } from "./session-store.ts";
@@ -63,9 +63,7 @@ async function run(
   return actionStatus(root, context.session.sessionId, receipt.jobId);
 }
 async function close(context: Context) {
-  await context.app.close();
-  context.session.status = "stopped";
-  await saveSession(root, context.session);
+  await closeGui(context);
 }
 async function nativeReady(context: Context, actions: GuiActions, test: TestContext) {
   const probe = spawnSync(

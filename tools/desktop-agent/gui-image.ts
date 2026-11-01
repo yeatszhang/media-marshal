@@ -7,6 +7,7 @@ import { runHome, type Session } from "./session-store.ts";
 import { ToolError, type Input } from "./protocol.ts";
 import type { SnapshotHandle } from "./gui-types.ts";
 import { maskInputs, unmaskInputs } from "./gui-mask.ts";
+import { captureExisting, captureArtifact } from "./evidence-capture.ts";
 interface SnapshotObserver {
   current(snapshotId: string): Promise<SnapshotHandle>;
 }
@@ -107,7 +108,19 @@ export async function captureImage(
       layoutMatched: true,
     };
     await atomicJson(join(directory, `image-${imageId}.json`), result);
-    return result;
+    const index = await captureExisting(root, session, path, {
+      kind: "image",
+      source: "dom",
+      snapshotId: evidence.snapshotId,
+      windowId: evidence.windowId,
+    });
+    await captureExisting(root, session, join(directory, `image-${imageId}.json`), {
+      kind: "image",
+      source: "dom",
+      snapshotId: evidence.snapshotId,
+      windowId: evidence.windowId,
+    });
+    return { ...result, evidence: index };
   } catch (error) {
     const result = {
       ...evidence,
@@ -116,6 +129,14 @@ export async function captureImage(
       reason: error instanceof ToolError ? error.code : "GUI_IMAGE_FAILED",
     };
     await atomicJson(join(directory, `image-${imageId}.json`), result);
+    await captureArtifact(root, session, {
+      kind: "image",
+      source: "dom",
+      status: "missing",
+      reason: result.reason,
+      snapshotId: evidence.snapshotId,
+      windowId: evidence.windowId,
+    });
     return result;
   }
 }

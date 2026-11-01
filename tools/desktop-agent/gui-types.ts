@@ -49,6 +49,7 @@ export interface GuiSnapshot {
   nodes: GuiNode[];
   truncated: boolean;
   coordinateSystem: "viewport-css-pixels";
+  evidence?: { status: "indexed" | "missing"; reason?: string; artifactId?: string };
 }
 export interface SnapshotHandle {
   snapshot: GuiSnapshot;

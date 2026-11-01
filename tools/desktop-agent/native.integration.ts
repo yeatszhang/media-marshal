@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { join } from "node:path";
 import { readFile, writeFile, symlink, unlink } from "node:fs/promises";
-import { setupGui, guiRoot as root } from "./gui-test-support.ts";
+import { closeGui, setupGui, guiRoot as root } from "./gui-test-support.ts";
 import { nativeTarget, invokeNative, type NativeRequest } from "./native-runtime.ts";
 import { runHome, saveSession } from "./session-store.ts";
 import { execFileSync } from "node:child_process";
@@ -101,9 +101,7 @@ test(
         }),
       );
     } finally {
-      await context.app.close();
-      context.session.status = "stopped";
-      await saveSession(root, context.session);
+      await closeGui(context);
     }
   },
 );

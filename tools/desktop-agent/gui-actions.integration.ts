@@ -2,12 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { guiRoot as root, setupGui } from "./gui-test-support.ts";
+import { closeGui, guiRoot as root, setupGui } from "./gui-test-support.ts";
 import { GuiActions } from "./gui-actions.ts";
 import { actionPath, actionStatus, type ActionReceipt } from "./action-store.ts";
 import { saveSession, type Session } from "./session-store.ts";
 import { parseRequest, type Input } from "./protocol.ts";
 import { dispatch } from "./cli.ts";
+import { readEvidence } from "./evidence-store.ts";
 
 type Context = Awaited<ReturnType<typeof setupGui>>;
 async function waitReceipt(context: Context, actions: GuiActions, jobId: string) {
@@ -36,9 +37,7 @@ async function perform(
   return { receipt: await waitReceipt(context, actions, accepted.jobId), request };
 }
 async function close(context: Context) {
-  await context.app.close();
-  context.session.status = "stopped";
-  await saveSession(root, context.session);
+  await closeGui(context);
 }
 test("真实导航与受限表单操作，独立条件等待及无明文收据", { timeout: 90000 }, async () => {
   const context = await setupGui(),
@@ -51,6 +50,7 @@ test("真实导航与受限表单操作，独立条件等待及无明文收据",
       after: { target: { role: "heading", name: "设置" }, state: "visible" },
     });
     assert.equal(navigation.receipt.status, "completed", JSON.stringify(navigation.receipt));
+    assert.equal(navigation.receipt.evidence?.status, "indexed");
     await page.evaluate(() => {
       const section = document.createElement("div");
       section.style.cssText =
@@ -69,6 +69,16 @@ test("真实导航与受限表单操作，独立条件等待及无明文收据",
       },
     });
     assert.equal(fill.receipt.status, "completed", JSON.stringify(fill.receipt));
+    assert.equal(fill.receipt.evidence?.status, "indexed");
+    const manifest = await readEvidence(root, context.session.runId);
+    assert.ok(
+      manifest.artifacts.some(
+        (item) =>
+          item.kind === "action" &&
+          item.requestId === fill.receipt.requestId &&
+          item.status === "available",
+      ),
+    );
     const stored = await readFile(
       await actionPath(root, context.session, fill.receipt.requestId),
       "utf8",

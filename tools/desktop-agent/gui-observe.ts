@@ -10,6 +10,7 @@ import { documentState, sameObservation, staleSnapshot } from "./gui-document.ts
 import { normalizeAria } from "./gui-normalize.ts";
 import type { GuiSnapshot, SnapshotHandle } from "./gui-types.ts";
 import { captureImage, type AvailableImage } from "./gui-image.ts";
+import { captureExisting } from "./evidence-capture.ts";
 export class GuiObserver {
   readonly windows: GuiWindows;
   private snapshots = new Map<string, SnapshotHandle>();
@@ -102,13 +103,17 @@ export class GuiObserver {
       coordinateSystem: "viewport-css-pixels",
     };
     const handle = { snapshot, page, targets: normalized.targets };
-    await atomicJson(
-      join(
-        await agentFile(this.root, runHome(this.root, this.session.runId)),
-        `aria-${snapshot.snapshotId}.json`,
-      ),
-      snapshot,
+    const path = join(
+      await agentFile(this.root, runHome(this.root, this.session.runId)),
+      `aria-${snapshot.snapshotId}.json`,
     );
+    await atomicJson(path, snapshot);
+    snapshot.evidence = await captureExisting(this.root, this.session, path, {
+      kind: "aria",
+      source: "dom",
+      snapshotId: snapshot.snapshotId,
+      windowId: window.windowId,
+    });
     this.snapshots.set(snapshot.snapshotId, handle);
     while (this.snapshots.size > 8) this.snapshots.delete(this.snapshots.keys().next().value!);
     return handle;

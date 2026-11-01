@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { launchDesktop } from "../../apps/desktop/tests/support/electron.ts";
 import { identify, sameProcess } from "./process.ts";
 import { readSession, runHome, type Session } from "./session-store.ts";
+import { readEvidence } from "./evidence-store.ts";
 const root = resolve(import.meta.dirname, "../..");
 const exec = promisify(execFile);
 async function cli(command: string, sessionId?: string, requestId?: string) {
@@ -74,6 +75,15 @@ test("独立客户端续用会话，重启保留数据且代际变化，不影�
     assert.equal(restarted.generation, running.generation + 1);
     assert.notEqual(restarted.runId, running.runId);
     assert.equal(restarted.profileRunId, running.profileRunId);
+    const oldEvidence = await readEvidence(root, running.runId);
+    assert.equal(oldEvidence.lifecycle, "closed");
+    assert.equal(oldEvidence.assertions, "not-run");
+    for (const kind of ["build", "scenario", "log", "health", "observation", "reproduction"])
+      assert.ok(
+        oldEvidence.artifacts.some((item) => item.kind === kind && item.status === "available"),
+        kind,
+      );
+    const oldBytes = await readFile(join(runHome(root, running.runId), "manifest.json"), "utf8");
     assert.equal(
       await readFile(join(profile, "session-sentinel.json"), "utf8"),
       '{"preserved":true}',
@@ -86,6 +96,11 @@ test("独立客户端续用会话，重启保留数据且代际变化，不影�
     await waitProcessGone(restarted.owner!);
     assert.equal((await page.title()).length > 0, true);
     const saved = await readSession(root, id!);
+    assert.equal((await readEvidence(root, restarted.runId)).lifecycle, "closed");
+    assert.equal(
+      await readFile(join(runHome(root, running.runId), "manifest.json"), "utf8"),
+      oldBytes,
+    );
     assert.equal(saved.status, "stopped");
     assert.equal(
       await readFile(join(profile, "session-sentinel.json"), "utf8"),
@@ -106,6 +121,12 @@ test("自有应用异常退出明确记录崩溃，停止只回收原控制进�
     process.kill(running.application!.pid, "SIGKILL");
     await waitStatus(id!, "crashed");
     await ensureStopped(id);
+    const evidence = await readEvidence(root, running.runId);
+    assert.ok(evidence.primaryFailureId);
+    assert.equal(
+      evidence.failures.find((item) => item.id === evidence.primaryFailureId)?.kind,
+      "crash",
+    );
     await waitProcessGone(running.owner!);
   } finally {
     await ensureStopped(id);

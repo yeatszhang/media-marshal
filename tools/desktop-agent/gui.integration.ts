@@ -2,16 +2,21 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { runHome, saveSession, type Session } from "./session-store.ts";
+import { runHome, type Session } from "./session-store.ts";
 import { parseRequest } from "./protocol.ts";
 import { dispatch } from "./cli.ts";
-import { guiRoot as root, observeInput as input, setupGui as setup } from "./gui-test-support.ts";
+import {
+  closeGui,
+  guiRoot as root,
+  observeInput as input,
+  setupGui as setup,
+} from "./gui-test-support.ts";
 
 test(
   "真实主导航、表单语义与分页，输入遮罩、焦点、重复名称和错误弹层",
   { timeout: 60000 },
   async () => {
-    const { app, page, session, gui } = await setup();
+    const { app, page, session, gui, collector } = await setup();
     try {
       const windows = await gui.windows.list();
       assert.equal(windows.length, 1);
@@ -73,14 +78,12 @@ test(
       assert.equal(reloaded.snapshot.window.windowId, body.window.windowId);
       assert.ok(reloaded.snapshot.window.generation > body.window.generation);
     } finally {
-      await app.close();
-      session.status = "stopped";
-      await saveSession(root, session);
+      await closeGui({ app, page, session, gui, collector });
     }
   },
 );
 test("布局、跨窗口身份与敏感上下文拒绝，CLI 只观察自有会话", { timeout: 60000 }, async () => {
-  const { app, page, session, gui } = await setup();
+  const { app, page, session, gui, collector } = await setup();
   try {
     await page.evaluate(() => document.body.setAttribute("data-observation-probe", "initial"));
     const unchanged = await gui.capture();
@@ -106,9 +109,7 @@ test("布局、跨窗口身份与敏感上下文拒绝，CLI 只观察自有会�
     await assert.rejects(gui.capture(), /嵌入页面/);
     await iframe.evaluate((element) => element.remove());
   } finally {
-    await app.close();
-    session.status = "stopped";
-    await saveSession(root, session);
+    await closeGui({ app, page, session, gui, collector });
   }
   const state = (await dispatch(parseRequest({ command: "start" }))) as Session;
   try {

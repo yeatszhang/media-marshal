@@ -9,6 +9,8 @@ import { GuiActions } from "./gui-actions.ts";
 import { assertController } from "./controller-identity.ts";
 import { EventCollector } from "./collector.ts";
 import { readHealth } from "./health.ts";
+import { beginEvidence, healthEvidence, finishEvidence } from "./evidence-run.ts";
+import { captureJson, captureExisting, lifecycleEvidence } from "./evidence-capture.ts";
 import type { Server } from "node:net";
 import { assertBuild, atomicJson } from "./build.ts";
 import { sanitizeLogValue } from "../../apps/desktop/src/logging/shared.ts";
@@ -38,13 +40,16 @@ interface Runtime {
 }
 async function openApplication(runtime: Runtime) {
   const { root, session } = runtime;
+  const directory = runHome(root, session.runId);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await beginEvidence(root, { ...session, buildId: undefined });
   const build = await assertBuild(root, session.options.target);
   runtime.toolIdentity = await assertController(build.manifest, runtime.toolIdentity);
-  const directory = runHome(root, session.runId);
   const dataDir = join(runHome(root, session.profileRunId), "data");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   session.buildId = build.buildId;
+  await beginEvidence(root, session, build.manifest);
   const fixture = await prepareScenario(root, session);
+  await captureJson(root, session, { kind: "scenario", source: "tool" }, fixture);
   runtime.collector = await EventCollector.create(root, session);
   const app = await launchDesktop(root, {
     ...session.options,
@@ -68,6 +73,10 @@ async function openApplication(runtime: Runtime) {
       session.status = "crashed";
       session.error = { code: "APPLICATION_EXITED", message: "应用异常退出，现有证据已保留" };
       void saveSession(root, session);
+      void lifecycleEvidence(root, { ...session }, "crashed", {
+        kind: "crash",
+        code: "APPLICATION_EXITED",
+      });
     }
   });
   const page = await app.firstWindow({ timeout: 20000 });
@@ -82,6 +91,11 @@ async function openApplication(runtime: Runtime) {
       buildId: session.buildId,
     });
   session.status = "running";
+  await captureExisting(root, session, join(directory, "scenario-check.json"), {
+    kind: "scenario",
+    source: "tool",
+  });
+  await lifecycleEvidence(root, session, "running");
   runtime.gui = new GuiObserver(root, app, session);
   runtime.actions = new GuiActions(root, session, runtime.gui);
   delete session.error;
@@ -102,6 +116,7 @@ async function closeApplication(runtime: Runtime) {
       "不能向替代进程发送停止指令；保留证据并核对",
       "unknown",
     );
+  await healthEvidence(runtime.root, session, app);
   await Promise.race([
     app.close().catch((error) => {
       if (!session.application || identify(session.application.pid)) throw error;
@@ -139,6 +154,7 @@ async function transition(runtime: Runtime, restart: boolean) {
   const { session, root } = runtime;
   await closeApplication(runtime);
   await runtime.collector?.close();
+  await finishEvidence(root, session);
   if (restart) {
     session.runId = randomUUID();
     session.generation++;
@@ -303,6 +319,10 @@ export async function supervise(root: string, id: string) {
           ? "blocked"
           : "failed";
     session.error = failure(error).error;
+    await lifecycleEvidence(root, session, session.status, {
+      kind: "startup",
+      code: error instanceof ToolError ? error.code : "APPLICATION_START_FAILED",
+    });
     await saveSession(root, session);
     if (!runtime.app) runtime.server.close();
   } finally {

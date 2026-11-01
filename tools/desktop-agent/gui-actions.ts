@@ -15,6 +15,7 @@ import { validateCondition, waitCondition } from "./gui-condition.ts";
 import { uniqueTarget } from "./gui-target.ts";
 import { executeCoordinate } from "./gui-coordinates.ts";
 import { observeAfter } from "./gui-after.ts";
+import { captureJson } from "./evidence-capture.ts";
 export class GuiActions {
   busy = false;
   private root: string;
@@ -68,6 +69,7 @@ export class GuiActions {
       );
     }
     const persist = () => saveAction(path, signature, receipt);
+    await this.evidence(receipt);
     void this.execute(input, receipt, persist)
       .catch((error) => {
         receipt.status =
@@ -85,6 +87,7 @@ export class GuiActions {
             ...(receipt.result && typeof receipt.result === "object" ? receipt.result : {}),
             afterObservation: await observeAfter(this.observer, input.windowId),
           };
+        await this.evidence(receipt);
         await saveAction(path, signature, receipt);
       })
       .catch(() => {
@@ -94,6 +97,19 @@ export class GuiActions {
         this.busy = false;
       });
     return { ...receipt };
+  }
+  private async evidence(receipt: ActionReceipt) {
+    receipt.evidence = await captureJson(
+      this.root,
+      this.session,
+      {
+        kind: "action",
+        source: "dom",
+        requestId: receipt.requestId,
+        snapshotId: receipt.snapshotId,
+      },
+      receipt,
+    );
   }
   private async execute(input: Input<"act">, receipt: ActionReceipt, persist: () => Promise<void>) {
     const build = await assertBuild(this.root, this.session.options.target);
