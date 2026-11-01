@@ -4,4 +4,7 @@ import { z } from "zod";
 export const RENDERER_PREPARE_RELOAD_CHANNEL = "media-marshal:renderer:prepare-reload:v1";
 export const RENDERER_RELOAD_RESULT_CHANNEL = "media-marshal:renderer:reload-result:v1";
 export const rendererPrepareReloadSchema = z.strictObject({ id: z.uuid() });
-export const rendererReloadResultSchema = z.strictObject({ id: z.uuid(), state: z.enum(["prepared", "failed"]) });
+export const rendererReloadResultSchema = z.strictObject({
+  id: z.uuid(),
+  state: z.enum(["prepared", "failed"]),
+});

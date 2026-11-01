@@ -1,6 +1,17 @@
-import { DesktopError, CloudError, directoryIssueMessage, publicError, type ManagedDownloadRoot, type DirectoryIssue } from "@media-marshal/contracts";
+import {
+  DesktopError,
+  CloudError,
+  directoryIssueMessage,
+  publicError,
+  type ManagedDownloadRoot,
+  type DirectoryIssue,
+} from "@media-marshal/contracts";
 import type { ManagedRootGrant } from "@media-marshal/contracts/internal";
-import type { PrivateCoreAction, PrivateCoreInput, PrivateCoreOutput } from "@media-marshal/contracts/internal/core";
+import type {
+  PrivateCoreAction,
+  PrivateCoreInput,
+  PrivateCoreOutput,
+} from "@media-marshal/contracts/internal/core";
 import { realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { pathsOverlap } from "@media-marshal/media-core/files";
@@ -8,45 +19,105 @@ import { probeManagedVolume } from "./volume-probe";
 import { getLogger } from "../../logging/node";
 
 interface RootCore {
-  requestPrivate<K extends PrivateCoreAction>(action: K, payload: PrivateCoreInput<K>): Promise<PrivateCoreOutput<K>>;
+  requestPrivate<K extends PrivateCoreAction>(
+    action: K,
+    payload: PrivateCoreInput<K>,
+  ): Promise<PrivateCoreOutput<K>>;
   request(action: "cloud.roots.list", payload: {}): Promise<ManagedDownloadRoot[]>;
 }
 export class DownloadRootController {
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private readonly core: RootCore, private readonly host: { installRoot(grant: ManagedRootGrant): Promise<void>; forgetRoot?(id: string): void }, private readonly probe = probeManagedVolume, private readonly protectedPaths: readonly string[] = []) {}
+  constructor(
+    private readonly core: RootCore,
+    private readonly host: {
+      installRoot(grant: ManagedRootGrant): Promise<void>;
+      forgetRoot?(id: string): void;
+    },
+    private readonly probe = probeManagedVolume,
+    private readonly protectedPaths: readonly string[] = [],
+  ) {}
   private async canonicalReserved(path: string): Promise<string> {
-    try { return await realpath(path); }
-    catch (error) { const parent = dirname(path); if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === path) throw error; return join(await this.canonicalReserved(parent), basename(path)); }
+    try {
+      return await realpath(path);
+    } catch (error) {
+      const parent = dirname(path);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === path) throw error;
+      return join(await this.canonicalReserved(parent), basename(path));
+    }
   }
   async validateDirectory(path: string) {
     let canonical: string;
-    try { canonical = await realpath(path); }
-    catch (error) { throw new CloudError("LOCAL_UNAVAILABLE", undefined, { reason: ["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "") ? "PERMISSION_DENIED" : "DIRECTORY_UNAVAILABLE" }); }
-    for (const reserved of this.protectedPaths) if (pathsOverlap(canonical, await this.canonicalReserved(reserved), { caseSensitive: false, unicodeEquivalent: true })) {
-      const issue: DirectoryIssue = { reason: "PRIVATE_PATH" };
-      throw new DesktopError("FORBIDDEN", directoryIssueMessage(issue), false, undefined, issue);
+    try {
+      canonical = await realpath(path);
+    } catch (error) {
+      throw new CloudError("LOCAL_UNAVAILABLE", undefined, {
+        reason: ["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")
+          ? "PERMISSION_DENIED"
+          : "DIRECTORY_UNAVAILABLE",
+      });
     }
+    for (const reserved of this.protectedPaths)
+      if (
+        pathsOverlap(canonical, await this.canonicalReserved(reserved), {
+          caseSensitive: false,
+          unicodeEquivalent: true,
+        })
+      ) {
+        const issue: DirectoryIssue = { reason: "PRIVATE_PATH" };
+        throw new DesktopError("FORBIDDEN", directoryIssueMessage(issue), false, undefined, issue);
+      }
     return canonical;
   }
-  private serial<T>(work: () => Promise<T>): Promise<T> { const result = this.queue.catch(() => {}).then(work); this.queue = result; return result; }
+  private serial<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.queue.catch(() => {}).then(work);
+    this.queue = result;
+    return result;
+  }
   choose(path: string): Promise<ManagedDownloadRoot> {
     return this.serial(async () => {
       const canonical = await this.validateDirectory(path);
-      const known = (await this.core.requestPrivate("cloud.roots.bootstrap", {})).find((root) => root.path === canonical);
-      const grant = await this.core.requestPrivate("cloud.roots.authorize", await this.probe(canonical, known?.id));
-      try { await this.host.installRoot(grant); }
-      catch (error) { this.host.forgetRoot?.(grant.id); await this.core.requestPrivate("cloud.roots.unavailable", { id: grant.id }); throw error; }
-      return (await this.core.request("cloud.roots.list", {})).find((root) => root.id === grant.id)!;
+      const known = (await this.core.requestPrivate("cloud.roots.bootstrap", {})).find(
+        (root) => root.path === canonical,
+      );
+      const grant = await this.core.requestPrivate(
+        "cloud.roots.authorize",
+        await this.probe(canonical, known?.id),
+      );
+      try {
+        await this.host.installRoot(grant);
+      } catch (error) {
+        this.host.forgetRoot?.(grant.id);
+        await this.core.requestPrivate("cloud.roots.unavailable", { id: grant.id });
+        throw error;
+      }
+      return (await this.core.request("cloud.roots.list", {})).find(
+        (root) => root.id === grant.id,
+      )!;
     });
   }
   restore() {
     return this.serial(async () => {
       for (const previous of await this.core.requestPrivate("cloud.roots.bootstrap", {})) {
-        try { const grant = await this.core.requestPrivate("cloud.roots.authorize", await this.probe(await this.validateDirectory(previous.path), previous.id)); await this.host.installRoot(grant); }
-        catch (error) {
+        try {
+          const grant = await this.core.requestPrivate(
+            "cloud.roots.authorize",
+            await this.probe(await this.validateDirectory(previous.path), previous.id),
+          );
+          await this.host.installRoot(grant);
+        } catch (error) {
           const failure = publicError(error);
-          getLogger("directories").warn({ event: "directory.restore.failed", directoryId: previous.id, code: failure.code, directoryIssue: failure.directoryIssue, error }, "下载目录授权恢复未完成");
-          this.host.forgetRoot?.(previous.id); await this.core.requestPrivate("cloud.roots.unavailable", { id: previous.id });
+          getLogger("directories").warn(
+            {
+              event: "directory.restore.failed",
+              directoryId: previous.id,
+              code: failure.code,
+              directoryIssue: failure.directoryIssue,
+              error,
+            },
+            "下载目录授权恢复未完成",
+          );
+          this.host.forgetRoot?.(previous.id);
+          await this.core.requestPrivate("cloud.roots.unavailable", { id: previous.id });
         }
       }
     });

@@ -1,0 +1,14 @@
+node_modules/
+**/node_modules/
+apps/desktop/out/
+apps/desktop/release/
+apps/desktop/resources/
+packages/*/dist/
+**/fixtures/
+build-artifacts/
+test-results/
+legacy/
+package-lock.json
+packages/media-core/src/domain/pinyin-initials.ts
+
+tools/desktop-agent/.build/

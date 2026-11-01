@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "erasableSyntaxOnly": true
+  },
+  "include": ["*.ts", "../../apps/desktop/tests/support/**/*.ts"],
+  "exclude": ["*.test.ts"]
+}

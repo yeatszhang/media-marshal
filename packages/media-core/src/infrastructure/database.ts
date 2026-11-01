@@ -7,9 +7,16 @@ import { cloudMigrationSql } from "./cloud-migration.js";
 import { cloudAuthorizationMigrationSql } from "./cloud-authorization-migration.js";
 import { cloudDownloadMigrationSql } from "./cloud-download-migration.js";
 import { cloudSubscriptionMigrationSql } from "./cloud-subscription-migration.js";
-import { ingestionMigrationSql, ingestionAccessoryMigrationSql, ingestionContentReviewMigrationSql } from "./ingestion-migration.js";
+import {
+  ingestionMigrationSql,
+  ingestionAccessoryMigrationSql,
+  ingestionContentReviewMigrationSql,
+} from "./ingestion-migration.js";
 import { sourceRuleMigrationSql } from "./source-rule-migration.js";
-import { sourceRuleLegacyMigrationSql, migrateLegacySourceRules } from "./source-rule-legacy-migration.js";
+import {
+  sourceRuleLegacyMigrationSql,
+  migrateLegacySourceRules,
+} from "./source-rule-legacy-migration.js";
 import { sourceExecutionMigrationSql } from "./source-execution-migration.js";
 import { sourceOrganizationMigrationSql } from "./source-organization-migration.js";
 import { sourceExecutionPreviewMigrationSql } from "./source-execution-preview-migration.js";
@@ -24,10 +31,19 @@ import { correctionPreparationMigrationSql } from "./correction-preparation-migr
 import { sourceScanMigrationSql } from "./source-scan-migration.js";
 import { automaticIngestionMigrationSql } from "./automatic-ingestion-migration.js";
 import { sourceHealthMigrationSql } from "./source-health-migration.js";
-import { syncRecognitionMigrationSql, migrateSyncRecognition } from "./sync-recognition-migration.js";
+import {
+  syncRecognitionMigrationSql,
+  migrateSyncRecognition,
+} from "./sync-recognition-migration.js";
 import { embyBindingMigrationSql } from "./emby-binding-migration.js";
-import { independentRecognitionMigrationSql, migrateIndependentRecognition } from "./independent-recognition-migration.js";
-import { independentSyncMigrationSql, migrateIndependentSync } from "./independent-sync-migration.js";
+import {
+  independentRecognitionMigrationSql,
+  migrateIndependentRecognition,
+} from "./independent-recognition-migration.js";
+import {
+  independentSyncMigrationSql,
+  migrateIndependentSync,
+} from "./independent-sync-migration.js";
 import { syncReceiptMigrationSql, migrateSyncReceiptEvidence } from "./sync-receipt-migration.js";
 import { syncHistoryMigrationSql, migrateSyncHistory } from "./sync-history-migration.js";
 import { downloadCleanupMigrationSql } from "./download-cleanup-migration.js";
@@ -100,9 +116,17 @@ export const migrations: readonly Migration[] = [
   { version: 30, sql: syncHistoryMigrationSql, apply: migrateSyncHistory },
   { version: 31, sql: embyBindingMigrationSql },
   { version: 32, sql: independentSyncMigrationSql, apply: migrateIndependentSync },
-  { version: 33, sql: independentRecognitionMigrationSql, apply: migrateIndependentRecognition, rebuildsReferencedTables: true },
+  {
+    version: 33,
+    sql: independentRecognitionMigrationSql,
+    apply: migrateIndependentRecognition,
+    rebuildsReferencedTables: true,
+  },
   { version: 34, sql: downloadCleanupMigrationSql },
-  { version: 35, sql: "ALTER TABLE download_item ADD COLUMN failure_detail_code TEXT CHECK(failure_detail_code IS NULL OR failure_detail_code IN ('TARGET_OCCUPIED','LOCAL_FILE_CHANGED','FILE_EVIDENCE_MISMATCH','LOCAL_FILE_MISSING','RECEIPT_CONFLICT','STOP_UNCONFIRMED'));" },
+  {
+    version: 35,
+    sql: "ALTER TABLE download_item ADD COLUMN failure_detail_code TEXT CHECK(failure_detail_code IS NULL OR failure_detail_code IN ('TARGET_OCCUPIED','LOCAL_FILE_CHANGED','FILE_EVIDENCE_MISMATCH','LOCAL_FILE_MISSING','RECEIPT_CONFLICT','STOP_UNCONFIRMED'));",
+  },
 ];
 
 export class CoreDatabase {
@@ -117,10 +141,8 @@ export class CoreDatabase {
     plan: readonly Migration[] = migrations,
     options: { exclusiveOwner?: boolean } = {},
   ): Promise<CoreDatabase> {
-    if (path !== ":memory:")
-      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const existed =
-      path !== ":memory:" && existsSync(path) && statSync(path).size > 0;
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const existed = path !== ":memory:" && existsSync(path) && statSync(path).size > 0;
     const connection = new Database(path, { timeout: 3000 });
     try {
       const version = connection.pragma("user_version", {
@@ -143,10 +165,7 @@ export class CoreDatabase {
             .get() as { count: number }
         ).count > 0
       ) {
-        throw new DesktopError(
-          "STORAGE_ERROR",
-          "发现未知数据库结构，已停止写入",
-        );
+        throw new DesktopError("STORAGE_ERROR", "发现未知数据库结构，已停止写入");
       }
       for (let index = 0; index < plan.length; index++) {
         if (plan[index]?.version !== index + 1)
@@ -160,7 +179,11 @@ export class CoreDatabase {
       if (existed && version < latest) {
         const original = `${path}.before-v${latest}.bak`;
         // 部分升级失败后的重试不覆盖最初版本的恢复证据。
-        await connection.backup(existsSync(original) ? `${path}.from-v${version}.before-v${latest}.${randomUUID()}.bak` : original);
+        await connection.backup(
+          existsSync(original)
+            ? `${path}.from-v${version}.before-v${latest}.${randomUUID()}.bak`
+            : original,
+        );
       }
       connection.pragma("foreign_keys = ON");
       connection.pragma("busy_timeout = 3000");
@@ -173,10 +196,16 @@ export class CoreDatabase {
           connection.transaction(() => {
             connection.exec(migration.sql);
             migration.apply?.(connection);
-            if (migration.rebuildsReferencedTables && (connection.pragma("foreign_key_check") as unknown[]).length) throw new DesktopError("STORAGE_ERROR", "数据库迁移引用核对失败，已回滚");
+            if (
+              migration.rebuildsReferencedTables &&
+              (connection.pragma("foreign_key_check") as unknown[]).length
+            )
+              throw new DesktopError("STORAGE_ERROR", "数据库迁移引用核对失败，已回滚");
             connection.pragma(`user_version = ${migration.version}`);
           })();
-        } finally { if (migration.rebuildsReferencedTables) connection.pragma("foreign_keys = ON"); }
+        } finally {
+          if (migration.rebuildsReferencedTables) connection.pragma("foreign_keys = ON");
+        }
       }
       return new CoreDatabase(connection);
     } catch (error) {

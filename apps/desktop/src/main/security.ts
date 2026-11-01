@@ -5,18 +5,32 @@ export const APP_ORIGIN = "marshal://app";
 /** 外部打开仅接收 Core 核对后的条目页，不允许替换服务器、路由或附带凭据。 */
 export function requireEmbyItemUrl(address: string, configuredAddress: string): URL {
   try {
-    const base = new URL(configuredAddress), url = new URL(address);
-    if (!["http:", "https:"].includes(base.protocol) || base.username || base.password || base.search || base.hash) throw new Error();
+    const base = new URL(configuredAddress),
+      url = new URL(address);
+    if (
+      !["http:", "https:"].includes(base.protocol) ||
+      base.username ||
+      base.password ||
+      base.search ||
+      base.hash
+    )
+      throw new Error();
     base.pathname = base.pathname.replace(/\/$/, "") + "/";
-    if (url.origin !== base.origin || url.username || url.password || url.search || url.pathname !== new URL("web/index.html", base).pathname || !/^#!\/item\?id=[a-zA-Z0-9-]{1,128}&serverId=[a-zA-Z0-9-]{1,128}$/.test(url.hash)) throw new Error();
+    if (
+      url.origin !== base.origin ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.pathname !== new URL("web/index.html", base).pathname ||
+      !/^#!\/item\?id=[a-zA-Z0-9-]{1,128}&serverId=[a-zA-Z0-9-]{1,128}$/.test(url.hash)
+    )
+      throw new Error();
     return url;
-  } catch { throw new DesktopError("FORBIDDEN", "Emby 页面地址未通过核验"); }
+  } catch {
+    throw new DesktopError("FORBIDDEN", "Emby 页面地址未通过核验");
+  }
 }
-export function trustedFrame(
-  url: string,
-  isMainFrame: boolean,
-  developmentUrl?: string,
-): boolean {
+export function trustedFrame(url: string, isMainFrame: boolean, developmentUrl?: string): boolean {
   if (!isMainFrame) return false;
   try {
     const value = new URL(url);
@@ -28,9 +42,7 @@ export function trustedFrame(
       !value.password
     )
       return true;
-    return Boolean(
-      developmentUrl && value.origin === new URL(developmentUrl).origin,
-    );
+    return Boolean(developmentUrl && value.origin === new URL(developmentUrl).origin);
   } catch {
     return false;
   }

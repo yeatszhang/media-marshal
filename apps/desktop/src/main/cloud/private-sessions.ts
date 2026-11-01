@@ -11,7 +11,10 @@ export async function clearPrivateSessions(privateRoot: string): Promise<void> {
     const info = await lstat(sessions);
     if (!info.isDirectory() || info.isSymbolicLink()) throw new CloudError("CONFLICT");
     entries = await readdir(sessions, { withFileTypes: true });
-  } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw new DesktopError("STORAGE_ERROR", "无法清理组件私有状态"); }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new DesktopError("STORAGE_ERROR", "无法清理组件私有状态");
+  }
   for (const entry of entries) {
     if (!z.uuid().safeParse(entry.name).success) continue;
     if (!entry.isDirectory() || entry.isSymbolicLink()) throw new CloudError("CONFLICT");

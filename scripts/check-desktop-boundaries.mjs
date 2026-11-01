@@ -10,11 +10,7 @@ async function walk(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...(await walk(path)));
-    else if (
-      /\.tsx?$/.test(path) &&
-      !path.endsWith(".test.ts") &&
-      !path.endsWith(".test.tsx")
-    )
+    else if (/\.tsx?$/.test(path) && !path.endsWith(".test.ts") && !path.endsWith(".test.tsx"))
       files.push(path);
   }
   return files;
@@ -37,8 +33,7 @@ for (const area of [
       .importedFiles.map((item) => item.fileName);
     for (const name of imports) {
       const reason = dependencyViolation(area, file, name);
-      if (reason)
-        forbidden.push(`${relative(root, file)}: ${name} — ${reason}`);
+      if (reason) forbidden.push(`${relative(root, file)}: ${name} — ${reason}`);
     }
   }
 }

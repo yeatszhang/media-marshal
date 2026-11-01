@@ -27,7 +27,9 @@ it("普通来源缺失不冒充存在同步收据，受管来源说明不自动�
 });
 
 it("保留已有受控业务原因；未知异常不猜测成权限或磁盘故障", () => {
-  expect(sourceFileFailure(new DesktopError("CONFLICT", "正式成果摘要与成功收据不一致"))).toBe("正式成果摘要与成功收据不一致");
+  expect(sourceFileFailure(new DesktopError("CONFLICT", "正式成果摘要与成功收据不一致"))).toBe(
+    "正式成果摘要与成功收据不一致",
+  );
   for (const error of [undefined, null, "错误", new TypeError("内部缺陷")]) {
     expect(sourceFileFailure(error)).toContain("原因尚不明确");
   }

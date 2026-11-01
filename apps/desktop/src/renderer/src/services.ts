@@ -1,23 +1,22 @@
 import { ConfigurationViewModel } from "./configuration-model";
 import { RecognitionViewModel } from "./recognition-model";
 import { SyncViewModel } from "./sync-model";
-import {
-  createApplication,
-  type ApplicationModule,
-} from "@yeatz/app-framework/application";
-import {
-  inject,
-  injectable,
-  StatefulService,
-} from "@yeatz/app-framework/ioc";
+import { createApplication, type ApplicationModule } from "@yeatz/app-framework/application";
+import { inject, injectable, StatefulService } from "@yeatz/app-framework/ioc";
 import type {
-  DownloadJob, SourceRule,
+  DownloadJob,
+  SourceRule,
   DesktopApi,
   DesktopRuntime,
   DesktopSettings,
-  TaskPage, PageInput,
+  TaskPage,
+  PageInput,
   SettingsDraft,
-  CoreInput, CoreOutput, IngestionCandidate, Recognition, OrganizePreview,
+  CoreInput,
+  CoreOutput,
+  IngestionCandidate,
+  Recognition,
+  OrganizePreview,
 } from "@media-marshal/contracts";
 
 import { DesktopClient } from "./desktop-client";
@@ -33,7 +32,11 @@ import { RecognitionEditsViewModel } from "./recognition-edits-model";
 import { SourceScansViewModel } from "./source-scans-model";
 import { ContentReviewsViewModel } from "./content-reviews-model";
 import { CloudAccountsViewModel } from "./cloud-accounts-model";
-import { CorrectionBatchDraftModel, CorrectionBatchViewModel, CorrectionBatchJobsModel } from "./correction-batches-model";
+import {
+  CorrectionBatchDraftModel,
+  CorrectionBatchViewModel,
+  CorrectionBatchJobsModel,
+} from "./correction-batches-model";
 import { CorrectionViewModel, CorrectionJobsViewModel } from "./corrections-model";
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "操作失败，请重试";
@@ -63,16 +66,18 @@ export class RuntimeViewModel extends StatefulService<{
       .getRuntime()
       .then(
         (runtime) => {
-          if (!this.stopped && generation === this.requestGeneration) this.setState({ runtime, error: null });
+          if (!this.stopped && generation === this.requestGeneration)
+            this.setState({ runtime, error: null });
         },
         (error) => {
-          if (!this.stopped && generation === this.requestGeneration) this.setState({ error: message(error) });
+          if (!this.stopped && generation === this.requestGeneration)
+            this.setState({ error: message(error) });
         },
       )
       .finally(() => {
         if (this.flight === flight) this.flight = undefined;
       });
-    return this.flight = flight;
+    return (this.flight = flight);
   }
   watch(): () => void {
     if (this.stopped) return () => {};
@@ -81,11 +86,7 @@ export class RuntimeViewModel extends StatefulService<{
       const generation = ++this.pollingGeneration;
       const tick = async () => {
         await this.refresh();
-        if (
-          this.watchers > 0 &&
-          !this.stopped &&
-          generation === this.pollingGeneration
-        )
+        if (this.watchers > 0 && !this.stopped && generation === this.pollingGeneration)
           this.timer = setTimeout(() => {
             void tick();
           }, 2000);
@@ -114,7 +115,9 @@ export class RuntimeViewModel extends StatefulService<{
       await this.refresh(true);
     } catch (error) {
       if (!this.stopped) this.setState({ error: message(error) });
-    } finally { if (!this.stopped) this.setState({ restarting: false }); }
+    } finally {
+      if (!this.stopped) this.setState({ restarting: false });
+    }
   }
   protected dispose() {
     this.stopped = true;
@@ -157,36 +160,73 @@ export class TasksViewModel extends StatefulService<{
     if (!force && this.flight?.key === key) return this.flight.promise;
     const generation = ++this.generation;
     this.setState({ loading: force || !this.loaded, filter: status });
-    const promise = this.client.listTasks({
+    const promise = this.client
+      .listTasks({
         page,
         pageSize: 25,
         ...(status ? { status } : {}),
-      }).then((data) => { if (!this.stopped && generation === this.generation) { this.loaded = true; this.setState({ data, queryError: null }); } },
-        (error) => { if (!this.stopped && generation === this.generation) this.setState({ queryError: message(error) }); })
-      .finally(() => { if (!this.stopped && generation === this.generation) this.setState({ loading: false }); if (this.flight?.promise === promise) this.flight = undefined; });
-    this.flight = { key, promise }; return promise;
+      })
+      .then(
+        (data) => {
+          if (!this.stopped && generation === this.generation) {
+            this.loaded = true;
+            this.setState({ data, queryError: null });
+          }
+        },
+        (error) => {
+          if (!this.stopped && generation === this.generation)
+            this.setState({ queryError: message(error) });
+        },
+      )
+      .finally(() => {
+        if (!this.stopped && generation === this.generation) this.setState({ loading: false });
+        if (this.flight?.promise === promise) this.flight = undefined;
+      });
+    this.flight = { key, promise };
+    return promise;
   }
   watch(status?: PageInput["status"]) {
     if (this.stopped) return () => {};
     if (status) this.query = { page: 1, status };
     if (++this.watchers === 1) {
       const epoch = ++this.epoch;
-      const tick = async () => { await this.refresh(this.query.page, this.query.status, false); if (!this.stopped && this.watchers && epoch === this.epoch) this.timer = setTimeout(() => { void tick(); }, 2000); };
+      const tick = async () => {
+        await this.refresh(this.query.page, this.query.status, false);
+        if (!this.stopped && this.watchers && epoch === this.epoch)
+          this.timer = setTimeout(() => {
+            void tick();
+          }, 2000);
+      };
       void tick();
     }
     let released = false;
-    return () => { if (released) return; released = true; if (!--this.watchers) { this.epoch++; clearTimeout(this.timer); } };
+    return () => {
+      if (released) return;
+      released = true;
+      if (!--this.watchers) {
+        this.epoch++;
+        clearTimeout(this.timer);
+      }
+    };
   }
   async delivery(taskId: string, open = false) {
     if (this.stopped || this.state.busy.includes(taskId)) return;
     this.setState({ busy: [...this.state.busy, taskId], error: null });
-    try { if (open) await this.client.openEmby(taskId); else await this.client.retryEmby(taskId); await this.refresh(); }
-    catch (error) { if (!this.stopped) this.setState({ error: message(error) }); }
-    finally { if (!this.stopped) this.setState({ busy: this.state.busy.filter((id) => id !== taskId) }); }
+    try {
+      if (open) await this.client.openEmby(taskId);
+      else await this.client.retryEmby(taskId);
+      await this.refresh();
+    } catch (error) {
+      if (!this.stopped) this.setState({ error: message(error) });
+    } finally {
+      if (!this.stopped) this.setState({ busy: this.state.busy.filter((id) => id !== taskId) });
+    }
   }
   protected dispose() {
     this.generation++;
-    this.stopped = true; this.epoch++; clearTimeout(this.timer);
+    this.stopped = true;
+    this.epoch++;
+    clearTimeout(this.timer);
   }
 }
 @injectable()
@@ -219,135 +259,526 @@ export class SettingsViewModel extends StatefulService<{
   }
   watch() {
     if (this.stopped) return () => {};
-    ++this.watchers; void this.refresh();
+    ++this.watchers;
+    void this.refresh();
     let released = false;
-    return () => { if (released) return; released = true; if (!--this.watchers) { ++this.page; ++this.request; this.setState({ loading: false }); } };
+    return () => {
+      if (released) return;
+      released = true;
+      if (!--this.watchers) {
+        ++this.page;
+        ++this.request;
+        this.setState({ loading: false });
+      }
+    };
   }
   private async write(work: () => Promise<unknown>) {
     if (this.stopped) throw new Error("界面已停止，请重新打开后操作");
     if (this.writing) throw new Error("设置正在保存，请等待当前操作完成");
-    const page = this.page; this.writing = true; ++this.request;
+    const page = this.page;
+    this.writing = true;
+    ++this.request;
     this.setState({ error: null, loading: false });
     try {
       await work();
     } catch (error) {
       if (!this.stopped && page === this.page) this.setState({ error: message(error) });
       throw error;
-    } finally { this.writing = false; }
+    } finally {
+      this.writing = false;
+    }
     if (!this.stopped && (page === this.page || this.watchers)) await this.refresh();
   }
   save(input: SettingsDraft) {
     return this.write(async () => {
-      const parsed = settingsDraftSchema.safeParse({ ...input, ...(input.recognition === undefined && this.state.settings?.recognition ? { recognition: this.state.settings.recognition } : {}) });
-      if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("；"));
+      const parsed = settingsDraftSchema.safeParse({
+        ...input,
+        ...(input.recognition === undefined && this.state.settings?.recognition
+          ? { recognition: this.state.settings.recognition }
+          : {}),
+      });
+      if (!parsed.success)
+        throw new Error(parsed.error.issues.map((issue) => issue.message).join("；"));
       await this.client.saveSettings(parsed.data);
     });
   }
   saveKey(kind: "tmdb" | "emby", value: string) {
     return this.write(() => this.client.saveCredential(kind, value));
   }
-  async prepareUpgrade() { if (this.stopped) return; try { await this.client.prepareDesktopUpgrade(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
-  async restoreUpgrade() { if (this.stopped) return; try { await this.client.restoreDesktopUpgrade(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } }
+  async prepareUpgrade() {
+    if (this.stopped) return;
+    try {
+      await this.client.prepareDesktopUpgrade();
+    } catch (error) {
+      if (!this.stopped) this.setState({ error: message(error) });
+    }
+  }
+  async restoreUpgrade() {
+    if (this.stopped) return;
+    try {
+      await this.client.restoreDesktopUpgrade();
+    } catch (error) {
+      if (!this.stopped) this.setState({ error: message(error) });
+    }
+  }
   async exportDiagnostics() {
     if (this.stopped) throw new Error("界面已停止，请重新打开后操作");
-    try { return await this.client.exportDiagnostics(); }
-    catch (error) { if (!this.stopped) this.setState({ error: message(error) }); throw error; }
+    try {
+      return await this.client.exportDiagnostics();
+    } catch (error) {
+      if (!this.stopped) this.setState({ error: message(error) });
+      throw error;
+    }
   }
-  protected dispose() { this.stopped = true; ++this.request; ++this.page; }
+  protected dispose() {
+    this.stopped = true;
+    ++this.request;
+    ++this.page;
+  }
 }
 @injectable()
-export class DownloadsViewModel extends StatefulService<{ paused: boolean; pausing: boolean; changingPause: boolean; items: DownloadJob[]; page: number; total: number; loading: boolean; error: string | null; busy: string[] }> {
-  protected initState = { paused: false, pausing: false, changingPause: false, items: [], page: 1, total: 0, loading: false, error: null, busy: [] };
-  private watchers = 0; private epoch = 0; private request = 0; private timer?: ReturnType<typeof setTimeout>; private stopped = false;
-  constructor(@inject(DesktopClient) private readonly client: DesktopApi) { super(); }
+export class DownloadsViewModel extends StatefulService<{
+  paused: boolean;
+  pausing: boolean;
+  changingPause: boolean;
+  items: DownloadJob[];
+  page: number;
+  total: number;
+  loading: boolean;
+  error: string | null;
+  busy: string[];
+}> {
+  protected initState = {
+    paused: false,
+    pausing: false,
+    changingPause: false,
+    items: [],
+    page: 1,
+    total: 0,
+    loading: false,
+    error: null,
+    busy: [],
+  };
+  private watchers = 0;
+  private epoch = 0;
+  private request = 0;
+  private timer?: ReturnType<typeof setTimeout>;
+  private stopped = false;
+  constructor(@inject(DesktopClient) private readonly client: DesktopApi) {
+    super();
+  }
   watch() {
-    if (++this.watchers === 1) { const epoch = ++this.epoch; const tick = async () => { await this.refresh(this.state.page); if (!this.stopped && this.watchers && epoch === this.epoch) this.timer = setTimeout(() => { void tick(); }, 1000); }; void tick(); }
-    let released = false; return () => { if (released) return; released = true; if (!--this.watchers) { this.epoch++; clearTimeout(this.timer); } };
+    if (++this.watchers === 1) {
+      const epoch = ++this.epoch;
+      const tick = async () => {
+        await this.refresh(this.state.page);
+        if (!this.stopped && this.watchers && epoch === this.epoch)
+          this.timer = setTimeout(() => {
+            void tick();
+          }, 1000);
+      };
+      void tick();
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (!--this.watchers) {
+        this.epoch++;
+        clearTimeout(this.timer);
+      }
+    };
   }
   async refresh(page = this.state.page) {
-    const request = ++this.request; this.setState({ page, loading: true });
+    const request = ++this.request;
+    this.setState({ page, loading: true });
     try {
-      const [data, pause] = await Promise.all([this.client.listDownloads({ page, pageSize: 25 }), this.client.getCloudDownloadPause()]);
+      const [data, pause] = await Promise.all([
+        this.client.listDownloads({ page, pageSize: 25 }),
+        this.client.getCloudDownloadPause(),
+      ]);
       if (this.stopped || request !== this.request) return;
       const lastPage = Math.max(1, Math.ceil(data.total / 25));
-      if (page > lastPage) { await this.refresh(lastPage); return; }
+      if (page > lastPage) {
+        await this.refresh(lastPage);
+        return;
+      }
       this.setState({ ...data, ...pause, error: null });
+    } catch (error) {
+      if (!this.stopped && request === this.request) this.setState({ error: message(error) });
+    } finally {
+      if (!this.stopped && request === this.request) this.setState({ loading: false });
     }
-    catch (error) { if (!this.stopped && request === this.request) this.setState({ error: message(error) }); }
-    finally { if (!this.stopped && request === this.request) this.setState({ loading: false }); }
   }
   async control(jobId: string, operation: "pause" | "resume" | "cancel" | "retry") {
     if (this.state.busy.includes(jobId)) return;
     this.setState({ busy: [...this.state.busy, jobId], error: null });
-    try { await this.client.controlDownload({ jobId, operation, requestKey: crypto.randomUUID() }); await this.refresh(); }
-    catch (error) { this.setState({ error: message(error) }); }
-    finally { this.setState({ busy: this.state.busy.filter((id) => id !== jobId) }); }
+    try {
+      await this.client.controlDownload({ jobId, operation, requestKey: crypto.randomUUID() });
+      await this.refresh();
+    } catch (error) {
+      this.setState({ error: message(error) });
+    } finally {
+      this.setState({ busy: this.state.busy.filter((id) => id !== jobId) });
+    }
   }
   async togglePause() {
     if (this.state.changingPause || this.state.pausing) return;
     this.setState({ changingPause: true, error: null });
-    try { await this.client.setCloudDownloadPause({ paused: !this.state.paused, requestKey: crypto.randomUUID() }); await this.refresh(); }
-    catch (error) { this.setState({ error: message(error) }); }
-    finally { this.setState({ changingPause: false }); }
+    try {
+      await this.client.setCloudDownloadPause({
+        paused: !this.state.paused,
+        requestKey: crypto.randomUUID(),
+      });
+      await this.refresh();
+    } catch (error) {
+      this.setState({ error: message(error) });
+    } finally {
+      this.setState({ changingPause: false });
+    }
   }
-  async open(jobId: string) { try { await this.client.openDownloadDirectory(jobId); } catch (error) { this.setState({ error: message(error) }); } }
-  protected dispose() { this.stopped = true; ++this.epoch; ++this.request; clearTimeout(this.timer); }
+  async open(jobId: string) {
+    try {
+      await this.client.openDownloadDirectory(jobId);
+    } catch (error) {
+      this.setState({ error: message(error) });
+    }
+  }
+  protected dispose() {
+    this.stopped = true;
+    ++this.epoch;
+    ++this.request;
+    clearTimeout(this.timer);
+  }
 }
 @injectable()
-export class IngestionViewModel extends StatefulService<{ items: IngestionCandidate[]; total: number; page: number; sources: SourceRule[]; task: Recognition | null; targets: CoreOutput<"recognition.task-targets"> | null; selecting: boolean; preview: OrganizePreview | null; error: string | null; busy: boolean }> {
-  protected initState = { items: [], total: 0, page: 1, sources: [], task: null, targets: null, selecting: false, preview: null, error: null, busy: false };
-  private stopped = false; private watchers = 0; private epoch = 0; private request = 0; private selection = 0; private timer?: ReturnType<typeof setTimeout>;
+export class IngestionViewModel extends StatefulService<{
+  items: IngestionCandidate[];
+  total: number;
+  page: number;
+  sources: SourceRule[];
+  task: Recognition | null;
+  targets: CoreOutput<"recognition.task-targets"> | null;
+  selecting: boolean;
+  preview: OrganizePreview | null;
+  error: string | null;
+  busy: boolean;
+}> {
+  protected initState = {
+    items: [],
+    total: 0,
+    page: 1,
+    sources: [],
+    task: null,
+    targets: null,
+    selecting: false,
+    preview: null,
+    error: null,
+    busy: false,
+  };
+  private stopped = false;
+  private watchers = 0;
+  private epoch = 0;
+  private request = 0;
+  private selection = 0;
+  private timer?: ReturnType<typeof setTimeout>;
   private readonly confirmations = new Map<string, string>();
-  constructor(@inject(DesktopClient) readonly client: DesktopApi) { super(); }
-  watch() { if (this.stopped) return () => {}; if (++this.watchers === 1) { const epoch = ++this.epoch; const poll = async () => { await this.refresh(); if (!this.stopped && this.watchers && epoch === this.epoch) this.timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); } let released = false; return () => { if (released) return; released = true; if (!--this.watchers) { this.epoch++; this.request++; this.selection++; this.setState({ selecting: false }); clearTimeout(this.timer); } }; }
-  async refresh(page = this.state.page) {
-    if (this.stopped || !this.watchers) return;
-    const request = ++this.request, selected = this.selection; this.setState({ page });
-    try { const [result, sources, task, targets] = await Promise.all([this.client.listIngestionCandidates({ page }), this.client.listSourceRules(), this.state.task ? this.client.getIngestionTask(this.state.task.taskId) : Promise.resolve(null), this.state.task ? this.client.getRecognitionTaskTargets(this.state.task.taskId) : Promise.resolve(null)]); if (!this.stopped && request === this.request) this.setState({ ...result, sources, ...(selected === this.selection ? { task, targets, ...(this.state.targets?.scopeToken && targets?.scopeToken !== this.state.targets.scopeToken ? { preview: null } : {}) } : {}) }); }
-    catch (error) { if (!this.stopped && request === this.request) this.setState({ error: message(error) }); }
+  constructor(@inject(DesktopClient) readonly client: DesktopApi) {
+    super();
   }
-  private async action(work: () => Promise<void>) { if (this.state.busy || this.stopped) return; this.setState({ busy: true, error: null }); try { await work(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } finally { if (!this.stopped) this.setState({ busy: false }); } }
-  async recognize(candidateId: string) { let taskId: string | null = null; await this.action(async () => { const result = await this.client.recognizeIngestion({ candidateId, requestKey: crypto.randomUUID() }); if (this.stopped || !this.watchers) return; await this.select(result.taskId); await this.refresh(); if (!this.stopped && this.watchers) taskId = result.taskId; }); return taskId; }
-  async select(taskId: string) { if (this.stopped || !this.watchers) return; const selection = ++this.selection; this.setState({ task: null, preview: null, selecting: true, targets: null }); try { const [task, targets] = await Promise.all([this.client.getIngestionTask(taskId), this.client.getRecognitionTaskTargets(taskId)]); if (!this.stopped && selection === this.selection) this.setState({ task, targets, error: null }); } catch (error) { if (!this.stopped && selection === this.selection) this.setState({ error: message(error) }); } finally { if (!this.stopped && selection === this.selection) this.setState({ selecting: false }); } }
-  clearPreview() { this.selection++; this.setState({ preview: null, selecting: false }); }
-  preview(input: Omit<CoreInput<"ingestion.preview">, "requestKey" | "taskId">) { return this.action(async () => { if (!this.state.task) return; const selection = this.selection, scopeToken = this.state.targets?.scopeToken, result = await this.client.previewOrganize({ ...input, taskId: this.state.task.taskId, requestKey: crypto.randomUUID() }); if (!this.stopped && selection === this.selection && scopeToken === this.state.targets?.scopeToken) this.setState({ preview: result }); }); }
-  confirm() { return this.action(async () => { const preview = this.state.preview; if (!preview) return; let requestKey = this.confirmations.get(preview.id); if (!requestKey) { requestKey = crypto.randomUUID(); this.confirmations.set(preview.id, requestKey); } await this.client.confirmOrganize({ previewId: preview.id, requestKey }); this.setState({ preview: null }); await this.refresh(); }); }
-  retry(taskId: string) { return this.action(async () => { await this.client.retryOrganize(taskId); await this.refresh(); }); }
-  protected dispose() { this.stopped = true; this.request++; this.selection++; this.epoch++; clearTimeout(this.timer); this.confirmations.clear(); }
-}
-@injectable()
-export class LibraryViewModel extends StatefulService<{ targets: CoreOutput<"media.libraries">; server: CoreOutput<"emby.libraries"> | null; discovery: CoreOutput<"emby.discover"> | null; configuration: CoreOutput<"emby.configuration">; error: string | null; queryError: string | null; busy: boolean }> {
-  protected initState = { targets: [], server: null, discovery: null, configuration: null, error: null, queryError: null, busy: false };
-  private connectIntent?: { signature: string; input: CoreInput<"emby.connect"> };
-  private stopped = false; private generation = 0; private watchers = 0; private epoch = 0; private timer?: ReturnType<typeof setTimeout>; private flight?: Promise<void>;
-  constructor(@inject(DesktopClient) readonly client: DesktopApi) { super(); }
   watch() {
     if (this.stopped) return () => {};
-    if (++this.watchers === 1) { const epoch = ++this.epoch; const poll = async () => { await this.refresh(); if (!this.stopped && this.watchers && epoch === this.epoch) this.timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); }
-    let released = false; return () => { if (released) return; released = true; if (!--this.watchers) { this.epoch++; clearTimeout(this.timer); } };
+    if (++this.watchers === 1) {
+      const epoch = ++this.epoch;
+      const poll = async () => {
+        await this.refresh();
+        if (!this.stopped && this.watchers && epoch === this.epoch)
+          this.timer = setTimeout(() => {
+            void poll();
+          }, 2000);
+      };
+      void poll();
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (!--this.watchers) {
+        this.epoch++;
+        this.request++;
+        this.selection++;
+        this.setState({ selecting: false });
+        clearTimeout(this.timer);
+      }
+    };
+  }
+  async refresh(page = this.state.page) {
+    if (this.stopped || !this.watchers) return;
+    const request = ++this.request,
+      selected = this.selection;
+    this.setState({ page });
+    try {
+      const [result, sources, task, targets] = await Promise.all([
+        this.client.listIngestionCandidates({ page }),
+        this.client.listSourceRules(),
+        this.state.task
+          ? this.client.getIngestionTask(this.state.task.taskId)
+          : Promise.resolve(null),
+        this.state.task
+          ? this.client.getRecognitionTaskTargets(this.state.task.taskId)
+          : Promise.resolve(null),
+      ]);
+      if (!this.stopped && request === this.request)
+        this.setState({
+          ...result,
+          sources,
+          ...(selected === this.selection
+            ? {
+                task,
+                targets,
+                ...(this.state.targets?.scopeToken &&
+                targets?.scopeToken !== this.state.targets.scopeToken
+                  ? { preview: null }
+                  : {}),
+              }
+            : {}),
+        });
+    } catch (error) {
+      if (!this.stopped && request === this.request) this.setState({ error: message(error) });
+    }
+  }
+  private async action(work: () => Promise<void>) {
+    if (this.state.busy || this.stopped) return;
+    this.setState({ busy: true, error: null });
+    try {
+      await work();
+    } catch (error) {
+      if (!this.stopped) this.setState({ error: message(error) });
+    } finally {
+      if (!this.stopped) this.setState({ busy: false });
+    }
+  }
+  async recognize(candidateId: string) {
+    let taskId: string | null = null;
+    await this.action(async () => {
+      const result = await this.client.recognizeIngestion({
+        candidateId,
+        requestKey: crypto.randomUUID(),
+      });
+      if (this.stopped || !this.watchers) return;
+      await this.select(result.taskId);
+      await this.refresh();
+      if (!this.stopped && this.watchers) taskId = result.taskId;
+    });
+    return taskId;
+  }
+  async select(taskId: string) {
+    if (this.stopped || !this.watchers) return;
+    const selection = ++this.selection;
+    this.setState({ task: null, preview: null, selecting: true, targets: null });
+    try {
+      const [task, targets] = await Promise.all([
+        this.client.getIngestionTask(taskId),
+        this.client.getRecognitionTaskTargets(taskId),
+      ]);
+      if (!this.stopped && selection === this.selection)
+        this.setState({ task, targets, error: null });
+    } catch (error) {
+      if (!this.stopped && selection === this.selection) this.setState({ error: message(error) });
+    } finally {
+      if (!this.stopped && selection === this.selection) this.setState({ selecting: false });
+    }
+  }
+  clearPreview() {
+    this.selection++;
+    this.setState({ preview: null, selecting: false });
+  }
+  preview(input: Omit<CoreInput<"ingestion.preview">, "requestKey" | "taskId">) {
+    return this.action(async () => {
+      if (!this.state.task) return;
+      const selection = this.selection,
+        scopeToken = this.state.targets?.scopeToken,
+        result = await this.client.previewOrganize({
+          ...input,
+          taskId: this.state.task.taskId,
+          requestKey: crypto.randomUUID(),
+        });
+      if (
+        !this.stopped &&
+        selection === this.selection &&
+        scopeToken === this.state.targets?.scopeToken
+      )
+        this.setState({ preview: result });
+    });
+  }
+  confirm() {
+    return this.action(async () => {
+      const preview = this.state.preview;
+      if (!preview) return;
+      let requestKey = this.confirmations.get(preview.id);
+      if (!requestKey) {
+        requestKey = crypto.randomUUID();
+        this.confirmations.set(preview.id, requestKey);
+      }
+      await this.client.confirmOrganize({ previewId: preview.id, requestKey });
+      this.setState({ preview: null });
+      await this.refresh();
+    });
+  }
+  retry(taskId: string) {
+    return this.action(async () => {
+      await this.client.retryOrganize(taskId);
+      await this.refresh();
+    });
+  }
+  protected dispose() {
+    this.stopped = true;
+    this.request++;
+    this.selection++;
+    this.epoch++;
+    clearTimeout(this.timer);
+    this.confirmations.clear();
+  }
+}
+@injectable()
+export class LibraryViewModel extends StatefulService<{
+  targets: CoreOutput<"media.libraries">;
+  server: CoreOutput<"emby.libraries"> | null;
+  discovery: CoreOutput<"emby.discover"> | null;
+  configuration: CoreOutput<"emby.configuration">;
+  error: string | null;
+  queryError: string | null;
+  busy: boolean;
+}> {
+  protected initState = {
+    targets: [],
+    server: null,
+    discovery: null,
+    configuration: null,
+    error: null,
+    queryError: null,
+    busy: false,
+  };
+  private connectIntent?: { signature: string; input: CoreInput<"emby.connect"> };
+  private stopped = false;
+  private generation = 0;
+  private watchers = 0;
+  private epoch = 0;
+  private timer?: ReturnType<typeof setTimeout>;
+  private flight?: Promise<void>;
+  constructor(@inject(DesktopClient) readonly client: DesktopApi) {
+    super();
+  }
+  watch() {
+    if (this.stopped) return () => {};
+    if (++this.watchers === 1) {
+      const epoch = ++this.epoch;
+      const poll = async () => {
+        await this.refresh();
+        if (!this.stopped && this.watchers && epoch === this.epoch)
+          this.timer = setTimeout(() => {
+            void poll();
+          }, 2000);
+      };
+      void poll();
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (!--this.watchers) {
+        this.epoch++;
+        clearTimeout(this.timer);
+      }
+    };
   }
   refresh(force = false): Promise<void> {
     if (this.stopped) return Promise.resolve();
     if (!force && this.flight) return this.flight;
     const generation = ++this.generation;
     const task = (async () => {
-      try { const [targets, configuration] = await Promise.all([this.client.listMediaLibraries(), this.client.getEmbyConfiguration()]); if (!this.stopped && generation === this.generation) this.setState({ targets, configuration, queryError: null }); }
-      catch (error) { if (!this.stopped && generation === this.generation) this.setState({ queryError: message(error) }); }
-    })().finally(() => { if (this.flight === task) this.flight = undefined; });
-    return this.flight = task;
+      try {
+        const [targets, configuration] = await Promise.all([
+          this.client.listMediaLibraries(),
+          this.client.getEmbyConfiguration(),
+        ]);
+        if (!this.stopped && generation === this.generation)
+          this.setState({ targets, configuration, queryError: null });
+      } catch (error) {
+        if (!this.stopped && generation === this.generation)
+          this.setState({ queryError: message(error) });
+      }
+    })().finally(() => {
+      if (this.flight === task) this.flight = undefined;
+    });
+    return (this.flight = task);
   }
-  async action(work: () => Promise<void>) { if (this.state.busy || this.stopped) return; this.setState({ busy: true, error: null }); try { await work(); await this.refresh(true); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } finally { if (!this.stopped) this.setState({ busy: false }); } }
-  choose(type: "MOVIE" | "TV_SHOW") { return this.action(async () => { const targets = await this.client.chooseMediaTarget(type); if (!this.stopped) this.setState({ targets, server: null, discovery: null }); }); }
-  readServer(input: CoreInput<"emby.discover"> = {}) { return this.action(async () => { this.connectIntent = undefined; const server = await this.client.listEmbyLibraries(); if (this.stopped) return; this.setState({ server, discovery: null }); const discovery = await this.client.discoverEmbyTargets(input); if (!this.stopped && discovery.serverId === server.serverId) this.setState({ discovery }); }); }
-  discover(input: CoreInput<"emby.discover">) { return this.action(async () => { const discovery = await this.client.discoverEmbyTargets(input); if (!this.stopped && discovery.serverId === this.state.server?.serverId) this.setState({ discovery }); else if (!this.stopped) throw new Error("Emby 服务器身份已变化，请重新读取媒体库"); }); }
-  clearDiscovery() { this.connectIntent = undefined; this.setState({ discovery: null }); }
-  connect(input: CoreInput<"emby.connect">) { return this.action(async () => {
-    const signature = JSON.stringify(input);
-    if (this.connectIntent?.signature !== signature) this.connectIntent = { signature, input: { ...input, requestKey: crypto.randomUUID(), expectedVersion: this.state.configuration?.version ?? 0 } };
-    const configuration = await this.client.connectEmby(this.connectIntent.input);
-    if (!this.stopped) { this.generation++; this.setState({ configuration }); this.connectIntent = undefined; }
-  }); }
-  protected dispose() { this.stopped = true; this.generation++; this.epoch++; clearTimeout(this.timer); }
+  async action(work: () => Promise<void>) {
+    if (this.state.busy || this.stopped) return;
+    this.setState({ busy: true, error: null });
+    try {
+      await work();
+      await this.refresh(true);
+    } catch (error) {
+      if (!this.stopped) this.setState({ error: message(error) });
+    } finally {
+      if (!this.stopped) this.setState({ busy: false });
+    }
+  }
+  choose(type: "MOVIE" | "TV_SHOW") {
+    return this.action(async () => {
+      const targets = await this.client.chooseMediaTarget(type);
+      if (!this.stopped) this.setState({ targets, server: null, discovery: null });
+    });
+  }
+  readServer(input: CoreInput<"emby.discover"> = {}) {
+    return this.action(async () => {
+      this.connectIntent = undefined;
+      const server = await this.client.listEmbyLibraries();
+      if (this.stopped) return;
+      this.setState({ server, discovery: null });
+      const discovery = await this.client.discoverEmbyTargets(input);
+      if (!this.stopped && discovery.serverId === server.serverId) this.setState({ discovery });
+    });
+  }
+  discover(input: CoreInput<"emby.discover">) {
+    return this.action(async () => {
+      const discovery = await this.client.discoverEmbyTargets(input);
+      if (!this.stopped && discovery.serverId === this.state.server?.serverId)
+        this.setState({ discovery });
+      else if (!this.stopped) throw new Error("Emby 服务器身份已变化，请重新读取媒体库");
+    });
+  }
+  clearDiscovery() {
+    this.connectIntent = undefined;
+    this.setState({ discovery: null });
+  }
+  connect(input: CoreInput<"emby.connect">) {
+    return this.action(async () => {
+      const signature = JSON.stringify(input);
+      if (this.connectIntent?.signature !== signature)
+        this.connectIntent = {
+          signature,
+          input: {
+            ...input,
+            requestKey: crypto.randomUUID(),
+            expectedVersion: this.state.configuration?.version ?? 0,
+          },
+        };
+      const configuration = await this.client.connectEmby(this.connectIntent.input);
+      if (!this.stopped) {
+        this.generation++;
+        this.setState({ configuration });
+        this.connectIntent = undefined;
+      }
+    });
+  }
+  protected dispose() {
+    this.stopped = true;
+    this.generation++;
+    this.epoch++;
+    clearTimeout(this.timer);
+  }
 }
 export function createRendererApplication(client: DesktopApi) {
   const connection: ApplicationModule = {
@@ -357,10 +788,47 @@ export function createRendererApplication(client: DesktopApi) {
     },
   };
   const modules: ApplicationModule[] = [
-    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ConfigurationViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(SourceScansViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); bind(DirectoriesViewModel).toSelf().inSingletonScope(); bind(CodexRecognitionViewModel).toSelf().inSingletonScope(); bind(SeasonsViewModel).toSelf().inSingletonScope(); bind(OrganizeBatchesViewModel).toSelf().inSingletonScope(); } },
-    { id: "renderer.corrections", dependencies: [connection.id], register(bind) { bind(CorrectionViewModel).toSelf().inSingletonScope(); bind(CorrectionJobsViewModel).toSelf().inSingletonScope(); bind(CorrectionBatchDraftModel).toSelf().inSingletonScope(); bind(CorrectionBatchViewModel).toSelf().inSingletonScope(); bind(CorrectionBatchJobsModel).toSelf().inSingletonScope(); } },
-    { id: "renderer.downloads", dependencies: [connection.id], register(bind) { bind(DownloadsViewModel).toSelf().inSingletonScope(); } },
-    { id: "renderer.cloud", dependencies: [connection.id], register(bind) { bind(CloudAccountsViewModel).toSelf().inSingletonScope(); } },
+    {
+      id: "renderer.ingestion",
+      dependencies: [connection.id],
+      register(bind) {
+        bind(IngestionViewModel).toSelf().inSingletonScope();
+        bind(LibraryViewModel).toSelf().inSingletonScope();
+        bind(ConfigurationViewModel).toSelf().inSingletonScope();
+        bind(ContentReviewsViewModel).toSelf().inSingletonScope();
+        bind(SourceScansViewModel).toSelf().inSingletonScope();
+        bind(RecognitionEditsViewModel).toSelf().inSingletonScope();
+        bind(DirectoriesViewModel).toSelf().inSingletonScope();
+        bind(CodexRecognitionViewModel).toSelf().inSingletonScope();
+        bind(SeasonsViewModel).toSelf().inSingletonScope();
+        bind(OrganizeBatchesViewModel).toSelf().inSingletonScope();
+      },
+    },
+    {
+      id: "renderer.corrections",
+      dependencies: [connection.id],
+      register(bind) {
+        bind(CorrectionViewModel).toSelf().inSingletonScope();
+        bind(CorrectionJobsViewModel).toSelf().inSingletonScope();
+        bind(CorrectionBatchDraftModel).toSelf().inSingletonScope();
+        bind(CorrectionBatchViewModel).toSelf().inSingletonScope();
+        bind(CorrectionBatchJobsModel).toSelf().inSingletonScope();
+      },
+    },
+    {
+      id: "renderer.downloads",
+      dependencies: [connection.id],
+      register(bind) {
+        bind(DownloadsViewModel).toSelf().inSingletonScope();
+      },
+    },
+    {
+      id: "renderer.cloud",
+      dependencies: [connection.id],
+      register(bind) {
+        bind(CloudAccountsViewModel).toSelf().inSingletonScope();
+      },
+    },
     {
       id: "renderer.runtime",
       dependencies: [connection.id],

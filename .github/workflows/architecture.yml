@@ -1,0 +1,26 @@
+name: 架构与代码约束
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22.23.1"
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: 校验格式、规则和相对基点的架构约束
+        run: npm run check:architecture
+        env:
+          ARCHITECTURE_BASE_REF: ${{ github.event.pull_request.base.sha || github.sha }}

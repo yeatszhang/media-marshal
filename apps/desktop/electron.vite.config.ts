@@ -6,20 +6,24 @@ import tailwind from "@tailwindcss/vite";
 import { typescriptDecorators } from "../../scripts/typescript-decorators.mjs";
 
 const alias = {
-  "@media-marshal/contracts/internal/core": resolve("..", "..", "packages/contracts/src/internal/core.ts"),
-  "@media-marshal/contracts/internal/rpc": resolve("..", "..", "packages/contracts/src/internal/rpc.ts"),
-  "@media-marshal/contracts/internal": resolve("..", "..", "packages/contracts/src/internal/index.ts"),
-  "@media-marshal/contracts": resolve(
+  "@media-marshal/contracts/internal/core": resolve(
     "..",
     "..",
-    "packages/contracts/src/index.ts",
+    "packages/contracts/src/internal/core.ts",
   ),
+  "@media-marshal/contracts/internal/rpc": resolve(
+    "..",
+    "..",
+    "packages/contracts/src/internal/rpc.ts",
+  ),
+  "@media-marshal/contracts/internal": resolve(
+    "..",
+    "..",
+    "packages/contracts/src/internal/index.ts",
+  ),
+  "@media-marshal/contracts": resolve("..", "..", "packages/contracts/src/index.ts"),
   "@media-marshal/media-core/files": resolve("..", "..", "packages/media-core/src/files/index.ts"),
-  "@media-marshal/media-core": resolve(
-    "..",
-    "..",
-    "packages/media-core/src/index.ts",
-  ),
+  "@media-marshal/media-core": resolve("..", "..", "packages/media-core/src/index.ts"),
 };
 export default defineConfig({
   main: {
@@ -60,10 +64,7 @@ export default defineConfig({
           if (!context.server) return html;
           return html
             .replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")
-            .replace(
-              "connect-src 'self'",
-              "connect-src 'self' ws://localhost:* ws://127.0.0.1:*",
-            );
+            .replace("connect-src 'self'", "connect-src 'self' ws://localhost:* ws://127.0.0.1:*");
         },
       },
     ],

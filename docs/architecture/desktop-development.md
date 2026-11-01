@@ -2,6 +2,8 @@
 
 桌面迁移采用 npm workspaces：`apps/desktop` 负责 Electron 宿主、最小 Preload、Utility Process 入口和 React；`packages/contracts` 定义普通数据与严格动作；`packages/media-core` 负责框架组装和 SQLite。迁移范围及旧行为证据见[迁移基线](./desktop-migration.md)。
 
+代码格式、依赖边界、结构预算及存量例外的维护方式见[架构检查与维护](../development/architecture-checks.md)。本轮实施证据见[桌面重构验证](../development/desktop-refactor-validation.md)。
+
 旧 Java / Vue / HTTP parser 源码、Docker 入口与历史文档统一放在仓库根 `legacy/`，仅供参考。客户端构建不运行 Maven、不引用 Vue、不打开旧数据库。不要通过个人目录或全局软链接接入应用依赖。
 
 ## 环境与命令
@@ -28,7 +30,15 @@ npm run desktop:pack
 
 `npm run desktop:dev` 默认启用 Main／Preload 文件监听：Main 改动后重新构建并重启 Electron，Preload 改动后重新构建并整页刷新 Renderer，避免界面调用新方法时仍使用旧桥接。若修改启动脚本，已运行的开发进程须退出后重新启动；仅刷新界面不会更新启动参数。
 
+### 备份恢复准入
+
+恢复仅接受与当前构建数据格式及平台完全匹配的备份。Main 先收敛已有恢复日志，再检查清单与文件摘要；所有文件复制到私有 staging 后，以只读 SQLite 核验实际 `user_version`、完整表／索引／触发器结构摘要、数据库完整性和外键。缺少业务库、清单声称同版本但结构不符、旧格式或较新格式均在创建新的恢复日志及替换当前库／凭据前拒绝。使用匹配构建或完整的同格式备份处理，不通过自动升级接管不匹配备份。
+
+当前格式版本与结构摘要由 contracts 内部协议声明；Core 的内存库测试核对结构摘要，切换 schema 时必须一起更新。恢复的 WAL 与其他私有状态仍按原日志事务一起替换；恢复后保留磁盘成果核对标记，数据库恢复不撤销或重放媒体文件操作。验证入口：`npm test -- apps/desktop/src/main/cloud/upgrades.test.ts packages/media-core/src/storage`，包含 SIGKILL 半途恢复与 WAL 回归。该规则已用于当前格式；直接初始化的新基线切换按 OpenSpec 3.3／3.5～3.7 继续实施。
+
 ### 开发与本地日志
+
+隔离开发会话的请求因果、业务身份和关键事件见[桌面日志与请求关联](../development/desktop-logging.md)。
 
 需要读取普通页面控制台、未捕获异常或真正的 webview 日志时，使用[开发态 CDP 日志工具](../development/desktop-cdp-logs.md)：`npm run desktop:dev:debug` 启动，`npm run desktop:logs` 读取。
 
@@ -71,6 +81,10 @@ Main、Core、Sidecar、Preload 和 Renderer 构建均生成带源码内容的 `
 ### E2E 前台与后台模式
 
 `npm run test:desktop` 默认使用后台模式。它保留真实 Electron 主窗口、登录子窗口、DOM 和截图能力，但窗口不显示、不请求焦点、不出现在任务栏或 macOS Dock；隐藏窗口关闭后台节流。测试仍使用各自隔离的用户数据目录，不连接正在使用的开发实例。
+
+测试入口现在先通过开发工具构建当前源码并保存指纹，再启动 Playwright；直接调用 Playwright 需要已有有效的当前构建清单。所有手动 Electron E2E 通过 `tests/support/test-electron.ts` 启动，统一关联运行身份、日志、动作摘要、受限 trace 与断言。`test:packaged` 默认同样先生成当前平台目录包并检查资源，可追加用例路径筛选；显式提供 `MARSHAL_APP_PATH` 时沿用生成该映像的构建清单，并核对整个包副本，不能用旧包匹配当前源码。工具文件、原生 GUI helper 和依赖内的 TypeScript 开发配置不进入目录包。
+
+完整 trace 仅为明确登记的无账号合成用例开启，其余上下文记录敏感阻断；iframe 或来源变化使整段 trace 作废。关闭前的健康采集最多等待 150ms，超时单独记录缺失，不占用应用自己的退出期限。结果写入 `test-results/agent/<runId>/manifest.json`；E2E 的 `test-fixture`／纯结果 `test-result` 与 CLI 注册场景分开标记。工具使用说明见仓库 `tools/desktop-agent/README.md`，证据与范围见[本轮验证记录](../development/desktop-refactor-validation.md)。
 
 ```bash
 npm run test:desktop -- apps/desktop/tests/presentation.spec.ts
@@ -261,7 +275,7 @@ macOS arm64、Intel Mac、Windows x64 在同一提交上各通过 22 次本地 A
 
 ## 原型测量
 
-生成当前平台目录包后，在 macOS 运行 `npm run desktop:benchmark`。测量从包内启动同一冻结 parser，不要求另有工作区 parser 产物。原始样本、ASAR／parser 摘要及环境保存到 `test-results/desktop/benchmark.json`。测量包含 Playwright 启动、查询与交互开销，系统磁盘缓存未清空；冷启动在此定义为新应用进程，热唤起为已有托盘进程重新显示窗口。它们不等于安装态真实用户体验的最终基准。
+生成当前平台目录包后，在 macOS 运行 `npm run desktop:benchmark`；默认前台，锁屏时明确受阻。`npm run --silent desktop:benchmark -- --json --background` 显式只测后台启动、导航、CPU／内存、队列与解析器，窗口唤起标为 not-run。脚本核对当前源码和目录包，修正后的目标页标题为「来源同步」。原始样本、ASAR／parser 摘要及设备环境保存在新建的 `test-results/agent/<runId>/`，终端结果返回 reportPath，旧报告不覆盖。每个应用样本有独立运行身份，复用资料目录时递增代际；只有写入者已确认停止才清理本次临时资料。测量包含 Playwright 连接、查询及采集开销，系统磁盘缓存未清空；启动从 SDK 启动调用测至观测到核心连接且来源同步页可用，热唤起为已有进程窗口重新显示后的 CDP 导航。性能回归状态为 not-evaluated，不生成未经实际基线确定的达标阈值；最新测量及范围见[桌面重构验证](../development/desktop-refactor-validation.md)。
 
 空队列测量使用隔离资料目录。从实际 Main 的 PID、创建时间和完整命令核对归属，递归采样其 OS 子进程，包含 Core 和冻结 parser。CPU 使用两次 `ps` 累计 user＋system CPU 时间之差除以实际采样间隔，RSS 为末次快照；Electron `app.getAppMetrics` 单列，不能重复相加。新出现或缺少比较基线的进程保留未知 CPU，不记为零。以下原型表保留 2026-10-18～19 的旧测量，不将旧值套用于当前构建。
 
@@ -278,7 +292,7 @@ macOS arm64、Intel Mac、Windows x64 在同一提交上各通过 22 次本地 A
 
 当时 `du -sk` 测得应用目录约 367.91 MiB，独立 parser 目录约 23.53 MiB，均非 DMG/NSIS 下载体积。样本较小，未设置虚构性能承诺；Windows、Intel Mac、最低系统、正式签名产物及完整媒体队列均未测，后续接通 parser 和业务后需重新测量。
 
-### 当前目录包测量（2026-10-26）
+### 目录包测量（2026-10-26）
 
 已接入 Core／冻结 parser 的 arm64 未签名目录包在同一 Apple M1／16 GiB、macOS 26.5.2／APFS 机器重新测量。修正脚本对「来源配置」标题的定位，直接测量随包解析器，补齐原先不在 Electron 指标中的 parser 进程。应用 ASAR 为 `6a35a50718d0f0a61fdb160d45186a62fa2046cdd5ed150dafd4e0dd7da08510`；脚本、环境与完整样本见 `tools/desktop-files/fixtures/mac-benchmark-2026-10-26.json`。
 
@@ -301,3 +315,8 @@ parser 独立启动至 health 为 91.03 ms，首个解析请求为 37.31 ms，�
 ### 桌面表单交互验证
 
 来源同步、识别映射和旧来源配置使用共享编辑抽屉，网盘连接使用居中弹窗；设置与文件核对／修正保持页面内流程。容器选择与交互规则见 `apps/desktop/DESIGN.md` 的「表单任务容器」。`editor-surface.test.tsx` 检查关闭保护与焦点恢复；`layout.spec.ts` 覆盖常用／最小窗口布局、真实 Escape、放弃修改、错误可见和保存后的范围确认。所有测试使用隔离数据目录，目录选择使用受控替身。
+
+
+## 按改动验证
+
+统一 CLI 的 `verify` 默认生成计划，按 Git 实际差异选择带理由的检查；`changedFiles` 仅补充提示，未知路径回退当前桌面全量。通过 JSON 输入 `{"mode":"run","baseRef":"HEAD"}` 执行，返回持久 jobId，再用 status 查询；相同请求只续查。需要的 development／packaged 构建须先通过统一 build 入口完成，旧产物按项受阻；文档变更不要求业务或 GUI 构建。执行、跳过、未知和未运行分别记录，验收标准变化单列且不自动接受。可用 `benchmark:true` 增加实际设备的后台性能样本，测量完成不代表性能回归达标。参数、范围和证据索引见 仓库 `tools/desktop-agent/README.md`。

@@ -230,7 +230,7 @@ contracts 的 root 入口只显式导出；公共协议、错误、能力 schema
 | `doctor` | 返回 Node／Electron ABI、锁文件、SQLite、parser、原生文件与 Sidecar 资源、源码映射、平台及 GUI 权限检查；逐项给出状态和修复命令 |
 | `build` | 构建指定工作区或当前平台目录包，生成源码与产物指纹清单；安装依赖／下载构建资源另行显式执行，不由 doctor 隐式触发 |
 | `start / status / restart / stop` | 创建或查询 runId／sessionId、实例代际、PID 身份、窗口、构建身份、隔离 userData、场景及能力；restart 默认保留同一隔离数据但提升代际 |
-| `observe` | 指定窗口，返回归一化语义 JSON、截图路径、snapshotId、窗口几何和能力；大树支持区域／分页，图片可裁剪 |
+| `observe` | 默认返回归一化 CDP 语义 JSON、snapshotId、窗口几何和能力；大树支持区域／分页，仅显式请求时附带可裁剪图片 |
 | `act / wait` | 用目标引用及动作执行，返回 actionId 和 receipt；等待明确 UI／业务条件，超时给出诊断，不使用固定长 sleep |
 | `logs / diagnose` | 过滤时间游标、级别、进程、scope、requestId／operationId 等；诊断同时给出健康状态、最近失败、持久任务摘要和证据完整性 |
 | `scenario / verify` | 枚举、执行或重复受版本管理的场景；按修改影响返回检查计划及理由，执行结果区分通过、失败、受阻和未运行 |
@@ -254,19 +254,19 @@ contracts 的 root 入口只显式导出；公共协议、错误、能力 schema
 
 健康读取复用现有 runtime／诊断及各模块只读查询接口，返回 Core／Host 代际、parser／原生文件可用性、暂停范围、队列数量和阻塞原因；检查本身不得触发补扫、重试或持有业务数据库写连接。运行期业务摘要通过 Core 提供，工具不直接打开活跃业务库。性能样本复用现有 benchmark，但先修正失效的页面定位，记录启动阶段、交互时延、CPU／内存及积压；阈值来自当前设备基线，不能写入未经测量的性能承诺。
 
-### 10. GUI 观察采用语义、截图和原生能力三层
+### 10. 优先日志与 CDP 语义，视觉和原生能力按场景使用
 
-Renderer 优先使用已安装 Playwright 的 role／label／ARIA snapshot 和页面截图，形成统一快照：窗口 ID、页面代际、路由、焦点、弹层、可见性、启用／选中状态、名称、稳定 test id（确有必要时）、bounding box、截图尺寸与 deviceScaleFactor。ARIA 树是语义证据，截图是视觉证据，二者关联但不互相替代；截图前后布局变化则标记不一致并重新观察。
+开发诊断默认先查结构化日志、只读健康状态和 CDP／Playwright 的 role／label／ARIA snapshot，再核对动作与业务后置条件。语义快照包含窗口 ID、页面代际、路由、焦点、弹层、可见性、启用／选中状态、名称、必要的稳定 test id 与 bounding box。截图为显式按需能力，仅在视觉问题或这些证据不足时补充尺寸、缩放及关联图片；缺截图不阻断非视觉开发或验证，未执行视觉验收如实记录。截图存在时仍须同会话、同快照关联，布局变化时拒绝旧图。
 
 每个可操作 ref 绑定 session、window、page generation 和 snapshot。act 重新解析语义定位并核对角色／名称／唯一性／可操作性；导航、重载、窗口重建直接使旧引用失效。语义未变但布局变化时允许重新定位，旧坐标操作仍拒绝。支持 click、fill、select、check、key、scroll；不提供通用 evaluate、任意 SQL 或任意 IPC 方法名。复杂测试可在受版本管理的场景代码中使用 Playwright evaluate，但不能从 CLI 输入任意源码。
 
-DOM 语义不足时，Codex 读取截图或局部放大图判断，再使用同快照的窗口内坐标。记录 CSS 像素／图像像素／原生屏幕坐标转换，执行前复核窗口、缩放、遮挡与位置；不对未知全屏坐标盲点。视觉理解使用调用工具的 Codex 已有图片能力，本轮不要求自建 OCR、视觉服务或账号。缺图片查看能力的调用环境必须明确报告，不能宣称已完成视觉检查。
+仅在日志、CDP 和 DOM 语义仍不足且当前问题确需视觉定位时，Codex 才读取截图或局部放大图，再使用同快照的窗口内坐标。记录 CSS 像素／图像像素／原生屏幕坐标转换，执行前复核窗口、缩放、遮挡与位置；不对未知全屏坐标盲点。视觉理解使用调用工具的 Codex 已有图片能力，本轮不要求自建 OCR、视觉服务或账号。缺图片查看能力时报告视觉检查未运行，继续可独立完成的日志、CDP 与业务验证。
 
-macOS 原生 GUI 由独立开发 helper 提供，使用系统辅助功能访问目标进程的窗口／菜单／对话框，以窗口捕获取得图片；目标限定本会话应用及可核验归属的系统面板。缺少辅助功能或录屏权限时只报告不可用和设置指引，不操作权限确认。前台 native 场景显式选择并按会话串行，后台默认继续用当前受控 dialog／shell 替身。无法核实系统面板归属、焦点被其他应用抢走或窗口被替换时停止输入。Windows／其他平台返回具体 unsupported，不能借此声称新增跨平台产品支持。
+macOS 原生 GUI 由独立开发 helper 提供，优先使用系统辅助功能访问目标进程的窗口／菜单／对话框，保留 AX 语义与动作结果，窗口捕获仅按需提供；目标限定本会话应用及可核验归属的系统面板。缺少辅助功能时将相应原生输入报告受阻；缺录屏权限只影响可选原生截图，不阻断日志、CDP 或具备辅助功能权限的非视觉验证。不操作权限确认。前台 native 场景显式选择并按会话串行，后台默认继续用当前受控 dialog／shell 替身。无法核实系统面板归属、焦点被其他应用抢走或窗口被替换时停止输入。Windows／其他平台返回具体 unsupported，不能借此声称新增跨平台产品支持。
 
 证据必须标注 `dom`、`native` 或 `stub`。至少在实际 macOS 环境验收菜单导航、目录选择／取消、窗口隐藏与重新打开、快捷键和焦点返回；权限不足时该阶段保留受阻，不能靠模拟盖过。GUI 操作后一律验证可观察后置条件；重要文件流程再核对任务及隔离文件结果。写操作超时先查 receipt／业务状态，不自动再次确认。
 
-依据：[Playwright Electron](https://playwright.dev/docs/api/class-electron) 当前仍标注实验性，故驱动封装并锁定仓库版本；[ARIA snapshots](https://playwright.dev/docs/aria-snapshots) 提供语义观察基础，视觉正确性仍需独立截图检查。
+依据：[Playwright Electron](https://playwright.dev/docs/api/class-electron) 当前仍标注实验性，故驱动封装并锁定仓库版本；[ARIA snapshots](https://playwright.dev/docs/aria-snapshots) 提供语义观察基础，CDP 与语义可独立支持非视觉验收，确需视觉正确性判断时才补充截图。
 
 原生 helper 的实现入口采用 macOS [AXUIElement](https://developer.apple.com/documentation/applicationservices/axuielement) 和 [ScreenCaptureKit](https://developer.apple.com/documentation/screencapturekit)，在实施时按本机 SDK 核对具体可用 API；这些系统能力的存在不代表本项目已取得权限或完成 native 验收。
 
@@ -288,7 +288,7 @@ macOS 原生 GUI 由独立开发 helper 提供，使用系统辅助功能访问�
 2. doctor、校验／构建、启动隔离场景，观察 GUI／日志并保存修复前证据。
 3. 提出可验证原因，修改最小逻辑单元，运行受影响检查；必要时加入能区分缺陷与正确行为的回归断言。
 4. 从相同场景和 seed 重跑，比较 UI、任务及文件结果；未知影响按完整回归处理。
-5. 对涉及交互的变更实际查看截图；涉及 OS 行为须取得 native 证据；保留不同构建间的比较清单。
+5. 默认使用日志、CDP 语义、动作结果和业务后置条件复验；视觉问题按需截图，OS 行为保留 AX／原生动作及应用后置证据；保留不同构建间的比较清单。
 6. 检查验收标准自身是否被修改，记录合理变更理由，禁止靠删测、扩大截图容差或改例外自证成功；同一失败连续三轮且无新证据时停止盲试并返回阻碍。
 7. 通过后提交逻辑单元，保留证据入口并停止自有会话；未通过只报告已验证部分。流程不自动 push、发布或修改全局 Codex 配置。
 

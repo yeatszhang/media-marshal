@@ -21,11 +21,29 @@ CREATE TABLE download_job_receipt (
 export function migrateSyncReceiptEvidence(db: Database.Database) {
   let cursor = "";
   for (;;) {
-    const rows = db.prepare("SELECT r.id,r.local_sha256,r.size,c.file_evidence_json FROM sync_receipt r JOIN download_commit_intent c ON r.result_kind='download-item' AND c.item_id=r.result_id AND c.state='RECORDED' WHERE r.id>? ORDER BY r.id LIMIT 250").all(cursor) as { id: string; local_sha256: string; size: number; file_evidence_json: string }[];
-    if (!rows.length) break; cursor = rows.at(-1)!.id;
+    const rows = db
+      .prepare(
+        "SELECT r.id,r.local_sha256,r.size,c.file_evidence_json FROM sync_receipt r JOIN download_commit_intent c ON r.result_kind='download-item' AND c.item_id=r.result_id AND c.state='RECORDED' WHERE r.id>? ORDER BY r.id LIMIT 250",
+      )
+      .all(cursor) as {
+      id: string;
+      local_sha256: string;
+      size: number;
+      file_evidence_json: string;
+    }[];
+    if (!rows.length) break;
+    cursor = rows.at(-1)!.id;
     for (const row of rows) {
       const evidence = localFileEvidenceSchema.safeParse(JSON.parse(row.file_evidence_json));
-      if (evidence.success && evidence.data.sha256 === row.local_sha256 && evidence.data.size === row.size) db.prepare("INSERT INTO sync_receipt_evidence VALUES(?,?)").run(row.id, JSON.stringify(evidence.data));
+      if (
+        evidence.success &&
+        evidence.data.sha256 === row.local_sha256 &&
+        evidence.data.size === row.size
+      )
+        db.prepare("INSERT INTO sync_receipt_evidence VALUES(?,?)").run(
+          row.id,
+          JSON.stringify(evidence.data),
+        );
     }
   }
 }

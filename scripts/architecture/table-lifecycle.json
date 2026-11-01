@@ -1,0 +1,44 @@
+{
+  "historicalDdlOnly": [
+    "desktop_source_rebuild",
+    "emby_library_v33",
+    "ingestion_automatic_v33",
+    "ingestion_source_v33"
+  ],
+  "legacyTakeoverTables": [
+    "legacy_configuration_owner",
+    "recognition_legacy_owner",
+    "recognition_rule_legacy_reference",
+    "source_rule_legacy_reference"
+  ],
+  "legacyTakeoverColumns": {
+    "sync_runtime": ["claimed", "edited", "legacy_fingerprint"],
+    "recognition_runtime": ["claimed", "edited", "legacy_fingerprint"]
+  },
+  "protectedFacts": [
+    "sync_receipt",
+    "sync_receipt_evidence",
+    "sync_receipt_local_state",
+    "sync_receipt_origin",
+    "sync_receipt_reference",
+    "sync_history_confirmation",
+    "download_commit_intent",
+    "download_source_demand",
+    "ingestion_operation",
+    "ingestion_outbox",
+    "media_correction_operation",
+    "media_file_relocation",
+    "download_cleanup_intent",
+    "owned_attempt_cleanup"
+  ],
+  "retainedIdentities": [
+    "desktop_source",
+    "cloud_subscription",
+    "source_rule",
+    "source_rule_version",
+    "sync_source_rule",
+    "sync_source_version",
+    "recognition_rule",
+    "recognition_rule_version"
+  ]
+}
