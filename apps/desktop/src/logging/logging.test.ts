@@ -22,12 +22,12 @@ afterEach(async () => {
 });
 
 describe("桌面统一日志", () => {
-  it("同一结构化记录写入控制台与文件，退出前落盘，并保留已有日志", async () => {
+  it("控制台美化、文件保留结构化记录，退出前落盘，并保留已有日志", async () => {
     const f = await fixture();
     f.logger.child({ scope: "test" }).info({ event: "first" }, "最后一条日志");
     await f.close(); await f.close();
     expect(JSON.parse(await readFile(f.path, "utf8"))).toMatchObject({ process: "main", scope: "test", event: "first", msg: "最后一条日志" });
-    expect(await readFile(f.path, "utf8")).toBe(f.consoleOutput());
+    expect(f.consoleOutput()).toMatch(/\[\d{2}:\d{2}:\d{2}\.\d{3}\] INFO: \[main\/test\] 最后一条日志 event=first\n/);
     const next = await configureMainLogging(f.directory, { console: { write() {} } }); outputs.push(next);
     next.logger.info("重启追加"); await next.close();
     expect((await readFile(f.path, "utf8")).trim().split("\n")).toHaveLength(2);
@@ -49,9 +49,13 @@ describe("桌面统一日志", () => {
     const content = await readFile(f.path, "utf8");
     for (const secret of ["绑定秘密", "字段秘密", "令牌秘密", "会话秘密", "地址秘密", "查询秘密", "片段秘密", "文本秘密", "原始远端秘密", "底层秘密"]) {
       expect(content).not.toContain(secret);
+      expect(f.consoleOutput()).not.toContain(secret);
     }
     expect(JSON.parse(content)).toMatchObject({ scope: "父模块", component: "子模块", error: { type: "Error", code: "EACCES", stack: expect.stringContaining("logging.test.ts") }, url: "https://example.com/path" });
-    expect(content).toBe(f.consoleOutput());
+    expect(f.consoleOutput()).toContain("ERROR:");
+    expect(f.consoleOutput()).toContain("error: type=Error code=EACCES\n");
+    expect(f.consoleOutput()).toMatch(/\n\s+at .*logging\.test\.ts/);
+    expect(f.consoleOutput()).not.toContain('"stack":');
   });
 
   it("按大小轮转且最多保留五份历史，归档权限仍受限", async () => {
@@ -73,7 +77,8 @@ describe("桌面统一日志", () => {
     const f = await fixture({ level: "trace" }); f.logger.trace("追踪日志"); await f.close();
     expect(JSON.parse(await readFile(f.path, "utf8"))).toMatchObject({ level: 10 });
     const filtered = await fixture({ level: "warn" }); filtered.logger.info("不输出"); filtered.logger.error("输出"); await filtered.close();
-    expect(await readFile(filtered.path, "utf8")).toBe(filtered.consoleOutput());
+    expect(JSON.parse(await readFile(filtered.path, "utf8"))).toMatchObject({ level: 50, msg: "输出" });
+    expect(filtered.consoleOutput()).toContain("ERROR: [main] 输出");
     expect(filtered.consoleOutput()).not.toContain("不输出");
   });
 

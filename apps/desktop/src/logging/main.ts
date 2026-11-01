@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { finished } from "node:stream/promises";
 import pino, { type DestinationStream } from "pino";
 import { createStream } from "rotating-file-stream";
+import { createConsoleDestination } from "./console";
 import { createProcessLogger, setRootLogger } from "./node";
 import { logLevel, type LogLevel } from "./shared";
 
@@ -10,7 +11,7 @@ export async function configureMainLogging(directory: string, options: {
   level?: LogLevel; console?: DestinationStream; size?: string; onFailure?: () => void;
 } = {}) {
   const level = options.level ?? logLevel(process.env.MARSHAL_LOG_LEVEL, "info");
-  const consoleStream = options.console ?? process.stdout;
+  const consoleStream = createConsoleDestination(options.console ?? process.stdout);
   const consoleLogger = createProcessLogger("main", consoleStream, level);
   let reported = false;
   const reportFailure = () => {
