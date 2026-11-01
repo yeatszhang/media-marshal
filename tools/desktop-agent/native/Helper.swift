@@ -118,14 +118,21 @@ func visibilityRecords(_ input: Input) throws -> [String: Any] {
     return ["source": "native-window-metadata", "sessionLocked": sessionLocked(), "frontmost": NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, "windows": windows]
 }
 func snapshot(_ root: AXUIElement, pid: Int32) throws -> [String: Any] {
-    var nodes = [[String: Any]](), truncated = false
+    var nodes = [[String: Any]](), truncated = false, omissions = [[String: Any]]()
+    func omit(_ path: [Int], _ reason: String) {
+        truncated = true
+        if omissions.count < 100 { omissions.append(["path": path, "reason": reason]) }
+    }
     func walk(_ element: AXUIElement, _ path: [Int], _ depth: Int) {
-        guard nodes.count < 500, depth < 24 else { truncated = true; return }
+        guard nodes.count < 500 else { omit(path, "node-limit"); return }
+        guard depth < 24 else { omit(path, "depth-limit"); return }
         var owner: pid_t = 0
-        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { truncated = true; return }
+        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { omit(path, "unknown-owner"); return }
         let role = attribute(element, kAXRoleAttribute) as? String ?? "unknown"
         let title = attribute(element, kAXTitleAttribute) as? String ?? attribute(element, kAXDescriptionAttribute) as? String ?? ""
-        nodes.append(["path": path, "role": role, "name": String(title.prefix(200)), "enabled": attribute(element, kAXEnabledAttribute) as? Bool ?? false, "focused": attribute(element, kAXFocusedAttribute) as? Bool ?? false, "bounds": geometry(element), "secure": role == "AXSecureTextField"])
+        nodes.append(["path": path, "role": role, "subrole": attribute(element, kAXSubroleAttribute) as? String ?? "", "name": String(title.prefix(200)), "enabled": attribute(element, kAXEnabledAttribute) as? Bool ?? false, "focused": attribute(element, kAXFocusedAttribute) as? Bool ?? false, "bounds": geometry(element), "secure": role == "AXSecureTextField"])
+        // 保留原生控件及明确的内容边界，不递归枚举 Renderer 和无界文件列表。
+        if nativeTraversalBoundary(role) { return }
         for (index, child) in children(element).enumerated() {
             // Apple 菜单属于系统，不开放其遍历及动作。
             if role == "AXMenuBar" && index == 0 { continue }
@@ -134,13 +141,14 @@ func snapshot(_ root: AXUIElement, pid: Int32) throws -> [String: Any] {
     }
     walk(root, [], 0)
     let windows = windowRecords(pid)
-    let fingerprint = SHA256.hash(data: try encode(["nodes": nodes, "windows": windows])).map { String(format: "%02x", $0) }.joined()
-    return ["nodes": nodes, "windows": windows, "fingerprint": fingerprint, "truncated": truncated, "coordinates": "screen-points-top-left"]
+    let fingerprint = SHA256.hash(data: try encode(["nodes": nodes, "windows": windows, "omissions": omissions])).map { String(format: "%02x", $0) }.joined()
+    return ["nodes": nodes, "windows": windows, "fingerprint": fingerprint, "truncated": truncated, "omissions": omissions, "coordinates": "screen-points-top-left", "coverage": "native-controls-content-boundaries"]
 }
 func target(_ root: AXUIElement, _ path: [Int]) throws -> AXUIElement {
     guard path.count < 24 else { try reject("INVALID_TARGET", "原生目标路径过深") }
     var element = root
     for index in path {
+        if nativeTraversalBoundary(attribute(element, kAXRoleAttribute) as? String ?? "") { try reject("NATIVE_CONTENT_BOUNDARY", "此内容区域不属于原生控件观察范围，不能向未观察路径输入") }
         if attribute(element, kAXRoleAttribute) as? String == "AXMenuBar" && index == 0 { try reject("SYSTEM_MENU_REJECTED", "系统菜单不属于开发实例的控制范围") }
         let values = children(element)
         guard index >= 0, index < values.count else { try reject("STALE_TARGET", "原生目标已变化，请重新观察") }
@@ -151,8 +159,19 @@ func target(_ root: AXUIElement, _ path: [Int]) throws -> AXUIElement {
 func pressKey(_ value: String, pid: Int32) throws {
     let keys: [String: (CGKeyCode, CGEventFlags)] = ["Escape": (53, []), "Enter": (36, []), "Tab": (48, []), "Command+Shift+G": (5, [.maskCommand, .maskShift]), "Command+R": (15, [.maskCommand]), "Command+W": (13, [.maskCommand])]
     guard let (code, flags) = keys[value], NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { try reject("FOCUS_MISMATCH", "按键不在允许清单内，或焦点已离开目标实例") }
-    guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true), let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else { try reject("INPUT_UNAVAILABLE", "无法创建原生按键") }
-    down.flags = flags; up.flags = flags; down.postToPid(pid); up.postToPid(pid)
+    guard let source = CGEventSource(stateID: .privateState) else { try reject("INPUT_UNAVAILABLE", "无法创建原生按键源") }
+    let modifiers: [(CGKeyCode, CGEventFlags)] = [(55, .maskCommand), (56, .maskShift)].filter { flags.contains($0.1) }
+    var sequence = [(CGKeyCode, Bool, CGEventFlags)](), held = CGEventFlags()
+    for (modifier, flag) in modifiers { held.insert(flag); sequence.append((modifier, true, held)) }
+    sequence.append((code, true, flags)); sequence.append((code, false, flags))
+    for (modifier, flag) in modifiers.reversed() { held.remove(flag); sequence.append((modifier, false, held)) }
+    // 先构造整个序列，失败不发送半个组合键；所有抬起事件仍只发给原 PID。
+    let events = try sequence.map { (key, down, held) -> CGEvent in
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: down) else { try reject("INPUT_UNAVAILABLE", "无法创建原生按键") }
+        event.flags = held; return event
+    }
+    for event in events { event.postToPid(pid); usleep(20000) }
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
 }
 @available(macOS 14.0, *)
 func capture(_ input: Input, root: AXUIElement, observed: [String: Any]) async throws -> [String: Any] {
@@ -183,11 +202,19 @@ func act(_ input: Input, app: NSRunningApplication, root: AXUIElement, observed:
         return ["status": "sent", "requiresPostcondition": true]
     }
     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == input.pid else { try reject("FOCUS_MISMATCH", "焦点已离开目标实例") }
-    if input.command == "key" { try pressKey(input.key ?? "", pid: input.pid); return ["status": "sent"] }
+    if input.command == "key" {
+        guard let value = attribute(root, kAXFocusedUIElementAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { try reject("NATIVE_FOCUS_UNKNOWN", "无法核验原生键盘焦点归属") }
+        var focusOwner: pid_t = 0
+        let focused = unsafeBitCast(value, to: AXUIElement.self)
+        try requireNativeOwner(AXUIElementGetPid(focused, &focusOwner) == .success ? focusOwner : nil, expected: input.pid)
+        try pressKey(input.key ?? "", pid: input.pid)
+        return ["status": "sent", "requiresPostcondition": true]
+    }
     guard let path = input.path else { try reject("INVALID_TARGET", "操作须指定快照内的目标") }
+    guard let records = observed["nodes"] as? [[String: Any]], records.contains(where: { ($0["path"] as? [Int]) == path }) else { try reject("NATIVE_TARGET_UNOBSERVED", "目标未包含在当前可信观察中，未知面板或省略区域不接受输入") }
     let element = try target(root, path)
     var owner: pid_t = 0
-    guard AXUIElementGetPid(element, &owner) == .success, owner == input.pid else { try reject("PANEL_OWNER_UNKNOWN", "无法确认原生目标属于当前实例") }
+    try requireNativeOwner(AXUIElementGetPid(element, &owner) == .success ? owner : nil, expected: input.pid)
     guard attribute(element, kAXEnabledAttribute) as? Bool == true else { try reject("NOT_ACTIONABLE", "原生控件不可操作") }
     let result: AXError
     switch input.command {

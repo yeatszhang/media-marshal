@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { verifyResource } from "./resources.ts";
 import type { Input } from "./protocol.ts";
 import { assertNativeHelper } from "./native-fingerprint.ts";
+import { nativeCapabilities } from "./native-capabilities.ts";
 
 const run = promisify(execFile);
 interface Check {
@@ -12,6 +13,7 @@ interface Check {
   status: "ready" | "blocked" | "unsupported";
   detail: string;
   repair?: string;
+  capabilities?: ReturnType<typeof nativeCapabilities>;
 }
 const json = async (path: string) =>
   JSON.parse(await readFile(path, "utf8")) as Record<string, any>;
@@ -110,13 +112,13 @@ async function nativeCheck(root: string, required: boolean): Promise<Check> {
       timeout: 5000,
       maxBuffer: 8192,
     });
-    const caps = JSON.parse(stdout);
-    const ready =
-      caps.accessibility === true && caps.screenCapture === true && caps.sessionLocked === false;
+    const caps = nativeCapabilities(JSON.parse(stdout));
+    const ready = caps.input.status === "ready";
     return {
       name: "native-gui",
       status: ready ? "ready" : "blocked",
       detail: `辅助功能=${!!caps.accessibility}，屏幕录制=${!!caps.screenCapture}，锁屏或非交互会话=${caps.sessionLocked ?? "未知"}${required ? "" : "；本次未要求原生验收"}`,
+      capabilities: caps,
       ...(!ready
         ? {
             repair:

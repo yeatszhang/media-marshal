@@ -27,6 +27,13 @@ import Foundation
             do { _ = try restrictedAgentPath(value.path, base: root, newFile: true) }
             catch let failure as ControlError { pathsRejected.append(failure.code) }
         }
-        emit(["rejected": codes, "pathsRejected": pathsRejected, "nonImageWithoutRecording": true, "authorizedImage": true])
+        var ownersRejected = [String]()
+        for owner: Int32? in [nil, 0, 43] {
+            do { try requireNativeOwner(owner, expected: 42) }
+            catch let failure as ControlError { ownersRejected.append(failure.code) }
+        }
+        try requireNativeOwner(42, expected: 42)
+        guard nativeTraversalBoundary("AXWebArea"), nativeTraversalBoundary("AXBrowser"), nativeTraversalBoundary("AXOutline"), !nativeTraversalBoundary("AXSheet"), !nativeTraversalBoundary("AXButton") else { fatalError("原生内容边界不符") }
+        emit(["rejected": codes, "pathsRejected": pathsRejected, "ownersRejected": ownersRejected, "nonImageWithoutRecording": true, "authorizedImage": true])
     }
 }

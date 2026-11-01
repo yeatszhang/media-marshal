@@ -8,6 +8,7 @@ import { verificationTests, type VerificationResult } from "./verify-results.ts"
 import type { VerificationStep } from "./verify-steps.ts";
 import { agentFile } from "./paths.ts";
 import { nativeHelperRecord } from "./native-fingerprint.ts";
+import { nativeCapabilities } from "./native-capabilities.ts";
 import { ToolError } from "./protocol.ts";
 import { redactExport } from "./export-redaction.ts";
 import { stripVTControlCharacters } from "node:util";
@@ -192,20 +193,7 @@ export async function nativeVerificationCapability(root: string) {
     const result = await checkProcess(root, helper.path, ["capabilities"], environment(root), 5000);
     if (result.timedOut || result.truncated || result.exitCode !== 0)
       return "NATIVE_CAPABILITY_UNKNOWN";
-    const data = z
-      .object({
-        accessibility: z.boolean(),
-        screenCapture: z.boolean(),
-        sessionLocked: z.boolean(),
-      })
-      .parse(JSON.parse(result.text));
-    return data.sessionLocked
-      ? "NATIVE_SESSION_LOCKED"
-      : !data.accessibility
-        ? "NATIVE_ACCESSIBILITY_REQUIRED"
-        : !data.screenCapture
-          ? "NATIVE_SCREEN_CAPTURE_REQUIRED"
-          : undefined;
+    return nativeCapabilities(JSON.parse(result.text)).input.reason;
   } catch (error) {
     return error instanceof ToolError ? error.code : "NATIVE_CAPABILITY_UNKNOWN";
   }

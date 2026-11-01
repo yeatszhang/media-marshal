@@ -62,6 +62,7 @@ test(
           join(root, "tools/desktop-agent/native/Errors.swift"),
           join(root, "tools/desktop-agent/native/Permissions.swift"),
           join(root, "tools/desktop-agent/native/Paths.swift"),
+          join(root, "tools/desktop-agent/native/Scope.swift"),
           join(root, "tools/desktop-agent/native/tests/PermissionsMain.swift"),
           "-o",
           binary,
@@ -72,6 +73,7 @@ test(
       assert.deepEqual(result.rejected, ["ACCESSIBILITY_REQUIRED", "SCREEN_PERMISSION_REQUIRED"]);
       assert.equal(result.nonImageWithoutRecording, true);
       assert.equal(result.authorizedImage, true);
+      assert.deepEqual(result.ownersRejected, Array(3).fill("PANEL_OWNER_UNKNOWN"));
       assert.deepEqual(result.pathsRejected, [
         "AGENT_PATH_REJECTED",
         "OUTPUT_REJECTED",

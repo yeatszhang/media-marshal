@@ -21,6 +21,8 @@ npm run typecheck:desktop-agent
 
 macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其能力探测不会弹出或操作权限确认；系统未授权录屏时原生截图保持受阻。helper 仅面向本工作树中使用工具隔离 profile 的进程，拒绝不匹配的可执行文件、创建时间和界面指纹，输出只进入新的会话证据文件。
 
+doctor 的 native-gui 按 AX 输入与锁屏状态判断，同时分项返回 input／capture 能力；缺少录屏权限只阻断 capture。`native.integration.ts` 保留真实目录选择／取消场景，保存 AX／动作与应用后置条件，不请求图片；依赖应用菜单名的菜单／快捷键／隐藏恢复用例已按用户要求移除，相关验收不因此标记完成。可选窗口捕获与其路径／窗口拒绝专项位于 `native-capture.integration.ts`，需显式执行该文件；普通 verify 原生检查不依赖它。原生就绪等待仅重复只读观察，连续两次指纹一致后返回；动作仍核验指纹，拒绝或结果未知时不刷新并重放动作。
+
 当前原生 helper 已通过编译、能力探测及非法输入／进程拒绝测试；完整目标身份、窗口代际和前台原生流程仍在任务 2.12／2.13 验收，不能将这些探测结果算作原生交互已通过。
 
 构建使用 `build --json`，默认 development；目录包输入为 `{"target":"packaged"}`。命令立即返回持久作业 ID；将 `{"jobId":"返回的 UUID"}` 写入参数文件后使用 `status --input 参数文件 --json` 查询。同一 `--request UUID` 只返回原构建，输入不同会拒绝。失败日志位于对应 `test-results/agent/builds/<jobId>/build.log`，不会混入 stdout。
