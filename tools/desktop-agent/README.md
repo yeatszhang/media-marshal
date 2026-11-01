@@ -55,4 +55,8 @@ macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其�
 
 `observe --session <sessionId> --json` 读取当前可信主窗口的归一化 ARIA 快照；参数 `{"mode":"windows"}` 只枚举窗口元数据。非可信窗口不读取标题、URL 和内容。多窗口时须明确 windowId，工具不会选择第一个。快照记录 sessionId／runId／buildId、windowId／窗口代际、文档身份／变化序号和几何状态；控件包含角色、可访问名称、状态、CSS 视口坐标及区域关系。输入内容统一遮罩，匿名控件保持不可操作；同名控件保留独立 ref 和 duplicateName 提示。
 
-快照最多 4000 个节点并明确截断，每页默认 100、最多 500；继续查询使用 `{"snapshotId":"上一页身份","cursor":100}`，可带 regionRef 查询子树。焦点、dialog／alert 引用始终关联完整快照。控制器只保留最近 8 份可续用快照，归一化证据保存在本 run 的 `aria-<snapshotId>.json`，不保存原始 ARIA 数据。页面导航、重载、窗口替换／移动／缩放、焦点或 DOM 变化均拒绝续用旧快照；重新观察不会自动重放操作。嵌入页面及 `data-agent-sensitive="true"` 区域存在时整次观察受阻。截图和动作按后续任务接入，当前语义观察不能代替截图或原生验证。
+快照最多 4000 个节点并明确截断，每页默认 100、最多 500；继续查询使用 `{"snapshotId":"上一页身份","cursor":100}`，可带 regionRef 查询子树。焦点、dialog／alert 引用始终关联完整快照。控制器只保留最近 8 份可续用快照，归一化证据保存在本 run 的 `aria-<snapshotId>.json`，不保存原始 ARIA 数据。页面导航、重载、窗口替换／移动／缩放、焦点或 DOM 变化均拒绝续用旧快照；重新观察不会自动重放操作。嵌入页面及 `data-agent-sensitive="true"` 区域存在时整次观察受阻。动作按后续任务接入，语义观察不能代替原生验证。
+
+观察参数 `{"image":true}` 同时取得关联截图，默认覆盖 CSS 视口；regionRef 对应元素的可见区域，也可使用 `{"clip":{"x":0,"y":0,"width":320,"height":200}}` 指定视口矩形，两者只能选一个。范围不完整可见时图片明确缺失，不自动滚动改变现场。`scale` 为 css（默认，每 CSS 像素一个 PNG 像素）或 device。工具保存 PNG 与 image manifest，返回真实路径、sha256、裁剪起点、像素大小、CSS 转换比例、页面 DPR、窗口 zoomFactor 和 deviceScaleFactor；页面 DPR 包含页面缩放，Electron device 截图使用显示设备比例，因此坐标转换必须使用实际 PNG 的 pixelsPerCss。
+
+截图前后重新核对同一快照身份与几何状态，并对最多 6000 个 DOM 元素的位置生成布局摘要；超出核验预算会受阻。输入区域使用临时自有遮罩，图像采集失败或布局变化不保存无法关联的 PNG，仍保存 status=missing 及原因；完整性不能从命令 completed 推断。画布、二维码或敏感上下文禁止截图。此能力只捕获自有 Renderer 视口，不需要屏幕录制权限，也不代表菜单、系统对话框或其他原生窗口已验证。

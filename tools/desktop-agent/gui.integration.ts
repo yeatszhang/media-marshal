@@ -1,40 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { launchDesktop } from "../../apps/desktop/tests/support/electron.ts";
-import { GuiObserver } from "./gui-observe.ts";
-import { assertBuild } from "./build.ts";
-import { newSession, runHome, saveSession, type Session } from "./session-store.ts";
-import { identify } from "./process.ts";
-import { parseRequest, type Input } from "./protocol.ts";
+import { runHome, saveSession, type Session } from "./session-store.ts";
+import { parseRequest } from "./protocol.ts";
 import { dispatch } from "./cli.ts";
+import { guiRoot as root, observeInput as input, setupGui as setup } from "./gui-test-support.ts";
 
-const root = resolve(import.meta.dirname, "../..");
-const input = (payload: object = {}) =>
-  parseRequest({ command: "observe", payload }).payload as Input<"observe">;
-async function setup() {
-  const build = await assertBuild(root, "development");
-  const session = await newSession(root, {
-    scenario: "empty",
-    seed: "gui",
-    mode: "background",
-    target: "development",
-  });
-  session.buildId = build.buildId;
-  const app = await launchDesktop(root, {
-    ...session.options,
-    dataDir: join(runHome(root, session.runId), "data"),
-    diagnostics: { sessionId: session.sessionId, runId: session.runId, buildId: build.buildId },
-  });
-  session.application = identify(app.process().pid!);
-  session.owner = identify(process.pid);
-  session.status = "running";
-  await saveSession(root, session);
-  const page = await app.firstWindow();
-  await page.getByText("核心已连接", { exact: true }).waitFor();
-  return { app, page, session, gui: new GuiObserver(root, app, session) };
-}
 test(
   "真实主导航、表单语义与分页，输入遮罩、焦点、重复名称和错误弹层",
   { timeout: 60000 },

@@ -13,6 +13,8 @@ export interface GuiWindow {
 export interface DocumentState {
   documentId: string;
   revision: number;
+  layoutDigest: string;
+  layoutComplete: boolean;
   url: string;
   viewport: { width: number; height: number };
   devicePixelRatio: number;

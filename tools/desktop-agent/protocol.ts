@@ -28,6 +28,16 @@ export const commands = {
   observe: page.extend({
     mode: z.enum(["windows", "snapshot"]).default("snapshot"),
     snapshotId: uuid.optional(),
+    image: z.boolean().default(false),
+    scale: z.enum(["css", "device"]).default("css"),
+    clip: z
+      .strictObject({
+        x: z.number().finite().nonnegative(),
+        y: z.number().finite().nonnegative(),
+        width: z.number().finite().positive(),
+        height: z.number().finite().positive(),
+      })
+      .optional(),
     limit: bounded.max(500).default(100),
     cursor: z.number().int().nonnegative().default(0),
     regionRef: z.string().max(120).optional(),

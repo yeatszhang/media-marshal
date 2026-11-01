@@ -9,6 +9,7 @@ import { GuiWindows } from "./gui-windows.ts";
 import { documentState, sameObservation, staleSnapshot } from "./gui-document.ts";
 import { normalizeAria } from "./gui-normalize.ts";
 import type { GuiSnapshot, SnapshotHandle } from "./gui-types.ts";
+import { captureImage } from "./gui-image.ts";
 export class GuiObserver {
   readonly windows: GuiWindows;
   private snapshots = new Map<string, SnapshotHandle>();
@@ -85,9 +86,10 @@ export class GuiObserver {
         "使用上一页快照身份",
         "blocked",
       );
-    const { snapshot } = input.snapshotId
+    const handle = input.snapshotId
       ? await this.current(input.snapshotId, input.windowId)
       : await this.capture(input.windowId);
+    const { snapshot } = handle;
     let nodes = snapshot.nodes;
     if (input.regionRef) {
       const region = nodes.find((n) => n.ref === input.regionRef);
@@ -114,6 +116,9 @@ export class GuiObserver {
         .filter((n) => ["dialog", "alertdialog"].includes(n.role))
         .map((n) => n.ref),
       alerts: snapshot.nodes.filter((n) => ["alert", "status"].includes(n.role)).map((n) => n.ref),
+      image: input.image
+        ? await captureImage(this.root, this.session, this, handle, input)
+        : { status: "not-requested" },
     };
   }
 }
