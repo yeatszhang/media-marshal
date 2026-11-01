@@ -7,9 +7,10 @@ import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import ts from "typescript";
 import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
 import {
   CoreDatabase,
-  migrations,
+  SCHEMA_VERSION,
 } from "../../../../../packages/media-core/src/infrastructure/database";
 import { ManagedUpgradeBackups, type RuntimeVersion } from "./upgrades";
 const directories: string[] = [];
@@ -18,7 +19,7 @@ afterEach(async () => {
 });
 const version: RuntimeVersion = {
   appVersion: "0.2.0",
-  schemaVersion: 6,
+  schemaVersion: SCHEMA_VERSION,
   target: "darwin-arm64",
   components: { openlist: "固定组件摘要" },
 };
@@ -30,7 +31,7 @@ async function fixture() {
   await mkdir(data);
   await mkdir(media);
   await writeFile(join(media, "保留.mp4"), "现存成果");
-  const db = await CoreDatabase.open(join(data, "desktop.sqlite3"), migrations.slice(0, 4));
+  const db = await CoreDatabase.open(join(data, "desktop.sqlite3"));
   db.connection.prepare("INSERT INTO app_setting VALUES('preserved','before')").run();
   db.close();
   await mkdir(join(data, "sidecars", "sessions", "旧私有状态"), { recursive: true });
@@ -39,6 +40,61 @@ async function fixture() {
   return { path, data, media, backups: new ManagedUpgradeBackups(data) };
 }
 describe("停写后的整包状态快照与恢复", () => {
+  it("较旧格式备份在替换当前库和凭据前拒绝", async () => {
+    const f = await fixture();
+    const backup = await f.backups.capture({ ...version, schemaVersion: SCHEMA_VERSION - 1 });
+    await writeFile(join(f.data, "credentials.json"), "当前凭据");
+    const before = await readFile(join(f.data, "desktop.sqlite3"));
+    await expect(f.backups.restore(backup.id, version)).rejects.toMatchObject({
+      code: "STORAGE_ERROR",
+    });
+    expect(await readFile(join(f.data, "desktop.sqlite3"))).toEqual(before);
+    expect(await readFile(join(f.data, "credentials.json"), "utf8")).toBe("当前凭据");
+    await expect(stat(join(f.backups.root, "restore.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+  it.each(["version", "structure", "missing"])(
+    "摘要正确但实际数据库 %s 不匹配时仍不替换当前状态",
+    async (kind) => {
+      const f = await fixture();
+      const backup = await f.backups.capture(version);
+      const home = join(f.backups.root, backup.id);
+      const manifestPath = join(home, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      const path = join(home, "desktop.sqlite3");
+      if (kind === "missing") {
+        manifest.files = manifest.files.filter(
+          (file: { path: string }) => file.path !== "desktop.sqlite3",
+        );
+      } else {
+        const db = new Database(path);
+        try {
+          if (kind === "version") db.pragma(`user_version = ${SCHEMA_VERSION - 1}`);
+          else db.exec("DROP INDEX media_task_status_updated");
+        } finally {
+          db.close();
+        }
+        const bytes = await readFile(path);
+        const entry = manifest.files.find(
+          (file: { path: string }) => file.path === "desktop.sqlite3",
+        );
+        entry.size = bytes.length;
+        entry.sha256 = createHash("sha256").update(bytes).digest("hex");
+      }
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      const before = await readFile(join(f.data, "desktop.sqlite3"));
+      await writeFile(join(f.data, "credentials.json"), "当前凭据");
+      await expect(f.backups.restore(backup.id, version)).rejects.toMatchObject({
+        code: "STORAGE_ERROR",
+      });
+      expect(await readFile(join(f.data, "desktop.sqlite3"))).toEqual(before);
+      expect(await readFile(join(f.data, "credentials.json"), "utf8")).toBe("当前凭据");
+      await expect(stat(join(f.backups.root, "restore.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
   it("Core 启动中断不能沿用旧 Schema 元数据，ready 后才确认新版本", async () => {
     const f = await fixture();
     await f.backups.recordVersion(version);
@@ -106,20 +162,20 @@ db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();
       } finally {
         incomplete.close();
       }
-      const backup = await f.backups.capture({ ...version, schemaVersion: 4 });
+      const backup = await f.backups.capture({ ...version, schemaVersion: SCHEMA_VERSION });
       const manifest = JSON.parse(
         await readFile(join(f.backups.root, backup.id, "manifest.json"), "utf8"),
       );
       expect(
         manifest.files.some((file: { path: string }) => file.path === "desktop.sqlite3-wal"),
       ).toBe(true);
-      const changed = await CoreDatabase.open(database, migrations.slice(0, 4));
+      const changed = await CoreDatabase.open(database);
       changed.connection
         .prepare("UPDATE app_setting SET value='after' WHERE key='preserved'")
         .run();
       changed.close();
       await f.backups.restore(backup.id, version);
-      const restored = await CoreDatabase.open(database, migrations.slice(0, 4));
+      const restored = await CoreDatabase.open(database);
       try {
         expect(
           restored.connection.prepare("SELECT value FROM app_setting WHERE key='preserved'").get(),
@@ -134,22 +190,20 @@ db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();
       await exited;
     }
   });
-  it("快照包含匹配私有状态，旧 Core 拒绝新版库；恢复数据不改动下载成果", async () => {
+  it("同格式快照恢复匹配私有状态，恢复数据不改动下载成果", async () => {
     const f = await fixture(),
-      backup = await f.backups.capture({ ...version, appVersion: "0.1.0", schemaVersion: 4 });
+      backup = await f.backups.capture({
+        ...version,
+        appVersion: "0.1.0",
+        schemaVersion: SCHEMA_VERSION,
+      });
     const db = await CoreDatabase.open(join(f.data, "desktop.sqlite3"));
     db.connection.prepare("UPDATE app_setting SET value='after'").run();
     db.close();
-    await expect(
-      CoreDatabase.open(join(f.data, "desktop.sqlite3"), migrations.slice(0, 4)),
-    ).rejects.toMatchObject({ code: "STORAGE_ERROR" });
     await writeFile(join(f.data, "credentials.json"), "新的密文占位");
     await f.backups.restore(backup.id, version);
-    const restored = await CoreDatabase.open(
-      join(f.data, "desktop.sqlite3"),
-      migrations.slice(0, 4),
-    );
-    expect(restored.schemaVersion).toBe(4);
+    const restored = await CoreDatabase.open(join(f.data, "desktop.sqlite3"));
+    expect(restored.schemaVersion).toBe(SCHEMA_VERSION);
     expect(restored.connection.prepare("SELECT value FROM app_setting").get()).toEqual({
       value: "before",
     });
@@ -162,7 +216,7 @@ db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();
   });
   it("恢复到一半发生异常时凭日志还原全部原文件，不留下半套状态", async () => {
     const f = await fixture(),
-      backup = await f.backups.capture({ ...version, schemaVersion: 4 });
+      backup = await f.backups.capture({ ...version, schemaVersion: SCHEMA_VERSION });
     await writeFile(join(f.data, "credentials.json"), "当前密文");
     await expect(
       f.backups.restore(backup.id, version, async (name) => {
@@ -172,18 +226,18 @@ db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();
     await f.backups.recover();
     expect(await readFile(join(f.data, "credentials.json"), "utf8")).toBe("当前密文");
     expect(await readFile(join(f.media, "保留.mp4"), "utf8")).toBe("现存成果");
-    const db = await CoreDatabase.open(join(f.data, "desktop.sqlite3"), migrations.slice(0, 4));
-    expect(db.schemaVersion).toBe(4);
+    const db = await CoreDatabase.open(join(f.data, "desktop.sqlite3"));
+    expect(db.schemaVersion).toBe(SCHEMA_VERSION);
     db.close();
   });
   it("恢复进程被 SIGKILL 后，新进程在打开业务库前回滚半套状态", async () => {
     const f = await fixture(),
-      backup = await f.backups.capture({ ...version, schemaVersion: 4 });
+      backup = await f.backups.capture({ ...version, schemaVersion: SCHEMA_VERSION });
     await writeFile(join(f.data, "credentials.json"), "恢复前当前密文");
     const compile = join(f.path, "compiled");
     await mkdir(compile);
     const require = createRequire(resolve("package.json"));
-    for (const name of ["upgrades", "private-files"]) {
+    for (const name of ["upgrades", "private-files", "backup-database"]) {
       const source = await readFile(resolve(`apps/desktop/src/main/cloud/${name}.ts`), "utf8"),
         output = ts
           .transpileModule(source, {
@@ -194,7 +248,16 @@ db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();
             JSON.stringify(pathToFileURL(resolve("packages/contracts/dist/index.js")).href),
           )
           .replaceAll('"zod"', JSON.stringify(pathToFileURL(require.resolve("zod")).href))
-          .replaceAll('"./private-files"', '"./private-files.mjs"');
+          .replaceAll('"./private-files"', '"./private-files.mjs"')
+          .replaceAll('"./backup-database"', '"./backup-database.mjs"')
+          .replaceAll(
+            '"better-sqlite3"',
+            JSON.stringify(pathToFileURL(require.resolve("better-sqlite3")).href),
+          )
+          .replaceAll(
+            '"@media-marshal/contracts/internal/core"',
+            JSON.stringify(pathToFileURL(resolve("packages/contracts/dist/internal/core.js")).href),
+          );
       await writeFile(join(compile, name + ".mjs"), output);
     }
     const script = join(compile, "crash.mjs");
@@ -224,8 +287,8 @@ db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();
       await new ManagedUpgradeBackups(f.data).recover();
       expect(await readFile(join(f.data, "credentials.json"), "utf8")).toBe("恢复前当前密文");
       expect(await readFile(join(f.media, "保留.mp4"), "utf8")).toBe("现存成果");
-      const db = await CoreDatabase.open(join(f.data, "desktop.sqlite3"), migrations.slice(0, 4));
-      expect(db.schemaVersion).toBe(4);
+      const db = await CoreDatabase.open(join(f.data, "desktop.sqlite3"));
+      expect(db.schemaVersion).toBe(SCHEMA_VERSION);
       db.close();
     } finally {
       child.kill("SIGKILL");
@@ -233,7 +296,7 @@ db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();
   }, 10000);
   it("损坏摘要、未来版本及链接在恢复写入之前被拒绝", async () => {
     const f = await fixture(),
-      backup = await f.backups.capture({ ...version, schemaVersion: 4 });
+      backup = await f.backups.capture({ ...version, schemaVersion: SCHEMA_VERSION });
     await writeFile(join(f.backups.root, backup.id, "credentials.json"), "被替换的备份");
     await expect(f.backups.restore(backup.id, version)).rejects.toMatchObject({
       code: "STORAGE_ERROR",
@@ -245,13 +308,13 @@ db.prepare("UPDATE app_setting SET value='in-wal' WHERE key='preserved'").run();
     });
     const otherArchitecture = await f.backups.capture({
       ...version,
-      schemaVersion: 4,
+      schemaVersion: SCHEMA_VERSION,
       target: "darwin-x64",
     });
     await expect(f.backups.restore(otherArchitecture.id, version)).rejects.toMatchObject({
       code: "STORAGE_ERROR",
     });
-    const linked = await f.backups.capture({ ...version, schemaVersion: 4 });
+    const linked = await f.backups.capture({ ...version, schemaVersion: SCHEMA_VERSION });
     await rm(join(f.backups.root, linked.id, "credentials.json"));
     await symlink(
       join(f.data, "credentials.json"),

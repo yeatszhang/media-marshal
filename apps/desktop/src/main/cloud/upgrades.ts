@@ -4,6 +4,7 @@ import { copyFile, lstat, mkdir, open, readFile, readdir, rename, rm } from "nod
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { DesktopError } from "@media-marshal/contracts";
+import { verifyBackupDatabase } from "./backup-database";
 import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files";
 
 // 仅备份应用持有的状态；下载根、媒体库、浏览器与普通诊断均不属于此集合。
@@ -217,9 +218,12 @@ export class ManagedUpgradeBackups {
     const manifest = await this.manifest(id);
     if (
       manifest.version.target !== current.target ||
-      manifest.version.schemaVersion > current.schemaVersion
+      manifest.version.schemaVersion !== current.schemaVersion
     )
-      throw new DesktopError("STORAGE_ERROR", "备份需要兼容的平台或较新客户端");
+      throw new DesktopError(
+        "STORAGE_ERROR",
+        "备份平台或数据格式与当前构建不匹配，请使用匹配构建或同格式备份；当前私有状态未替换",
+      );
     const transaction = randomUUID(),
       work = join(this.root, "restore-" + transaction),
       staged = join(work, "staged"),
@@ -249,6 +253,9 @@ export class ManagedUpgradeBackups {
         )
           throw new DesktopError("STORAGE_ERROR", "备份摘要不匹配，未开始恢复");
       }
+      if (!unique.has("desktop.sqlite3"))
+        throw new DesktopError("STORAGE_ERROR", "备份缺少业务数据库，当前私有状态未替换");
+      verifyBackupDatabase(join(staged, "desktop.sqlite3"), manifest.version.schemaVersion);
       const originals: (typeof names)[number][] = [];
       for (const name of names) if (await exists(join(this.data, name))) originals.push(name);
       await json(join(this.root, "restore.json"), {

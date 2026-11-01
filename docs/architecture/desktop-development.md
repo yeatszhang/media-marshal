@@ -30,6 +30,12 @@ npm run desktop:pack
 
 `npm run desktop:dev` 默认启用 Main／Preload 文件监听：Main 改动后重新构建并重启 Electron，Preload 改动后重新构建并整页刷新 Renderer，避免界面调用新方法时仍使用旧桥接。若修改启动脚本，已运行的开发进程须退出后重新启动；仅刷新界面不会更新启动参数。
 
+### 备份恢复准入
+
+恢复仅接受与当前构建数据格式及平台完全匹配的备份。Main 先收敛已有恢复日志，再检查清单与文件摘要；所有文件复制到私有 staging 后，以只读 SQLite 核验实际 `user_version`、完整表／索引／触发器结构摘要、数据库完整性和外键。缺少业务库、清单声称同版本但结构不符、旧格式或较新格式均在创建新的恢复日志及替换当前库／凭据前拒绝。使用匹配构建或完整的同格式备份处理，不通过自动升级接管不匹配备份。
+
+当前格式版本与结构摘要由 contracts 内部协议声明；Core 的内存库测试核对结构摘要，切换 schema 时必须一起更新。恢复的 WAL 与其他私有状态仍按原日志事务一起替换；恢复后保留磁盘成果核对标记，数据库恢复不撤销或重放媒体文件操作。验证入口：`npm test -- apps/desktop/src/main/cloud/upgrades.test.ts packages/media-core/src/storage`，包含 SIGKILL 半途恢复与 WAL 回归。该规则已用于当前格式；直接初始化的新基线切换按 OpenSpec 3.3／3.5～3.7 继续实施。
+
 ### 开发与本地日志
 
 隔离开发会话的请求因果、业务身份和关键事件见[桌面日志与请求关联](../development/desktop-logging.md)。

@@ -15,6 +15,9 @@ import { PROTOCOL_VERSION, rpcErrorSchema } from "../index.js";
 import { directoryBindingSchema } from "../sync-recognition.js";
 
 export const CORE_DATA_SCHEMA_VERSION = 35;
+/** 当前 schema 的 sqlite_master 有序结构摘要；切换基线时与结构用例一起更新。 */
+export const CORE_DATABASE_STRUCTURE_DIGEST =
+  "8401edfe41bd25cbdea299432aebf7e1ac485138ebf4de1ec0bca14f984a9a55";
 const id = z.uuid(),
   empty = z.strictObject({});
 const configuredBinding = z.strictObject({

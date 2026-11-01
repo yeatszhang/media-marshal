@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { CoreDatabase } from "../infrastructure/database";
+import { createHash } from "node:crypto";
+import { CORE_DATABASE_STRUCTURE_DIGEST } from "@media-marshal/contracts/internal/core";
 const read = (name: string) =>
   JSON.parse(
     readFileSync(new URL(`../../../../scripts/architecture/${name}`, import.meta.url), "utf8"),
@@ -16,6 +18,14 @@ it("所有当前表和计划基线表均有唯一所有者，历史 DDL 和旧�
   };
   const db = await CoreDatabase.open(":memory:");
   try {
+    const objects = db.connection
+      .prepare(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE ? ORDER BY type,name",
+      )
+      .all("sqlite_%");
+    expect(createHash("sha256").update(JSON.stringify(objects)).digest("hex")).toBe(
+      CORE_DATABASE_STRUCTURE_DIGEST,
+    );
     const current = db.connection
       .prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
