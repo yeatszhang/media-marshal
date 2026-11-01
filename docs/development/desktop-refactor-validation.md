@@ -256,3 +256,14 @@ Git 核验补齐暂存区与工作区相互抵消的情况：工作区改回 HEA
 该轮 development 作业 `b0121c08-b5d5-4fdc-be84-5a01c78a2653`，buildId `84b53873fa2134f3de02a46c412e7420ab19de473f5144ce9ac13d27d8982c75`；packaged 作业 `bafeca11-cfe5-4603-ac50-3d5e82aca894`，buildId `fa1b55ab3b3ee2f6f598ba4bdc5c8a4372acbad55a0da51282c8fe81f0f0d29c`。性能的独立 run／build／报告路径登记在该 verify 的 benchmark 步骤中，regression=not-evaluated；后台样本不代表前台或正式发行达标。
 
 此后补充机器结果缺失负例及 Playwright 首次失败停止，当前工具单元 70/70、工具类型和结构检查通过；未修改业务断言或新增结构例外。全量桌面阶段预算 45 分钟，以容纳生产就绪期限，未放宽各用例的时间约束。该执行能力可用于继续定位旧桌面验收，2.17 完成不代表全部产品测试或 11 组终验通过。原生捕获实测仍在激活前返回 STALE_SNAPSHOT，2.12／2.13 保持未完成。
+
+
+## 项目开发闭环 Skill（2.18）
+
+新增 `.agents/skills/desktop-development-loop/SKILL.md`，AGENTS 只追加一条知识入口。Skill 直接链接 CLI、桌面架构和本验收记录，要求保留修复前失败、对照实际场景／seed、核对构建与源码、先查未知收据再行动，并单列验收标准变化；同一失败连续三轮且没有新证据时停止该失败的盲试，输出具体阻碍。没有附带全局安装、配置修改、删测、自动接收视觉基线或发布脚本。
+
+通过临时虚拟环境中的官方 quick_validate，所有本地链接及 Markdown 格式核对通过；临时依赖未安装到个人全局环境。按 Skill 在最终工具代码的当前构建运行 empty 场景，seed 为 `desktop-development-loop-final`：实际查看总览和设置的受限截图，按最新语义快照点击设置，heading 后置条件 passed，读取只读诊断，按 kind 导出 ARIA／图像／动作，再正常 stop。业务断言继续 not-run，不把导航成功当作文件业务成功。runId `cfd88b9b-0fe6-4b54-8d9a-f6b841647b51`、sessionId `d6a1e0e7-0bce-4a7d-afe2-a9fb681a1c63`、development buildId `ff16d25f3cfce2b7c3e6395a2e99b98975df524d1ea8235a3e411d1fb43ee9d2`；原草稿演练 run `9a522ec3-d5f5-4272-8c0a-1aa97fa5e88a` 的不同构建证据未覆盖。
+
+该次观察的两张图片及 action 收据均已登记，完整导出路径见 `test-results/agent/skill-final-proof.json`，失败／跳过均不隐去。当前 Skill／AGENTS 改动的 verify 计划为 planned、execution=not-run，列出 architecture／types／tools／desktop／docs；既有失败作业继续保留。另在提交后的真实 CLI 执行非空文档检查，run `155c83e3-ebff-4035-a0ec-ec25cc0569d5` 实际 completed、allPlannedChecksPassed=true、sourceChanged=false，仅代表这份文档计划通过，未扩大为整个桌面通过。
+
+最终打包作业 `f9ad62ef-af93-4f2e-95db-59a5755c5b00`、buildId `4c9cb07476115c4fc66f58322bf6a70aa0b093ed70f764a86108c6e2afaf75cc`，随后开发作业 `8a9c7aa5-71aa-40c1-a100-29731cbd092e`。本 smoke 不连接真实账号、不修改个人媒体或全局配置；自有会话已停止，导出与旧失败固定保留。2.18 完成；2.12／2.13 原生就绪问题、2.19 CI smoke 及原桌面基线的定位修复仍未作为完成项。

@@ -12,6 +12,7 @@
 | 任务 | 优先阅读 |
 | --- | --- |
 | 桌面开发、构建、进程与框架边界 | [桌面客户端开发](docs/architecture/desktop-development.md) |
+| 桌面复现、GUI 观察与修复复验 | [desktop-development-loop Skill](.agents/skills/desktop-development-loop/SKILL.md) |
 | 从旧工程迁移业务规则 | [迁移基线](docs/architecture/desktop-migration.md)，再按需查询[旧工程资料](legacy/docs/index.md) |
 | 来源、网盘与传输 | [统一来源](docs/architecture/source-rules.md)、[下载内部边界](docs/architecture/cloud-downloads-internal.md)、[扩展开发](docs/architecture/cloud-adapter-development.md) |
 | 识别、整理与 Emby 交付 | [识别规则](docs/architecture/desktop-recognition.md)、[整理流水线](docs/architecture/desktop-ingestion.md) |
