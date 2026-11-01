@@ -80,3 +80,5 @@ DOM 变化判断会合并同一批次内原值重复写入及写后恢复，避�
 macOS helper 构建使用 `npm run desktop:agent:native:build`。构建生成私有 native-manifest.json，绑定 native 根目录的 Swift 源码、构建器、平台和二进制摘要；doctor 与原生调用均校验，源码改动后须重建，不能沿用旧二进制。固定命令不接收任意脚本，内核创建代际和隔离 profile 必须属于本会话。原生捕获只接受本次观察中的自有窗口，截图前后指纹须一致；输出只写会话内新 PNG，链接、越界及覆盖均拒绝。激活是显式动作，不会为旧坐标自动抢焦点；锁屏时输入和捕获受阻。系统 Apple 菜单不开放控制，其他应用和未知面板不作为可操作目标。当前菜单／面板和发行资源的完整验收仍见 OpenSpec 2.12／2.13，不能仅凭 capability=true 判定通过。
 
 控制器会自动写入 `test-results/agent/<runId>/manifest.json`，登记构建、场景、复现、ARIA／图片及坐标侧车、动作、只读诊断、关闭时日志尾部与采集器结果。默认 historyComplete=false，业务断言保持 not-run；采集失败单独登记并返回 missing，不覆盖启动／崩溃原失败。动作最终状态在证据处理后发布，后续生命周期请求不会因这一段收尾而误报 busy。restart 为新 run 建立索引，旧 run 不覆盖；截图返回的 evidence 字段说明是否已登记，不能仅以 PNG 文件存在推断索引完整。Playwright reporter 和 trace 的接入仍属于未完成的 2.14。
+
+结果 reporter 通过 `media-marshal.run` 注解中的 runId／sessionId 关联已登记上下文，保留断言、超时／中断、启动失败和跳过状态，原始错误和断言值不进入汇总。TraceSession 是内部驱动 API，默认 sensitive 不录制；safe-synthetic 只供受版本管理的无账号流程，敏感转场丢弃整个录制段。敏感输入前 await discard，关闭 context 前 await stop；正常停止的 ZIP 才登记为 available。`reporter-probe.config.ts` 是显式失败采集探针，必须由对应 integration 验收调用，内部失败不作为产品测试通过。主测试入口及全体手动上下文迁移仍在 2.14 中继续。
