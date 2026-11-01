@@ -120,6 +120,13 @@ test("自有应用异常退出明确记录崩溃，停止只回收原控制进�
     assert.equal(sameProcess(running.application!), true);
     process.kill(running.application!.pid, "SIGKILL");
     await waitStatus(id!, "crashed");
+    await cli("restart", id);
+    const recovered = await waitStatus(id!, "running");
+    assert.equal(recovered.profileRunId, running.profileRunId);
+    assert.equal(recovered.generation, running.generation + 1);
+    assert.notEqual(recovered.runId, running.runId);
+    assert.equal(sameProcess(recovered.application!), true);
+    assert.equal(sameProcess(running.application!), false);
     await ensureStopped(id);
     const evidence = await readEvidence(root, running.runId);
     assert.ok(evidence.primaryFailureId);
@@ -128,6 +135,7 @@ test("自有应用异常退出明确记录崩溃，停止只回收原控制进�
       "crash",
     );
     await waitProcessGone(running.owner!);
+    assert.equal((await readEvidence(root, recovered.runId)).lifecycle, "closed");
   } finally {
     await ensureStopped(id);
   }

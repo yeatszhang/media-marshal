@@ -13,6 +13,8 @@ import {
 } from "./session-store.ts";
 import { serveController, callController } from "./transport.ts";
 import { parseRequest } from "./protocol.ts";
+import { sessionCommand } from "./session.ts";
+import { identify } from "./process.ts";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "marshal-agent-session-"));
@@ -45,6 +47,26 @@ test("会话身份与输出不暴露控制凭证，PID 复用和过期启动不�
     );
     await saveSession(f.root, f.session);
     assert.equal((await readSession(f.root, f.session.sessionId)).status, "stopped");
+  } finally {
+    await f.cleanup();
+  }
+});
+test("崩溃恢复拒绝未知控制进程、仍存活的应用 PID 和不完整身份，不接管或重放", async () => {
+  const f = await fixture();
+  const own = identify(process.pid)!;
+  const restart = parseRequest({ command: "restart", sessionId: f.session.sessionId });
+  try {
+    f.session.status = "crashed";
+    f.session.owner = { ...own, created: "旧代际" };
+    f.session.application = own;
+    await saveSession(f.root, f.session);
+    await assert.rejects(sessionCommand(f.root, restart), { code: "SESSION_UNAVAILABLE" });
+    f.session.owner = own;
+    await saveSession(f.root, f.session);
+    await assert.rejects(sessionCommand(f.root, restart), { code: "APPLICATION_EXIT_UNCONFIRMED" });
+    delete f.session.application;
+    await saveSession(f.root, f.session);
+    await assert.rejects(sessionCommand(f.root, restart), { code: "APPLICATION_EXIT_UNCONFIRMED" });
   } finally {
     await f.cleanup();
   }

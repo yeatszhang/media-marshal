@@ -194,6 +194,7 @@ describe("集中元数据网络、持久缓存与取消", () => {
         res.writeHead(429, { "Retry-After": "20" }).end("fixture-private-key");
         return;
       }
+      if (req.url === "/recovered") res.end(JSON.stringify({ recovered: true }));
     });
     await expect(requestJson(new URL("length", url))).rejects.toMatchObject({
       code: "INVALID_RESPONSE",
@@ -220,6 +221,7 @@ describe("集中元数据网络、持久缓存与取消", () => {
       ).rejects.toMatchObject({ code: "INTERRUPTED" });
     controller.abort();
     await canceled;
+    await expect(requestJson(new URL("recovered", url))).resolves.toEqual({ recovered: true });
   });
   it("TMDB 只用显式代理，其他服务请求不随环境代理走；不允许带凭据的代理 URL", async () => {
     let tunnels = 0,

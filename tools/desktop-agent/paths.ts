@@ -24,7 +24,10 @@ export async function agentBase(root: string) {
   }
   return directory;
 }
-export async function agentDirectory(root: string, name: "exports" | "sessions" | "builds") {
+export async function agentDirectory(
+  root: string,
+  name: "exports" | "sessions" | "builds" | "checks",
+) {
   const path = resolve(await agentBase(root), name);
   try {
     await mkdir(path, { mode: 0o700 });

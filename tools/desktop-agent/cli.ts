@@ -1,14 +1,15 @@
+import { dispatchScenario } from "./scenario-command.ts";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { doctor } from "./doctor.ts";
 import { createBuild, buildStatus } from "./build.ts";
-import { scenarios, SCENARIO_VERSION } from "./scenarios.ts";
 import { readLogs } from "./log-reader.ts";
 import { diagnoseSession } from "./diagnose.ts";
 import { startSession, sessionCommand } from "./session.ts";
 import { actionStatus } from "./action-store.ts";
 import { collect } from "./collect.ts";
 import { gcEvidence } from "./evidence-retention.ts";
+import { knownCheckStatus } from "./check-store.ts";
 import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -70,28 +71,7 @@ export async function dispatch(request: Request): Promise<unknown> {
   const root = resolve(import.meta.dirname, "../..");
   if (request.command === "collect") return collect(root, request);
   if (request.command === "gc") return gcEvidence(root, (request.payload as Input<"gc">).dryRun);
-  if (request.command === "scenario") {
-    const input = request.payload as Input<"scenario">;
-    if (input.mode === "list") return { version: SCENARIO_VERSION, scenarios };
-    if (request.sessionId)
-      throw new ToolError(
-        "SCENARIO_REQUIRES_FRESH_SESSION",
-        "不能向现有会话直接写入场景数据",
-        "不指定 --session，使用 scenario run 创建新隔离会话",
-        "blocked",
-      );
-    if (!input.name)
-      throw new ToolError("SCENARIO_NAME_REQUIRED", "运行场景需要名称", "先查询 scenario list");
-    return startSession(root, {
-      ...request,
-      payload: {
-        scenario: input.name,
-        seed: input.seed,
-        mode: "background",
-        target: "development",
-      },
-    });
-  }
+  if (request.command === "scenario") return dispatchScenario(root, request);
   if (request.command === "diagnose") return diagnoseSession(root, request);
   if (request.command === "logs") {
     if (!request.sessionId)
@@ -116,8 +96,10 @@ export async function dispatch(request: Request): Promise<unknown> {
   )
     return sessionCommand(root, request);
   if (request.command === "build") return createBuild(root, request);
-  if (request.command === "status" && (request.payload as Input<"status">).jobId)
-    return buildStatus(root, (request.payload as Input<"status">).jobId!);
+  if (request.command === "status" && (request.payload as Input<"status">).jobId) {
+    const id = (request.payload as Input<"status">).jobId!;
+    return (await knownCheckStatus(root, id)) ?? buildStatus(root, id);
+  }
   if (request.command === "doctor")
     return doctor(resolve(import.meta.dirname, "../.."), request.payload as Input<"doctor">);
   if (request.command === "help")

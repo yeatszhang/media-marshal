@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { artifactKinds } from "./evidence-kinds.ts";
+import { faultNames } from "./fault-catalog.ts";
 
 export const TOOL_PROTOCOL_VERSION = 1 as const;
 const uuid = z.uuid();
@@ -103,7 +104,9 @@ export const commands = {
   }),
   diagnose: z.strictObject({}),
   scenario: z.strictObject({
-    mode: z.enum(["list", "run"]).default("list"),
+    mode: z.enum(["list", "run", "fault"]).default("list"),
+    fault: z.enum(faultNames).optional(),
+    repeat: z.number().int().min(1).max(3).default(2),
     name: scenario.optional(),
     seed: z.string().max(100).default("default"),
   }),

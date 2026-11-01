@@ -161,6 +161,24 @@ describe.skipIf(process.platform !== "darwin")("修正文件组件的资源完�
     expect(await readFile(join(f.path, "真实发布保留.mkv"), "utf8")).toBe("跨卷复制暂存内容");
     await f.root.cleanupAttempt(attempt);
     expect(await readFile(join(f.path, ...parts), "utf8")).toBe("跨卷复制暂存内容");
+    const recoveredAttempt = randomUUID(),
+      recoveredParts = ["安全恢复", "新文件.mkv"];
+    await f.root.prepareStage(recoveredAttempt);
+    await writeFile(
+      await f.root.stageFilePath(recoveredAttempt, recoveredParts),
+      "关闭故障后的新文件",
+    );
+    const recovered = await f.root.verifyStage(
+      recoveredAttempt,
+      recoveredParts,
+      Buffer.byteLength("关闭故障后的新文件"),
+    );
+    expect(
+      await f.root.publishRelocationStage(recoveredAttempt, recoveredParts, recovered, native),
+    ).toEqual(recovered);
+    expect(await readFile(join(f.path, ...recoveredParts), "utf8")).toBe("关闭故障后的新文件");
+    expect(await readFile(join(f.path, ...parts), "utf8")).toBe("跨卷复制暂存内容");
+    await f.root.cleanupAttempt(recoveredAttempt);
   });
   it("只清理证据一致的私有隔离文件，变化文件和其他私有路径均保留", async () => {
     const f = await fixture(),

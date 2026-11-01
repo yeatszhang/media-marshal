@@ -87,7 +87,14 @@ it("缺盘和所有权标记丢失时保留暂存，不把未知目录当垃圾"
     state: "PENDING",
   });
   await rename(f.targetGrant.path + "-离线", f.targetGrant.path);
-  await rm(join(f.targetGrant.path, ".media-marshal", "attempts", f.operation.attemptId + ".json"));
+  const marker = join(
+    f.targetGrant.path,
+    ".media-marshal",
+    "attempts",
+    f.operation.attemptId + ".json",
+  );
+  const ownership = await readFile(marker);
+  await rm(marker);
   await f.owner.run("ingestion_operation", f.operation.operationId, f.root);
   expect(
     f.database.connection.prepare("SELECT state,failure FROM owned_attempt_cleanup").get(),
@@ -96,6 +103,13 @@ it("缺盘和所有权标记丢失时保留暂存，不把未知目录当垃圾"
     failure: expect.stringContaining("缺少可靠所有权标记"),
   });
   expect(await readFile(join(f.path, "本次暂存"), "utf8")).toBe("恢复锚点");
+  await writeFile(marker, ownership, { flag: "wx", mode: 0o600 });
+  await f.owner.run("ingestion_operation", f.operation.operationId, f.root);
+  expect(f.database.connection.prepare("SELECT state FROM owned_attempt_cleanup").get()).toEqual({
+    state: "DONE",
+  });
+  await expect(readFile(join(f.path, "本次暂存"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(join(f.sourceGrant.path, ...f.sourceSegments))).toEqual(f.bytes);
 });
 it("未知或尚未停止的下载写入者不能回收暂存，即使持有一个清理业务记录", async () => {
   const f = await fixture(),

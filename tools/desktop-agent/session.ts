@@ -2,7 +2,7 @@ import { open, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { assertBuild, atomicJson } from "./build.ts";
-import { identify } from "./process.ts";
+import { identify, sameProcess } from "./process.ts";
 import { callController } from "./transport.ts";
 import {
   newSession,
@@ -119,7 +119,25 @@ export async function sessionCommand(root: string, request: Request) {
     );
   const session = inspectSession(await readSession(root, request.sessionId));
   if (request.command === "status") return publicSession(session);
-  if (session.status === "unknown" || (session.status === "crashed" && request.command !== "stop"))
+  const recovering = session.status === "crashed" && request.command === "restart";
+  if (recovering && (!session.owner || !sameProcess(session.owner)))
+    throw new ToolError(
+      "SESSION_UNAVAILABLE",
+      "原控制进程身份无法核实",
+      "保留原会话，不接管替代控制进程",
+      "unknown",
+    );
+  if (recovering && (!session.application || identify(session.application.pid)))
+    throw new ToolError(
+      "APPLICATION_EXIT_UNCONFIRMED",
+      "原应用 PID 尚未确认退出或记录不完整",
+      "核对原应用与残留写入者，不自动重放恢复",
+      "unknown",
+    );
+  if (
+    session.status === "unknown" ||
+    (session.status === "crashed" && request.command !== "stop" && !recovering)
+  )
     throw new ToolError(
       "SESSION_UNAVAILABLE",
       "原会话控制权或进程已丢失",
