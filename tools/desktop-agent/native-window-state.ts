@@ -1,13 +1,9 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { join } from "node:path";
 import { z } from "zod";
 import { ToolError } from "./protocol.ts";
-import { sameProcess } from "./process.ts";
-import { runHome, type Session } from "./session-store.ts";
+import type { Session } from "./session-store.ts";
 import type { GuiWindows } from "./gui-windows.ts";
 import type { GuiWindow } from "./gui-types.ts";
-const exec = promisify(execFile);
+import { invokeNative, nativeTarget } from "./native-runtime.ts";
 const nativeState = z.strictObject({
   source: z.literal("native-window-metadata"),
   sessionLocked: z.boolean(),
@@ -28,37 +24,6 @@ const nativeState = z.strictObject({
     )
     .max(200),
 });
-async function helper(root: string, input: object) {
-  try {
-    const operation = exec(join(root, "tools/desktop-agent/.build/native-helper"), [], {
-      encoding: "utf8",
-      timeout: 5000,
-      maxBuffer: 256 * 1024,
-    });
-    operation.child.stdin!.on("error", () => {});
-    operation.child.stdin!.end(JSON.stringify(input));
-    const result = await operation;
-    return JSON.parse(result.stdout);
-  } catch (error) {
-    const output = (error as { stdout?: string }).stdout;
-    if (output) {
-      const value = JSON.parse(output);
-      if (value.error?.code)
-        throw new ToolError(
-          String(value.error.code),
-          "原生窗口状态核验受阻",
-          "运行 doctor 检查 helper 与辅助功能权限",
-          "blocked",
-        );
-    }
-    throw new ToolError(
-      "NATIVE_WINDOW_STATE_UNAVAILABLE",
-      "无法读取原生窗口状态",
-      "构建 native helper 并运行 doctor，不跳过遮挡核验",
-      "blocked",
-    );
-  }
-}
 export async function assertWindowVisible(
   root: string,
   session: Session,
@@ -80,40 +45,10 @@ export async function assertWindowVisible(
       "使用后台隔离模式；原生能力保持未验证",
       "blocked",
     );
-  const app = await windows.applicationIdentity();
-  if (
-    !session.application ||
-    app.pid !== session.application.pid ||
-    !sameProcess(session.application)
-  )
-    throw new ToolError(
-      "APPLICATION_IDENTITY_CHANGED",
-      "坐标目标进程身份不匹配",
-      "停止输入并核对原会话",
-      "blocked",
-    );
-  const identity = {
-    pid: app.pid,
-    executable: app.executable,
-    profile: join(runHome(root, session.profileRunId), "data"),
-  };
-  const launch = await helper(root, { ...identity, command: "identity" });
-  if (
-    !sameProcess(session.application) ||
-    launch.pid !== app.pid ||
-    typeof launch.generation !== "string" ||
-    !/^\d+:\d+$/.test(launch.generation)
-  )
-    throw new ToolError(
-      "APPLICATION_IDENTITY_CHANGED",
-      "无法关联原生进程代际",
-      "停止输入并核对原会话",
-      "blocked",
-    );
+  const identity = await nativeTarget(root, session, windows);
   const state = nativeState.parse(
-    await helper(root, {
+    await invokeNative(root, {
       ...identity,
-      generation: launch.generation,
       command: "window-state",
       ...(point ? { screenX: point.x, screenY: point.y } : {}),
     }),

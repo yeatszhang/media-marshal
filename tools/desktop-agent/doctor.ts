@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { verifyResource } from "./resources.ts";
 import type { Input } from "./protocol.ts";
+import { assertNativeHelper } from "./native-fingerprint.ts";
 
 const run = promisify(execFile);
 interface Check {
@@ -105,11 +106,10 @@ async function nativeCheck(root: string, required: boolean): Promise<Check> {
       detail: "本工具原生 GUI 驱动当前仅支持 macOS",
     };
   try {
-    const { stdout } = await run(
-      join(root, "tools/desktop-agent/.build/native-helper"),
-      ["capabilities"],
-      { timeout: 5000, maxBuffer: 8192 },
-    );
+    const { stdout } = await run(await assertNativeHelper(root), ["capabilities"], {
+      timeout: 5000,
+      maxBuffer: 8192,
+    });
     const caps = JSON.parse(stdout);
     const ready =
       caps.accessibility === true && caps.screenCapture === true && caps.sessionLocked === false;

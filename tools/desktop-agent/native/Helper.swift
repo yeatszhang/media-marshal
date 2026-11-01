@@ -6,10 +6,6 @@ import ScreenCaptureKit
 import CryptoKit
 import Darwin
 
-struct ControlError: Error { let code: String; let message: String }
-func reject(_ code: String, _ message: String) throws -> Never { throw ControlError(code: code, message: message) }
-func encode(_ value: Any) throws -> Data { try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) }
-func emit(_ value: Any) { if let bytes = try? encode(value) { FileHandle.standardOutput.write(bytes); print("") } }
 let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL
 
 struct Input: Decodable {
@@ -45,9 +41,8 @@ func trustedApplication(_ input: Input) throws -> NSRunningApplication {
     let electron = repository.appendingPathComponent("node_modules/electron/dist/Electron.app/Contents/MacOS/Electron").resolvingSymlinksInPath().path
     let packages = repository.appendingPathComponent("apps/desktop/release").path + "/"
     guard executable == expected, expected == electron || expected.hasPrefix(packages) else { try reject("PROCESS_MISMATCH", "目标不是本工作树的桌面实例") }
-    let root = repository.appendingPathComponent("test-results/agent").resolvingSymlinksInPath().path + "/"
-    let profile = URL(fileURLWithPath: input.profile).resolvingSymlinksInPath().path
-    guard profile.hasPrefix(root), profile.hasSuffix("/data") else { try reject("PROFILE_MISMATCH", "目标不是开发工具的隔离目录") }
+    let profile = try restrictedAgentPath(input.profile, base: repository.appendingPathComponent("test-results/agent"), newFile: false).path
+    guard profile.hasSuffix("/data") else { try reject("PROFILE_MISMATCH", "目标不是开发工具的隔离目录") }
     let query = Process(), pipe = Pipe()
     query.executableURL = URL(fileURLWithPath: "/bin/ps"); query.arguments = ["-p", String(input.pid), "-o", "args="]; query.standardOutput = pipe; query.standardError = Pipe()
     try query.run(); let bytes = pipe.fileHandleForReading.readDataToEndOfFile(); query.waitUntilExit()
@@ -126,10 +121,16 @@ func snapshot(_ root: AXUIElement, pid: Int32) throws -> [String: Any] {
     var nodes = [[String: Any]](), truncated = false
     func walk(_ element: AXUIElement, _ path: [Int], _ depth: Int) {
         guard nodes.count < 500, depth < 24 else { truncated = true; return }
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { truncated = true; return }
         let role = attribute(element, kAXRoleAttribute) as? String ?? "unknown"
         let title = attribute(element, kAXTitleAttribute) as? String ?? attribute(element, kAXDescriptionAttribute) as? String ?? ""
         nodes.append(["path": path, "role": role, "name": String(title.prefix(200)), "enabled": attribute(element, kAXEnabledAttribute) as? Bool ?? false, "focused": attribute(element, kAXFocusedAttribute) as? Bool ?? false, "bounds": geometry(element), "secure": role == "AXSecureTextField"])
-        for (index, child) in children(element).enumerated() { walk(child, path + [index], depth + 1) }
+        for (index, child) in children(element).enumerated() {
+            // Apple 菜单属于系统，不开放其遍历及动作。
+            if role == "AXMenuBar" && index == 0 { continue }
+            walk(child, path + [index], depth + 1)
+        }
     }
     walk(root, [], 0)
     let windows = windowRecords(pid)
@@ -140,6 +141,7 @@ func target(_ root: AXUIElement, _ path: [Int]) throws -> AXUIElement {
     guard path.count < 24 else { try reject("INVALID_TARGET", "原生目标路径过深") }
     var element = root
     for index in path {
+        if attribute(element, kAXRoleAttribute) as? String == "AXMenuBar" && index == 0 { try reject("SYSTEM_MENU_REJECTED", "系统菜单不属于开发实例的控制范围") }
         let values = children(element)
         guard index >= 0, index < values.count else { try reject("STALE_TARGET", "原生目标已变化，请重新观察") }
         element = values[index]
@@ -153,30 +155,45 @@ func pressKey(_ value: String, pid: Int32) throws {
     down.flags = flags; up.flags = flags; down.postToPid(pid); up.postToPid(pid)
 }
 @available(macOS 14.0, *)
-func capture(_ input: Input) async throws -> [String: Any] {
-    guard CGPreflightScreenCaptureAccess() else { try reject("SCREEN_PERMISSION_REQUIRED", "尚未获得屏幕录制权限") }
+func capture(_ input: Input, root: AXUIElement, observed: [String: Any]) async throws -> [String: Any] {
+    try requireNativePermission(accessibility: AXIsProcessTrusted(), screenCapture: CGPreflightScreenCaptureAccess(), image: true)
+    guard !sessionLocked() else { try reject("NATIVE_SESSION_LOCKED", "系统锁屏时不能捕获原生窗口") }
+    guard let fingerprint = input.fingerprint, fingerprint == observed["fingerprint"] as? String else { try reject("STALE_SNAPSHOT", "窗口捕获前原生界面已经变化") }
     guard let id = input.windowID, let output = input.output else { try reject("INVALID_INPUT", "截图需要明确窗口及输出文件") }
-    let destination = URL(fileURLWithPath: output).resolvingSymlinksInPath()
-    let root = repository.appendingPathComponent("test-results/agent").resolvingSymlinksInPath().path + "/"
-    guard destination.path.hasPrefix(root), destination.pathExtension == "png", !FileManager.default.fileExists(atPath: destination.path) else { try reject("OUTPUT_REJECTED", "截图只能写入新的会话 PNG 文件") }
+    let destination = try restrictedAgentPath(output, base: repository.appendingPathComponent("test-results/agent"), newFile: true)
+    guard destination.pathExtension == "png" else { try reject("OUTPUT_REJECTED", "截图只能写入新的会话 PNG 文件") }
+    guard let records = observed["windows"] as? [[String: Any]], records.contains(where: { ($0["id"] as? UInt32) == id }) else { try reject("WINDOW_MISMATCH", "截图窗口不属于当前快照") }
     let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
     guard let window = content.windows.first(where: { $0.windowID == id && $0.owningApplication?.processID == input.pid }) else { try reject("WINDOW_MISMATCH", "截图窗口不属于当前实例") }
     let config = SCStreamConfiguration(); config.width = max(1, Int(window.frame.width * 2)); config.height = max(1, Int(window.frame.height * 2)); config.showsCursor = false
     let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config)
     let bitmap = NSBitmapImageRep(cgImage: image)
     guard let data = bitmap.representation(using: .png, properties: [:]) else { try reject("CAPTURE_FAILED", "无法编码窗口截图") }
+    let after = try snapshot(root, pid: input.pid)
+    guard fingerprint == after["fingerprint"] as? String else { try reject("STALE_SNAPSHOT", "窗口捕获期间原生界面发生变化，未写入图片") }
     try data.write(to: destination, options: .withoutOverwriting)
-    return ["path": destination.path, "width": image.width, "height": image.height, "windowID": id, "source": "native"]
+    return ["path": destination.path, "width": image.width, "height": image.height, "windowID": id, "source": "native", "fingerprint": fingerprint, "generation": try processGeneration(input.pid)]
 }
 func act(_ input: Input, app: NSRunningApplication, root: AXUIElement, observed: [String: Any]) throws -> [String: Any] {
     guard let fingerprint = input.fingerprint, fingerprint == observed["fingerprint"] as? String else { try reject("STALE_SNAPSHOT", "原生界面已经变化，请重新观察") }
+    guard !sessionLocked() else { try reject("NATIVE_SESSION_LOCKED", "系统锁屏时不能执行原生输入") }
+    if input.command == "activate" {
+        app.unhide()
+        guard app.activate(options: []) else { try reject("ACTIVATE_REJECTED", "目标实例未接受激活请求") }
+        return ["status": "sent", "requiresPostcondition": true]
+    }
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == input.pid else { try reject("FOCUS_MISMATCH", "焦点已离开目标实例") }
     if input.command == "key" { try pressKey(input.key ?? "", pid: input.pid); return ["status": "sent"] }
     guard let path = input.path else { try reject("INVALID_TARGET", "操作须指定快照内的目标") }
     let element = try target(root, path)
+    var owner: pid_t = 0
+    guard AXUIElementGetPid(element, &owner) == .success, owner == input.pid else { try reject("PANEL_OWNER_UNKNOWN", "无法确认原生目标属于当前实例") }
     guard attribute(element, kAXEnabledAttribute) as? Bool == true else { try reject("NOT_ACTIONABLE", "原生控件不可操作") }
     let result: AXError
     switch input.command {
-    case "press": result = AXUIElementPerformAction(element, kAXPressAction as CFString)
+    case "press":
+        guard ["AXButton", "AXCheckBox", "AXRadioButton", "AXMenuItem", "AXMenuBarItem", "AXPopUpButton"].contains(attribute(element, kAXRoleAttribute) as? String ?? "") else { try reject("ROLE_REJECTED", "此原生角色不在基础操作清单内") }
+        result = AXUIElementPerformAction(element, kAXPressAction as CFString)
     case "fill":
         let role = attribute(element, kAXRoleAttribute) as? String
         guard ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? ""), let text = input.text, text.count <= 4096 else { try reject("INVALID_INPUT", "仅允许向受限文本控件输入") }
@@ -196,14 +213,14 @@ func act(_ input: Input, app: NSRunningApplication, root: AXUIElement, observed:
             guard bytes.count <= 65536 else { try reject("INPUT_TOO_LARGE", "原生请求超过允许大小") }
             let input = try JSONDecoder().decode(Input.self, from: bytes), app = try trustedApplication(input)
             if input.command == "identity" { emit(["pid": app.processIdentifier, "generation": try processGeneration(input.pid)]); return }
-            guard AXIsProcessTrusted() else { try reject("ACCESSIBILITY_REQUIRED", "尚未获得辅助功能权限") }
+            try requireNativePermission(accessibility: AXIsProcessTrusted(), screenCapture: CGPreflightScreenCaptureAccess(), image: false)
             if input.command == "window-state" { emit(try visibilityRecords(input)); return }
             let root = AXUIElementCreateApplication(input.pid)
+            let observed = try snapshot(root, pid: input.pid)
             if input.command == "capture" {
                 guard #available(macOS 14.0, *) else { try reject("UNSUPPORTED", "当前 macOS 不支持此窗口截图驱动") }
-                emit(try await capture(input)); return
+                emit(try await capture(input, root: root, observed: observed)); return
             }
-            let observed = try snapshot(root, pid: input.pid)
             if input.command == "observe" { emit(observed); return }
             emit(try act(input, app: app, root: root, observed: observed))
         } catch let error as ControlError { emit(["status": "blocked", "error": ["code": error.code, "message": error.message]]); exit(2) }

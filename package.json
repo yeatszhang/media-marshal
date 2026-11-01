@@ -42,7 +42,7 @@
     "desktop:agent": "node --disable-warning=ExperimentalWarning --experimental-strip-types tools/desktop-agent/cli.ts",
     "test:desktop-agent": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tools/desktop-agent/*.test.ts",
     "typecheck:desktop-agent": "tsc -p tools/desktop-agent/tsconfig.json",
-    "desktop:agent:native:build": "node tools/desktop-agent/native-build.mjs"
+    "desktop:agent:native:build": "node --disable-warning=ExperimentalWarning --experimental-strip-types tools/desktop-agent/native-build.mjs"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
