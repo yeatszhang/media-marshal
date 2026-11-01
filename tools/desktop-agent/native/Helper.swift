@@ -24,6 +24,8 @@ struct Input: Decodable {
     let key: String?
     let windowID: UInt32?
     let output: String?
+    let screenX: Double?
+    let screenY: Double?
 }
 func processGeneration(_ pid: Int32) throws -> String {
     var information = proc_bsdinfo()
@@ -74,13 +76,38 @@ func windowRecords(_ pid: Int32) -> [[String: Any]] {
         ["id": row[kCGWindowNumber as String] ?? 0, "bounds": row[kCGWindowBounds as String] ?? [:], "layer": row[kCGWindowLayer as String] ?? 0, "onScreen": row[kCGWindowIsOnscreen as String] ?? false]
     }
 }
-func visibilityRecords(_ pid: Int32) throws -> [String: Any] {
+func sameRectangle(_ left: CGRect, _ right: CGRect) -> Bool {
+    abs(left.minX - right.minX) < 1 && abs(left.minY - right.minY) < 1 && abs(left.width - right.width) < 1 && abs(left.height - right.height) < 1
+}
+func ownedPointWindow(_ input: Input) throws -> CGRect? {
+    guard let x = input.screenX, let y = input.screenY, x.isFinite, y.isFinite else { try reject("POINT_REQUIRED", "命中核验需要窗口内的有限坐标") }
+    var element: AXUIElement?
+    guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(x), Float(y), &element) == .success, let hit = element else { try reject("HIT_TEST_UNAVAILABLE", "无法核验目标位置的原生窗口") }
+    var owner: pid_t = 0
+    guard AXUIElementGetPid(hit, &owner) == .success, owner == input.pid else { return nil }
+    let window: AXUIElement
+    if attribute(hit, kAXRoleAttribute) as? String == "AXWindow" { window = hit }
+    else {
+        guard let value = attribute(hit, kAXWindowAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { try reject("HIT_WINDOW_UNKNOWN", "无法确认命中元素所属窗口") }
+        window = unsafeBitCast(value, to: AXUIElement.self)
+    }
+    let frame = geometry(window)
+    guard let width = frame["width"], let height = frame["height"], width > 0, height > 0 else { try reject("HIT_WINDOW_UNKNOWN", "命中窗口缺少可核验几何信息") }
+    return CGRect(x: frame["x"]!, y: frame["y"]!, width: width, height: height)
+}
+func visibilityRecords(_ input: Input) throws -> [String: Any] {
+    let pid = input.pid
     guard let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { try reject("WINDOW_STATE_UNAVAILABLE", "无法核验屏幕窗口次序") }
     var windows = [[String: Any]]()
     func bounds(_ row: [String: Any]) -> CGRect? {
         guard let value = row[kCGWindowBounds as String] as? NSDictionary else { return nil }
         return CGRect(dictionaryRepresentation: value)
     }
+    let hasPoint = input.screenX != nil || input.screenY != nil
+    if hasPoint {
+        guard let x = input.screenX, let y = input.screenY, rows.contains(where: { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && bounds($0)?.contains(CGPoint(x:x,y:y)) == true }) else { try reject("POINT_OUTSIDE_TARGET", "坐标不属于自有窗口") }
+    }
+    let pointWindow = hasPoint && !sessionLocked() ? try ownedPointWindow(input) : nil
     for (index, row) in rows.enumerated() where (row[kCGWindowOwnerPID as String] as? Int32) == pid {
         guard let rectangle = bounds(row) else { try reject("WINDOW_STATE_UNAVAILABLE", "自有窗口缺少位置证据") }
         let occluded = rows.prefix(index).contains { higher in
@@ -88,9 +115,10 @@ func visibilityRecords(_ pid: Int32) throws -> [String: Any] {
             guard let frame = bounds(higher) else { return true }
             return !frame.intersection(rectangle).isNull
         }
+        let pointOwned: Any = hasPoint ? (pointWindow.map { sameRectangle($0, rectangle) } ?? false) as Any : NSNull()
         windows.append(["id": row[kCGWindowNumber as String] ?? 0,
                         "bounds": ["x": rectangle.minX, "y": rectangle.minY, "width": rectangle.width, "height": rectangle.height],
-                        "occluded": occluded])
+                        "occluded": occluded, "pointOwned": pointOwned])
     }
     return ["source": "native-window-metadata", "sessionLocked": sessionLocked(), "frontmost": NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, "windows": windows]
 }
@@ -169,7 +197,7 @@ func act(_ input: Input, app: NSRunningApplication, root: AXUIElement, observed:
             let input = try JSONDecoder().decode(Input.self, from: bytes), app = try trustedApplication(input)
             if input.command == "identity" { emit(["pid": app.processIdentifier, "generation": try processGeneration(input.pid)]); return }
             guard AXIsProcessTrusted() else { try reject("ACCESSIBILITY_REQUIRED", "尚未获得辅助功能权限") }
-            if input.command == "window-state" { emit(try visibilityRecords(input.pid)); return }
+            if input.command == "window-state" { emit(try visibilityRecords(input)); return }
             let root = AXUIElementCreateApplication(input.pid)
             if input.command == "capture" {
                 guard #available(macOS 14.0, *) else { try reject("UNSUPPORTED", "当前 macOS 不支持此窗口截图驱动") }

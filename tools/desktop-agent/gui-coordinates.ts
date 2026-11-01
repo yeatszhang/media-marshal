@@ -93,6 +93,7 @@ export async function prepareCoordinate(
       session,
       observer.windows,
       handle.snapshot.window,
+      point.nativeScreenDip,
     );
     await observer.current(input.snapshotId, input.windowId);
     return {
@@ -114,7 +115,13 @@ export async function clickCoordinate(
   handle: SnapshotHandle,
   prepared: Awaited<ReturnType<typeof prepareCoordinate>>,
 ) {
-  await assertWindowVisible(root, session, observer.windows, handle.snapshot.window);
+  await assertWindowVisible(
+    root,
+    session,
+    observer.windows,
+    handle.snapshot.window,
+    prepared.point.nativeScreenDip,
+  );
   await handle.page.mouse.move(prepared.point.viewportCss.x, prepared.point.viewportCss.y);
   await observer.current(handle.snapshot.snapshotId, handle.snapshot.window.windowId);
   if (

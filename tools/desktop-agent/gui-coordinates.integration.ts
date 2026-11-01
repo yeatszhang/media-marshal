@@ -209,11 +209,21 @@ test(
       const success = await run(context, actions, visible);
       assert.equal(success.status, "completed", JSON.stringify(success));
       const proof = success.result as {
-        coordinate: { visibility: { source: string; frontmost: boolean; occluded: boolean } };
+        coordinate: {
+          visibility: {
+            source: string;
+            frontmost: boolean;
+            occluded: boolean;
+            pointOwned: boolean;
+            hitTest: string;
+          };
+        };
       };
       assert.equal(proof.coordinate.visibility.source, "native-window-metadata");
       assert.equal(proof.coordinate.visibility.frontmost, true);
       assert.equal(proof.coordinate.visibility.occluded, false);
+      assert.equal(proof.coordinate.visibility.pointOwned, true);
+      assert.equal(proof.coordinate.visibility.hitTest, "accessibility-window-z-order");
       const identity = {
         pid: context.app.process().pid,
         executable: await context.app.evaluate(() => process.execPath),

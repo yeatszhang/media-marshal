@@ -23,6 +23,7 @@ const nativeState = z.strictObject({
           height: z.number(),
         }),
         occluded: z.boolean(),
+        pointOwned: z.boolean().nullable(),
       }),
     )
     .max(200),
@@ -63,6 +64,7 @@ export async function assertWindowVisible(
   session: Session,
   windows: GuiWindows,
   window: GuiWindow,
+  point?: { x: number; y: number },
 ) {
   if (session.options.mode === "background")
     return {
@@ -109,7 +111,12 @@ export async function assertWindowVisible(
       "blocked",
     );
   const state = nativeState.parse(
-    await helper(root, { ...identity, generation: launch.generation, command: "window-state" }),
+    await helper(root, {
+      ...identity,
+      generation: launch.generation,
+      command: "window-state",
+      ...(point ? { screenX: point.x, screenY: point.y } : {}),
+    }),
   );
   if (state.sessionLocked)
     throw new ToolError(
@@ -129,7 +136,7 @@ export async function assertWindowVisible(
     !window.visible ||
     window.minimized ||
     matches.length !== 1 ||
-    matches[0]!.occluded
+    (point ? matches[0]!.pointOwned !== true : matches[0]!.occluded)
   )
     throw new ToolError(
       "GUI_WINDOW_OCCLUDED",
@@ -143,6 +150,9 @@ export async function assertWindowVisible(
     windowId: matches[0]!.id,
     frontmost: true,
     occluded: false,
+    rectangleOverlap: matches[0]!.occluded,
+    pointOwned: point ? matches[0]!.pointOwned : null,
+    hitTest: point ? "accessibility-window-z-order" : "window-rectangles",
     nativeInputSent: false,
   };
 }
