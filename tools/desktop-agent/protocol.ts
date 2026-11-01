@@ -112,13 +112,22 @@ export const commands = {
   }),
   verify: z.strictObject({
     mode: z.enum(["plan", "run"]).default("plan"),
+    baseRef: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9/_.-]{0,199}$/)
+      .default("HEAD"),
+    benchmark: z.boolean().default(false),
     changedFiles: z
       .array(
         z
           .string()
           .max(4096)
           .refine(
-            (v) => !v.startsWith("/") && !v.split(/[\\/]/).includes(".."),
+            (v) =>
+              v.length > 0 &&
+              !v.includes("\0") &&
+              !/^(?:[A-Za-z]:|[\\/])/.test(v) &&
+              !v.split(/[\\/]/).some((part) => part === ".." || part === "."),
             "必须使用仓库内相对路径",
           ),
       )

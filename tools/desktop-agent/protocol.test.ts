@@ -55,7 +55,7 @@ test("收据处理异步结果，重复请求只执行一次，取消保持结�
   await new Promise((done) => setImmediate(done));
   assert.equal(jobs.get(another.jobId).status, "unknown");
 });
-test("CLI stdout 只有机器结果，未知与未接入命令以非零退出", () => {
+test("CLI stdout 只有机器结果，未知命令与缺少必要身份以非零退出，计划不冒充执行", () => {
   const script = resolve(import.meta.dirname, "cli.ts");
   const invoke = (command: string) =>
     spawnSync(
@@ -75,7 +75,12 @@ test("CLI stdout 只有机器结果，未知与未接入命令以非零退出", 
   const invalid = invoke("eval");
   assert.equal(invalid.status, 1);
   assert.equal(JSON.parse(invalid.stdout).error.code, "UNKNOWN_COMMAND");
-  const blocked = invoke("verify");
+  const blocked = invoke("collect");
   assert.equal(blocked.status, 2);
   assert.equal(JSON.parse(blocked.stdout).status, "blocked");
+  assert.equal(JSON.parse(blocked.stdout).error.code, "RUN_REQUIRED");
+  const planned = invoke("verify");
+  assert.equal(planned.status, 0, planned.stderr);
+  assert.equal(JSON.parse(planned.stdout).status, "planned");
+  assert.equal(JSON.parse(planned.stdout).result.allPlannedChecksPassed, false);
 });

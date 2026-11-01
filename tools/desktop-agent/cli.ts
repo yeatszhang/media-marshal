@@ -10,6 +10,7 @@ import { actionStatus } from "./action-store.ts";
 import { collect } from "./collect.ts";
 import { gcEvidence } from "./evidence-retention.ts";
 import { knownCheckStatus } from "./check-store.ts";
+import { verifyCommand } from "./verify-command.ts";
 import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -69,6 +70,7 @@ export async function requestFromArgs(args: string[]): Promise<Request> {
 }
 export async function dispatch(request: Request): Promise<unknown> {
   const root = resolve(import.meta.dirname, "../..");
+  if (request.command === "verify") return verifyCommand(root, request);
   if (request.command === "collect") return collect(root, request);
   if (request.command === "gc") return gcEvidence(root, (request.payload as Input<"gc">).dryRun);
   if (request.command === "scenario") return dispatchScenario(root, request);
@@ -126,6 +128,7 @@ export async function dispatch(request: Request): Promise<unknown> {
         "restart",
         "collect",
         "gc",
+        "verify",
       ],
     };
   throw new ToolError(
@@ -142,9 +145,18 @@ export async function main(args: string[]) {
     const value = await dispatch(request);
     const response = result(request, value);
     if (
-      ["build", "status", "start", "restart", "stop", "scenario", "act", "collect", "gc"].includes(
-        request.command,
-      ) &&
+      [
+        "build",
+        "status",
+        "start",
+        "restart",
+        "stop",
+        "scenario",
+        "act",
+        "collect",
+        "gc",
+        "verify",
+      ].includes(request.command) &&
       value &&
       typeof value === "object" &&
       "status" in value
