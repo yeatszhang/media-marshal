@@ -21,4 +21,4 @@ Renderer 通过受限业务 IPC 访问能力，Preload 保持最小桥接；Main
 
 ## 旧工程架构
 
-Java / Vue / Docker 的[架构总览](../legacy/architecture/index.md)、[发现与整理流程](../legacy/architecture/processing.md)及[数据与恢复机制](../legacy/architecture/data-and-recovery.md)已归档。其他历史资料见[旧工程入口](../legacy/index.md)。
+Java / Vue / Docker 的[架构总览](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/architecture/index.md)、[发现与整理流程](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/architecture/processing.md)及[数据与恢复机制](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/architecture/data-and-recovery.md)已归档。其他历史资料见[旧工程入口](https://github.com/yeatszhang/media-marshal/blob/main/legacy/docs/index.md)。

@@ -83,6 +83,9 @@ describe("同步来源与识别映射的独立契约", () => {
     const embyBinding = { id: randomUUID(), version: 3, targetId: mapping.id, targetDirectory: output, serverId: "fixture-server", connectionVersion: 2, libraryId: "movies", libraryRoot: "/server/media", mediaType: "MOVIE", conversion: { id: randomUUID(), version: 4, localRoot: output, serverRoot: "/server/media", serverPathStyle: "posix" } };
     const snapshot = { ruleId: randomUUID(), ruleVersion: 5, configuration: { name: "识别", targets: [mapping] }, inputDirectory: directory(), inputMode: "managed-completed", defaultDirectoryVersion: 1, targets: [{ targetId: mapping.id, directory: output, embyBinding }] };
     expect(recognitionRuleSnapshotSchema.parse(snapshot).targets[0]?.embyBinding).toMatchObject({ version: 3, connectionVersion: 2, conversion: { version: 4 } });
+    for (const mediaType of ["MOVIE", "AUTO"]) {
+      expect(recognitionRuleSnapshotSchema.safeParse({ ...snapshot, targets: [{ ...snapshot.targets[0], embyBinding: { ...embyBinding, targetId: output.id, mediaType } }] }).success).toBe(true);
+    }
     expect(recognitionRuleSnapshotSchema.safeParse({ ...snapshot, targets: [] }).success).toBe(false);
     expect(recognitionRuleSnapshotSchema.safeParse({ ...snapshot, targets: [snapshot.targets[0], snapshot.targets[0]] }).success).toBe(false);
     for (const patch of [{ targetId: randomUUID() }, { mediaType: "TV_SHOW" }, { targetDirectory: { ...output, version: 2 } }]) expect(recognitionRuleSnapshotSchema.safeParse({ ...snapshot, targets: [{ ...snapshot.targets[0], embyBinding: { ...embyBinding, ...patch } }] }).success).toBe(false);
@@ -115,4 +118,20 @@ it("公开写入仅接受公共下载目录，拒绝识别客户端和逐规则�
     expect(recognitionRuleWriteSchema.safeParse({ ...edit(), configuration: { name: "公共目录识别", targets: [], ...patch } }).success).toBe(false);
   }
   expect(recognitionRuleWriteSchema.safeParse({ ...edit(), configuration: { name: "公共目录识别", targets: [target()] } }).success).toBe(true);
+});
+
+
+it("同步复核只接受任务 ID 和幂等键，不接受本机路径或跳过结论", () => {
+  const input = { id: randomUUID(), requestKey: randomUUID() }, action = coreActions["sync.recheck-library"];
+  expect(action.input.parse(input)).toEqual(input);
+  for (const extra of [{ path: "/Volumes/个人媒体" }, { grant: {} }, { inLibrary: true }, { files: ["a.mp4"] }]) expect(action.input.safeParse({ ...input, ...extra }).success).toBe(false);
+  expect(action.input.safeParse({ id: input.id }).success).toBe(false);
+});
+
+
+it("人工核对只接受当前预览文件与候选 ID，拒绝任意路径授权和混合决定", () => {
+  const action = coreActions["sync.resolve-library-review"], base = { previewId: randomUUID(), relativePath: "视频/S1/12.mp4", requestKey: randomUUID() };
+  expect(action.input.safeParse({ ...base, decision: "USE_LIBRARY", candidateId: "a".repeat(64) }).success).toBe(true);
+  expect(action.input.safeParse({ ...base, decision: "DOWNLOAD" }).success).toBe(true);
+  for (const extra of [{ decision: "USE_LIBRARY" }, { decision: "DOWNLOAD", candidateId: "a".repeat(64) }, { decision: "USE_LIBRARY", candidateId: "a".repeat(64), path: "/任意媒体" }, { decision: "DOWNLOAD", grant: {} }]) expect(action.input.safeParse({ ...base, ...extra }).success).toBe(false);
 });

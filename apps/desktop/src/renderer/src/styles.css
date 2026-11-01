@@ -158,6 +158,8 @@
 .source-lifecycle-dialog::backdrop { background: rgb(20 30 45 / 45%); }
 .sync-panel { display: grid; gap: 12px; padding: 24px; margin-bottom: 20px; min-width: 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .sync-panel > .button { justify-self: start; }
+.sync-preview-loading { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--primary); font-weight: 550; }
+.sync-preview-loading > svg { flex-shrink: 0; }
 .sync-panel > .cloud-hint, .sync-panel > .notice, .sync-panel > .download-controls { margin: 0; }
 .source-list > .sync-panel { margin-bottom: 0; }
 .sync-check { display: flex; align-items: start; gap: 10px; margin: 14px 0; line-height: 1.6; }
@@ -167,6 +169,10 @@
 .sync-filter-list .sync-check { align-self: center; }
 .sync-files article { padding: 14px 0; border-bottom: 1px solid var(--border); }
 .sync-files article > span { display: block; color: var(--muted-foreground); margin-top: 6px; font-size: 13px; }
+.sync-conflict, .sync-conflict-count { color: #903d30; font-weight: 650; }
+.sync-conflict-count { display: inline-block; padding: 2px 8px; border: 1px solid #ebc6be; border-radius: 5px; background: #fff3f1; }
+.sync-files article.sync-file-blocked { padding: 14px; border: 1px solid #ebc6be; border-radius: 8px; background: #fff3f1; }
+.sync-file-blocked > strong { color: #903d30; }
 .sync-remote-dialog { width: min(780px, calc(100vw - 40px)); }
 .sync-remote-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .sync-remote-list > div > span { min-width: 0; overflow-wrap: anywhere; }
@@ -924,7 +930,10 @@ th:first-child {
  .download-job { padding: 20px; min-width: 0; }
  .download-job h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; font-size: 16px; margin: 0; }
  .download-job .cloud-browser-toolbar { gap: 16px; }
- .download-job progress { width: 100%; height: 7px; accent-color: var(--primary); }
+ .download-job progress { display: block; width: 100%; height: 7px; appearance: none; border: 0; border-radius: 4px; overflow: hidden; background: var(--border); }
+ .download-job progress::-webkit-progress-bar { background: var(--border); }
+ .download-job progress::-webkit-progress-value { background: var(--primary); }
+ .download-job progress::-moz-progress-bar { background: var(--primary); }
  .download-controls, .download-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
  .download-pagination { justify-content: end; font-size: 13px; }
  .download-progress { font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -1095,3 +1104,26 @@ main:focus { outline: none; }
   .sidebar nav a { padding-top: 8px; padding-bottom: 8px; }
   .sidebar-bottom { padding-top: 12px; }
 }
+
+.download-cleanup-panel { min-width: 0; margin-top: 24px; padding: 20px; }
+.download-cleanup-panel h2 { font-size: 16px; line-height: 1.6; margin-bottom: 12px; }
+.download-cleanup-panel h3 { font-size: 14px; line-height: 1.6; margin-bottom: 12px; }
+.download-cleanup-panel p { line-height: 1.8; }
+.download-cleanup-list { list-style: none; padding: 0; margin: 16px 0; min-width: 0; }
+.download-cleanup-list > li { padding: 16px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.download-cleanup-list .settings-mapping-path { overflow-wrap: anywhere; white-space: normal; min-width: 0; }
+.download-cleanup-list .content-review-heading { flex-wrap: wrap; gap: 8px 16px; font-variant-numeric: tabular-nums; }
+.download-cleanup-list .check-label { align-items: flex-start; }
+.download-cleanup-list input[type="checkbox"] { flex: 0 0 auto; margin-top: 4px; }
+.download-cleanup-history { margin-top: 24px; }
+.download-cleanup-history > summary { cursor: pointer; font-weight: 600; margin-bottom: 12px; }
+.download-cleanup-history .download-controls { flex-wrap: wrap; }
+.download-cleanup-preview { margin-top: 24px; }
+
+.download-issues { margin-top: 16px; min-width: 0; }
+.download-issues > summary { cursor: pointer; color: var(--primary); padding: 8px 0; font-weight: 550; }
+.download-issue-list { list-style: none; padding: 0; margin: 0; }
+.download-issue-list > li { padding: 16px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.download-issue-path, .download-issue-reason { overflow-wrap: anywhere; white-space: normal; margin: 0 0 8px; }
+.download-issue-path { font-weight: 550; }
+.download-issue-list .cloud-hint { margin: 0 0 8px; }

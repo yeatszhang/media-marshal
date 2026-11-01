@@ -11,9 +11,10 @@ const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const stamp = "2026-10-20T01:00:00.000Z";
 const oldTables = ["desktop_source", "ingestion_source", "media_task", "ingestion_candidate", "ingestion_operation", "cloud_account", "cloud_subscription", "cloud_subscription_runtime", "cloud_scan", "download_job", "download_job_item", "download_item", "managed_download_root", "media_target_root"];
-// 比较 v8 已存在的事实；v16 新增的属性键与当前版本列由独立迁移测试核对。
+// 只比较 v8 已存在的事实；后续新增的候选属性和提交失败原因不属于旧版本快照。
 const candidateColumns = "id,source_id,relative_json,version_key,snapshot_json,expected_sha256,managed_item_id,managed_version_key,state,task_id,reason,created_at,updated_at";
-const snapshot = (db: CoreDatabase) => Object.fromEntries(oldTables.map((table) => [table, db.connection.prepare(`SELECT ${table === "ingestion_candidate" ? candidateColumns : "*"} FROM ${table} ORDER BY rowid`).all()]));
+const downloadColumns = "id,account_id,remote_ref,version_key,version_json,request_variant,target_root_id,target_path_key,target_segments_json,expected_size,state,local_sha256,completed_size,failure_code,created_at,updated_at";
+const snapshot = (db: CoreDatabase) => Object.fromEntries(oldTables.map((table) => [table, db.connection.prepare(`SELECT ${table === "ingestion_candidate" ? candidateColumns : table === "download_item" ? downloadColumns : "*"} FROM ${table} ORDER BY rowid`).all()]));
 async function oldFixture(options: { unconfirmed?: boolean; shared?: boolean; orphan?: boolean; oldJobVersion?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "marshal-来源迁移-")); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "desktop.sqlite3"), db = await CoreDatabase.open(path, migrations.slice(0, 8));
@@ -67,6 +68,7 @@ describe("旧来源、订阅和共享需求的有序迁移", () => {
   it("保留稳定 ID、路径、暂停、过滤、周期和全部旧表；迁移不创建扫描或作业", async () => {
     const f = await oldFixture(), db = await upgraded(f.path);
     expect(snapshot(db)).toEqual(f.before);
+    expect(db.connection.prepare("SELECT count(*) AS n FROM download_item WHERE failure_detail_code IS NOT NULL").get()).toEqual({ n: 0 });
     const rows = db.connection.prepare("SELECT * FROM source_rule ORDER BY type").all() as { id: string; type: string; version: number; paused: number; draft_json: string; subscription_id: string | null; local_source_id: string | null; ingestion_source_id: string | null }[];
     expect(rows).toHaveLength(2); expect(rows.find((row) => row.type === "local")).toMatchObject({ id: f.ids.local, version: 4, paused: 1, local_source_id: f.ids.local });
     const cloud = rows.find((row) => row.type === "cloud")!;

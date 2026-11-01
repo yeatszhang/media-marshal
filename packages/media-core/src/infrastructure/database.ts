@@ -30,6 +30,7 @@ import { independentRecognitionMigrationSql, migrateIndependentRecognition } fro
 import { independentSyncMigrationSql, migrateIndependentSync } from "./independent-sync-migration.js";
 import { syncReceiptMigrationSql, migrateSyncReceiptEvidence } from "./sync-receipt-migration.js";
 import { syncHistoryMigrationSql, migrateSyncHistory } from "./sync-history-migration.js";
+import { downloadCleanupMigrationSql } from "./download-cleanup-migration.js";
 
 import { CORE_DATA_SCHEMA_VERSION } from "@media-marshal/contracts/internal/core";
 export const SCHEMA_VERSION = CORE_DATA_SCHEMA_VERSION;
@@ -100,6 +101,8 @@ export const migrations: readonly Migration[] = [
   { version: 31, sql: embyBindingMigrationSql },
   { version: 32, sql: independentSyncMigrationSql, apply: migrateIndependentSync },
   { version: 33, sql: independentRecognitionMigrationSql, apply: migrateIndependentRecognition, rebuildsReferencedTables: true },
+  { version: 34, sql: downloadCleanupMigrationSql },
+  { version: 35, sql: "ALTER TABLE download_item ADD COLUMN failure_detail_code TEXT CHECK(failure_detail_code IS NULL OR failure_detail_code IN ('TARGET_OCCUPIED','LOCAL_FILE_CHANGED','FILE_EVIDENCE_MISMATCH','LOCAL_FILE_MISSING','RECEIPT_CONFLICT','STOP_UNCONFIRMED'));" },
 ];
 
 export class CoreDatabase {

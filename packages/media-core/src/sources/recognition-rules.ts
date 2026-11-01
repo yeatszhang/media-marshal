@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { DesktopError, recognitionRuleConfigurationSchema, recognitionRuleSchema, recognitionRuleSnapshotSchema, type CoreInput, type CoreOutput, type RecognitionRule, type RecognitionRuleSnapshot } from "@media-marshal/contracts";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { IngestionPipeline } from "../ingestion/pipeline.js";
@@ -15,13 +16,13 @@ const signature = (value: unknown) => createHash("sha256").update(JSON.stringify
 export class RecognitionRules {
   readonly scans: SourceScans;
   private closed = false; private queue: Promise<unknown> = Promise.resolve();
-  constructor(private readonly database: CoreDatabase, readonly directories: ConfigurationDirectories, private readonly ingestion: IngestionPipeline, private readonly now = Date.now, private readonly legacyChanged?: () => void) {
+  constructor(private readonly database: CoreDatabase, readonly directories: ConfigurationDirectories, private readonly ingestion: IngestionPipeline, private readonly now = Date.now, private readonly legacyChanged?: () => void, private readonly logger: CoreLogger = silentLogger) {
     this.scans = new SourceScans(database, (id) => {
       const rule = this.get(id), physicalId = rule.runtime?.sourceId;
       if (!rule.runtime?.claimed || !physicalId || rule.deletedAt) throw conflict("识别规则已删除或尚未确认输入，请先核对配置");
       const source = database.connection.prepare("SELECT available,source_version FROM ingestion_source WHERE source_id=?").get(physicalId) as { available: number; source_version: number };
       return { physicalId, name: rule.snapshot!.configuration.name, context: JSON.stringify([id, rule.version, this.runtime(id)?.scan_generation ?? 0, physicalId, source.source_version]), waiting: rule.paused || ingestion.pauseStatus().paused ? "识别规则或全局整理已暂停；恢复后重新补扫，不解除其他暂停" : !source.available ? "等待原输入目录和卷授权恢复" : null };
-    }, (id) => ingestion.scan(id), now, "recognition");
+    }, (id) => ingestion.scan(id), now, "recognition", logger);
   }
   private row(id: string) { return this.database.connection.prepare("SELECT * FROM recognition_rule WHERE id=?").get(id) as Row | undefined; }
   private runtime(id: string) { return this.database.connection.prepare("SELECT * FROM recognition_runtime WHERE rule_id=?").get(id) as { claimed: number; edited: number; scan_generation: number; legacy_fingerprint: string | null; failure: string | null } | undefined; }
@@ -79,7 +80,9 @@ export class RecognitionRules {
     await this.checkSnapshot(snapshot); this.writable(); this.versions(this.row(input.id), input); this.assertLegacy(input.id); if (dependent && this.directories.defaults().version !== snapshot.defaultDirectoryVersion) throw conflict("默认目录已变化，请重新预览");
     const id = randomUUID(); db.transaction(() => { const prior = this.previous<{ id: string }>(input.requestKey, { action: "recognition.preview", input }); if (prior) return;
       db.prepare("INSERT INTO recognition_configuration_preview VALUES(?,?,?,?,?,?,?,?, 'READY',?)").run(id, input.id, input.requestKey, row!.version, row!.draft_revision, row!.lifecycle_revision, JSON.stringify(snapshot), Number(dependent), this.now() + 15 * 60 * 1000); this.receipt(input.requestKey, { action: "recognition.preview", input }, { id }); })();
-    return this.getPreview((this.previous<{ id: string }>(input.requestKey, { action: "recognition.preview", input }))!.id);
+    const result = this.getPreview((this.previous<{ id: string }>(input.requestKey, { action: "recognition.preview", input }))!.id);
+    this.logger.info({ event: "recognition.mapping.preview", ruleId: input.id, previewId: result.id, version: snapshot.ruleVersion, targetCount: snapshot.targets.length }, "识别映射预览已生成");
+    return result;
   }
   getPreview(id: string): CoreOutput<"recognition.get-preview"> {
     const row = this.previewRow(id), current = this.row(row.rule_id), snapshot = recognitionRuleSnapshotSchema.parse(JSON.parse(row.snapshot_json));
@@ -103,8 +106,10 @@ export class RecognitionRules {
         this.retireLegacy(rule.id); prepared.commit(rule.version > 0 && rule.paused);
         db.prepare("UPDATE recognition_configuration_preview SET state=CASE WHEN id=? THEN 'APPLIED' ELSE 'EXPIRED' END WHERE rule_id=? AND state='READY'").run(row.id, rule.id);
         const saved = this.get(rule.id); this.receipt(input.requestKey, command, saved); return saved;
-      })(); await prepared.activate(); this.legacyChanged?.(); return result;
-    } catch (error) { await prepared.close(); throw error; }
+      })(); await prepared.activate(); this.legacyChanged?.();
+      this.logger.info({ event: "recognition.mapping.confirmed", ruleId: rule.id, previewId: row.id, version: result.version, paused: result.paused, targetCount: preview.snapshot.targets.length }, "识别映射已确认生效");
+      return result;
+    } catch (error) { this.logger.warn({ event: "recognition.mapping.failed", ruleId: rule.id, previewId: row.id, error }, "识别映射确认未完成，请核对当前配置"); await prepared.close(); throw error; }
   }
   private retireLegacy(id: string) {
     const db = this.database.connection;
@@ -124,7 +129,9 @@ export class RecognitionRules {
       db.prepare("UPDATE desktop_source SET paused=(SELECT paused FROM recognition_rule WHERE id=?) WHERE id IN (SELECT source_id FROM recognition_input WHERE rule_id=?)").run(rule.id, rule.id);
       if (input.operation === "resume") for (const intent of db.prepare("SELECT id FROM ingestion_automatic WHERE source_id=? AND state IN ('PREVIEWING','CONFIRMING') AND selection_json IS NOT NULL AND NOT EXISTS(SELECT 1 FROM ingestion_operation o WHERE o.request_key=ingestion_automatic.confirmation_key)").all(rule.id) as { id: string }[]) db.prepare("UPDATE ingestion_automatic SET state='PREVIEWING',preview_id=NULL,preview_key=?,failure=NULL WHERE id=?").run(randomUUID(), intent.id);
       db.prepare("UPDATE recognition_configuration_preview SET state='EXPIRED' WHERE rule_id=? AND state='READY'").run(rule.id); const saved = this.get(rule.id); this.receipt(input.requestKey, command, saved); return saved;
-    })(); this.ingestion.recognitionRuleChanged(rule.id); this.scans.kick(); this.legacyChanged?.(); return result;
+    })(); this.ingestion.recognitionRuleChanged(rule.id); this.scans.kick(); this.legacyChanged?.();
+    this.logger.info({ event: "recognition.mapping.controlled", ruleId: rule.id, version: result.version, operation: input.operation, paused: result.paused }, "识别映射状态已更新");
+    return result;
   }
   scan(input: CoreInput<"recognition.scan">): CoreOutput<"recognition.scan"> {
     this.writable(); this.versions(this.row(input.id), input); const rule = this.get(input.id); if (!rule.runtime?.claimed || !rule.runtime.sourceId || rule.deletedAt || rule.paused) throw conflict("请先确认识别配置并恢复此规则后补扫");

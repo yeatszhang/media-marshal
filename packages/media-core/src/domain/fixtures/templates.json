@@ -1,5 +1,5 @@
 {
-  "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java",
+  "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java",
   "cases": [
     {
       "id": "optionalSegmentIsKeptWhenAllVariablesArePresent",
@@ -11,7 +11,7 @@
         "ext": ".mkv"
       },
       "expected": "影片名 (2026) - 2160p.mkv",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsKeptWhenAllVariablesArePresent"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsKeptWhenAllVariablesArePresent"
     },
     {
       "id": "optionalSegmentIsRemovedWhenVariableIsMissing",
@@ -22,7 +22,7 @@
         "ext": ".mkv"
       },
       "expected": "影片名 (2026).mkv",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenVariableIsMissing"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenVariableIsMissing"
     },
     {
       "id": "optionalSegmentIsRemovedWhenAnyVariableIsMissing",
@@ -34,7 +34,7 @@
         "ext": ".mkv"
       },
       "expected": "影片名 (2026).mkv",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenAnyVariableIsMissing"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenAnyVariableIsMissing"
     },
     {
       "id": "missingVariableOutsideOptionalSegmentKeepsPlaceholder",
@@ -45,7 +45,7 @@
         "ext": ".mkv"
       },
       "expected": "影片名 (2026) - {resolution}.mkv",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#missingVariableOutsideOptionalSegmentKeepsPlaceholder"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#missingVariableOutsideOptionalSegmentKeepsPlaceholder"
     },
     {
       "id": "stringVariablesAreSanitizedBeforeRenderingPathSegments",
@@ -56,7 +56,7 @@
         "ext": ".mkv"
       },
       "expected": "Bad_Movie_Name_ - TEAM_A.mkv",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#stringVariablesAreSanitizedBeforeRenderingPathSegments"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#stringVariablesAreSanitizedBeforeRenderingPathSegments"
     },
     {
       "id": "optionalSegmentIsRemovedWhenSanitizedVariableIsBlank",
@@ -67,7 +67,7 @@
         "ext": ".mkv"
       },
       "expected": "Movie.mkv",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenSanitizedVariableIsBlank"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#optionalSegmentIsRemovedWhenSanitizedVariableIsBlank"
     },
     {
       "id": "emptyExtRendersAsEmptyString",
@@ -77,7 +77,7 @@
         "ext": ""
       },
       "expected": "Movie",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#emptyExtRendersAsEmptyString"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#emptyExtRendersAsEmptyString"
     },
     {
       "id": "formattedVariablesWorkInsideOptionalSegment",
@@ -89,7 +89,7 @@
         "ext": ".mkv"
       },
       "expected": "剧名 - S03E07.mkv",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#formattedVariablesWorkInsideOptionalSegment"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#formattedVariablesWorkInsideOptionalSegment"
     },
     {
       "id": "placeholderParametersRenderAffixesForSingleValues",
@@ -99,7 +99,7 @@
         "episode": 16
       },
       "expected": "S01E16",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParametersRenderAffixesForSingleValues"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParametersRenderAffixesForSingleValues"
     },
     {
       "id": "placeholderParametersRenderAffixesForRanges",
@@ -112,7 +112,7 @@
         }
       },
       "expected": "S01E16-E17",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParametersRenderAffixesForRanges"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParametersRenderAffixesForRanges"
     },
     {
       "id": "rangeRenderingCanSkipRepeatedAffixes",
@@ -124,7 +124,7 @@
         }
       },
       "expected": "E21-28X",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#rangeRenderingCanSkipRepeatedAffixes"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#rangeRenderingCanSkipRepeatedAffixes"
     },
     {
       "id": "rangeRenderingUsesCustomSeparator",
@@ -136,7 +136,7 @@
         }
       },
       "expected": "EP001_EP002",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#rangeRenderingUsesCustomSeparator"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#rangeRenderingUsesCustomSeparator"
     },
     {
       "id": "placeholderParameterValuesAreSanitized",
@@ -148,7 +148,7 @@
         }
       },
       "expected": "E_01_X_E_02_X",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParameterValuesAreSanitized"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#placeholderParameterValuesAreSanitized"
     },
     {
       "id": "parameterizedPlaceholderWorksInsideOptionalSegment",
@@ -163,7 +163,7 @@
         "ext": ".mkv"
       },
       "expected": "Friends - S01E16-E17.mkv",
-      "source": "backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#parameterizedPlaceholderWorksInsideOptionalSegment"
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/rename/TemplateRendererTest.java#parameterizedPlaceholderWorksInsideOptionalSegment"
     }
   ]
 }

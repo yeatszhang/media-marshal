@@ -1,5 +1,5 @@
 import { inject, injectable, StatefulService } from "@yeatz/app-framework/ioc";
-import type { CoreOutput, DesktopApi, SourceScan } from "@media-marshal/contracts";
+import type { CoreOutput, DesktopApi, SourceScan, RecognitionRule } from "@media-marshal/contracts";
 import { DesktopClient } from "./desktop-client";
 interface ScanState { items: SourceScan[]; total: number; page: number; pending: boolean; error: string | null; queryError: string | null; detail: (CoreOutput<"ingestion.scan-job"> & { page: number }) | null }
 @injectable()
@@ -19,12 +19,17 @@ export class SourceScansViewModel extends StatefulService<ScanState> {
     try { const [result, current] = await Promise.all([this.client.listIngestionScans({ page }), detail ? this.client.getIngestionScan({ id: detail.job.id, page: detail.page }) : Promise.resolve(null)]); if (!this.stopped && this.watchers && request === this.request) this.setState({ ...result, ...(current && detail ? { detail: { ...current, page: detail.page } } : {}), queryError: null }); }
     catch (error) { if (!this.stopped && this.watchers && request === this.request) this.setState({ queryError: error instanceof Error ? error.message : "目录扫描记录读取失败，请刷新重试" }); }
   }
-  async start(sourceId: string) {
+  start(sourceId: string) { return this.enqueue("legacy:" + sourceId, (requestKey) => this.client.scanIngestion(sourceId, requestKey)); }
+  startRecognition(rule: RecognitionRule) {
+    const input = { id: rule.id, expectedVersion: rule.version, expectedDraftRevision: rule.draftRevision, expectedLifecycleRevision: rule.lifecycleRevision };
+    return this.enqueue("recognition:" + JSON.stringify(input), (requestKey) => this.client.scanRecognitionRule({ ...input, requestKey }));
+  }
+  private async enqueue(signature: string, submit: (requestKey: string) => Promise<SourceScan>) {
     if (this.stopped || !this.watchers || this.state.pending) return;
     const operation = ++this.operation; this.setState({ pending: true, error: null });
-    let key = this.starts.get(sourceId); if (!key) { key = crypto.randomUUID(); this.starts.set(sourceId, key); }
-    try { await this.client.scanIngestion(sourceId, key); if (this.starts.get(sourceId) === key) this.starts.delete(sourceId); if (!this.stopped && operation === this.operation) await this.refresh(1); }
-    catch (error) { if (!this.stopped && operation === this.operation) this.setState({ error: error instanceof Error ? error.message : "目录扫描未能提交，请查询记录后重试" }); }
+    let key = this.starts.get(signature); if (!key) { key = crypto.randomUUID(); this.starts.set(signature, key); }
+    try { await submit(key); if (this.starts.get(signature) === key) this.starts.delete(signature); if (!this.stopped && operation === this.operation) await this.refresh(1); }
+    catch (error) { if (error && typeof error === "object" && "code" in error && error.code === "CONFLICT") this.starts.delete(signature); if (!this.stopped && operation === this.operation) this.setState({ error: error instanceof Error ? error.message : "目录扫描未能提交，请查询记录后重试" }); }
     finally { if (!this.stopped && operation === this.operation) this.setState({ pending: false }); }
   }
   inspect(id: string, page = 1) { ++this.request; const job = this.state.items.find((value) => value.id === id) ?? this.state.detail?.job; if (!job || job.id !== id) return; this.setState({ detail: { job, issues: [], total: 0, page } }); return this.refresh(); }

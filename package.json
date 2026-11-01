@@ -12,6 +12,9 @@
   ],
   "scripts": {
     "desktop:dev": "npm run dev -w @media-marshal/desktop",
+    "desktop:dev:debug": "node scripts/desktop-debug.mjs",
+    "desktop:logs": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning --experimental-strip-types scripts/desktop-logs.mjs",
+    "test:desktop:logs": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning --experimental-strip-types --test scripts/desktop-logs.test.mjs",
     "desktop:build": "npm run build -w @media-marshal/contracts && npm run build -w @media-marshal/media-core && npm run desktop:prepare-parser && npm run desktop:prepare-native-files && npm run build -w @media-marshal/desktop",
     "desktop:prepare-native-files": "node tools/desktop-files/prepare.mjs",
     "desktop:prepare-parser": "node tools/desktop-parser/prepare.mjs",

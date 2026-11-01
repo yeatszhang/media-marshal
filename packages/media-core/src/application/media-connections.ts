@@ -1,5 +1,5 @@
 import { createIdentifier } from "@yeatz/app-framework/ioc";
-import type { SettingsDraft } from "@media-marshal/contracts";
+import { recognitionSettingsSchema, type SettingsDraft } from "@media-marshal/contracts";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import { TmdbClient, type TmdbOptions } from "../infrastructure/tmdb.js";
 import { MediaNetworkError } from "../infrastructure/json-http.js";
@@ -14,6 +14,7 @@ export class MediaConnections {
   private injected = false;
   constructor(private readonly database: CoreDatabase, private readonly settings: () => SettingsDraft, private readonly testTmdb: Pick<TmdbOptions, "baseUrl" | "timeoutMs"> = {}) {}
   get version() { return this.revision; }
+  get recognitionSettings() { return recognitionSettingsSchema.parse(this.settings().recognition ?? {}); }
   get installed() { return this.injected && !this.stopped; }
   get tmdb() { if (this.stopped) throw new MediaNetworkError("INTERRUPTED"); if (!this.client) this.reconfigure(); return this.client!; }
   get embyKey() { return this.stopped ? null : this.secrets.emby; }

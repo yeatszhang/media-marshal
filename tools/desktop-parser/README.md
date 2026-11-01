@@ -17,4 +17,8 @@ python smoke.py
 
 Core 已通过有界、串行、带 requestId 的管道接入；超时、输出过长、错误关联及非法结构会停止旧解析器，最多自动恢复三次。实际冻结文件逐个核验，额外代码、越界链接和错误架构均拒绝。Core 失效时由 stdin EOF 和 POSIX 父进程监测收敛生命周期，Main 强杀的真实窗口测试验证 Core 与解析器都退出。当前新接线仅完成 Mac arm64 开发态验证，其他架构和包含解析器的新安装包需要分别验收；0.2.1 下载补丁包不包含本节后续新增能力。
 
+`--codex-stdio` 使用独立进程加载迁入的 `codex_recognition.py`，先接收 Core 的 `initialize` 配置，再接收 `recognize`、`recognize-cluster`、`recognize-directory` 或 `usage`。它复用旧引擎的缓存和每日预算，通过本机 Codex CLI 返回作品建议；普通 `parse` 进程保持离线。冻结资源摘要包含两个 Codex 模块，安装端不需要系统 Python。Core 取消、超时或 POSIX 父进程消失时终止所属 CLI 进程组；测试不调用真实账号。
+
+旧桥接的全部 30 项回归原样迁入 `tests/test_codex_recognition.py`，测试模块仅调整被测引擎路径；HTTP 兼容协议留在引擎回归中，桌面生产不启动 HTTP 监听。新增 `tests/test_codex_stdio.py` 验证初始化、预算恢复、缺少 CLI 的错误与停止清理，可通过 `PARSER_EXECUTABLE` 对同一冻结产物复验。
+
 顶层依赖维护在 `requirements*.in`，带校验值的跨平台锁定清单由 `uv pip compile --universal --python-version 3.11 --generate-hashes requirements-build.in -o requirements-build.txt` 生成。当前没有 Developer ID/公证，仍不是正式发行。

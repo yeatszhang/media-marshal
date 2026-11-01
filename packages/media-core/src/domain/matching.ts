@@ -1,12 +1,12 @@
 import { RecognitionError, type ParsedMedia } from "./media.js";
-import type { EpisodeCheck } from "@media-marshal/contracts";
+import type { EpisodeCheck, CodexEvidence } from "@media-marshal/contracts";
 
 export type QueryType = "LOCALIZED" | "ORIGINAL" | "COMBINED" | "GUESSIT";
 export interface TitleQuery { query: string; type: QueryType; weight: number }
 export interface SearchPlan { originalFilename: string; guessitTitle: string | null; titleRegion: string | null; queries: TitleQuery[] }
 export interface MetadataWork { tmdbId: number; mediaType: "MOVIE" | "TV_SHOW"; title: string; originalTitle: string | null; year: number | null; overview?: string; genres?: string[]; country?: string | null }
 export interface MatchScore { confidence: number; bestQuery: string | null; queryType: QueryType | null; titleScore: number; yearScore: number; mediaTypeScore: number; structureBonus: number }
-export interface MediaMatch extends MetadataWork { score: MatchScore; evidence: "filename" | "parent" | "both" | "manual"; filenameConfidence?: number; parentConfidence?: number; parentOnlyCapped?: boolean; episodeCheck?: EpisodeCheck }
+export interface MediaMatch extends MetadataWork { score: MatchScore; evidence: "filename" | "parent" | "both" | "manual" | "codex"; codex?: CodexEvidence; filenameConfidence?: number; parentConfidence?: number; parentOnlyCapped?: boolean; episodeCheck?: EpisodeCheck }
 const hasHan = (value: string) => /\p{Script=Han}/u.test(value), hasAscii = (value: string | null) => /[A-Za-z]/.test(value ?? "");
 const normalize = (value: string | null | undefined): string | null => value?.replace(/[._]+/g, " ").replace(/[\[\]【】()（）]/g, " ").replace(/\s+/g, " ").trim() || null;
 const trim = (value: string) => value.replace(/^[\s._-]+|[\s._-]+$/g, "");
@@ -83,11 +83,11 @@ export function parentContext(folder: string, parsed: ParsedMedia): { folderName
   return { folderName: folder, titleRegion: region };
 }
 /** 父目录不独自授权自动整理；原实现仅同 ID 即加分的宽松行为由新规格收紧。 */
-export function mergeParentEvidence(filename: readonly MediaMatch[], parent: readonly MediaMatch[], threshold = 0.8): MediaMatch[] {
+export function mergeParentEvidence(filename: readonly MediaMatch[], parent: readonly MediaMatch[], threshold = 0.8, parentCap = 0.75, mutualBoost = 0.05): MediaMatch[] {
   const key = (value: MetadataWork) => `${value.mediaType}:${value.tmdbId}`, merged = new Map(filename.map((value) => [key(value), value]));
   for (const candidate of parent) {
     const old = merged.get(key(candidate)), supporting = !!old && old.score.confidence >= 0.6 && candidate.score.confidence >= 0.6;
-    const score = supporting ? Math.min(1, Math.max(old.score.confidence, candidate.score.confidence) + 0.05) : Math.max(old?.score.confidence ?? 0, Math.min(candidate.score.confidence, 0.75, Math.max(0, threshold - 0.01)));
+    const score = supporting ? Math.min(1, Math.max(old.score.confidence, candidate.score.confidence) + mutualBoost) : Math.max(old?.score.confidence ?? 0, Math.min(candidate.score.confidence, parentCap, Math.max(0, threshold - 0.01)));
     const source = old && old.score.confidence > candidate.score.confidence ? old : candidate;
     merged.set(key(candidate), { ...source, score: { ...source.score, confidence: score }, evidence: old ? "both" : "parent", filenameConfidence: old?.filenameConfidence ?? old?.score.confidence, parentConfidence: candidate.score.confidence, parentOnlyCapped: !supporting });
   }

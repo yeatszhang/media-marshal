@@ -8,3 +8,4 @@ export {
 } from "./infrastructure/database.js";
 
 export type { ManagedIngestionSink } from "./cloud/outbox.js";
+export type { CoreLogger } from "./application/logger.js";

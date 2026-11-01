@@ -1,0 +1,20 @@
+.codex-actions { display: grid; gap: 6px; margin-block: 12px; }
+.codex-actions .cloud-hint { margin: 0; max-width: 76ch; }
+.codex-history { min-width: 0; }
+.codex-history > details { margin-block: 16px; padding-block: 12px; border-block: 1px solid var(--border); }
+.codex-history summary { cursor: pointer; font-weight: 600; padding-block: 6px; }
+.codex-job { padding-block: 18px; border-bottom: 1px solid var(--border); }
+.codex-job:last-of-type { border-bottom: 0; }
+.codex-job-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.codex-job h3 { margin: 0 0 6px; font-size: 15px; }
+.codex-job p { overflow-wrap: anywhere; }
+.codex-job table { min-width: 620px; width: 100%; text-align: left; border-collapse: collapse; }
+.codex-job th, .codex-job td { padding: 10px 12px; vertical-align: top; border-bottom: 1px solid var(--border); }
+.codex-job th { color: var(--muted-foreground); font-size: 12px; font-weight: 550; }
+.codex-job td:first-child { width: 32%; }
+.codex-job td:last-child { width: 180px; }
+.codex-settings-advanced { padding-block: 14px; }
+.codex-settings-advanced summary { font-weight: 550; cursor: pointer; padding-block: 8px; }
+.codex-settings-advanced .settings-rows { padding-top: 12px; }
+.codex-usage { font-variant-numeric: tabular-nums; }
+.recognition-member-file-meta { display: block; margin-top: 4px; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }

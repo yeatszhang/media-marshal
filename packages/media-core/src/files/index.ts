@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { open, lstat, realpath, mkdir, readFile, writeFile, rm, link, statfs, type FileHandle } from "node:fs/promises";
+import { open, lstat, realpath, mkdir, readFile, writeFile, readdir, rm, rmdir, link, statfs, type FileHandle } from "node:fs/promises";
 import type { NativeFileSnapshot, NativeRenameApi } from "./native-rename.js";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { CloudError, type VersionEvidence } from "@media-marshal/contracts";
@@ -68,13 +68,18 @@ export class ManagedRoot {
     }
     for (const item of items) for (let length = 1; length < item.length; length++) if (keys.has(this.slotKey(item.slice(0, length)))) throw new CloudError("CONFLICT");
   }
+  private async matchesRealPath(path: string) {
+    const resolved = await realpath(path);
+    // HFS+ 会分解假名和重音字符；只在已探测为 Unicode 等价的卷上接受这种表示差异。
+    return this.grant.volume.unicodeEquivalent ? resolved.normalize("NFC") === path.normalize("NFC") : resolved === path;
+  }
   private async directory(parts: readonly string[], create: boolean) {
     await this.check(); let path = this.grant.path;
     for (const part of parts) {
       path = join(path, part);
       if (create) await mkdir(path, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error; });
       const info = await lstat(path, { bigint: true });
-      if (!info.isDirectory() || info.isSymbolicLink() || String(info.dev) !== this.grant.volume.observedDevice || await realpath(path) !== path) throw new CloudError("LOCAL_UNAVAILABLE");
+      if (!info.isDirectory() || info.isSymbolicLink() || String(info.dev) !== this.grant.volume.observedDevice || !await this.matchesRealPath(path)) throw new CloudError("LOCAL_UNAVAILABLE");
     }
     await this.check(); return path;
   }
@@ -140,10 +145,10 @@ export class ManagedRoot {
       progress?.(0, Number(before.size));
       for (;;) { if (signal?.aborted) throw new CloudError("INTERRUPTED"); const { bytesRead } = await handle.read(buffer, 0, buffer.length, position); if (!bytesRead) break; digest.update(buffer.subarray(0, bytesRead)); upstream?.update(buffer.subarray(0, bytesRead)); position += bytesRead; progress?.(position, Number(before.size)); }
       const after = await handle.stat({ bigint: true });
-      if (before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(position) !== after.size) throw new CloudError("CONFLICT");
+      if (before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(position) !== after.size) throw new CloudError("LOCAL_FILE_CHANGED");
       if (remoteHash && upstream!.digest("hex") !== remoteHash.value) throw new CloudError("REMOTE_CHANGED");
       const current = await lstat(path, { bigint: true });
-      if (!current.isFile() || current.isSymbolicLink() || current.dev !== after.dev || current.ino !== after.ino || current.birthtimeNs !== after.birthtimeNs || current.size !== after.size || current.mtimeNs !== after.mtimeNs || current.ctimeNs !== after.ctimeNs || await realpath(path) !== path) throw new CloudError("CONFLICT");
+      if (!current.isFile() || current.isSymbolicLink() || current.dev !== after.dev || current.ino !== after.ino || current.birthtimeNs !== after.birthtimeNs || current.size !== after.size || current.mtimeNs !== after.mtimeNs || current.ctimeNs !== after.ctimeNs || !await this.matchesRealPath(path)) throw new CloudError("LOCAL_FILE_CHANGED");
       await handle.sync();
       await this.check(); return { evidence: this.evidence(after, digest.digest("hex")), snapshot: { dev: after.dev, ino: after.ino, size: after.size, birthtimeNs: after.birthtimeNs, mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs } };
     } finally { await handle.close(); }
@@ -202,7 +207,7 @@ export class ManagedRoot {
   async assertVacant(segments: readonly string[]) {
     try { await lstat(await this.filePath("completed", segments)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-    throw new CloudError("CONFLICT");
+    throw new CloudError("TARGET_OCCUPIED");
   }
   completedDirectory() { return this.directory(this.layout === "completed" ? ["completed"] : [], false); }
   stageFilePath(attemptId: string, segments: readonly string[]) { return this.filePath("staging", segments, attemptId, true); }
@@ -210,19 +215,20 @@ export class ManagedRoot {
     const target = await this.filePath("completed", segments, undefined, true);
     try {
       const metadata = await lstat(target, { bigint: true });
-      if (!metadata.isFile() || metadata.isSymbolicLink() || String(metadata.dev) !== this.grant.volume.observedDevice || String(metadata.ino) !== expected.inode || String(metadata.birthtimeNs) !== expected.birthtimeNs || String(metadata.mtimeNs) !== expected.modifiedNs || Number(metadata.size) !== expected.size) throw new CloudError("CONFLICT");
+      if (!metadata.isFile() || metadata.isSymbolicLink() || String(metadata.dev) !== this.grant.volume.observedDevice || String(metadata.ino) !== expected.inode || String(metadata.birthtimeNs) !== expected.birthtimeNs) throw new CloudError("TARGET_OCCUPIED");
+      if (String(metadata.mtimeNs) !== expected.modifiedNs || Number(metadata.size) !== expected.size) throw new CloudError("FILE_EVIDENCE_MISMATCH");
       const existing = await this.hash(target);
-      if (!fingerprint(existing, expected)) throw new CloudError("CONFLICT");
+      if (!fingerprint(existing, expected)) throw new CloudError("FILE_EVIDENCE_MISMATCH");
       return { path: target, evidence: existing, alreadyCommitted: true };
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     const source = await this.filePath("staging", segments, attemptId), verified = await this.hash(source);
-    if (!fingerprint(verified, expected)) throw new CloudError("CONFLICT");
+    if (!fingerprint(verified, expected)) throw new CloudError("FILE_EVIDENCE_MISMATCH");
     await this.filePath("completed", segments, undefined, false); await this.check();
     try { await link(source, target); }
-    catch (error) { throw new CloudError((error as NodeJS.ErrnoException).code === "EEXIST" ? "CONFLICT" : "LOCAL_UNAVAILABLE"); }
+    catch (error) { throw new CloudError((error as NodeJS.ErrnoException).code === "EEXIST" ? "TARGET_OCCUPIED" : "LOCAL_UNAVAILABLE"); }
     await this.syncDirectory(join(target, ".."));
     const result = await this.hash(target);
-    if (!fingerprint(result, expected)) throw new CloudError("CONFLICT");
+    if (!fingerprint(result, expected)) throw new CloudError("FILE_EVIDENCE_MISMATCH");
     return { path: target, evidence: result, alreadyCommitted: false };
   }
   async cleanupAttempt(attemptId: string) {
@@ -232,6 +238,30 @@ export class ManagedRoot {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     await this.check(); if (directory) await rm(directory, { recursive: true, force: false });
     await rm(join(this.grant.path, ".media-marshal", "attempts", attemptId + ".json"));
+  }
+  /** 统计带本作业标记的暂存字节，不遍历未知缓存或符号链接。 */
+  async ownedAttemptBytes(attemptId: string) {
+    await this.marker(attemptId); const pending = [[".media-marshal", "staging", this.attempt(attemptId)]];
+    let bytes = 0, entries = 0;
+    while (pending.length) {
+      const parts = pending.shift()!, path = await this.directory(parts, false);
+      for (const entry of await readdir(path, { withFileTypes: true })) {
+        if (++entries > 10000) throw new CloudError("CONFLICT");
+        const info = await lstat(join(path, entry.name), { bigint: true });
+        if (info.isSymbolicLink() || String(info.dev) !== this.grant.volume.observedDevice) throw new CloudError("CONFLICT");
+        if (info.isDirectory()) pending.push([...parts, entry.name]); else if (info.isFile()) bytes += Number(info.size); else throw new CloudError("CONFLICT");
+        if (!Number.isSafeInteger(bytes)) throw new CloudError("CONFLICT");
+      }
+    }
+    await this.marker(attemptId); await this.check(); return bytes;
+  }
+  /** 只移除已清理原件的空父目录，绝不递归删除、移除完成区根或跨越原卷。 */
+  async cleanupEmptyCompletedParents(parts: readonly string[]) {
+    this.segments(parts); if (parts[0] !== "completed") throw new CloudError("INVALID_REQUEST");
+    for (let length = parts.length - 1; length > 1; length--) {
+      try { const path = await this.directory(parts.slice(0, length), false); await this.check(); await rmdir(path); await this.syncDirectory(join(path, "..")); }
+      catch (error) { if (["ENOENT", "ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) return; throw error; }
+    }
   }
   async close() { if (!this.closed) { this.closed = true; await this.handle.close(); } }
 }

@@ -48,10 +48,17 @@ import { defaultDiagnostic } from "./cloud/diagnostics";
 import { CloudAccountController } from "./cloud/accounts";
 import { QuarkLoginController } from "./cloud/quark-login";
 import { DownloadRootController } from "./cloud/roots";
+import { ConfigurationDirectoryController } from "./configuration-directories";
 import { cloudCredentialDraftSchema } from "@media-marshal/contracts";
 import { parserLaunchSchema } from "@media-marshal/contracts/internal";
 import { createHash } from "node:crypto";
 import { probeManagedVolume, probeReadOnlyVolume } from "./cloud/volume-probe";
+import { configureMainLogging } from "../logging/main";
+import { getLogger } from "../logging/node";
+import { createLogReceiver } from "../logging/receiver";
+import { logLevel } from "../logging/shared";
+
+let logging: Awaited<ReturnType<typeof configureMainLogging>> | undefined;
 
 async function installServiceCredentials(supervisor: CoreSupervisor, vault: Credentials) {
   const { values, unavailable } = await vault.readServices();
@@ -74,9 +81,23 @@ windowPresentation.prepare(app);
 windowPresentation.guardNativeUi(dialog, shell);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
-else void app.whenReady().then(bootstrap);
+else void app.whenReady().then(bootstrap).catch(async (error) => {
+  getLogger("main").fatal({ error }, "客户端初始化异常，无法继续启动");
+  dialog.showErrorBox("客户端启动失败", "无法初始化客户端，请检查本地日志并重新启动。");
+  await logging?.close();
+  app.exit(1);
+});
 
 async function bootstrap() {
+  const level = logLevel(process.env.MARSHAL_LOG_LEVEL, app.isPackaged ? "info" : "debug");
+  process.env.MARSHAL_LOG_LEVEL = level;
+  logging = await configureMainLogging(join(app.getPath("userData"), "logs"), { level, onFailure: () => {
+    dialog.showErrorBox("本地日志不可用", "无法完整保存本地日志，请检查应用数据目录权限和磁盘空间。控制台日志仍可用。");
+  } });
+  const log = getLogger("main");
+  log.info({ event: "app.start" }, "客户端正在启动");
+  log.info(`日志文件：${logging.path}；日志级别：${level}`);
+  process.on("uncaughtExceptionMonitor", (error) => log.fatal({ error }, "主进程发生未捕获异常"));
   const coreToken = createIdentifier<CoreSupervisor>("desktop.core");
   const credentialToken = createIdentifier<Credentials>("desktop.credentials");
   const sidecarToken = createIdentifier<SidecarSupervisor>("desktop.sidecars");
@@ -84,6 +105,7 @@ async function bootstrap() {
   const cloudAccountsToken = createIdentifier<CloudAccountController>("desktop.cloud-accounts");
   const quarkLoginToken = createIdentifier<QuarkLoginController>("desktop.quark-login");
   const downloadRootsToken = createIdentifier<DownloadRootController>("desktop.download-roots");
+  const configurationDirectoriesToken = createIdentifier<ConfigurationDirectoryController>("desktop.configuration-directories");
   const developmentUrl = !app.isPackaged
     ? process.env.ELECTRON_RENDERER_URL
     : undefined;
@@ -161,6 +183,16 @@ async function bootstrap() {
       },
     });
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    const rendererLogs = createLogReceiver(getLogger("renderer"), "renderer");
+    window.webContents.on("console-message", (details) => {
+      if (details.frame !== window?.webContents.mainFrame) return;
+      try { requireTrustedRequest({}, details.frame.url, true, developmentUrl); }
+      catch { return; }
+      rendererLogs.renderer(details.message);
+    });
+    window.webContents.on("render-process-gone", (_event, details) => {
+      log.error({ event: "renderer.exit", reason: details.reason, exitCode: details.exitCode }, "界面进程已退出");
+    });
     rendererReload = new RendererReloadController(window.webContents, ipcMain, () => !exiting && !maintenance, developmentUrl);
     window.webContents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown" || input.isComposing || input.alt) return;
@@ -285,16 +317,15 @@ async function bootstrap() {
       const quarkLogin = new QuarkLoginController((input) => accounts.authorize(input), (requestKey) => supervisor.request("cloud.authorizations.get", { requestKey }));
       ctx.container.bind(quarkLoginToken).toConstantValue(quarkLogin);
       ctx.container.bind(downloadRootsToken).toConstantValue(roots);
+      const directories = new ConfigurationDirectoryController(supervisor, roots);
+      ctx.container.bind(configurationDirectoriesToken).toConstantValue(directories);
       let recovering: Promise<void> | undefined, recoverAgain = false;
       const recover = (fresh = false): Promise<void> => {
         if (recovering) { if (fresh) recoverAgain = true; return recovering; }
         return recovering = (async () => {
         if (exiting || supervisor.state !== "ready") return;
         await roots.restore();
-        for (const previous of await supervisor.requestPrivate("configuration.bootstrap", {})) {
-          try { const path = await roots.validateDirectory(previous.grant.path), grant = await (previous.kind === "ordinary" ? probeReadOnlyVolume(path, previous.grant.id) : probeManagedVolume(path, previous.grant.id)); await supervisor.requestPrivate("configuration.authorize", { kind: previous.kind, grant }); }
-          catch { /* 保留原目录身份和不可用状态，等待用户恢复原磁盘。 */ }
-        }
+        await directories.restore();
         for (const previous of await supervisor.requestPrivate("media.targets.bootstrap", {})) {
           try { const target = await probeManagedVolume(await roots.validateDirectory(previous.path), previous.id); await supervisor.requestPrivate("media.targets.authorize", target); }
           catch { /* 每个媒体目标独立恢复；单个目标缺盘不阻断同下载根的其他策略。 */ }
@@ -384,6 +415,7 @@ async function bootstrap() {
       const supervisor = ctx.get(coreToken),
         vault = ctx.get(credentialToken);
       ipcMain.handle(DESKTOP_CHANNEL, async (event, value: unknown) => {
+        let loggedAction: string | undefined;
         try {
           if (maintenance || exiting) throw new DesktopError("INTERRUPTED", "正在停止客户端，请等待操作完成");
           requireTrustedRequest(
@@ -413,6 +445,7 @@ async function bootstrap() {
               "页面与应用版本不一致，请重新打开窗口",
             );
           const action = value.action;
+          if (Object.hasOwn(nativeActions, action) || Object.hasOwn(coreActions, action)) loggedAction = action;
           if (Object.prototype.hasOwnProperty.call(nativeActions, action)) {
             const schema = nativeActions[action as keyof typeof nativeActions];
             const parsed = schema.safeParse(value.payload);
@@ -546,6 +579,15 @@ async function bootstrap() {
           }
           const request = parseCoreRequest({ ...value, kind: "request" });
           if (["sources.save", "sources.pause", "cloud.subscriptions.configure", "cloud.subscriptions.control", "cloud.downloads.preview", "cloud.downloads.confirm"].includes(request.action)) throw new DesktopError("CONFLICT", "该配置入口已并入来源配置，请重新预览确认或使用来源控制");
+          if (request.action === "sync.preview") {
+            const input = coreActions["sync.preview"].input.parse(request.payload);
+            try { return { ok: true, result: await supervisor.request("sync.preview", input) }; }
+            catch (error) {
+              if (publicError(error).code !== "LOCAL_UNAVAILABLE" || !await ctx.get(configurationDirectoriesToken).prepareSyncPreview(input)) throw error;
+            }
+            // 仅在所需原目录成功恢复后重试一次，沿用幂等键；已生成的预览直接返回。
+            return { ok: true, result: await supervisor.request("sync.preview", input) };
+          }
           if (request.action === "source-rules.apply") {
             const input = coreActions["source-rules.apply"].input.parse(request.payload);
             const preview = await supervisor.request("source-rules.get-preview", { id: input.previewId });
@@ -586,6 +628,7 @@ async function bootstrap() {
             ),
           };
         } catch (error) {
+          log.warn({ action: loggedAction, error, code: publicError(error).code }, "桌面请求未完成");
           return { ok: false, error: publicError(error) };
         }
       });
@@ -723,12 +766,15 @@ async function bootstrap() {
           Promise.resolve().then(() => desktop.container.isBound(coreToken) ? desktop.container.get(coreToken).stop() : undefined),
         ]);
       } finally {
-        await desktop.stop().catch(() => {});
+        await desktop.stop().catch((error) => log.error({ error }, "客户端资源清理未完成"));
+        log.info({ event: "app.stopped" }, "客户端已停止");
+        await logging?.close();
         app.quit();
       }
     })().catch(() => app.quit());
   });
-  await desktop.start().catch(async () => {
+  await desktop.start().catch(async (error) => {
+    log.error({ event: "app.start.failed", error }, "客户端启动失败");
     await desktop.stop().catch(() => {});
     if (exiting) return;
     dialog.showErrorBox(
@@ -736,6 +782,7 @@ async function bootstrap() {
       "无法初始化客户端，请重新启动或检查安装包。",
     );
     exiting = true;
+    await logging?.close();
     app.quit();
   });
 }

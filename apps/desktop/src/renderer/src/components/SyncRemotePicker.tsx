@@ -6,10 +6,26 @@ import { Button } from "./ui/button";
 import { ErrorNotice } from "./shared";
 export function SyncRemotePicker({ account, onClose, onSelect }: { account: CloudAccount; onClose(): void; onSelect(entry: RemoteEntry): void }) {
   const client = useService(DesktopClient), dialog = useRef<HTMLDialogElement>(null), generation = useRef(0), title = useId();
+  const reads = useRef(new Map<string, Promise<RemotePage>>());
   const [trail, setTrail] = useState([{ ref: account.rootRef!, name: "网盘根目录" }]), [page, setPage] = useState<RemotePage>({ items: [], nextCursor: null, complete: false, total: null }), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const current = trail.at(-1)!;
   useEffect(() => { const element = dialog.current!, original = document.activeElement; element.showModal(); return () => { generation.current++; element.close(); requestAnimationFrame(() => { if (original instanceof HTMLElement && original.isConnected) original.focus(); }); }; }, []);
-  const load = async (cursor: string | null = null) => { const token = ++generation.current; setBusy(true); setError(null); try { const result = await client.listRemote({ accountId: account.id, parentRef: current.ref, cursor, pageSize: 50, refresh: !cursor }); if (token === generation.current) setPage((old) => ({ ...result, items: cursor ? [...new Map([...old.items, ...result.items].map((entry) => [entry.ref, entry])).values()] : result.items })); } catch (error) { if (token === generation.current) setError(error instanceof Error ? error.message : "无法读取网盘范围，请检查连接后重试"); } finally { if (token === generation.current) setBusy(false); } };
+  const load = async (cursor: string | null = null) => {
+    const token = ++generation.current, key = JSON.stringify([account.id, account.rootRef, current.ref, cursor]);
+    setBusy(true); setError(null);
+    try {
+      // StrictMode 重建读取订阅时复用在途请求，避免第二次读取被 Core 判为同目录并发冲突。
+      let pending = reads.current.get(key);
+      if (!pending) {
+        pending = client.listRemote({ accountId: account.id, parentRef: current.ref, cursor, pageSize: 50, refresh: !cursor }).finally(() => { reads.current.delete(key); });
+        reads.current.set(key, pending);
+      }
+      const result = await pending;
+      if (token === generation.current) setPage((old) => ({ ...result, items: cursor ? [...new Map([...old.items, ...result.items].map((entry) => [entry.ref, entry])).values()] : result.items }));
+    } catch (error) {
+      if (token === generation.current) setError(`读取账号「${account.name}」的目录「${current.name}」失败：${error instanceof Error ? error.message : "暂时无法读取网盘范围"}。请重试；持续失败时到网盘账号页检查连接。`);
+    } finally { if (token === generation.current) setBusy(false); }
+  };
   useEffect(() => { setPage({ items: [], nextCursor: null, total: null, complete: false }); void load(); return () => { generation.current++; }; }, [current.ref, account.id, account.rootRef]);
   const select = async (ref: string) => { const token = ++generation.current; setBusy(true); setError(null); try { const entry = await client.statRemote(account.id, ref); if (token === generation.current) onSelect(entry); } catch (error) { if (token === generation.current) setError(error instanceof Error ? error.message : "范围已失效，请重新连接并选择"); } finally { if (token === generation.current) setBusy(false); } };
   return <dialog ref={dialog} className="source-lifecycle-dialog sync-remote-dialog" aria-labelledby={title} onCancel={(event) => { event.preventDefault(); onClose(); }}>

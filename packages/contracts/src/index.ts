@@ -1,7 +1,11 @@
 import { hostPreferencesDraftSchema, licenseIdSchema, type HostPreferencesDraft, type HostPreferences, type DesktopAbout, type LicenseId, type LicenseText } from "./desktop-host.js";
 export * from "./desktop-host.js";
 export * from "./renderer-lifecycle.js";
+export * from "./download-cleanup.js";
+import { downloadCleanupActions } from "./download-cleanup.js";
 import { z } from "zod";
+import { recognitionSettingsSchema, codexActions } from "./codex-recognition.js";
+export * from "./codex-recognition.js";
 import { directoryIssueSchema, type DirectoryIssue } from "./directory-issues.js";
 export * from "./directory-issues.js";
 import { cloudActions, cloudCredentialDraftSchema, cloudLoginDraftSchema, cloudDiagnosticCountsSchema, CloudError, cloudFailure, type CloudAccount, type CloudAuthorization, type CloudCredentialDraft, type CloudLoginDraft, type RemotePage, type RemoteEntry, type ManagedDownloadRoot, type CloudInput, type DownloadPreview, type CloudOutput, type CloudSubscription } from "./cloud/index.js";
@@ -37,6 +41,7 @@ export const errorCodeSchema = z.enum([
   "CONFLICT",
   "UNSAFE_PATH",
   "STORAGE_ERROR",
+  "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "LOCAL_FILE_MISSING", "RECEIPT_CONFLICT", "STOP_UNCONFIRMED",
   "INTERNAL_ERROR",
   "AUTH_REQUIRED", "RATE_LIMITED", "NETWORK_UNAVAILABLE", "REMOTE_CHANGED", "REMOTE_NOT_FOUND", "LOCAL_UNAVAILABLE", "UNSUPPORTED_CAPABILITY", "COMPONENT_UNAVAILABLE",
 ]);
@@ -94,6 +99,7 @@ export const settingsDraftSchema = z.strictObject({
   language: z.enum(["zh-CN", "en"]).default("zh-CN"),
   embyUrl: serviceAddressSchema(false),
   tmdbProxy: serviceAddressSchema(true),
+  recognition: recognitionSettingsSchema.optional(),
 });
 export type SettingsDraft = z.infer<typeof settingsDraftSchema>;
 export const settingsSchema = settingsDraftSchema.extend({
@@ -177,10 +183,12 @@ const empty = z.strictObject({});
 export const coreActions = {
   ...configurationActions,
   ...syncActions,
+  ...downloadCleanupActions,
   ...recognitionActions,
   ...correctionActions,
   ...sourceRuleActions,
   ...ingestionActions,
+  ...codexActions,
   ...embyActions,
   "cloud.downloads.pause-status": cloudActions["cloud.downloads.pause-status"],
   "cloud.downloads.set-paused": cloudActions["cloud.downloads.set-paused"],
@@ -193,6 +201,8 @@ export const coreActions = {
   "cloud.downloads.confirm": cloudActions["cloud.downloads.confirm"],
   "cloud.downloads.list": cloudActions["cloud.downloads.list"],
   "cloud.downloads.control": cloudActions["cloud.downloads.control"],
+  "cloud.downloads.issues": cloudActions["cloud.downloads.issues"],
+  "cloud.downloads.reconcile": cloudActions["cloud.downloads.reconcile"],
   "cloud.accounts.list": cloudActions["cloud.accounts.list"],
   "cloud.authorizations.get": cloudActions["cloud.authorizations.get"],
   "cloud.remote.list": cloudActions["cloud.remote.list"],
@@ -298,8 +308,18 @@ export interface DesktopApi {
   listSyncJobs(input?: CoreInput<"sync.jobs">): Promise<CoreOutput<"sync.jobs">>;
   getSyncJob(id: string): Promise<CoreOutput<"sync.job">>;
   listSyncJobFiles(input: CoreInput<"sync.job-files">): Promise<CoreOutput<"sync.job-files">>;
+  resolveSyncLibraryReview(input: CoreInput<"sync.resolve-library-review">): Promise<CoreOutput<"sync.resolve-library-review">>;
+  recheckSyncJobLibrary(input: CoreInput<"sync.recheck-library">): Promise<CoreOutput<"sync.recheck-library">>;
+  removeSyncJob(input: CoreInput<"sync.remove-job">): Promise<CoreOutput<"sync.remove-job">>;
   retrySyncJob(input: CoreInput<"sync.retry">): Promise<CoreOutput<"sync.retry">>;
   listConfigurationDirectories(): Promise<CoreOutput<"configuration.directories">>;
+  listDownloadCleanup(input: CoreInput<"cleanup.list">): Promise<CoreOutput<"cleanup.list">>;
+  getDownloadCleanupScope(input: CoreInput<"cleanup.scope">): Promise<CoreOutput<"cleanup.scope">>;
+  previewDownloadCleanup(input: CoreInput<"cleanup.preview">): Promise<CoreOutput<"cleanup.preview">>;
+  getDownloadCleanupPreview(id: string): Promise<CoreOutput<"cleanup.get-preview">>;
+  confirmDownloadCleanup(id: string): Promise<CoreOutput<"cleanup.confirm">>;
+  cancelDownloadCleanupPreview(id: string): Promise<CoreOutput<"cleanup.cancel-preview">>;
+  retryDownloadCleanup(id: string): Promise<CoreOutput<"cleanup.retry">>;
   getDefaultDownloadDirectory(): Promise<CoreOutput<"configuration.default">>;
   setDefaultDownloadDirectory(input: CoreInput<"configuration.set-default">): Promise<CoreOutput<"configuration.set-default">>;
   chooseConfigurationDirectory(kind: "ordinary" | "managed" | "media"): Promise<z.infer<typeof configurationDirectorySchema> | null>;
@@ -371,6 +391,12 @@ export interface DesktopApi {
   getIngestionDirectory(input: CoreInput<"ingestion.directory">): Promise<CoreOutput<"ingestion.directory">>;
   recognizeIngestionBatch(input: CoreInput<"ingestion.recognize-batch">): Promise<CoreOutput<"ingestion.recognize-batch">>;
   listRecognitionBatches(input: CoreInput<"ingestion.recognition-batches">): Promise<CoreOutput<"ingestion.recognition-batches">>;
+  rematchWithCodex(input: CoreInput<"codex.rematch">): Promise<CoreOutput<"codex.rematch">>;
+  recognizeDirectoryWithCodex(input: CoreInput<"codex.prepare-directory">): Promise<CoreOutput<"codex.prepare-directory">>;
+  getCodexUsage(): Promise<CoreOutput<"codex.usage">>;
+  listCodexJobs(input: CoreInput<"codex.jobs">): Promise<CoreOutput<"codex.jobs">>;
+  getCodexJob(id: string): Promise<CoreOutput<"codex.job">>;
+  cancelCodexJob(id: string): Promise<CoreOutput<"codex.cancel">>;
   listRecognitionBatchItems(input: CoreInput<"ingestion.recognition-batch-items">): Promise<CoreOutput<"ingestion.recognition-batch-items">>;
   cancelRecognitionBatch(id: string): Promise<CoreOutput<"ingestion.cancel-recognition-batch">>;
   recognizeIngestion(input: CoreInput<"ingestion.recognize">): Promise<CoreOutput<"ingestion.recognize">>;
@@ -391,6 +417,8 @@ export interface DesktopApi {
   getDownloadPreview(requestKey: string): Promise<DownloadPreview | null>;
   confirmDownload(input: CloudInput<"cloud.downloads.confirm">): Promise<{ jobId: string }>;
   listDownloads(input: CloudInput<"cloud.downloads.list">): Promise<CloudOutput<"cloud.downloads.list">>;
+  listDownloadIssues(input: CloudInput<"cloud.downloads.issues">): Promise<CloudOutput<"cloud.downloads.issues">>;
+  reconcileDownload(input: CloudInput<"cloud.downloads.reconcile">): Promise<{ jobId: string }>;
   controlDownload(input: CloudInput<"cloud.downloads.control">): Promise<{ jobId: string }>;
   openDownloadDirectory(jobId: string): Promise<void>;
   listCloudAccounts(): Promise<CloudAccount[]>;

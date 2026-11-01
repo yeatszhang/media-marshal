@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -38,11 +39,16 @@ describe.runIf(process.platform === "darwin")("真实独立进程抢占正式目
       if (armed && path === f.stage) { armed = false; await expect(lstat(f.target)).rejects.toMatchObject({ code: "ENOENT" }); raced = await claim(f.target, foreign); expect(raced.state).toBe("CLAIMED"); }
       return proof;
     });
-    await expect(f.root.commit(f.attempt, f.segments, f.evidence)).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(f.root.commit(f.attempt, f.segments, f.evidence)).rejects.toMatchObject({ code: "TARGET_OCCUPIED" });
     expect(armed).toBe(false); expect(raced?.state).toBe("CLAIMED");
     expect(String((await lstat(f.target, { bigint: true })).ino)).toBe(raced!.inode); expect((await readFile(f.target)).equals(foreign)).toBe(true);
     expect((await readFile(f.stage)).equals(f.bytes)).toBe(true); await f.root.cleanupAttempt(f.attempt);
     expect((await readFile(f.target)).equals(foreign)).toBe(true);
+  });
+  it("读取期间文件被修改时给出具体原因，保留变更文件", async () => {
+    const f = await fixture(); await f.root.commit(f.attempt, f.segments, f.evidence); let changed = false;
+    await expect(f.root.inspectForRelocation(f.segments, undefined, () => { if (!changed) { changed = true; writeFileSync(f.target, "校验期间的外部变更，必须保留"); } })).rejects.toMatchObject({ code: "LOCAL_FILE_CHANGED" });
+    expect(await readFile(f.target, "utf8")).toBe("校验期间的外部变更，必须保留");
   });
   it("应用先提交时，其他进程的 wx 抢占失败，清理 stage 不影响正式文件", async () => {
     const f = await fixture(), committed = await f.root.commit(f.attempt, f.segments, f.evidence), racer = await claim(f.target, Buffer.from("其他进程的数据"));

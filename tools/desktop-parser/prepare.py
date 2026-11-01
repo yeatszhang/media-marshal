@@ -54,7 +54,7 @@ def prepare(target):
     versions = {name: importlib.metadata.version(name) for name in ("guessit", "rebulk", "babelfish", "pyinstaller")}
     if versions != {"guessit": "3.8.0", "rebulk": "6.0.1", "babelfish": "0.6.1", "pyinstaller": "6.22.3"}:
         raise ValueError("解析依赖与固定清单不符，请使用带哈希的构建依赖")
-    sources = ["main.py", "build.py", "prepare.py", "requirements-build.txt"]
+    sources = ["main.py", "codex_recognition.py", "codex_stdio.py", "build.py", "prepare.py", "requirements-build.txt"]
     source_hash = hashlib.sha256(json.dumps({name: digest(SOURCE / name) for name in sources}, sort_keys=True).encode()).hexdigest()
     destination = ROOT / "apps/desktop/resources/parser" / target
     existing = destination / "manifest.json"

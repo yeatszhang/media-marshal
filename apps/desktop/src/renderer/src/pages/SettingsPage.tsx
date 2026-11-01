@@ -15,6 +15,7 @@ import i18n from "../i18n";
 import { HostSettingsPanel } from "../components/HostSettingsPanel";
 import { LibrarySetup } from "./LibrarySetup";
 import { DownloadDirectorySettings } from "../components/DownloadDirectorySettings";
+import { RecognitionSettingsPanel } from "../components/RecognitionSettingsPanel";
 import "./settings.css";
 
 export function SettingsPage() {
@@ -67,6 +68,7 @@ export function SettingsPage() {
       ) : (
         <div className="settings-sections">
           <DownloadDirectorySettings />
+          <RecognitionSettingsPanel />
           <form
             className="panel settings-card"
             aria-labelledby="settings-connection-title"

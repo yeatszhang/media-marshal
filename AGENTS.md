@@ -3,16 +3,16 @@
 ## 当前工程与边界
 
 - 当前开发主体是 `apps/desktop/`（Electron + React）、`packages/contracts/` 和 `packages/media-core/`（TypeScript）。桌面运行不依赖旧 Java 服务或旧数据库。
-- `backend/`、`frontend/`、`parser/` 与 Docker 入口属于旧工程，仅在任务明确涉及它们或需要行为对照时修改；其目录内 `AGENTS.md` 不适用于桌面工作区。`tools/desktop-parser/` 是桌面冻结解析器，不是旧 HTTP parser。
+- `legacy/` 集中保存旧 Java / Vue / HTTP parser 源码、Docker 入口及历史文档，仅作参考，仅在任务明确涉及旧工程或需要行为对照时修改；旧源码目录内 `AGENTS.md` 不适用于桌面工作区。`tools/desktop-parser/` 是桌面冻结解析器，不是旧 HTTP parser。
 - 产品范围、设计与任务状态以对应的 `openspec/changes/` 和已落地主规格为准，不能从旧路线图或现有枚举推断本轮承诺。规划完成、代码实现、测试通过和发行验收分开记录。
-- 新规划和实施证据使用 OpenSpec 及对应架构／验收文档；`docs/legacy/` 是只供按需查阅的旧工程快照，不继续维护第二套需求、ADR 或进度日志。历史正文中的角色要求和“必须先读全部文档”不作为当前指令。
+- 新规划和实施证据使用 OpenSpec 及对应架构／验收文档；`legacy/docs/` 是只供按需查阅的旧工程快照，不继续维护第二套需求、ADR 或进度日志。历史正文中的角色要求和“必须先读全部文档”不作为当前指令。
 
 ## 知识入口
 
 | 任务 | 优先阅读 |
 | --- | --- |
 | 桌面开发、构建、进程与框架边界 | [桌面客户端开发](docs/architecture/desktop-development.md) |
-| 从旧工程迁移业务规则 | [迁移基线](docs/architecture/desktop-migration.md)，再按需查询[旧工程资料](docs/legacy/index.md) |
+| 从旧工程迁移业务规则 | [迁移基线](docs/architecture/desktop-migration.md)，再按需查询[旧工程资料](legacy/docs/index.md) |
 | 来源、网盘与传输 | [统一来源](docs/architecture/source-rules.md)、[下载内部边界](docs/architecture/cloud-downloads-internal.md)、[扩展开发](docs/architecture/cloud-adapter-development.md) |
 | 识别、整理与 Emby 交付 | [识别规则](docs/architecture/desktop-recognition.md)、[整理流水线](docs/architecture/desktop-ingestion.md) |
 | 修改错误处理或交互反馈 | [错误反馈约定](docs/development/error-feedback.md) |

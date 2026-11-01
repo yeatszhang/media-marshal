@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { open } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { DesktopError, CloudError, compileSyncFilters, syncSourceConfigurationSchema, type SyncSourceSnapshot, type VersionEvidence } from "@media-marshal/contracts";
@@ -8,11 +9,13 @@ import type { CloudRoots } from "../cloud/roots.js";
 import { assertSpaceBudget, sameVolumeRoot } from "../files/index.js";
 import { sourceVersion, sameSnapshot, type SourceSnapshot } from "../files/source-root.js";
 import { SyncReceipts } from "./sync-receipts.js";
+import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
+import { EmbyLibraryFiles, libraryFileReason, type LibraryFileEvidence } from "./emby-library-files.js";
 import type { ConfigurationDirectories } from "./configuration-directories.js";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const conflict = (message: string) => new DesktopError("CONFLICT", message);
-export interface LocalSyncFile { segments: string[]; size: number; snapshot: SourceSnapshot; namespace: string; version: VersionEvidence; versionKey: string; targetSegments: string[]; slot: string; receiptId: string | null; state: "READY" | "OBSERVING" | "REUSED" | "REMOVED" | "CONFLICT" | "UNAVAILABLE"; reason: string | null }
+export interface LocalSyncFile { segments: string[]; size: number; snapshot: SourceSnapshot; namespace: string; version: VersionEvidence; versionKey: string; targetSegments: string[]; slot: string; receiptId: string | null; libraryFile?: LibraryFileEvidence; state: "IN_LIBRARY" | "READY" | "OBSERVING" | "REUSED" | "REMOVED" | "CONFLICT" | "UNAVAILABLE"; reason: string | null }
 interface Preview { id: string; request_key: string; signature: string; snapshot_json: string; files_json: string; force: number; expires_at: number; job_id: string | null }
 interface Plan { source: ManagedRootGrant; snapshot: SourceSnapshot; sourceSegments: string[]; targetSegments: string[]; target: ManagedRootGrant; variant: string }
 interface Operation { id: string; identity_key: string; source_namespace: string; source_object_key: string; source_version_key: string; version_json: string; target_directory_id: string; target_slot: string; plan_json: string; attempt_id: string; phase: string; evidence_json: string | null }
@@ -23,9 +26,10 @@ export class LocalSync {
   private active = new Map<string, AbortController>();
   private flight?: Promise<void>;
   private closed = false;
+  private readonly libraryAbort = new AbortController();
   private observedAt = -Infinity;
   private globallyPaused = false;
-  constructor(private readonly database: CoreDatabase, private readonly directories: ConfigurationDirectories, private readonly roots: CloudRoots, private readonly now = Date.now, private readonly monotonic = () => performance.now()) {}
+  constructor(private readonly database: CoreDatabase, private readonly directories: ConfigurationDirectories, private readonly roots: CloudRoots, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly logger: CoreLogger = silentLogger) {}
   private stable(key: string, snapshot: SourceSnapshot) {
     const now = this.monotonic(), wall = this.now(), version = sourceVersion(snapshot), old = this.observations.get(key);
     if (!old || old.version !== version || now - old.last > 30000 || Math.abs(wall - old.wall - (now - old.last)) > 5000) { this.observations.set(key, { since: now, last: now, wall, version }); return false; }
@@ -50,7 +54,7 @@ export class LocalSync {
     await source.check(); await target.check();
     const files = await source.discover([], 10000), id = randomUUID(), result: LocalSyncFile[] = [];
     const namespace = hash([source.grant.volume.volumeId, source.grant.volume.rootInode, source.grant.volume.rootBirthtimeNs]);
-    const receipts = new SyncReceipts(this.database, this.now);
+    const receipts = new SyncReceipts(this.database, this.now), library = new EmbyLibraryFiles(this.database, this.libraryAbort.signal);
     for (const segments of files) {
       if (this.closed) throw new DesktopError("INTERRUPTED", "本地同步预览已停止", true);
       if (!includes(segments.join("/")) || /(?:\.(?:part|tmp|temp|aria2|download|downloading|qkdownloading|crdownload)|\.!qB)$/i.test(segments.at(-1)!)) continue;
@@ -60,20 +64,29 @@ export class LocalSync {
       const targetSegments = force ? ["resync-" + id, ...segments] : segments, slot = target.slotKey(targetSegments);
       const receipt = !force ? receipts.find("local", namespace, JSON.stringify(segments), version, target.grant.id, slot) : undefined;
       const file: LocalSyncFile = { segments, size: proof.size, snapshot: proof, namespace, version, versionKey, targetSegments, slot, receiptId: receipt?.id ?? null, state: "OBSERVING", reason: "等待文件连续稳定至少 120 秒；稳定后仍需确认文件完整" };
-      if (receipt) {
+      let libraryFile: LibraryFileEvidence | undefined;
+      try { libraryFile = !force ? await library.find(segments.at(-1)!, proof.size, { root: source, segments, snapshot: proof }) : undefined; }
+      catch (error) {
+        if (!(error instanceof DesktopError) || error.code === "INTERRUPTED") throw error;
+        file.state = error.code === "LOCAL_UNAVAILABLE" ? "UNAVAILABLE" : "CONFLICT"; file.reason = error.message; result.push(file); continue;
+      }
+      if (libraryFile) {
+        file.libraryFile = libraryFile; file.receiptId = null; file.state = "IN_LIBRARY"; file.reason = libraryFileReason(libraryFile);
+      } else if (receipt) {
         const state = await receipts.observe(receipt, target);
         file.state = state === "PRESENT" ? "REUSED" : state === "REMOVED" ? "REMOVED" : state === "CONFLICT" ? "CONFLICT" : "UNAVAILABLE";
-        file.reason = state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回，可显式预览重新同步" : state === "PRESENT" ? "已同步，复用成功收据" : state === "CONFLICT" ? "已同步目标的身份或内容已变化，请保留双方文件并核对" : "原目标卷或目录不可用，不认定为删除";
+        file.reason = state === "REMOVED" && receipts.isCleaned(receipt.id) ? "已核验媒体库内容并主动清理受管副本；成功同步记录保留，普通执行不会补回" : state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回，可显式预览重新同步" : state === "PRESENT" ? "已同步，复用成功收据" : state === "CONFLICT" ? "已同步目标的身份或内容已变化，请保留双方文件并核对" : "原目标卷或目录不可用，不认定为删除";
       } else {
         if (this.stable(namespace + JSON.stringify(segments), proof)) { file.state = "READY"; file.reason = null; }
-        try { await target.assertVacant(targetSegments); } catch (error) { file.state = error instanceof CloudError && error.code === "CONFLICT" ? "CONFLICT" : "UNAVAILABLE"; file.reason = file.state === "CONFLICT" ? "目标已被其他内容占用，不覆盖；请处理后重新预览" : "目标目录不可用，请恢复原磁盘和授权后重试"; }
+        try { await target.assertVacant(targetSegments); } catch (error) { file.state = error instanceof CloudError && ["CONFLICT", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "RECEIPT_CONFLICT"].includes(error.code) ? "CONFLICT" : "UNAVAILABLE"; file.reason = file.state === "CONFLICT" ? "目标已被其他内容占用，不覆盖；请处理后重新预览" : "目标目录不可用，请恢复原磁盘和授权后重试"; }
       }
       result.push(file);
     }
     target.assertMappings(result.map((file) => file.targetSegments));
-    await source.check(); assertSpaceBudget(await target.check(), result.filter((file) => !file.receiptId).reduce((sum, file) => sum + file.size, 0));
+    await source.check(); assertSpaceBudget(await target.check(), result.filter((file) => !file.receiptId && !file.libraryFile).reduce((sum, file) => sum + file.size, 0));
     if (this.closed) throw new DesktopError("INTERRUPTED", "本地同步预览已停止", true);
     db.prepare("INSERT INTO local_sync_preview(id,request_key,signature,snapshot_json,files_json,force,expires_at) VALUES(?,?,?,?,?,?,?)").run(id, requestKey, signature, JSON.stringify(snapshot), JSON.stringify(result), Number(force), this.now() + 15 * 60 * 1000);
+    this.logger.info({ event: "sync.local.preview.ready", sourceId: snapshot.sourceId, previewId: id, fileCount: result.length, readyCount: result.filter((file) => file.state === "READY").length, reusedCount: result.filter((file) => ["REUSED", "IN_LIBRARY"].includes(file.state)).length }, "本地同步清单已生成，等待完整性确认");
     return this.preview(id);
   }
   async confirm(previewId: string, jobId: string, filesComplete: boolean) {
@@ -81,16 +94,18 @@ export class LocalSync {
     if (preview.job_id) { if (preview.job_id !== jobId) throw conflict("预览已用于其他作业，请查看原作业"); return; }
     if (!filesComplete || preview.expires_at <= this.now() || this.closed) throw conflict("请重新预览并确认本地文件完整；过期预览不能执行");
     const snapshot = JSON.parse(preview.snapshot_json) as SyncSourceSnapshot, files = this.preview(previewId).files;
-    if (files.some((file) => !["READY", "REUSED", "REMOVED"].includes(file.state))) throw conflict("同步预览仍有未就绪、冲突或不可用文件，请逐项处理并重新预览");
+    if (files.some((file) => !["IN_LIBRARY", "READY", "REUSED", "REMOVED"].includes(file.state))) throw conflict("同步预览仍有未就绪、冲突或不可用文件，请逐项处理并重新预览");
     const source = this.directories.reader(snapshot.inputDirectory!.id), target = this.roots.files.get(snapshot.targetDirectory.id), receipts = new SyncReceipts(this.database, this.now);
+    const library = new EmbyLibraryFiles(this.database, this.libraryAbort.signal);
     for (const file of files) {
       let actual: SourceSnapshot;
       try { actual = await source.inspect(file.segments); } catch { throw new DesktopError("LOCAL_UNAVAILABLE", `来源「${file.segments.join("/").slice(-180)}」无法读取，请恢复原文件、原磁盘和权限后重新预览`, true); }
       if (!sameSnapshot(file.snapshot, actual)) throw conflict(`来源 ${file.segments.join("/").slice(-180)} 已变化，请重新预览`);
-      if (file.receiptId) { const receipt = receipts.get(file.receiptId); if (!receipt || !["PRESENT", "REMOVED"].includes(await receipts.observe(receipt, target))) throw conflict(`已同步目标 ${file.targetSegments.join("/")} 已变化，请核对后重新预览`); }
+      if (file.libraryFile) await library.verify(file.libraryFile);
+      else if (file.receiptId) { const receipt = receipts.get(file.receiptId); if (!receipt || !["PRESENT", "REMOVED"].includes(await receipts.observe(receipt, target))) throw conflict(`已同步目标 ${file.targetSegments.join("/")} 已变化，请核对后重新预览`); }
       else if (!this.stable(file.namespace + JSON.stringify(file.segments), file.snapshot)) throw conflict(`来源 ${file.segments.join("/")} 需要重新连续观察至少 120 秒`);
     }
-    await source.check(); assertSpaceBudget(await target.check(), files.filter((file) => !file.receiptId).reduce((sum, file) => sum + file.size, 0));
+    await source.check(); assertSpaceBudget(await target.check(), files.filter((file) => !file.receiptId && !file.libraryFile).reduce((sum, file) => sum + file.size, 0));
     return () => {
       const db = this.database.connection;
       if (!db.inTransaction) throw new Error("本地同步确认必须与作业在同一事务提交");
@@ -98,7 +113,7 @@ export class LocalSync {
       const current = this.previewRow(previewId)!; if (current.job_id) { if (current.job_id !== jobId) throw conflict("同步预览已经确认"); return; }
       for (const [ordinal, file] of files.entries()) {
         let operationId: string | null = null;
-        if (!file.receiptId) {
+        if (!file.receiptId && !file.libraryFile) {
           const variant = preview.force ? "resync:" + preview.id : "", identity = hash([file.namespace, file.segments, file.versionKey, snapshot.targetDirectory.id, file.slot, variant]);
           const old = db.prepare("SELECT id FROM local_sync_operation WHERE identity_key=?").get(identity) as { id: string } | undefined;
           operationId = old?.id ?? randomUUID();
@@ -108,7 +123,7 @@ export class LocalSync {
           }
         }
         const completed = operationId ? new SyncReceipts(this.database, this.now).byResult("local-sync", operationId) : undefined;
-        db.prepare("INSERT INTO local_sync_member(job_id,ordinal,relative_path,operation_id,receipt_id,state) VALUES(?,?,?,?,?,?)").run(jobId, ordinal, file.segments.join("/"), operationId, completed?.id ?? file.receiptId, completed ? "DONE" : file.receiptId ? file.state === "REMOVED" ? "REMOVED" : "REUSED" : "PENDING");
+        db.prepare("INSERT INTO local_sync_member(job_id,ordinal,relative_path,operation_id,receipt_id,state) VALUES(?,?,?,?,?,?)").run(jobId, ordinal, file.segments.join("/"), operationId, completed?.id ?? file.receiptId, file.libraryFile ? "REUSED" : completed ? "DONE" : file.receiptId ? file.state === "REMOVED" ? "REMOVED" : "REUSED" : "PENDING");
       }
       db.prepare("UPDATE local_sync_preview SET job_id=? WHERE id=?").run(jobId, preview.id);
     };
@@ -128,7 +143,8 @@ export class LocalSync {
       try { await this.copy(row, controller.signal); }
       catch (error) {
         const paused = controller.signal.aborted || error instanceof DesktopError && error.code === "INTERRUPTED";
-        const failure = paused ? "同步已暂停，原计划和文件保留，恢复后重新核对" : error instanceof DesktopError ? error.message : error instanceof CloudError && error.code === "CONFLICT" ? "同步目标被占用或文件证据不一致，请保留双方文件，处理后重试原作业" : "原输入或目标不可用，请恢复原磁盘和目录授权后重试";
+        this.logger[paused ? "info" : "warn"]({ event: paused ? "sync.local.interrupted" : "sync.local.failed", operationId: row.id, attemptId: row.attempt_id, error }, paused ? "本地同步已中断，原计划保留" : "本地同步文件未完成，等待处理");
+        const failure = paused ? "同步已暂停，原计划和文件保留，恢复后重新核对" : error instanceof DesktopError ? error.message : error instanceof CloudError && ["CONFLICT", "TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "RECEIPT_CONFLICT"].includes(error.code) ? "同步目标被占用或文件证据不一致，请保留双方文件，处理后重试原作业" : "原输入或目标不可用，请恢复原磁盘和目录授权后重试";
         if (!paused) db.transaction(() => { db.prepare("UPDATE local_sync_operation SET phase='NEEDS_ATTENTION',failure=?,updated_at=? WHERE id=?").run(failure, new Date(this.now()).toISOString(), row.id); db.prepare("UPDATE local_sync_member SET state='NEEDS_ATTENTION',failure=? WHERE operation_id=?").run(failure, row.id); })();
       } finally { this.active.delete(row.id); }
     }
@@ -163,6 +179,7 @@ export class LocalSync {
       assertSpaceBudget(await target.check(), plan.snapshot.size, reserved);
       if (row.phase === "COPYING") { await target.cleanupAttempt(row.attempt_id).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); row.attempt_id = randomUUID(); }
       db.prepare("UPDATE local_sync_operation SET phase='COPYING',attempt_id=?,updated_at=? WHERE id=?").run(row.attempt_id, new Date(this.now()).toISOString(), row.id);
+      this.logger.info({ event: "sync.local.copy.started", operationId: row.id, attemptId: row.attempt_id, bytes: plan.snapshot.size }, "本地同步开始复制文件");
       await target.prepareStage(row.attempt_id); const stage = await target.stageFilePath(row.attempt_id, plan.targetSegments);
       let digest = "";
       await source.read(plan.sourceSegments, plan.snapshot, async (reader) => {
@@ -181,8 +198,10 @@ export class LocalSync {
       const receipt = new SyncReceipts(this.database, this.now).record({ source_kind: "local", source_namespace: row.source_namespace, source_object_key: row.source_object_key, source_version_key: row.source_version_key, version_json: row.version_json, target_directory_id: row.target_directory_id, target_slot: row.target_slot, target_segments_json: JSON.stringify(plan.targetSegments), completed_at: stamp, result_kind: "local-sync", result_id: row.id, request_variant: plan.variant }, committed.evidence);
       db.prepare("UPDATE local_sync_operation SET phase='RECORDED',failure=NULL,updated_at=? WHERE id=?").run(stamp, row.id);
       db.prepare("UPDATE local_sync_member SET state='DONE',receipt_id=?,failure=NULL WHERE operation_id=?").run(receipt.id, row.id);
+      new OwnedAttemptCleanup(this.database).record("local_sync_operation", row.id, row.attempt_id, target.grant);
     })(); } catch { throw new DesktopError("STORAGE_ERROR", "本地同步结果尚未完成记账，已提交文件保留；请重启核心后仅重试原作业，不要删除私有恢复文件", true); }
-    await target.cleanupAttempt(row.attempt_id).catch(() => {});
+    await new OwnedAttemptCleanup(this.database).run("local_sync_operation", row.id, target);
+    this.logger.info({ event: "sync.local.completed", operationId: row.id, attemptId: row.attempt_id, bytes: plan.snapshot.size }, "本地同步文件已核验提交并完成记账");
   }
   pauseChanged(inputDirectoryId?: string, sourceId?: string) {
     if (!inputDirectoryId) this.resetObservations();
@@ -201,5 +220,5 @@ export class LocalSync {
     db.transaction(() => { db.prepare("UPDATE local_sync_operation SET phase=CASE WHEN evidence_json IS NOT NULL THEN 'VERIFIED' WHEN phase='NEEDS_ATTENTION' THEN 'COPYING' ELSE phase END,failure=NULL WHERE id IN (SELECT operation_id FROM local_sync_member WHERE job_id=?) AND phase='NEEDS_ATTENTION'").run(id); db.prepare("UPDATE local_sync_member SET state='PENDING',failure=NULL WHERE job_id=? AND state='NEEDS_ATTENTION'").run(id); db.prepare("UPDATE sync_job SET state='RUNNING',failure=NULL WHERE id=? AND state='NEEDS_ATTENTION'").run(id); })();
   }
   hasActive(sourceId: string) { return (this.database.connection.prepare("SELECT m.operation_id FROM local_sync_member m JOIN sync_job j ON j.id=m.job_id WHERE j.source_id=? AND m.operation_id IS NOT NULL").all(sourceId) as { operation_id: string }[]).some((row) => this.active.has(row.operation_id)); }
-  async close() { this.closed = true; for (const controller of this.active.values()) controller.abort(); await this.flight; }
+  async close() { this.closed = true; this.libraryAbort.abort(); for (const controller of this.active.values()) controller.abort(); await this.flight; }
 }

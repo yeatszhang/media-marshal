@@ -28,6 +28,7 @@ import { SourceRulesViewModel } from "./source-rules-model";
 import { OrganizeBatchesViewModel } from "./organize-batches-model";
 import { SeasonsViewModel } from "./seasons-model";
 import { DirectoriesViewModel } from "./directories-model";
+import { CodexRecognitionViewModel } from "./codex-recognition-model";
 import { RecognitionEditsViewModel } from "./recognition-edits-model";
 import { SourceScansViewModel } from "./source-scans-model";
 import { ContentReviewsViewModel } from "./content-reviews-model";
@@ -237,7 +238,7 @@ export class SettingsViewModel extends StatefulService<{
   }
   save(input: SettingsDraft) {
     return this.write(async () => {
-      const parsed = settingsDraftSchema.safeParse(input);
+      const parsed = settingsDraftSchema.safeParse({ ...input, ...(input.recognition === undefined && this.state.settings?.recognition ? { recognition: this.state.settings.recognition } : {}) });
       if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("；"));
       await this.client.saveSettings(parsed.data);
     });
@@ -265,7 +266,13 @@ export class DownloadsViewModel extends StatefulService<{ paused: boolean; pausi
   }
   async refresh(page = this.state.page) {
     const request = ++this.request; this.setState({ page, loading: true });
-    try { const [data, pause] = await Promise.all([this.client.listDownloads({ page, pageSize: 25 }), this.client.getCloudDownloadPause()]); if (!this.stopped && request === this.request) this.setState({ ...data, ...pause, error: null }); }
+    try {
+      const [data, pause] = await Promise.all([this.client.listDownloads({ page, pageSize: 25 }), this.client.getCloudDownloadPause()]);
+      if (this.stopped || request !== this.request) return;
+      const lastPage = Math.max(1, Math.ceil(data.total / 25));
+      if (page > lastPage) { await this.refresh(lastPage); return; }
+      this.setState({ ...data, ...pause, error: null });
+    }
     catch (error) { if (!this.stopped && request === this.request) this.setState({ error: message(error) }); }
     finally { if (!this.stopped && request === this.request) this.setState({ loading: false }); }
   }
@@ -301,8 +308,8 @@ export class IngestionViewModel extends StatefulService<{ items: IngestionCandid
   }
   private async action(work: () => Promise<void>) { if (this.state.busy || this.stopped) return; this.setState({ busy: true, error: null }); try { await work(); } catch (error) { if (!this.stopped) this.setState({ error: message(error) }); } finally { if (!this.stopped) this.setState({ busy: false }); } }
   async recognize(candidateId: string) { let taskId: string | null = null; await this.action(async () => { const result = await this.client.recognizeIngestion({ candidateId, requestKey: crypto.randomUUID() }); if (this.stopped || !this.watchers) return; await this.select(result.taskId); await this.refresh(); if (!this.stopped && this.watchers) taskId = result.taskId; }); return taskId; }
-  async select(taskId: string) { if (this.stopped || !this.watchers) return; const selection = ++this.selection; this.setState({ preview: null, selecting: true, targets: null }); try { const [task, targets] = await Promise.all([this.client.getIngestionTask(taskId), this.client.getRecognitionTaskTargets(taskId)]); if (!this.stopped && selection === this.selection) this.setState({ task, targets, error: null }); } catch (error) { if (!this.stopped && selection === this.selection) this.setState({ error: message(error) }); } finally { if (!this.stopped && selection === this.selection) this.setState({ selecting: false }); } }
-  clearPreview() { this.selection++; this.setState({ preview: null }); }
+  async select(taskId: string) { if (this.stopped || !this.watchers) return; const selection = ++this.selection; this.setState({ task: null, preview: null, selecting: true, targets: null }); try { const [task, targets] = await Promise.all([this.client.getIngestionTask(taskId), this.client.getRecognitionTaskTargets(taskId)]); if (!this.stopped && selection === this.selection) this.setState({ task, targets, error: null }); } catch (error) { if (!this.stopped && selection === this.selection) this.setState({ error: message(error) }); } finally { if (!this.stopped && selection === this.selection) this.setState({ selecting: false }); } }
+  clearPreview() { this.selection++; this.setState({ preview: null, selecting: false }); }
   preview(input: Omit<CoreInput<"ingestion.preview">, "requestKey" | "taskId">) { return this.action(async () => { if (!this.state.task) return; const selection = this.selection, scopeToken = this.state.targets?.scopeToken, result = await this.client.previewOrganize({ ...input, taskId: this.state.task.taskId, requestKey: crypto.randomUUID() }); if (!this.stopped && selection === this.selection && scopeToken === this.state.targets?.scopeToken) this.setState({ preview: result }); }); }
   confirm() { return this.action(async () => { const preview = this.state.preview; if (!preview) return; let requestKey = this.confirmations.get(preview.id); if (!requestKey) { requestKey = crypto.randomUUID(); this.confirmations.set(preview.id, requestKey); } await this.client.confirmOrganize({ previewId: preview.id, requestKey }); this.setState({ preview: null }); await this.refresh(); }); }
   retry(taskId: string) { return this.action(async () => { await this.client.retryOrganize(taskId); await this.refresh(); }); }
@@ -350,7 +357,7 @@ export function createRendererApplication(client: DesktopApi) {
     },
   };
   const modules: ApplicationModule[] = [
-    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ConfigurationViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(SourceScansViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); bind(DirectoriesViewModel).toSelf().inSingletonScope(); bind(SeasonsViewModel).toSelf().inSingletonScope(); bind(OrganizeBatchesViewModel).toSelf().inSingletonScope(); } },
+    { id: "renderer.ingestion", dependencies: [connection.id], register(bind) { bind(IngestionViewModel).toSelf().inSingletonScope(); bind(LibraryViewModel).toSelf().inSingletonScope(); bind(ConfigurationViewModel).toSelf().inSingletonScope(); bind(ContentReviewsViewModel).toSelf().inSingletonScope(); bind(SourceScansViewModel).toSelf().inSingletonScope(); bind(RecognitionEditsViewModel).toSelf().inSingletonScope(); bind(DirectoriesViewModel).toSelf().inSingletonScope(); bind(CodexRecognitionViewModel).toSelf().inSingletonScope(); bind(SeasonsViewModel).toSelf().inSingletonScope(); bind(OrganizeBatchesViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.corrections", dependencies: [connection.id], register(bind) { bind(CorrectionViewModel).toSelf().inSingletonScope(); bind(CorrectionJobsViewModel).toSelf().inSingletonScope(); bind(CorrectionBatchDraftModel).toSelf().inSingletonScope(); bind(CorrectionBatchViewModel).toSelf().inSingletonScope(); bind(CorrectionBatchJobsModel).toSelf().inSingletonScope(); } },
     { id: "renderer.downloads", dependencies: [connection.id], register(bind) { bind(DownloadsViewModel).toSelf().inSingletonScope(); } },
     { id: "renderer.cloud", dependencies: [connection.id], register(bind) { bind(CloudAccountsViewModel).toSelf().inSingletonScope(); } },

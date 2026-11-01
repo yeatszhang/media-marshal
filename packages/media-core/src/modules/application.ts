@@ -29,6 +29,9 @@ import { CloudSubscriptions } from "../cloud/subscriptions.js";
 import { IngestionOutbox, type ManagedIngestionSink } from "../cloud/outbox.js";
 import type { ParserLaunch } from "@media-marshal/contracts/internal";
 import { ParserProcess } from "../infrastructure/parser-process.js";
+import { dirname, join } from "node:path";
+import { CodexProcess } from "../infrastructure/codex-process.js";
+import { CodexRecognition } from "../ingestion/codex-recognition.js";
 import { verifyParserResources } from "../infrastructure/parser-resources.js";
 import { MediaConnections, MediaConnectionsToken } from "../application/media-connections.js";
 import { IngestionPipeline } from "../ingestion/pipeline.js";
@@ -39,10 +42,19 @@ import { ConfigurationDirectories } from "../sources/configuration-directories.j
 import { LocalSync } from "../sources/local-sync.js";
 import { SyncRules } from "../sources/sync-rules.js";
 import { Corrections } from "../ingestion/corrections.js";
+import { DownloadCleanupService } from "../ingestion/download-cleanup-service.js";
 import { loadNativeRename, type NativeRenameLaunch } from "../files/native-rename.js";
+import { scopedLogger, type CoreLogger } from "../application/logger.js";
 
 declare module "@yeatz/app-framework/command" {
   interface Commands {
+    "media.cleanup.list": (input: CoreInput<"cleanup.list">) => CoreOutput<"cleanup.list">;
+    "media.cleanup.scope": (input: CoreInput<"cleanup.scope">) => CoreOutput<"cleanup.scope">;
+    "media.cleanup.preview": (input: CoreInput<"cleanup.preview">) => CoreOutput<"cleanup.preview">;
+    "media.cleanup.get-preview": (input: CoreInput<"cleanup.get-preview">) => CoreOutput<"cleanup.get-preview">;
+    "media.cleanup.confirm": (input: CoreInput<"cleanup.confirm">) => Promise<CoreOutput<"cleanup.confirm">>;
+    "media.cleanup.cancel-preview": (input: CoreInput<"cleanup.cancel-preview">) => CoreOutput<"cleanup.cancel-preview">;
+    "media.cleanup.retry": (input: CoreInput<"cleanup.retry">) => CoreOutput<"cleanup.retry">;
     "media.corrections.preparation": (input: CoreInput<"corrections.preparation">) => CoreOutput<"corrections.preparation">;
     "media.corrections.cancel-preparation": (input: CoreInput<"corrections.cancel-preparation">) => CoreOutput<"corrections.cancel-preparation">;
     "media.corrections.scope": (input: CoreInput<"corrections.scope">) => CoreOutput<"corrections.scope">;
@@ -67,6 +79,12 @@ declare module "@yeatz/app-framework/command" {
     "media.source-rules.run-once": (input: CoreInput<"source-rules.run-once">) => CoreOutput<"source-rules.run-once">;
     "media.source-rules.runs": (input: CoreInput<"source-rules.runs">) => CoreOutput<"source-rules.runs">;
     "media.ingestion.pause-status": () => CoreOutput<"ingestion.pause-status">;
+    "media.codex.rematch": (input: CoreInput<"codex.rematch">) => CoreOutput<"codex.rematch">;
+    "media.codex.prepare-directory": (input: CoreInput<"codex.prepare-directory">) => Promise<CoreOutput<"codex.prepare-directory">>;
+    "media.codex.usage": () => Promise<CoreOutput<"codex.usage">>;
+    "media.codex.jobs": (input: CoreInput<"codex.jobs">) => CoreOutput<"codex.jobs">;
+    "media.codex.job": (input: CoreInput<"codex.job">) => CoreOutput<"codex.job">;
+    "media.codex.cancel": (input: CoreInput<"codex.cancel">) => CoreOutput<"codex.cancel">;
     "media.ingestion.set-paused": (input: CoreInput<"ingestion.set-paused">) => CoreOutput<"ingestion.set-paused">;
     "media.source-rules.legacy": (input: CoreInput<"source-rules.legacy">) => CoreOutput<"source-rules.legacy">;
     "media.source-rules.configure": (input: CoreInput<"source-rules.configure">) => CoreOutput<"source-rules.configure">;
@@ -98,6 +116,9 @@ declare module "@yeatz/app-framework/command" {
     "media.sync.jobs": (input: CoreInput<"sync.jobs">) => CoreOutput<"sync.jobs">;
     "media.sync.job": (input: CoreInput<"sync.job">) => CoreOutput<"sync.job">;
     "media.sync.job-files": (input: CoreInput<"sync.job-files">) => CoreOutput<"sync.job-files">;
+    "media.sync.resolve-library-review": (input: CoreInput<"sync.resolve-library-review">) => Promise<CoreOutput<"sync.resolve-library-review">>;
+    "media.sync.recheck-library": (input: CoreInput<"sync.recheck-library">) => CoreOutput<"sync.recheck-library">;
+    "media.sync.remove-job": (input: CoreInput<"sync.remove-job">) => CoreOutput<"sync.remove-job">;
     "media.sync.retry": (input: CoreInput<"sync.retry">) => CoreOutput<"sync.retry">;
     "media.configuration.directories": () => Promise<CoreOutput<"configuration.directories">>;
     "media.configuration.default": () => CoreOutput<"configuration.default">;
@@ -145,6 +166,8 @@ declare module "@yeatz/app-framework/command" {
     "media.cloud.downloads.get-preview": (input: CoreInput<"cloud.downloads.get-preview">) => CoreOutput<"cloud.downloads.get-preview">;
     "media.cloud.downloads.confirm": (input: CoreInput<"cloud.downloads.confirm">) => Promise<CoreOutput<"cloud.downloads.confirm">>;
     "media.cloud.downloads.list": (input: CoreInput<"cloud.downloads.list">) => CoreOutput<"cloud.downloads.list">;
+    "media.cloud.downloads.issues": (input: CoreInput<"cloud.downloads.issues">) => CoreOutput<"cloud.downloads.issues">;
+    "media.cloud.downloads.reconcile": (input: CoreInput<"cloud.downloads.reconcile">) => CoreOutput<"cloud.downloads.reconcile">;
     "media.cloud.downloads.control": (input: CoreInput<"cloud.downloads.control">) => CoreOutput<"cloud.downloads.control">;
     "media.cloud.accounts.list": () => CoreOutput<"cloud.accounts.list">;
     "media.cloud.authorizations.get": (input: CoreInput<"cloud.authorizations.get">) => CoreOutput<"cloud.authorizations.get">;
@@ -173,7 +196,7 @@ declare module "@yeatz/app-framework/command" {
 export function createMediaApplication(
   databasePath: string,
   extraModules: ApplicationModule[] = [],
-  options: { host?: CoreHostGateway; ingestion?: ManagedIngestionSink; parser?: ParserLaunch; nativeFiles?: NativeRenameLaunch; cancelHostRequests?: () => void } = {},
+  options: { host?: CoreHostGateway; ingestion?: ManagedIngestionSink; parser?: ParserLaunch; nativeFiles?: NativeRenameLaunch; cancelHostRequests?: () => void; logger?: CoreLogger } = {},
 ) {
   let accepting = true, stopFlight: Promise<void> | undefined, quiescence: Promise<PromiseSettledResult<unknown>[]> | undefined;
   const ensureAccepting = () => { if (!accepting) throw new DesktopError("INTERRUPTED", "核心正在停止", true); };
@@ -196,7 +219,7 @@ export function createMediaApplication(
       accounts = new CloudAccounts(db); accounts.recover();
       roots = new CloudRoots(db); ctx.disposables.add(() => roots.close());
       catalog = new RemoteCatalog(db, options.host ?? unavailableHost, Date.now, (binding) => accounts.isReady(binding));
-      downloads = new CloudDownloads(db, options.host ?? unavailableHost, catalog, roots);
+      downloads = new CloudDownloads(db, options.host ?? unavailableHost, catalog, roots, Date.now, scopedLogger(options.logger, "downloads"));
       ctx.disposables.add(() => downloads.close());
       subscriptions = new CloudSubscriptions(db, downloads, catalog, roots);
       ctx.disposables.add(() => subscriptions.close());
@@ -225,14 +248,23 @@ export function createMediaApplication(
       connections = new MediaConnections(ctx.get(DatabaseToken), () => service.getSettings());
       ctx.container.bind(MediaConnectionsToken).toConstantValue(connections);
       ctx.disposables.add(() => connections.close());
-      ingestion = new IngestionPipeline(ctx.get(DatabaseToken), () => parser, connections);
+      let codex: CodexRecognition | undefined;
+      if (options.parser) {
+        const launch = options.parser, gateway = new CodexProcess(() => {
+          const settings = connections.recognitionSettings;
+          return { executable: codexExecutable!, runtimeDirectory: join(dirname(databasePath), "recognition-codex"), cliPath: settings.cliPath, model: settings.model, dailyCalls: settings.dailyCalls };
+        });
+        try { codexExecutable = await verifyParserResources(launch); codexGateway = gateway; codex = new CodexRecognition(gateway, () => connections.recognitionSettings); ctx.disposables.add(() => gateway.close()); }
+        catch { /* 普通解析及人工核对保持可用，主动 Codex 请求会提示资源不可用。 */ }
+      }
+      ingestion = new IngestionPipeline(ctx.get(DatabaseToken), () => parser, connections, Date.now, undefined, undefined, scopedLogger(options.logger, "recognition"), codex);
       ctx.disposables.add(() => ingestion.close());
       sourceRules = new SourceRules(ctx.get(DatabaseToken), downloads, subscriptions, ingestion);
       configurationDirectories = new ConfigurationDirectories(ctx.get(DatabaseToken), roots);
       ctx.disposables.add(() => configurationDirectories.close());
-      syncRules = new SyncRules(ctx.get(DatabaseToken), configurationDirectories, downloads, new LocalSync(ctx.get(DatabaseToken), configurationDirectories, roots), Date.now, () => sourceRules.synchronize());
+      syncRules = new SyncRules(ctx.get(DatabaseToken), configurationDirectories, downloads, new LocalSync(ctx.get(DatabaseToken), configurationDirectories, roots, Date.now, undefined, scopedLogger(options.logger, "local-sync")), Date.now, () => sourceRules.synchronize(), scopedLogger(options.logger, "sync"));
       ctx.disposables.add(() => syncRules.close());
-      recognitionRules = new RecognitionRules(ctx.get(DatabaseToken), configurationDirectories, ingestion, Date.now, () => sourceRules.synchronize());
+      recognitionRules = new RecognitionRules(ctx.get(DatabaseToken), configurationDirectories, ingestion, Date.now, () => sourceRules.synchronize(), scopedLogger(options.logger, "recognition-rules"));
       ctx.disposables.add(() => recognitionRules.close());
       ctx.disposables.add(() => sourceRules.close());
       outbox = new IngestionOutbox(ctx.get(DatabaseToken), roots, options.ingestion ?? ingestion);
@@ -240,9 +272,17 @@ export function createMediaApplication(
       delivery = new EmbyDelivery(ctx.get(DatabaseToken), connections, () => service.getSettings(), ingestion);
       ctx.disposables.add(() => delivery.close());
       const native = options.nativeFiles ? await loadNativeRename(options.nativeFiles).catch(() => undefined) : undefined; ensureAccepting();
+      cleanup = new DownloadCleanupService(ctx.get(DatabaseToken), native); ctx.disposables.add(() => cleanup.close());
       corrections = new Corrections(ctx.get(DatabaseToken), ingestion, connections, native); ctx.disposables.add(() => corrections.close());
       const registry = ctx.commandRegistry;
       const add = (dispose: () => void) => ctx.disposables.add(dispose);
+      add(registry.register("media.cleanup.list", (_, input) => cleanup.list(input)));
+      add(registry.register("media.cleanup.scope", (_, input) => cleanup.scope(input)));
+      add(registry.register("media.cleanup.preview", (_, input) => cleanup.preview(input)));
+      add(registry.register("media.cleanup.get-preview", (_, input) => cleanup.getPreview(input.id)));
+      add(registry.register("media.cleanup.confirm", (_, input) => cleanup.confirm(input.id)));
+      add(registry.register("media.cleanup.cancel-preview", (_, input) => cleanup.cancel(input.id)));
+      add(registry.register("media.cleanup.retry", (_, input) => cleanup.retry(input.id)));
       add(registry.register("media.corrections.preparation", (_, input) => corrections.preparations.get(input.id)));
       add(registry.register("media.corrections.cancel-preparation", (_, input) => corrections.preparations.cancel(input.id)));
       add(registry.register("media.corrections.scope", (_, input) => corrections.batches.scope(input)));
@@ -300,6 +340,9 @@ export function createMediaApplication(
       add(registry.register("media.sync.jobs", (_, input) => syncRules.jobs(input)));
       add(registry.register("media.sync.job", (_, input) => syncRules.getJob(input.id)));
       add(registry.register("media.sync.job-files", (_, input) => syncRules.jobFiles(input)));
+      add(registry.register("media.sync.resolve-library-review", (_, input) => syncRules.resolveLibraryReview(input)));
+      add(registry.register("media.sync.recheck-library", (_, input) => syncRules.recheckLibrary(input)));
+      add(registry.register("media.sync.remove-job", (_, input) => syncRules.removeJob(input)));
       add(registry.register("media.sync.retry", (_, input) => syncRules.retry(input)));
       add(registry.register("media.configuration.set-default", (_, input) => recognitionRules.setDownloadDirectory(input)));
       add(registry.register("media.emby.libraries", () => delivery.libraries()));
@@ -350,6 +393,8 @@ export function createMediaApplication(
       add(registry.register("media.cloud.downloads.get-preview", (_, input) => downloads.previews.get(input.requestKey)));
       add(registry.register("media.cloud.downloads.confirm", (_, input) => downloads.confirm(input)));
       add(registry.register("media.cloud.downloads.list", (_, input) => downloads.list(input)));
+      add(registry.register("media.cloud.downloads.issues", (_, input) => downloads.issues(input)));
+      add(registry.register("media.cloud.downloads.reconcile", (_, input) => downloads.requestReconcile(input)));
       add(registry.register("media.cloud.downloads.control", (_, input) => downloads.control(input)));
       add(registry.register("media.cloud.accounts.list", () => catalog.accounts()));
       add(registry.register("media.cloud.authorizations.get", (_, input) => accounts.authorization(input.requestKey)));
@@ -375,6 +420,15 @@ export function createMediaApplication(
       );
       add(registry.register("media.jobs.list", () => service.listJobs()));
       add(registry.register("media.settings.get", () => service.getSettings()));
+      add(registry.register("media.codex.rematch", (_, input) => ingestion.codexJobs.enqueue(coreActions["codex.rematch"].input.parse(input))));
+      add(registry.register("media.codex.prepare-directory", (_, input) => ingestion.prepareCodexDirectory(coreActions["codex.prepare-directory"].input.parse(input))));
+      add(registry.register("media.codex.jobs", (_, input) => ingestion.codexJobs.list(coreActions["codex.jobs"].input.parse(input).page)));
+      add(registry.register("media.codex.job", (_, input) => ingestion.codexJobs.get(coreActions["codex.job"].input.parse(input).id)));
+      add(registry.register("media.codex.cancel", (_, input) => ingestion.codexJobs.cancel(coreActions["codex.cancel"].input.parse(input).id)));
+      add(registry.register("media.codex.usage", async () => {
+        if (!codexGateway) throw new DesktopError("COMPONENT_UNAVAILABLE", "Codex 识别资源不可用，请检查安装资源后重启核心");
+        return coreActions["codex.usage"].output.parse(await codexGateway.request("usage", {}));
+      }));
       add(
         registry.register("media.settings.save", (_, input) =>
           { const previous = service.getSettings(), saved = service.saveSettings(coreActions["settings.save"].input.parse(input)); connections.reconfigure(); if (previous.embyUrl !== saved.embyUrl) delivery.invalidate(); return saved; },
@@ -382,8 +436,9 @@ export function createMediaApplication(
       );
     },
   };
-  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); recognitionRules.start(); syncRules.start(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); } };
-  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories, syncRules: SyncRules, recognitionRules: RecognitionRules;
+  const transfers: ApplicationModule = { id: "media.cloud-downloads", dependencies: ["media.commands"], start() { ensureAccepting(); recognitionRules.start(); syncRules.start(); sourceRules.start(); downloads.start(); subscriptions.start(); outbox.start(); ingestion.start(); delivery.start(); corrections.start(); cleanup.start(); } };
+  let codexExecutable: string | undefined, codexGateway: CodexProcess | undefined;
+  let accounts: CloudAccounts, catalog: RemoteCatalog, roots: CloudRoots, downloads: CloudDownloads, subscriptions: CloudSubscriptions, outbox: IngestionOutbox, parser: ParserProcess | undefined, connections: MediaConnections, ingestion: IngestionPipeline, delivery: EmbyDelivery, sourceRules: SourceRules, corrections: Corrections, configurationDirectories: ConfigurationDirectories, syncRules: SyncRules, recognitionRules: RecognitionRules, cleanup: DownloadCleanupService;
   const app = createApplication({
     modules: [host, storage, services, parsing, commands, transfers, ...extraModules],
   });
@@ -397,7 +452,7 @@ export function createMediaApplication(
     // 取消等待不等同于文件回滚或写入者已停止；后者仍由 Main／Host 回收证明。
     let cancelFailure: unknown;
     try { options.cancelHostRequests?.(); } catch (error) { cancelFailure = error; }
-    return quiescence = Promise.allSettled([recognitionRules?.close(), syncRules?.close(), configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
+    return quiescence = Promise.allSettled([cleanup?.close(), recognitionRules?.close(), syncRules?.close(), configurationDirectories?.close(), sourceRules?.close(), corrections?.close(), ingestion?.quiesce(), delivery?.close(), parser?.close(), outbox?.close(), subscriptions?.close(), downloads?.close(), ...(cancelFailure ? [Promise.reject(cancelFailure)] : [])]);
   }
   return {
     app,
@@ -425,7 +480,7 @@ export function createMediaApplication(
           if (request.action === "media.sources.authorize") return ingestion.authorize(privateCoreActions["media.sources.authorize"].input.parse(payload));
           if (request.action === "media.sources.configure-managed") return ingestion.configureManaged(privateCoreActions["media.sources.configure-managed"].input.parse(payload));
           if (request.action === "media.library.bootstrap") return ingestion.libraryBootstrap();
-          if (request.action === "media.library.authorize") { const input = privateCoreActions["media.library.authorize"].input.parse(payload), previous = ingestion.libraryBootstrap().find((row) => row.mediaType === input.mediaType); const result = await ingestion.authorizeLibrary(input); if (previous && previous.target.id !== input.target.id) delivery.invalidate(); return result; }
+          if (request.action === "media.library.authorize") { const input = privateCoreActions["media.library.authorize"].input.parse(payload), previous = ingestion.libraryBootstrap().find((row) => row.mediaType === input.mediaType); const result = await ingestion.authorizeLibrary(input); await configurationDirectories.authorize(input.target, "media"); if (previous && previous.target.id !== input.target.id) delivery.invalidate(); return result; }
           if (request.action === "media.emby.open-url") return delivery.openUrl((payload as { taskId: string }).taskId);
           if (request.action === "cloud.downloads.reconcile-restored") { downloads.reconcileRestored(); return {}; }
           if (request.action === "cloud.downloads.quiesce") { downloads.quiesce(); return {}; }

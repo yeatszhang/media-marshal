@@ -11,15 +11,15 @@ import { i18nReady } from "./i18n";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.useRealTimers(); document.body.innerHTML = ""; });
-async function mount() {
+async function mount(saved = false, converted = false) {
   vi.useFakeTimers(); await i18nReady;
   const target = { mediaType: "TV_SHOW" as const, targetId: crypto.randomUUID(), path: "/本机/中文剧集目标", available: true };
-  let configuration: CoreOutput<"emby.configuration"> = { serverId: "server-fixture", version: 3, address: "http://localhost:8096", verified: false, libraries: [{ targetId: target.targetId, libraryId: "library-tv", libraryPath: target.path }] };
+  let configuration: CoreOutput<"emby.configuration"> = { serverId: "server-fixture", version: 3, address: "http://localhost:8096", verified: saved, libraries: [{ targetId: target.targetId, libraryId: "library-tv", libraryPath: target.path, ...(converted ? { conversion: { localRoot: target.path, serverRoot: "/container/tv", serverPathStyle: "posix" as const } } : {}) }] };
   const api = {
     listMediaLibraries: vi.fn(async () => [target]), getEmbyConfiguration: vi.fn(async () => configuration),
     chooseMediaTarget: vi.fn(async () => [target]),
     listEmbyLibraries: vi.fn(async () => ({ serverId: "server-fixture", version: "4.9-fixture", libraries: [{ id: "library-tv", name: "原有剧集库", type: "tvshows", paths: [target.path] }] })),
-    discoverEmbyTargets: vi.fn(async () => ({ serverId: "server-fixture", targets: [{ targetId: target.targetId, state: "MATCHED", matches: [{ libraryId: "library-tv", libraryPath: target.path, serverPath: target.path }], incompatible: [], reason: null }] })),
+    discoverEmbyTargets: vi.fn(async (): Promise<CoreOutput<"emby.discover">> => ({ serverId: "server-fixture", targets: [{ targetId: target.targetId, state: "MATCHED", matches: [{ libraryId: "library-tv", libraryPath: target.path, serverPath: target.path }], incompatible: [], reason: null }] })),
     connectEmby: vi.fn(async () => { configuration = { ...configuration!, verified: true }; return configuration; }),
   };
   const app = createRendererApplication(api as unknown as DesktopApi); await app.start();
@@ -29,10 +29,52 @@ async function mount() {
   const unmount = async () => { if (!unmounted) { unmounted = true; await act(async () => root.unmount()); } };
   cleanup.push(async () => { await unmount(); await app.stop(); });
   const button = (text: string) => [...element.querySelectorAll("button")].find((value) => value.textContent === text)!;
-  return { app, api, element, target, model: app.container.get(LibraryViewModel), unmount, button,
+  const remount = async () => {
+    await unmount();
+    const nextRoot = createRoot(element);
+    await act(async () => nextRoot.render(<StrictMode><ContainerProvider value={app.container}><LibrarySetup /></ContainerProvider></StrictMode>));
+    cleanup.push(async () => { await act(async () => nextRoot.unmount()); });
+  };
+  return { app, api, element, target, remount, model: app.container.get(LibraryViewModel), unmount, button,
     verified() { configuration = { ...configuration!, verified: true }; } };
 }
 describe("已有 Emby 媒体目标与验证状态", () => {
+  it("首次加载直接回显持久关联，不读取服务器或触发扫描", async () => {
+    const f = await mount(true);
+    expect(f.element.querySelector<HTMLSelectElement>("select")?.value).toBe(JSON.stringify(["library-tv", f.target.path]));
+    expect(f.element.textContent).toContain("关联已保存，连接已验证。");
+    expect(f.element.textContent).not.toContain("请验证并保存");
+    expect(f.api.listEmbyLibraries).not.toHaveBeenCalled();
+    expect(f.api.connectEmby).not.toHaveBeenCalled();
+  });
+  it("重进后恢复已保存的路径转换，连接待复核仍保留配置", async () => {
+    const f = await mount(false, true);
+    const checkbox = () => f.element.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(checkbox().checked).toBe(true);
+    expect(f.element.querySelector<HTMLInputElement>(`input[aria-label="服务端根 · ${f.target.path}"]`)?.value).toBe("/container/tv");
+    expect(f.element.textContent).toContain("关联已保存，连接尚未验证。");
+    await f.remount();
+    expect(checkbox().checked).toBe(true);
+    expect(f.element.querySelector<HTMLSelectElement>(`select[id="settings-library-${f.target.targetId}"]`)?.value).toBe(JSON.stringify(["library-tv", f.target.path]));
+    expect(f.api.connectEmby).not.toHaveBeenCalled();
+  });
+  it("多个候选中已保存的手动选择在重进和重新读取后保持，轮询不覆盖草稿", async () => {
+    const f = await mount();
+    f.api.discoverEmbyTargets.mockResolvedValue({ serverId: "server-fixture", targets: [{ targetId: f.target.targetId, state: "AMBIGUOUS", matches: [{ libraryId: "library-tv", libraryPath: f.target.path, serverPath: f.target.path }, { libraryId: "other-tv", libraryPath: f.target.path, serverPath: f.target.path }], incompatible: [], reason: null }] });
+    await act(async () => f.button("读取 Emby 媒体库").click());
+    await act(async () => f.button("验证并保存（触发扫描）").click());
+    await f.remount();
+    expect(f.element.querySelector<HTMLSelectElement>("select")?.value).toBe(JSON.stringify(["library-tv", f.target.path]));
+    expect(f.element.textContent).toContain("关联已保存，连接已验证。");
+    await act(async () => f.button("读取 Emby 媒体库").click());
+    const select = f.element.querySelector<HTMLSelectElement>("select")!;
+    expect(select.value).toBe(JSON.stringify(["library-tv", f.target.path]));
+    await act(async () => { select.value = JSON.stringify(["other-tv", f.target.path]); select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(select.value).toBe(JSON.stringify(["other-tv", f.target.path]));
+    expect(f.element.textContent).not.toContain("关联已保存，连接已验证。");
+    expect(f.api.connectEmby).toHaveBeenCalledTimes(1);
+  });
   it("唯一发现自动选择，修改转换使旧选择失效；无匹配保留修复原因且不提交", async () => {
     const f = await mount(); await act(async () => f.button("读取 Emby 媒体库").click());
     expect(f.element.querySelector<HTMLSelectElement>("select")?.value).toBe(JSON.stringify(["library-tv", f.target.path]));

@@ -16,7 +16,8 @@ export function recognitionRoute(database: CoreDatabase, sourceId: string, type:
   return { owner, snapshot, configuration, target, binding: recognitionEmbyBinding(database, configuration.id) };
 }
 export function recognitionEmbyBinding(database: CoreDatabase, targetId: string) {
-  const row = database.connection.prepare("SELECT l.binding_json FROM emby_library l JOIN emby_connection c ON c.id=l.connection_id WHERE l.target_root_id=? AND c.valid=1 ORDER BY c.verified_at DESC LIMIT 1").get(targetId) as { binding_json: string | null } | undefined;
+  // 规则目标保留独立身份，复用设置页按物理目录保存的 Emby 关联。
+  const row = database.connection.prepare("SELECT l.binding_json FROM emby_library l JOIN emby_connection c ON c.id=l.connection_id WHERE (l.target_root_id=? OR l.target_root_id=(SELECT directory_id FROM recognition_target_identity WHERE id=?)) AND c.valid=1 ORDER BY (l.target_root_id=?) DESC,c.verified_at DESC LIMIT 1").get(targetId, targetId, targetId) as { binding_json: string | null } | undefined;
   return row?.binding_json ? embyTargetBindingSchema.parse(JSON.parse(row.binding_json)) : null;
 }
 export function recognitionScopeHash(snapshot: RecognitionRuleSnapshot) { return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex"); }

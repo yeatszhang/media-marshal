@@ -14,20 +14,20 @@ import { IngestionPipeline } from "./pipeline";
 const cleanup: (() => unknown | Promise<unknown>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
 async function grant(path: string): Promise<ManagedRootGrant> { const info = await lstat(path, { bigint: true }), fs = await statfs(path, { bigint: true }); return { id: randomUUID(), path, volume: { volumeId: randomUUID(), rootInode: String(info.ino), rootBirthtimeNs: String(info.birthtimeNs), observedDevice: String(info.dev), fsTypeCode: String(fs.type), fsType: "real-isolated-test", caseSensitive: true, unicodeEquivalent: true, pathMaxBytes: 4096 } }; }
-async function fixture() {
+async function fixture(count = 2, firstEpisode = 1) {
   const path = await realpath(await mkdtemp(join(tmpdir(), "marshal-organize-batch-"))); cleanup.push(() => rm(path, { recursive: true, force: true })); const source = join(path, "中文剧集"), target = join(path, "媒体库"); await mkdir(source); await mkdir(target);
-  for (const number of [1, 2]) await writeFile(join(source, `作品.S01E0${number}.mkv`), `第 ${number} 集原内容保留`);
+  for (const number of Array.from({ length: count }, (_, n) => n + firstEpisode)) await writeFile(join(source, `作品.S01E${String(number).padStart(2, "0")}.mkv`), `第 ${number} 集原内容保留`);
   const db = await CoreDatabase.open(join(path, "core.sqlite3")); cleanup.push(() => db.close()); let clock = Date.now(), monotonic = 0;
   const work = { id: 7, name: "测试剧集", original_name: "Test Series", first_air_date: "2026-01-01", seasons: [{ season_number: 1 }] };
-  const server = createServer((req, res) => { res.setHeader("Content-Type", "application/json"); const url = new URL(req.url!, "http://localhost"); if (url.pathname.startsWith("/search/")) res.end(JSON.stringify({ results: [work] })); else if (url.pathname === "/tv/7") res.end(JSON.stringify(work)); else if (url.pathname === "/tv/7/season/1") res.end(JSON.stringify({ episodes: [1, 2, 3].map((episode_number) => ({ episode_number, season_number: 1, name: `第 ${episode_number} 集` })) })); else res.writeHead(404).end("{}"); }); await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); cleanup.push(() => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }));
+  const server = createServer((req, res) => { res.setHeader("Content-Type", "application/json"); const url = new URL(req.url!, "http://localhost"); if (url.pathname.startsWith("/search/")) res.end(JSON.stringify({ results: [work] })); else if (url.pathname === "/tv/7") res.end(JSON.stringify(work)); else if (url.pathname === "/tv/7/season/1") res.end(JSON.stringify({ episodes: Array.from({ length: Math.max(3, firstEpisode + count) }, (_, n) => n + 1).map((episode_number) => ({ episode_number, season_number: 1, name: `第 ${episode_number} 集` })) })); else res.writeHead(404).end("{}"); }); await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); cleanup.push(() => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }));
   const connections = new MediaConnections(db, () => ({ language: "zh-CN", embyUrl: "", tmdbProxy: "" }), { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` }); cleanup.push(() => connections.close()); connections.install({ tmdb: "fixture-private", emby: null });
   const parser = { ready: true, parse: async (name: string) => normalizeParse({ title: "测试剧集", type: "episode", season: 1, episode: Number(/E0?(\d+)/.exec(name)?.[1] ?? 1), year: 2026 }, name) };
   const pipeline = new IngestionPipeline(db, () => parser, connections, () => clock, () => monotonic); cleanup.push(() => pipeline.close()); const sourceId = randomUUID(), sourceGrant = await grant(source), targetGrant = await grant(target), stamp = new Date(clock).toISOString();
   db.connection.prepare("INSERT INTO desktop_source(id,name,kind,source_path,target_path,media_type,operation,created_at) VALUES(?,'批量整理测试','custom',?,?,'AUTO','COPY',?)").run(sourceId, source, target, stamp); const authorization = { sourceId, sourceVersion: 1, mode: "local" as const, downloadRootId: null, source: sourceGrant, target: targetGrant }; await pipeline.authorize(authorization);
   const advance = async () => { for (let n = 0; n < 12; n++) { clock += 10000; monotonic += 10000; await pipeline.scan(sourceId); } };
   await pipeline.scan(sourceId); await advance(); const candidates = pipeline.list({}).items.sort((a, b) => a.relativePath.localeCompare(b.relativePath)); const tasks: string[] = [];
-  for (const candidate of candidates) tasks.push((await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() })).taskId); await pipeline.tick();
-  const input = (): CoreInput<"ingestion.preview-organize-batch"> => ({ requestKey: randomUUID(), items: tasks.map((taskId, index) => ({ taskId, expectedRevision: 0, selection: { tmdbId: 7, mediaType: "TV_SHOW", season: 1, episode: index + 1, episodeEnd: null } })), includeAccessories: false });
+  for (const candidate of candidates) { tasks.push((await pipeline.recognize({ candidateId: candidate.id, requestKey: randomUUID() })).taskId); await pipeline.tick(); }
+  const input = (): CoreInput<"ingestion.preview-organize-batch"> => ({ requestKey: randomUUID(), items: tasks.map((taskId, index) => ({ taskId, expectedRevision: 0, selection: { tmdbId: 7, mediaType: "TV_SHOW", season: 1, episode: index + firstEpisode, episodeEnd: null } })), includeAccessories: false });
   return { path, db, pipeline, parser, now: () => clock, monotonic: () => monotonic, connections, source, target, sourceId, sourceGrant, targetGrant, authorization, tasks, input, advance, jump(ms: number) { clock += ms; monotonic += ms; } };
 }
 describe("共同作品的逐文件预览与持久批量确认", () => {
@@ -122,4 +122,22 @@ describe("共同作品的逐文件预览与持久批量确认", () => {
     await f.pipeline.organizeBatches.tick(); expect(f.pipeline.organizeBatches.get(job.id)).toMatchObject({ state: "CONFIRMING", failed: 0, submitted: 0 }); f.pipeline.setPaused({ paused: false, requestKey: randomUUID() }); await f.pipeline.scan(f.sourceId); await f.advance(); await f.pipeline.organizeBatches.tick(); await f.pipeline.tick(); expect(f.pipeline.organizeBatches.get(job.id)).toMatchObject({ state: "DONE", done: 2 });
   });
 
+});
+
+// 旧前端 submitDirectoryConfirmation 的共同作品／多集 case 改由桌面不可变预览和显式确认承接。
+it.each([[25, 1], [13, 48]])("迁移旧目录批量确认：%i个文件从第%i集开始，共同作品且一次幂等确认", async (count, firstEpisode) => {
+  const f = await fixture(count, firstEpisode), request = f.input();
+  const job = f.pipeline.organizeBatches.create(request); for (let n = 0; n < count; n++) await f.pipeline.organizeBatches.tick();
+  const details = f.pipeline.organizeBatches.details({ id: job.id, page: 1 });
+  expect(details.items).toHaveLength(count);
+  expect(details.batch.state, JSON.stringify(details.items.map((item) => ({ state: item.state, errors: item.errors, waiting: item.waitingReason })))).toBe("READY");
+  expect(details.items.every((item) => item.selection.tmdbId === 7 && item.preview?.mediaType === "TV_SHOW" && item.preview.season === 1)).toBe(true);
+  expect(details.items.map((item) => item.preview!.episode).sort((a, b) => a! - b!)).toEqual(Array.from({ length: count }, (_, n) => n + firstEpisode));
+  expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: 0 });
+  const confirmation = { id: job.id, requestKey: randomUUID(), filesComplete: true as const };
+  f.pipeline.organizeBatches.confirm(confirmation);
+  for (let n = 0; n < count; n++) { await f.pipeline.organizeBatches.tick(); await f.pipeline.tick(); }
+  f.pipeline.organizeBatches.confirm(confirmation); await f.pipeline.organizeBatches.tick();
+  expect(f.pipeline.organizeBatches.get(job.id)).toMatchObject({ state: "DONE", done: count, failed: 0 });
+  expect(f.db.connection.prepare("SELECT count(*) AS n FROM ingestion_operation").get()).toEqual({ n: count });
 });

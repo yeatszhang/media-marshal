@@ -8,6 +8,11 @@ import threading
 import time
 from importlib.metadata import version
 
+if "--codex-stdio" in sys.argv:
+    from codex_stdio import main as codex_main
+    codex_main()
+    sys.exit(0)
+
 from guessit import guessit
 
 PROTOCOL_VERSION = 1

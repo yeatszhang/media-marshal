@@ -14,6 +14,8 @@ import { NativeProcessOwnership } from "./process-ownership";
 import { ensurePrivateDirectory } from "./private-files";
 import { clearPrivateSessions } from "./private-sessions";
 import type { ComponentDiagnostic } from "./diagnostics";
+import { getLogger } from "../../logging/node";
+import { createLogReceiver } from "../../logging/receiver";
 import { managedRootGrantSchema, type ManagedRootGrant, type BindingRef } from "@media-marshal/contracts/internal";
 import { credentialValidationSchema, type CredentialValidation } from "../../sidecar-host/protocol";
 
@@ -97,7 +99,8 @@ export class SidecarSupervisor implements CoreHostBridge {
     this.toCore?.({ kind: "sidecar.generation", hostGeneration: this.generation });
     const child = utilityProcess.fork(this.options.workerPath, [], { serviceName: "Media Marshal Sidecar Host", stdio: "pipe" });
     this.child = child;
-    child.stdout?.on("data", () => {}); child.stderr?.on("data", () => {});
+    const logs = createLogReceiver(getLogger("sidecar-supervisor"), "sidecar");
+    child.stdout?.on("data", logs.stream()); child.stderr?.on("data", logs.stream());
     const { port1, port2 } = new MessageChannelMain(); this.port = port1;
     let resolveReady!: () => void, rejectReady!: (reason: unknown) => void;
     const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
@@ -155,7 +158,9 @@ export class SidecarSupervisor implements CoreHostBridge {
       if (this.capacity.observe(data, this.coreGeneration, this.generation)) this.onCapacity?.();
     });
     port1.start();
-    this.exited = new Promise<void>((resolve) => child.once("exit", () => {
+    this.exited = new Promise<void>((resolve) => child.once("exit", (exitCode: number) => {
+      const log = getLogger("sidecar-supervisor");
+      log[this.stopping ? "info" : "error"]({ event: "sidecar.exit", exitCode }, this.stopping ? "网盘组件宿主已退出" : "网盘组件宿主意外退出");
       clearTimeout(deadline); clearInterval(this.heartbeat); port1.close();
       rejectReady(new CloudError("COMPONENT_UNAVAILABLE"));
       this.relay?.invalidate();

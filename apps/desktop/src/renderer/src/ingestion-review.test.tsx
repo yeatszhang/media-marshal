@@ -10,15 +10,17 @@ import { Ingestion } from "./pages/Ingestion";
 import { i18nReady } from "./i18n";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.useRealTimers(); document.body.innerHTML = ""; });
-async function mount() {
+async function mount(openTask = true) {
   vi.useFakeTimers(); await i18nReady; const taskId = crypto.randomUUID(), candidateId = crypto.randomUUID(), sourceId = crypto.randomUUID();
   const task: CoreOutput<"ingestion.task"> = { taskId, candidateId, sourcePath: "/来源/待确认片.mkv", state: "AWAITING_CONFIRMATION", parsed: { title: "待确认片", year: 2026, type: "MOVIE", season: null, episode: null, episodeEnd: null }, matches: [{ tmdbId: 7, mediaType: "MOVIE", title: "正确影片", originalTitle: null, year: 2026, confidence: 0.8, evidence: "filename", explanation: "人工核对候选" }], failure: null };
   const api = { listIngestionCandidates: vi.fn(async () => ({ total: 1, items: [{ id: candidateId, sourceId, taskId, relativePath: "待确认片.mkv", size: 20, state: "QUEUED", reason: null, requiresConfirmation: true, updatedAt: new Date().toISOString() }] })), listSourceRules: vi.fn(async () => []), getRecognitionTaskTargets: vi.fn(async () => ({ ruleId: null, targets: [] })), getIngestionTask: vi.fn(async () => structuredClone(task)), listOrganizeBatches: vi.fn(async () => ({ items: [], total: 0 })), listContentReviews: vi.fn(async () => ({ items: [], total: 0 })), listIngestionScans: vi.fn(async () => ({ items: [], total: 0 })), previewOrganize: vi.fn(async (): Promise<OrganizePreview> => ({ id: crypto.randomUUID(), taskId, sourcePath: "/来源/待确认片.mkv", targetPath: "/媒体库/正确影片/正确影片.mkv", title: "正确影片", mediaType: "MOVIE", season: null, episode: null, episodeEnd: null, size: 20, expiresAt: Date.now() + 5000, operationId: null, accessories: [] })), confirmOrganize: vi.fn(async () => ({ operationId: crypto.randomUUID() })), previewOrganizeBatch: vi.fn() };
-  const app = createRendererApplication(api as unknown as DesktopApi); await app.start(); const element = document.createElement("div"); document.body.append(element); let root = createRoot(element), mounted = true;
-  const render = () => act(async () => root.render(<StrictMode><MemoryRouter initialEntries={[{ pathname: "/review", state: { taskId } }]}><ContainerProvider value={app.container}><Ingestion /></ContainerProvider></MemoryRouter></StrictMode>));
+  const directory = { id: "a".repeat(64), sourceId, sourceName: "识别输入", relativePath: "待确认目录", total: 1, ready: 0, awaiting: 1, bytes: 20 };
+  const folderApi = { listIngestionDirectories: vi.fn(async () => ({ items: [directory], total: 1 })), getIngestionDirectory: vi.fn(async () => ({ directory, items: [{ candidate: (await api.listIngestionCandidates()).items[0], task }], options: [] })), listRecognitionBatches: vi.fn(async () => ({ items: [], total: 0 })) };
+  const app = createRendererApplication({ ...api, ...folderApi } as unknown as DesktopApi); await app.start(); const element = document.createElement("div"); document.body.append(element); let root = createRoot(element), mounted = true;
+  const render = () => act(async () => root.render(<StrictMode><MemoryRouter initialEntries={[{ pathname: "/review", state: openTask ? { taskId } : null }]}><ContainerProvider value={app.container}><Ingestion /></ContainerProvider></MemoryRouter></StrictMode>));
   const unmount = async () => { if (mounted) { mounted = false; await act(async () => root.unmount()); } };
   const remount = async () => { await unmount(); root = createRoot(element); mounted = true; await render(); };
-  await render(); cleanup.push(async () => { await unmount(); await app.stop(); }); return { api, element, app, task, unmount, remount };
+  await render(); cleanup.push(async () => { await unmount(); await app.stop(); }); return { api, folderApi, element, app, task, unmount, remount };
 }
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === text)!;
 async function click(text: string) { expect(button(text), text).toBeTruthy(); await act(async () => button(text).click()); }
@@ -69,4 +71,48 @@ describe("单条整理与分组草稿的确认边界", () => {
   it("打开分组草稿清除单条旧预览和确认勾选，编辑不触发任何 COPY", async () => {
     const f = await mount(); await preview(); await act(async () => document.querySelector<HTMLInputElement>('[aria-label="选择识别任务 待确认片.mkv"]')!.click()); await click("预览所选文件整理（1）"); expect(f.element.textContent).toContain("共同作品与逐文件计划"); expect(button("确认 COPY 整理")).toBeUndefined(); expect(f.api.confirmOrganize).not.toHaveBeenCalled(); expect(f.api.previewOrganizeBatch).not.toHaveBeenCalled();
   });
+  it("默认进入目录批量，浏览目录不会发起识别、预览或 COPY，单项接续保留目录范围", async () => {
+    const f = await mount(false);
+    expect(document.querySelector('[aria-current="page"]')?.textContent).toBe("目录批量");
+    expect(f.folderApi.getIngestionDirectory).toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="手动目录扫描"]')).toBeNull();
+    expect(document.querySelector('[aria-label="批量整理预览与提交记录"]')).toBeNull();
+    await click("查看此项识别");
+    expect(document.querySelector('[aria-current="page"]')?.textContent).toBe("逐个处理");
+    expect(f.element.textContent).toContain("待确认目录");
+    expect(f.element.textContent).toContain("正确影片");
+    expect(f.api.previewOrganize).not.toHaveBeenCalled();
+    expect(f.api.confirmOrganize).not.toHaveBeenCalled();
+    expect(f.api.previewOrganizeBatch).not.toHaveBeenCalled();
+  });
+  it("切换视图撤销旧预览与完整性勾选，返回单项必须重新预览", async () => {
+    const f = await mount(); await preview();
+    const complete = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((input) => input.parentElement!.textContent!.includes("我已在下载器中确认"))!;
+    await act(async () => complete.click()); expect(button("确认 COPY 整理").disabled).toBe(false);
+    await click("目录批量"); await click("逐个处理");
+    expect(button("确认 COPY 整理")).toBeUndefined();
+    expect(f.api.confirmOrganize).not.toHaveBeenCalled();
+  });
+  it("切换单个文件失败时不展示前一项可操作的确认表单", async () => {
+    const f = await mount(); await preview();
+    f.api.getIngestionTask.mockRejectedValueOnce(new Error("当前文件无法读取，请刷新"));
+    await click("查看识别");
+    expect(f.element.textContent).toContain("当前文件无法读取，请刷新");
+    expect(button("确认 COPY 整理")).toBeUndefined();
+    expect(button("预览 COPY 计划")).toBeUndefined();
+    expect(f.api.confirmOrganize).not.toHaveBeenCalled();
+  });
+
+  it("慢文件查询期间切换入口可退出读取状态，迟到响应不恢复旧表单", async () => {
+    const f = await mount(), response = Promise.withResolvers<CoreOutput<"ingestion.task">>();
+    f.api.getIngestionTask.mockReturnValueOnce(response.promise);
+    await click("查看识别"); expect(f.element.textContent).toContain("正在读取当前文件");
+    await click("目录批量"); await click("逐个处理");
+    expect(f.element.textContent).not.toContain("正在读取当前文件");
+    await act(async () => response.resolve(f.task));
+    expect(button("预览 COPY 计划")).toBeUndefined();
+    expect(f.api.confirmOrganize).not.toHaveBeenCalled();
+    await click("查看识别"); expect(button("预览 COPY 计划")).toBeTruthy();
+  });
+
 });

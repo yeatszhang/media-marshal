@@ -18,17 +18,22 @@ export function LibrarySetup() {
   useEffect(() => {
     if (!state.configuration || initialized.current) return;
     initialized.current = true;
+    setMapping(Object.fromEntries(state.configuration.libraries.map((row) => [row.targetId, JSON.stringify([row.libraryId, row.libraryPath])])));
     setConversions(Object.fromEntries(state.configuration.libraries.filter((row) => row.conversion).map((row) => [row.targetId, { enabled: true, ...row.conversion! }])));
   }, [state.configuration]);
   useEffect(() => {
     if (!state.discovery) return;
-    setMapping(Object.fromEntries(state.discovery.targets.map((target) => [target.targetId, target.state === "MATCHED" ? JSON.stringify([target.matches[0]!.libraryId, target.matches[0]!.libraryPath]) : ""])));
+    setMapping(Object.fromEntries(state.discovery.targets.map((target) => {
+      const saved = state.configuration?.serverId === state.discovery!.serverId ? state.configuration.libraries.find((row) => row.targetId === target.targetId) : undefined;
+      const conversion = conversions[target.targetId];
+      const currentConversion = conversion?.enabled ? { localRoot: conversion.localRoot, serverRoot: conversion.serverRoot, serverPathStyle: conversion.serverPathStyle } : conversion ? null : saved?.conversion ?? null;
+      const matchesSaved = saved && JSON.stringify(saved.conversion ?? null) === JSON.stringify(currentConversion) && target.matches.some((match) => match.libraryId === saved.libraryId && match.libraryPath === saved.libraryPath);
+      return [target.targetId, matchesSaved ? JSON.stringify([saved.libraryId, saved.libraryPath]) : target.state === "MATCHED" ? JSON.stringify([target.matches[0]!.libraryId, target.matches[0]!.libraryPath]) : ""];
+    })));
+    // 仅在新发现结果到达时初始化，轮询配置不覆盖正在编辑的选择。
   }, [state.discovery]);
   const conversionInput = (): CoreInput<"emby.discover"> => ({ conversions: state.targets.map((target) => { const value = conversions[target.targetId]; return { targetId: target.targetId, conversion: value?.enabled ? { localRoot: value.localRoot, serverRoot: value.serverRoot, serverPathStyle: value.serverPathStyle } : null }; }) });
   const changeConversion = (id: string, patch: Partial<{ enabled: boolean; localRoot: string; serverRoot: string; serverPathStyle: "posix" | "win32" }>) => { const target = state.targets.find((row) => row.targetId === id)!; setConversions((values) => ({ ...values, [id]: { enabled: false, localRoot: target.path, serverRoot: "", serverPathStyle: "posix", ...values[id], ...patch } })); setMapping({}); model.clearDiscovery(); };
-  useEffect(() => {
-    setMapping({});
-  }, [state.server?.serverId]);
   const invalidConversion = state.targets.some((target) => { const value = conversions[target.targetId]; return value?.enabled && (!value.localRoot.trim() || !value.serverRoot.trim()); });
   return (
     <section
@@ -94,11 +99,15 @@ export function LibrarySetup() {
           {t("ingestion.readLibraries")}
         </Button>
       </div>
-      {state.server && (
+      {(state.server || !!state.configuration?.libraries.length) && (
         <div className="settings-body settings-rows settings-library-mapping">
-          <p className="settings-description">Emby {state.server.version}</p>
+          <p className="settings-description">{state.server ? `Emby ${state.server.version}` : t("ingestion.savedMapping")}</p>
           {state.targets.map((target) => {
             const discovery = state.discovery?.targets.find((row) => row.targetId === target.targetId), conversion = conversions[target.targetId];
+            const saved = state.configuration?.libraries.find((row) => row.targetId === target.targetId);
+            const matches = discovery?.matches ?? (!state.server && saved ? [{ libraryId: saved.libraryId, libraryPath: saved.libraryPath }] : []);
+            const currentConversion = conversion?.enabled ? { localRoot: conversion.localRoot, serverRoot: conversion.serverRoot, serverPathStyle: conversion.serverPathStyle } : null;
+            const isSaved = saved && (!state.server || state.server.serverId === state.configuration?.serverId) && mapping[target.targetId] === JSON.stringify([saved.libraryId, saved.libraryPath]) && JSON.stringify(saved.conversion ?? null) === JSON.stringify(currentConversion);
             const label = target.mediaType === "AUTO" ? "电影／剧集" : t(target.mediaType === "MOVIE" ? "ingestion.movie" : "ingestion.tv");
             return <div className="settings-library-choice" key={target.targetId}>
               <label htmlFor={`settings-library-${target.targetId}`}>{label} · {target.path}</label>
@@ -111,14 +120,14 @@ export function LibrarySetup() {
               {conversion?.enabled && (!conversion.localRoot.trim() || !conversion.serverRoot.trim()) && <p className="notice notice-error" role="alert">请填写此目标的本机根和服务端根，再重新发现关联。</p>}
               <select id={`settings-library-${target.targetId}`} aria-label={`${t("ingestion.chooseLibrary")} · ${target.path}`} disabled={state.busy || !discovery?.matches.length} value={mapping[target.targetId] ?? ""} onChange={(event) => setMapping({ ...mapping, [target.targetId]: event.target.value })}>
                 <option value="">暂不关联此目标</option>
-                {discovery?.matches.map((match) => <option key={JSON.stringify([match.libraryId, match.libraryPath])} value={JSON.stringify([match.libraryId, match.libraryPath])}>{state.server!.libraries.find((row) => row.id === match.libraryId)?.name ?? match.libraryId} · {match.libraryPath}</option>)}
+                {matches.map((match) => <option key={JSON.stringify([match.libraryId, match.libraryPath])} value={JSON.stringify([match.libraryId, match.libraryPath])}>{state.server?.libraries.find((row) => row.id === match.libraryId)?.name ?? match.libraryId} · {match.libraryPath}</option>)}
               </select>
-              <p className="settings-description" role="status">{!discovery ? "路径配置已变化，请重新发现关联。" : discovery.state === "MATCHED" ? "发现唯一兼容库根，请验证并保存。" : discovery.state === "AMBIGUOUS" ? "匹配多个库根，请明确选择其中一个。" : discovery.state === "TYPE_CONFLICT" ? "路径匹配但媒体类型不兼容，请选择同类型库或核对目标类型。" : discovery.state === "UNAVAILABLE" ? discovery.reason : "没有匹配库根，请核对完整路径或配置显式转换；仍可独立整理文件。"}</p>
-              {discovery?.matches.filter((match) => mapping[target.targetId] === JSON.stringify([match.libraryId, match.libraryPath])).map((match) => <p className="settings-description settings-mapping-path" key={match.serverPath}>本机目标：{target.path}<br />服务端目标：{match.serverPath}</p>)}
+              <p className="settings-description" role="status">{isSaved ? (state.configuration?.verified ? t("ingestion.mappingVerified") : t("ingestion.mappingUnverified")) : !discovery ? "路径配置已变化，请重新发现关联。" : discovery.state === "MATCHED" ? "发现唯一兼容库根，请验证并保存。" : discovery.state === "AMBIGUOUS" ? "匹配多个库根，请明确选择其中一个。" : discovery.state === "TYPE_CONFLICT" ? "路径匹配但媒体类型不兼容，请选择同类型库或核对目标类型。" : discovery.state === "UNAVAILABLE" ? discovery.reason : "没有匹配库根，请核对完整路径或配置显式转换；仍可独立整理文件。"}</p>
+              {discovery?.matches.filter((match) => mapping[target.targetId] === JSON.stringify([match.libraryId, match.libraryPath])).map((match) => <p className="settings-description settings-mapping-path" key={match.libraryPath}>本机目标：{target.path}<br />服务端目标：{match.serverPath}</p>)}
             </div>;
           })}
-          <Button variant="outline" disabled={state.busy || invalidConversion} onClick={() => { setMapping({}); void model.discover(conversionInput()); }}>重新发现关联</Button>
-          {!state.discovery && <p className="settings-description">请先发现关联并核对两侧完整目标，才能验证保存。</p>}
+          <Button variant="outline" disabled={state.busy || invalidConversion || !state.server} onClick={() => { setMapping({}); void model.discover(conversionInput()); }}>重新发现关联</Button>
+          {!state.server ? <p className="settings-description">{t("ingestion.editSavedMapping")}</p> : !state.discovery && <p className="settings-description">请先发现关联并核对两侧完整目标，才能验证保存。</p>}
           <div className="settings-actions">
             <Button
               disabled={

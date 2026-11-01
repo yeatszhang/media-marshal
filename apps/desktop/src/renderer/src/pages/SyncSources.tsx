@@ -1,5 +1,6 @@
 import { EditorSurface } from "../components/EditorSurface";
-import { useEffect, useRef, useState } from "react";
+import { LoaderCircle } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useService, useServiceState } from "@yeatz/app-framework/react";
 import { syncSourceConfigurationSchema, type CoreOutput, type SyncSourceConfiguration, type SyncSourceRule } from "@media-marshal/contracts";
@@ -10,49 +11,140 @@ import { Header, ErrorNotice } from "../components/shared";
 import { Button } from "../components/ui/button";
 import { sourceSize } from "../source-format";
 
-const status = { READY: "可确认", BUILDING: "正在扫描", BLOCKED: "需要核对", EXPIRED: "已过期", APPLIED: "已确认", PENDING: "等待执行", RUNNING: "执行中", DONE: "完成", NEEDS_ATTENTION: "需要处理", CANCELED: "已取消", OBSERVING: "正在观察", REUSED: "复用成功历史", REMOVED: "已同步，本地已移除", CONFLICT: "目标冲突", UNAVAILABLE: "目录不可用" };
+const status = { READY: "可确认", BUILDING: "正在扫描", BLOCKED: "需要核对", EXPIRED: "已过期", APPLIED: "已确认", PENDING: "等待执行", RUNNING: "执行中", DONE: "完成", NEEDS_ATTENTION: "需要处理", CANCELED: "已取消", OBSERVING: "正在观察", IN_LIBRARY: "已在媒体库", LIBRARY_REVIEW: "重复待核对", REUSED: "复用成功历史", REMOVED: "已同步，本地已移除", CONFLICT: "目标冲突", UNAVAILABLE: "目录不可用" };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "查询未完成，请核对连接后重试";
 function Pager({ page, total, onChange }: { page: number; total: number; onChange(page: number): void }) { return total > 25 ? <div className="download-pagination"><Button variant="outline" disabled={page <= 1} onClick={() => onChange(page - 1)}>上一页</Button><span>{page} / {Math.ceil(total / 25)}</span><Button variant="outline" disabled={page * 25 >= total} onClick={() => onChange(page + 1)}>下一页</Button></div> : null; }
-function FileList({ data }: { data: CoreOutput<"sync.preview-files"> | null }) { return <div className="sync-files">{data?.items.map((file) => <article key={file.relativePath}><strong className="settings-mapping-path">{file.relativePath}</strong><span>{sourceSize(file.size)} · {status[file.state]}</span><p className="settings-mapping-path">→ {file.targetPath}</p>{file.reason && <p>{file.reason}</p>}</article>)}</div>; }
+type ReviewChoice = { relativePath: string; decision: "USE_LIBRARY"; candidateId: string } | { relativePath: string; decision: "DOWNLOAD" };
+function LibraryReviewControls({ file, busy, onResolve }: { file: CoreOutput<"sync.preview-files">["items"][number]; busy: boolean; onResolve(input: ReviewChoice): Promise<void> }) {
+  const [selected, setSelected] = useState(""), [error, setError] = useState<string | null>(null), group = useId();
+  const candidate = file.libraryReview?.candidates.find((value) => value.id === selected);
+  const submit = async (decision: ReviewChoice) => { setError(null); try { await onResolve(decision); } catch (error) { setError(errorMessage(error)); } };
+  return <div className="sync-library-review">
+    <fieldset disabled={busy}><legend>核对媒体库候选</legend>
+      {file.libraryReview?.candidates.map((value) => <label key={value.id} className="sync-library-candidate"><input type="radio" name={group} checked={selected === value.id} onChange={() => { setSelected(value.id); setError(null); }} /><span className="settings-mapping-path">{value.path}<small>{sourceSize(value.size)} · {value.size.toLocaleString()} 字节</small></span></label>)}
+    </fieldset>
+    {file.libraryReview && file.libraryReview.totalCandidates > file.libraryReview.candidates.length && <p className="cloud-hint">共 {file.libraryReview.totalCandidates} 个候选，仅展示前 {file.libraryReview.candidates.length} 个；可缩小来源范围后重新预览。</p>}
+    <p className="cloud-hint" id={group + "-help"}>{busy ? "正在保存核对结果，请等待。" : candidate ? "确认所选文件就是此视频后再跳过；人工确认未验证远端内容指纹。" : "先选择库内候选，再确认跳过；若不是同一视频，可选择仍需同步。"}</p>
+    <div className="form-actions"><Button variant="outline" disabled={busy || !candidate} aria-describedby={group + "-help"} onClick={() => { if (candidate) void submit({ relativePath: file.relativePath, decision: "USE_LIBRARY", candidateId: candidate.id }); }}>确认所选文件已在库，跳过</Button><Button variant="outline" disabled={busy} onClick={() => { void submit({ relativePath: file.relativePath, decision: "DOWNLOAD" }); }}>仍需同步此文件</Button></div>
+    <ErrorNotice message={error} />
+  </div>;
+}
+function FileList({ data, busy = false, onResolve }: { data: CoreOutput<"sync.preview-files"> | null; busy?: boolean; onResolve?(input: ReviewChoice): Promise<void> }) { return <div className="sync-files">{data?.items.map((file) => {
+  const review = file.state === "LIBRARY_REVIEW", blocked = review || file.state === "CONFLICT" || file.state === "UNAVAILABLE" || file.state === "NEEDS_ATTENTION";
+  return <article key={file.relativePath} className={blocked ? "sync-file-blocked" : undefined}><strong className="settings-mapping-path">{file.relativePath}</strong><span>{sourceSize(file.size)} · <strong className={blocked ? "sync-conflict" : undefined}>{status[file.state]}</strong></span><p className="settings-mapping-path">→ {file.targetPath}</p>{file.reason && <p className={blocked ? "sync-conflict" : undefined}>{file.reason}</p>}
+    {review && file.libraryReview && onResolve ? <LibraryReviewControls file={file} busy={busy} onResolve={onResolve} /> : blocked && <p className="sync-conflict">{file.state === "CONFLICT" ? "下载目标已占用或已有成果校验不通过。请保留双方文件，核对上方路径及原因；处理后重新预览，或从来源使用「显式重新同步」下载到独立目录。" : "请恢复原目录、授权或处理上述问题后重新预览。"}</p>}
+  </article>;
+})}</div>; }
 
 function SyncPreview({ id, onClose, onApplied }: { id: string; onClose(): void; onApplied(jobId: string | null): void }) {
-  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy), [preview, setPreview] = useState<CoreOutput<"sync.get-preview"> | null>(null), [files, setFiles] = useState<CoreOutput<"sync.preview-files"> | null>(null), [page, setPage] = useState(1), [error, setError] = useState<string | null>(null), [complete, setComplete] = useState(false), [history, setHistory] = useState(false), [once, setOnce] = useState(false), ref = useRef<HTMLElement>(null);
-  useEffect(() => { ref.current?.focus(); setComplete(false); setHistory(false); setOnce(false); }, [id]);
-  useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const [p, f] = await Promise.all([model.client.getSyncPreview(id), model.client.listSyncPreviewFiles({ id, page })]); if (live) { setPreview(p); setFiles(f); setError(null); } } catch (error) { if (live) setError(errorMessage(error)); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, id, page]);
+  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy), [preview, setPreview] = useState<CoreOutput<"sync.get-preview"> | null>(null), [files, setFiles] = useState<CoreOutput<"sync.preview-files"> | null>(null), [page, setPage] = useState(1), [error, setError] = useState<string | null>(null), [complete, setComplete] = useState(false), [history, setHistory] = useState(false), [once, setOnce] = useState(false), ref = useRef<HTMLElement>(null), previewEpoch = useRef(0);
+  useEffect(() => { previewEpoch.current++; ref.current?.focus(); setComplete(false); setHistory(false); setOnce(false); return () => { previewEpoch.current++; }; }, [id]);
+  useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { const epoch = previewEpoch.current; try { const [p, f] = await Promise.all([model.client.getSyncPreview(id), model.client.listSyncPreviewFiles({ id, page })]); if (live && epoch === previewEpoch.current) { setPreview(p); setFiles(f); setError(null); } } catch (error) { if (live && epoch === previewEpoch.current) setError(errorMessage(error)); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, id, page]);
   const local = preview?.snapshot.configuration.type === "local", executes = preview?.mode === "execution" || once, requiresHistory = !!preview?.download?.historyRestore && !preview.download.historyRestore.confirmed;
+  const reasonId = useId();
+  const blockedReason = !preview || preview.state === "APPLIED" ? null
+    : busy ? "正在处理同步操作，请等待完成后再确认。"
+    : preview.state === "EXPIRED" ? "预览已过期或配置已变化，请关闭预览并重新保存草稿、生成预览。"
+    : preview.state === "BUILDING" ? "正在扫描文件范围，扫描完成后才能确认。"
+    : (preview.libraryReviews ?? 0) > 0 ? `有 ${preview.libraryReviews} 项疑似重复，请在各文件行选择已有候选并确认跳过，或选择仍需同步。`
+    : preview.conflicts > 0 ? `有 ${preview.conflicts} 项冲突或目录不可用，暂时无法确认。请在各页中查看高亮项，核对目标路径与原因，处理后重新预览。`
+    : preview.failure ? `暂时无法确认：${preview.failure}`
+    : !preview.complete ? "文件范围尚未完整，请核对来源连接后重新预览。"
+    : preview.mode === "execution" && preview.observing > 0 ? `仍有 ${preview.observing} 项文件正在观察，请等待文件稳定后再确认。`
+    : preview.state !== "READY" ? "预览尚不可确认，请核对来源状态后重新预览。"
+    : local && executes && !complete ? "请先勾选上方的本地文件完整性确认，再执行本次清单。"
+    : requiresHistory && !history ? "请先勾选上方的原账号、目录及同步历史确认。" : null;
   return <section ref={ref} tabIndex={-1} className="panel sync-panel" aria-label="同步预览"><div className="cloud-browser-toolbar"><h2>{preview?.force ? "显式重新同步预览" : preview?.mode === "execution" ? "执行一次预览" : "配置范围预览"}</h2><Button variant="ghost" disabled={busy} onClick={onClose}>关闭预览</Button></div><ErrorNotice message={error ?? preview?.failure ?? null} />
-    {preview && <><p role="status">{status[preview.state]} · {preview.complete ? "完整范围" : "范围尚未完整"} · {preview.files} 项 · {sourceSize(preview.bytes)} · 复用 {preview.reused} · 已移除 {preview.removed} · 观察中 {preview.observing} · 冲突 {preview.conflicts}</p><p className="settings-mapping-path">本次实际完成目录：{preview.snapshot.targetDirectory.path}/completed</p>
+    {(!preview && !error || preview?.state === "BUILDING") && <p className="sync-preview-loading" role="status"><LoaderCircle className="spin" size={20} aria-hidden="true" /><span>{preview ? "正在扫描范围，文件数量和大小仍在更新…" : "正在加载范围预览…"}</span></p>}
+    {preview && <><p role="status">{status[preview.state]} · {preview.complete ? "完整范围" : "范围尚未完整"} · {preview.files} 项 · {sourceSize(preview.bytes)} · 已在媒体库 {preview.inLibrary ?? 0} · 复用 {preview.reused} · 已移除 {preview.removed} · 观察中 {preview.observing} · <strong className={preview.conflicts > 0 ? "sync-conflict-count" : undefined}>冲突 {preview.conflicts}</strong> · <strong className={(preview.libraryReviews ?? 0) > 0 ? "sync-conflict-count" : undefined}>重复待核对 {preview.libraryReviews ?? 0}</strong></p><p className="settings-mapping-path">本次实际完成目录：{preview.snapshot.targetDirectory.path}/completed</p>
       {preview.force && <p className="notice">本次将重新传输到独立 resync 目录，保留旧文件和成功历史；重复确认只受理同一作业。</p>}
       {preview.observing > 0 && <p className="notice">源文件须连续观察至少 120 秒，重启或观察中断会重新计时。可先确认配置范围，执行前仍须核对完整性。</p>}
-      <FileList data={files} /><Pager page={page} total={files?.total ?? 0} onChange={setPage} />
+      <FileList data={files} busy={busy} onResolve={preview.state !== "APPLIED" && preview.state !== "EXPIRED" ? async (choice) => {
+        const epoch = ++previewEpoch.current;
+        const input = { ...choice, previewId: id };
+        const result = await model.command("library-review:" + JSON.stringify(input), (requestKey) => model.client.resolveSyncLibraryReview({ ...input, requestKey }));
+        if (!result) throw new Error(model.state.error ?? "核对决定未保存，请刷新预览后重试");
+        if (epoch !== previewEpoch.current) return;
+        const nextEpoch = ++previewEpoch.current, refreshed = await model.client.listSyncPreviewFiles({ id, page });
+        if (nextEpoch === previewEpoch.current) { setPreview(result); setFiles(refreshed); }
+      } : undefined} /><Pager page={page} total={files?.total ?? 0} onChange={setPage} />
       {preview.state === "APPLIED" ? <p role="status">范围已确认，查询和重载不会再次执行。{preview.jobId && <Button variant="ghost" onClick={() => onApplied(preview.jobId)}>查看原作业</Button>}</p> : <>
         {preview.mode === "configuration" && <label className="sync-check"><input type="checkbox" checked={once} disabled={busy || !!preview.observing || !!preview.snapshot.configuration.periodic.enabled && !local} onChange={(event) => setOnce(event.target.checked)} />确认配置时执行一次{preview.snapshot.configuration.periodic.enabled && !local && "（网盘周期规则确认后会执行首轮）"}</label>}
         {local && executes && <label className="sync-check"><input type="checkbox" checked={complete} disabled={busy} onChange={(event) => setComplete(event.target.checked)} />我已确认本次本地文件完整，允许复制此精确清单</label>}
         {requiresHistory && <label className="sync-check"><input type="checkbox" checked={history} disabled={busy} onChange={(event) => setHistory(event.target.checked)} />确认仍为原账号和目录并沿用同步历史（{preview.download!.historyRestore!.files} 项）</label>}
-        <Button disabled={busy || preview.state !== "READY" || local && executes && !complete || requiresHistory && !history} onClick={() => { void model.confirm({ previewId: id, runOnce: once, ...(local && executes ? { filesComplete: true } : {}), ...(requiresHistory && history ? { historyConsent: { accepted: true } } : {}) }).then((result) => { if (result) { setPreview((old) => old ? { ...old, state: "APPLIED", jobId: result.jobId } : old); onApplied(result.jobId); } }); }}>{preview.mode === "execution" ? preview.force ? "确认重新同步到独立目录" : "确认执行一次" : "确认配置范围"}</Button>
+        {blockedReason && <p id={reasonId} className={`notice${preview.conflicts > 0 || preview.failure ? " notice-error" : ""}`} role="status">{blockedReason}</p>}
+        <Button disabled={!!blockedReason} aria-describedby={blockedReason ? reasonId : undefined} onClick={() => { void model.confirm({ previewId: id, runOnce: once, ...(local && executes ? { filesComplete: true } : {}), ...(requiresHistory && history ? { historyConsent: { accepted: true } } : {}) }).then((result) => { if (result) { setPreview((old) => old ? { ...old, state: "APPLIED", jobId: result.jobId } : old); onApplied(result.jobId); } }); }}>{preview.mode === "execution" ? preview.force ? "确认重新同步到独立目录" : "确认执行一次" : "确认配置范围"}</Button>
       </>}
     </>}
   </section>;
 }
 
 function SyncJob({ id, onClose }: { id: string; onClose(): void }) {
-  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy), [job, setJob] = useState<CoreOutput<"sync.job"> | null>(null), [files, setFiles] = useState<CoreOutput<"sync.job-files"> | null>(null), [page, setPage] = useState(1), [error, setError] = useState<string | null>(null);
-  useEffect(() => { let live = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const [j, f] = await Promise.all([model.client.getSyncJob(id), model.client.listSyncJobFiles({ id, page })]); if (live) { setJob(j); setFiles(f); setError(null); } } catch (error) { if (live) setError(errorMessage(error)); } if (live) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { live = false; clearTimeout(timer); }; }, [model, id, page]);
-  return <section className="panel sync-panel" aria-label="同步任务详情"><div className="cloud-browser-toolbar"><h2>同步任务详情</h2><Button variant="ghost" onClick={onClose}>关闭任务详情</Button></div><ErrorNotice message={error ?? job?.failure ?? null} />{job && <><p>{status[job.state]} · 冻结版本 v{job.sourceVersion} · 共 {job.files} 项 · 完成 {job.done} · 复用 {job.reused} · 移除 {job.removed} · 失败 {job.failed}</p><p className="cloud-hint">{job.recognition?.state === "NOT_ENABLED" ? "此完成目录尚未启用识别；之后配置独立识别可补处理，无需重新同步。" : job.recognition?.state === "PAUSED" ? "此输入的独立识别已暂停，成功成果保留等待恢复。" : job.recognition?.state === "ENABLED" ? "此完成目录已接入独立识别，复制与媒体整理分别记账。" : ""}{job.recognition?.ruleId && <Link to={`/recognition?rule=${job.recognition.ruleId}`}>查看对应识别规则</Link>}</p><p className="cloud-hint">任务标识：{id}。规则编辑不替换本作业计划；重载只查询状态。</p><FileList data={files} /><Pager page={page} total={files?.total ?? 0} onChange={setPage} />{job.state === "NEEDS_ATTENTION" && <Button variant="outline" disabled={busy} onClick={() => { void model.command("retry:" + id, (requestKey) => model.client.retrySyncJob({ id, requestKey })); }}>重试原同步作业</Button>}</>}</section>;
+  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy);
+  const [job, setJob] = useState<CoreOutput<"sync.job"> | null>(null), [files, setFiles] = useState<CoreOutput<"sync.job-files"> | null>(null), [page, setPage] = useState(1);
+  const [error, setError] = useState<string | null>(null), [actionError, setActionError] = useState<string | null>(null), live = useRef(false), currentId = useRef(id), recheckReasonId = useId();
+  currentId.current = id;
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => { let active = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const [j, f] = await Promise.all([model.client.getSyncJob(id), model.client.listSyncJobFiles({ id, page })]); if (active) { setJob(j); setFiles(f); setError(null); } } catch (error) { if (active) setError(errorMessage(error)); } if (active) timer = setTimeout(() => { void poll(); }, 2000); }; void poll(); return () => { active = false; clearTimeout(timer); }; }, [model, id, page]);
+  const recheck = job?.libraryRecheck, checking = recheck?.state === "PENDING" || recheck?.state === "RUNNING";
+  const recheckReason = busy ? "正在提交同步操作，请等待完成。" : job?.libraryRecheckBlockedReason ?? (checking ? "正在重新核对媒体库，请等待结果；来源保持暂停。" : null);
+  const actOnJob = (operation: "recheck" | "retry") => {
+    setActionError(null);
+    void model.command(operation + ":" + id, (requestKey) => operation === "recheck" ? model.client.recheckSyncJobLibrary({ id, requestKey }) : model.client.retrySyncJob({ id, requestKey })).then((result) => {
+      if (!live.current || currentId.current !== id) return;
+      if (result) setJob(result); else setActionError(model.state.error ?? "任务操作未提交，请核对来源状态后重试");
+    });
+  };
+  return <EditorSurface title="同步任务详情" variant="modal" dirty={false} onClose={onClose}>{(requestClose) => <section className="sync-job-detail" aria-label="同步任务详情">
+    <div className="cloud-browser-toolbar"><h2>同步任务详情</h2><Button variant="ghost" onClick={requestClose}>关闭任务详情</Button></div>
+    <ErrorNotice message={actionError ?? error ?? recheck?.failure ?? job?.failure ?? null} />
+    {job?.waitingReason && <p className="notice" role="status">{job.waitingReason}</p>}
+    {!job && !error && <p role="status">正在加载任务明细…</p>}
+    {job && <>
+      <p>{status[job.state]} · 冻结版本 v{job.sourceVersion} · 共 {job.files} 项 · 完成 {job.done} · 已在媒体库 {job.inLibrary ?? 0} · 复用 {job.reused} · 移除 {job.removed} · 失败 {job.failed}</p>
+      <p className="cloud-hint">{job.recognition?.state === "NOT_ENABLED" ? "此完成目录尚未启用识别；之后配置独立识别可补处理，无需重新同步。" : job.recognition?.state === "PAUSED" ? "此输入的独立识别已暂停，成功成果保留等待恢复。" : job.recognition?.state === "ENABLED" ? "此完成目录已接入独立识别，复制与媒体整理分别记账。" : ""}{job.recognition?.ruleId && <Link to={`/recognition?rule=${job.recognition.ruleId}`}>查看对应识别规则</Link>}</p>
+      <p className="cloud-hint">任务标识：{id}。规则编辑不替换本作业计划；重载只查询状态。</p>
+      {recheck && <p className="notice settings-mapping-path" role="status">{checking ? `正在重新核对媒体库：${recheck.checked} / ${recheck.total} 个视频` : recheck.state === "DONE" ? `媒体库核对完成：本次跳过 ${recheck.matched} 个视频，避免下载 ${sourceSize(recheck.skippedBytes)}。来源保持暂停。` : `媒体库核对未完成，已检查 ${recheck.checked} / ${recheck.total} 个视频，本次未撤销下载需求。`}{checking && recheck.relativePath && <span> · {recheck.relativePath}</span>}</p>}
+      {job.state !== "DONE" && job.state !== "CANCELED" && <div className="form-group">
+        <p className="cloud-hint">重新检查原清单中的未完成视频，跳过媒体库已有文件；完成历史和其他任务的下载需求保留。</p>
+        {recheckReason && <p id={recheckReasonId} className="cloud-hint">{recheckReason}</p>}
+        <div className="form-actions"><Button variant="outline" disabled={!!recheckReason} aria-describedby={recheckReason ? recheckReasonId : undefined} onClick={() => actOnJob("recheck")}>{checking ? "正在核对媒体库…" : "重新核对媒体库已有文件"}</Button>
+          {job.state === "NEEDS_ATTENTION" && <Button variant="outline" disabled={busy || checking} onClick={() => actOnJob("retry")}>重试原同步作业</Button>}
+        </div>
+      </div>}
+      <FileList data={files} /><Pager page={page} total={files?.total ?? 0} onChange={setPage} />
+    </>}
+  </section>}</EditorSurface>;
+}
+
+function RemoveSyncJob({ job, onClose, onRemoved }: { job: CoreOutput<"sync.job">; onClose(): void; onRemoved(): void }) {
+  const model = useService(SyncViewModel), busy = useServiceState(model, (state) => state.busy), [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  return <EditorSurface title="删除同步任务" variant="modal" dirty={false} busy={busy} onClose={onClose}>{(requestClose) => <section className="sync-job-detail">
+    <h2>删除此同步任务？</h2><p>删除后不再显示此任务，已同步文件、冻结计划和成功历史保留。未完成的任务须先暂停对应来源，等待在途同步停止。</p><p className="settings-mapping-path">任务标识：{job.id}</p><ErrorNotice message={error} />
+    <div className="form-actions"><Button variant="outline" disabled={busy} onClick={requestClose}>取消</Button><Button disabled={busy} onClick={() => {
+      setError(null); void model.command("remove-job:" + job.id, (requestKey) => model.client.removeSyncJob({ id: job.id, requestKey })).then((result) => {
+        if (!mounted.current) return;
+        if (result) onRemoved(); else setError(model.state.error ?? "删除任务未完成，请刷新任务状态后重试");
+      });
+    }}>{busy ? "正在删除…" : "确认删除同步任务"}</Button></div>
+  </section>}</EditorSurface>;
 }
 
 export function SyncSources() {
   const model = useService(SyncViewModel), state = useServiceState(model, (value) => value), [draft, setDraft] = useSyncDraft(), [query, setQuery] = useSearchParams(), [picker, setPicker] = useState(false), [validation, setValidation] = useState<string | null>(null), [page, setPage] = useState(1), [jobPage, setJobPage] = useState(1), [jobs, setJobs] = useState<CoreOutput<"sync.jobs"> | null>(null), lifecycle = useRef<HTMLDialogElement>(null), [removing, setRemoving] = useState<SyncSourceRule | null>(null), currentDraft = useRef(draft), mounted = useRef(true);
+  const [removingJob, setRemovingJob] = useState<CoreOutput<"sync.job"> | null>(null);
   const [removalError, setRemovalError] = useState<string | null>(null), cancelRemoval = useRef<HTMLButtonElement>(null);
 
   currentDraft.current = draft;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => model.watch(), [model]);
-  useEffect(() => { let live = true; void model.client.listSyncJobs({ page: jobPage }).then((value) => { if (live) setJobs(value); }).catch((error) => { if (live) setValidation(errorMessage(error)); }); return () => { live = false; }; }, [model, jobPage, state.jobs]);
+  useEffect(() => { let live = true; void model.client.listSyncJobs({ page: jobPage }).then((value) => { if (live) { const last = Math.max(1, Math.ceil(value.total / 25)); if (jobPage > last) setJobPage(last); else setJobs(value); } }).catch((error) => { if (live) setValidation(errorMessage(error)); }); return () => { live = false; }; }, [model, jobPage, state.jobs]);
   const patch = (configuration: Partial<SyncSourceConfiguration>) => { setValidation(null); if (query.has("preview")) setQuery({}); setDraft((old) => old ? { ...old, revision: old.revision + 1, configuration: { ...old.configuration, ...configuration } as SyncSourceConfiguration } : old); };
   const open = (row: SyncSourceRule) => { setDraft({ row, id: row.id, configuration: structuredClone(row.draft), remoteName: null, accountRoot: row.draft.type === "cloud" ? state.accounts.find((account) => row.draft.type === "cloud" && account.id === row.draft.accountId)?.rootRef ?? null : null, rebind: false, revision: 0 }); setValidation(null); };
   const sourceId = query.get("source"), lastOpened = useRef<string | null>(null);
-  useEffect(() => { if (!sourceId) { lastOpened.current = null; return; } if (lastOpened.current === sourceId) return; const row = state.items.find((value) => value.id === sourceId); if (row) { lastOpened.current = sourceId; open(row); } }, [sourceId, state.items]);
+  useEffect(() => { if (!sourceId) { lastOpened.current = null; return; } if (lastOpened.current === sourceId) return; const row = state.items.find((value) => value.id === sourceId && !value.deletedAt); if (row) { lastOpened.current = sourceId; open(row); } }, [sourceId, state.items]);
   const account = draft?.configuration.type === "cloud" ? state.accounts.find((value) => draft.configuration.type === "cloud" && value.id === draft.configuration.accountId) : null;
   const staleRemote = !!(draft?.configuration.type === "cloud" && draft.configuration.remoteRef && account && (draft.accountRoot !== account.rootRef || !["READY", "RESELECT_REQUIRED"].includes(account.status)));
   const choose = (_kind: "ordinary", _input = true) => { const old = currentDraft.current; void model.command("choose:ordinary", () => model.client.chooseConfigurationDirectory("ordinary")).then((value) => { if (value && mounted.current && currentDraft.current?.id === old?.id) patch({ inputDirectoryId: value.id } as Partial<SyncSourceConfiguration>); }); };
@@ -95,8 +187,8 @@ export function SyncSources() {
     {query.get("job") && <SyncJob key={query.get("job")!} id={query.get("job")!} onClose={() => setQuery({})} />}
     <div className="source-list">{rows.slice((visiblePage - 1) * 25, visiblePage * 25).map((row) => <article className="panel sync-panel" key={row.id} aria-label={`同步来源 ${row.draft.name}`}><h3>{row.draft.name}</h3><p>{row.draft.type === "local" ? "本地来源" : "网盘来源"} · {row.version ? `生效 v${row.version}` : "未生效草稿"} · {row.paused ? "已暂停" : directoriesReady(row) ? "同步可用" : "等待原目录恢复"}</p><p className="settings-mapping-path">{row.snapshot ? `${row.snapshot.inputDirectory?.path ?? "已确认远端范围"} → ${state.defaults?.directory?.path ?? "尚未设置本地下载目录"}/completed` : "待预览核对输入和目标"}</p><ErrorNotice message={row.runtime?.failure ?? null} />{!!row.reviewReasons.length && <p className="notice">升级配置须完整预览确认后接管；历史保留。<Link to={`/sources/legacy?source=${row.id}`}>核对或暂停旧配置</Link></p>}<div className="download-controls"><Button variant="outline" disabled={busy} onClick={() => open(row)}>编辑并预览</Button><Button variant="outline" disabled={busy || row.paused || !row.runtime?.claimed || !directoriesReady(row)} onClick={() => execute(row)}>执行一次</Button><Button variant="ghost" disabled={busy || row.paused || !row.runtime?.claimed || !directoriesReady(row)} onClick={() => execute(row, true)}>显式重新同步…</Button><Button variant="ghost" disabled={busy || !row.runtime?.claimed && row.paused} onClick={() => { void model.control(row, row.paused ? "resume" : "pause"); }}>{row.paused ? "恢复来源同步" : "暂停来源同步"}</Button><Button variant="ghost" disabled={busy || !row.paused} onClick={() => { setRemovalError(null); setRemoving(row); }}>删除同步来源…</Button></div></article>)}</div><Pager page={visiblePage} total={rows.length} onChange={setPage} />
     {!rows.length && <p className="panel sync-panel">暂无同步来源。先在设置中配置本地下载目录，再添加本地或网盘来源。</p>}
-    {!!state.items.filter((row) => row.deletedAt).length && <details className="panel sync-panel"><summary>已删除同步来源</summary>{state.items.filter((row) => row.deletedAt).map((row) => <div className="download-controls" key={row.id}><span>{row.draft.name} · 文件和历史保留，恢复后仍暂停</span><Button disabled={busy} variant="outline" onClick={() => { void model.control(row, "restore"); }}>恢复已删除来源</Button></div>)}</details>}
-    <section className="panel sync-panel"><h2>同步任务</h2>{(jobs ?? state.jobs).items.map((job) => <div className="download-controls" key={job.id}><span>{state.items.find((row) => row.id === job.sourceId)?.draft.name ?? "历史来源"} · {status[job.state]} · {job.done + job.reused + job.removed}/{job.files}</span><Button variant="ghost" onClick={() => setQuery({ job: job.id })}>查看任务明细</Button></div>)}<Pager page={jobPage} total={(jobs ?? state.jobs).total} onChange={setJobPage} /></section>
-    {removing && <dialog ref={lifecycle} className="source-lifecycle-dialog" aria-label="删除同步来源" onCancel={(event) => { event.preventDefault(); if (!busy) setRemoving(null); }}><h2>删除「{removing.draft.name}」？</h2><p>来源须已暂停并到达安全点。文件、冻结计划和成功历史保留；恢复后仍保持暂停。</p><ErrorNotice message={removalError} /><div className="form-actions"><Button ref={cancelRemoval} variant="outline" disabled={busy} onClick={() => setRemoving(null)}>取消</Button><Button disabled={busy} onClick={() => { setRemovalError(null); void model.control(removing, "remove").then((row) => { if (!mounted.current) return; if (row) { setRemoving(null); if (draft?.id === row.id) setDraft(null); setQuery({}); } else { setRemovalError(`删除「${removing.draft.name}」未完成：${model.state.error ?? "请核对来源和任务状态后重试"}`); } }); }}>{busy ? "正在删除…" : "确认删除同步来源"}</Button></div></dialog>}
+    <section className="panel sync-panel"><h2>同步任务</h2>{!(jobs ?? state.jobs).total && <p className="cloud-hint">暂无同步任务。</p>}{(jobs ?? state.jobs).items.map((job) => <div key={job.id}><div className="download-controls"><span>{state.items.find((row) => row.id === job.sourceId)?.draft.name ?? "历史来源"} · {status[job.state]} · {job.done + job.reused + job.removed + (job.inLibrary ?? 0)}/{job.files}</span><Button variant="ghost" onClick={() => setQuery({ job: job.id })}>查看任务明细</Button><Button variant="ghost" disabled={busy} onClick={() => setRemovingJob(job)}>删除任务…</Button></div>{job.waitingReason && <p className="notice" role="status">{job.waitingReason}</p>}<ErrorNotice message={job.failure} /></div>)}<Pager page={jobPage} total={(jobs ?? state.jobs).total} onChange={setJobPage} /></section>
+    {removingJob && <RemoveSyncJob job={removingJob} onClose={() => setRemovingJob(null)} onRemoved={() => { setRemovingJob(null); setJobs(null); if (query.get("job") === removingJob.id) setQuery({}); }} />}
+    {removing && <dialog ref={lifecycle} className="source-lifecycle-dialog" aria-label="删除同步来源" onCancel={(event) => { event.preventDefault(); if (!busy) setRemoving(null); }}><h2>删除「{removing.draft.name}」？</h2><p>来源须已暂停并到达安全点。删除后不再显示此来源，文件、冻结计划和成功历史保留。</p><ErrorNotice message={removalError} /><div className="form-actions"><Button ref={cancelRemoval} variant="outline" disabled={busy} onClick={() => setRemoving(null)}>取消</Button><Button disabled={busy} onClick={() => { setRemovalError(null); void model.control(removing, "remove").then((row) => { if (!mounted.current) return; if (row) { setRemoving(null); if (draft?.id === row.id) setDraft(null); setQuery({}); } else { setRemovalError(`删除「${removing.draft.name}」未完成：${model.state.error ?? "请核对来源和任务状态后重试"}`); } }); }}>{busy ? "正在删除…" : "确认删除同步来源"}</Button></div></dialog>}
   </>;
 }

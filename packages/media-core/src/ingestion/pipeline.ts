@@ -1,4 +1,5 @@
 import type { ScanResult } from "../sources/scans.js";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access, open } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -13,10 +14,17 @@ import type { CoreDatabase } from "../infrastructure/database.js";
 import type { NameParser } from "../infrastructure/parser-process.js";
 import { SourceRoot, sameSnapshot, sourceSnapshotSchema, sourceVersion, type SourceSnapshot } from "../files/source-root.js";
 import { ManagedRoot, ManagedRoots, pathsOverlap, sameVolumeRoot, assertSpaceBudget } from "../files/index.js";
+import { authorizeOrganizedDownloadCleanup } from "./download-cleanup-intents.js";
+import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
 import type { ManagedIngestionSink } from "../cloud/outbox.js";
 import type { MediaConnections } from "../application/media-connections.js";
-import { mergeParentEvidence, parentContext, searchMatches, type MediaMatch, type MetadataWork } from "../domain/matching.js";
-import { resolveSeason, RecognitionError, type ParsedMedia } from "../domain/media.js";
+import { searchMatches, type MediaMatch, type MetadataWork } from "../domain/matching.js";
+import { normalizeParse, RecognitionError, type ParsedMedia } from "../domain/media.js";
+import { CodexRecognition, codexContext, type CodexSuggestion } from "./codex-recognition.js";
+import { identifyUsingStrategies } from "./recognition-strategies.js";
+import { CodexJobs, type CodexMember } from "./codex-jobs.js";
+import { selectAutomaticWork } from "./automatic-selection.js";
+import { episodeFeature, episodeOverlap } from "../domain/episode-feature.js";
 import { MediaNetworkError } from "../infrastructure/json-http.js";
 import { templatePath } from "../domain/template.js";
 import { titleInitial } from "../domain/title-initial.js";
@@ -31,6 +39,7 @@ import { OrganizeBatches, type BatchManifest } from "./organize-batches.js";
 import { assertMediaCoordinates } from "./coordinates.js";
 import { assertCorrectionTarget } from "./correction-assets.js";
 import { previewFailure } from "./preview-errors.js";
+import { sourceFileFailure } from "./source-file-failure.js";
 import { AutomaticIngestion } from "./automatic.js";
 import { AutomaticPolicies } from "./automatic-policy.js";
 import { validateMediaSelection } from "./selection-validation.js";
@@ -59,6 +68,7 @@ function recognitionFailure(error: unknown): string {
   if (error instanceof DesktopError) {
     if (error.code === "COMPONENT_UNAVAILABLE") return "离线名称解析器不可用，请重启核心后重试识别";
     if (error.code === "TIMEOUT") return "离线名称解析器超时，请重启核心后重试识别";
+    if (["TARGET_OCCUPIED", "LOCAL_FILE_CHANGED", "FILE_EVIDENCE_MISMATCH", "LOCAL_FILE_MISSING", "RECEIPT_CONFLICT"].includes(error.code)) return error.message;
     if (error.code === "CONFLICT") return "文件或连接配置已变化，请刷新后重试识别";
   }
   return "识别未完成，请检查解析器、TMDB 配置或网络后重试";
@@ -68,6 +78,7 @@ const temporary = /(?:\.(?:part|tmp|temp|aria2|download|downloading|qkdownloadin
 const unsupported = /\.(?:mp3|flac|wav|m4a|aac|ogg|iso)$/i;
 const associated = /\.(?:srt|ass|ssa|sub|idx|nfo|jpg|jpeg|png|webp|md5|vtt)$/i;
 const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const codexRequestKey = (value: unknown) => { const hex = fingerprint(value); return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`; };
 class SourceWorkInterrupted extends DesktopError {
   constructor() { super("INTERRUPTED", "所属来源已暂停或配置变化，等待恢复并重新观察", true); }
 }
@@ -82,6 +93,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
   readonly recognitionBatches: RecognitionBatches;
   readonly organizeBatches: OrganizeBatches;
   readonly automatic: AutomaticIngestion;
+  readonly codexJobs: CodexJobs;
   private readonly automaticPolicies: AutomaticPolicies;
   private readonly sources = new Map<string, SourceRoot>();
   private readonly observations = new Map<string, Observation>();
@@ -94,8 +106,9 @@ export class IngestionPipeline implements ManagedIngestionSink {
   private readonly scans = new Map<string, Promise<ScanResult>>();
   private readonly scanControllers = new Map<string, AbortController>();
   private readonly watches = new Map<string, { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout> }>();
-  constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly watchFiles: typeof watch = watch) {
+  constructor(private readonly database: CoreDatabase, private readonly parser: () => NameParser | undefined, private readonly connections: MediaConnections, private readonly now = Date.now, private readonly monotonic = () => performance.now(), private readonly watchFiles: typeof watch = watch, private readonly logger: CoreLogger = silentLogger, private readonly codex?: CodexRecognition) {
     const db = database.connection;
+    this.codexJobs = new CodexJobs(database, { capture: (taskId, directory) => this.captureCodex(taskId, directory), run: (job, members, signal, progress) => this.runCodex(job, members, signal, progress) }, now);
     this.seasons = new IngestionSeasons(database, (id) => this.describeCandidate(id), (id) => this.task(id));
     this.directories = new IngestionDirectories(database, (id) => this.describeCandidate(id), (id) => this.task(id));
     this.recognitionBatches = new RecognitionBatches(database, { capture: (id) => ({ relativePath: JSON.parse(this.candidate(id).relative_json).join("/"), context: JSON.stringify(this.recognitionContext(id)) }), availability: (id, context) => this.batchAvailability(id, context), recognize: (id, requestKey) => this.recognize({ candidateId: id, requestKey }) }, now);
@@ -140,6 +153,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     }, now);
     this.automaticPolicies = new AutomaticPolicies(database);
     this.automatic = new AutomaticIngestion(database, {
+      threshold: () => this.connections.recognitionSettings.confidenceThreshold,
       check: (id, sourceId, context) => this.automaticPolicies.check(id, sourceId, context),
       available: async (id) => {
         const row = this.candidate(id);
@@ -148,7 +162,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       },
       recognize: (candidateId, requestKey) => this.recognize({ candidateId, requestKey }, requestKey),
       task: (id) => this.task(id),
-      preview: (taskId, requestKey, selection) => this.withSourceWork(this.task(taskId).candidateId, this.controller?.signal ?? new AbortController().signal, (signal) => this.preview({ taskId, requestKey, selection }, signal)),
+      preview: (taskId, requestKey, selection) => this.withSourceWork(this.task(taskId).candidateId, this.controller?.signal ?? new AbortController().signal, async (signal) => { await this.assertCodexSiblingsUnique(this.task(taskId).candidateId); return this.preview({ taskId, requestKey, selection }, signal); }),
       confirm: (previewId, requestKey, check) => {
         const row = db.prepare("SELECT c.id FROM ingestion_candidate c JOIN ingestion_preview p ON p.task_id=c.task_id WHERE p.id=?").get(previewId) as { id: string };
         return this.withSourceWork(row.id, this.controller?.signal ?? new AbortController().signal, (signal) => this.confirm({ previewId, requestKey }, undefined, () => { signal.throwIfAborted(); check(); }));
@@ -466,7 +480,12 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const targets = new Map<string, CoreOutput<"media.libraries">[number]>();
     for (const row of rows) { const previous = targets.get(row.id); targets.set(row.id, { targetId: row.id, mediaType: previous && previous.mediaType !== row.media_type ? "AUTO" : row.media_type, path: managedRootGrantSchema.parse(JSON.parse(row.grant_json)).path, available: !!row.available }); }
     const logical = this.database.connection.prepare("SELECT x.id,x.directory_id,x.media_type,x.name,d.version,d.path,t.available FROM recognition_target_identity x JOIN configuration_directory d ON d.id=x.directory_id LEFT JOIN media_target_root t ON t.id=d.id WHERE EXISTS(SELECT 1 FROM recognition_rule r JOIN recognition_rule_version v ON v.rule_id=r.id AND v.version=r.version,json_each(v.snapshot_json,'$.configuration.targets') j WHERE r.deleted_at IS NULL AND json_extract(j.value,'$.id')=x.id) OR EXISTS(SELECT 1 FROM ingestion_operation o WHERE json_extract(o.plan_json,'$.logicalTargetId')=x.id) OR EXISTS(SELECT 1 FROM media_correction_operation o WHERE json_extract(o.plan_json,'$.logicalTargetId')=x.id) ORDER BY x.id LIMIT 2000").all() as { id: string; directory_id: string; media_type: "MOVIE" | "TV_SHOW"; name: string; version: number; path: string; available: number | null }[];
-    for (const target of logical) targets.set(target.id, { targetId: target.id, directoryId: target.directory_id, directoryVersion: target.version, name: target.name, mediaType: target.media_type, path: target.path, available: !!target.available });
+    const settingsRoutes = this.libraryBootstrap();
+    for (const target of logical) { if (settingsRoutes.some((route) => route.target.id === target.directory_id && route.mediaType === target.media_type)) continue; targets.set(target.id, { targetId: target.id, directoryId: target.directory_id, directoryVersion: target.version, name: target.name, mediaType: target.media_type, path: target.path, available: !!target.available }); }
+    for (const route of settingsRoutes) {
+      const target = targets.get(route.target.id);
+      if (target) target.configuredMediaTypes = [...(target.configuredMediaTypes ?? []), route.mediaType];
+    }
     return [...targets.values()];
   }
   private targetFor(source: SourceRow, type: "MOVIE" | "TV_SHOW", targetId?: string) {
@@ -694,6 +713,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     return this.candidateSource(candidate);
   }
   canAccept(input: { itemId: string; versionKey: string }) {
+    if (this.database.connection.prepare("SELECT 1 FROM owned_attempt_cleanup a JOIN download_commit_intent c ON c.attempt_id=a.attempt_id WHERE c.item_id=? AND a.owner_kind='download_attempt' AND a.state!='DONE'").get(input.itemId)) return false;
     const independent = this.database.connection.prepare("SELECT i.source_id,r.paused,r.deleted_at,p.candidate_id FROM download_item d JOIN recognition_input i ON i.directory_id=d.target_root_id AND i.active=1 AND i.mode='managed-completed' JOIN recognition_rule r ON r.id=i.rule_id LEFT JOIN sync_receipt s ON s.result_kind='download-item' AND s.result_id=d.id LEFT JOIN recognition_receipt p ON p.receipt_id=s.id WHERE d.id=? AND d.version_key=?").get(input.itemId, input.versionKey) as { source_id: string; paused: number; deleted_at: string | null; candidate_id: string | null } | undefined;
     if (independent) { if (independent.candidate_id) return true; if (independent.paused || independent.deleted_at || this.closed || this.pauseStatus().paused) return false; try { this.source(independent.source_id); return true; } catch { return false; } }
     if (this.database.connection.prepare("SELECT 1 FROM ingestion_candidate WHERE managed_item_id=? AND managed_version_key=?").get(input.itemId, input.versionKey)) return true;
@@ -787,6 +807,10 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const row = db.prepare("SELECT r.*,e.evidence_json FROM sync_receipt r LEFT JOIN sync_receipt_evidence e ON e.receipt_id=r.id WHERE r.id=? AND r.target_directory_id=?").get(receiptId, owner.directory_id) as { target_segments_json: string; local_sha256: string; size: number; evidence_json: string | null } | undefined;
     if (!row) throw conflict("正式同步成功收据已不存在，请核对原任务；不会补下载");
     const relative = ["completed", ...JSON.parse(row.target_segments_json)], previous = db.prepare("SELECT candidate_id FROM recognition_receipt WHERE receipt_id=?").get(receiptId) as { candidate_id: string | null } | undefined;
+    if (db.prepare("SELECT 1 FROM download_cleanup WHERE receipt_id=? AND claimed=1").get(receiptId)) {
+      if (previous?.candidate_id && ["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(this.candidate(previous.candidate_id).state)) return { candidateId: previous.candidate_id };
+      throw conflict("此受管原件已按媒体库内容核验领取清理；请查询原整理成果，不会重新下载或接入新原件任务");
+    }
     try {
       check?.(); this.source(sourceId); const source = this.sources.get(sourceId)!, snapshot = await source.inspect(relative); check?.();
       const evidence = row.evidence_json ? localFileEvidenceSchema.parse(JSON.parse(row.evidence_json)) : null;
@@ -809,7 +833,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       else if (!["PROCESSED", "SKIPPED", "SUPERSEDED"].includes(this.candidate(result.candidateId).state)) await this.observe(this.candidate(result.candidateId), check);
       return result;
     } catch (error) {
-      check?.(); const reason = error instanceof DesktopError ? error.message.slice(0, 500) : "正式成果不可读取，请恢复原输入卷、目录和文件后补扫；识别不会要求重新下载";
+      check?.(); const reason = sourceFileFailure(error, true);
       db.transaction(() => { db.prepare("INSERT INTO recognition_receipt VALUES(?,?,?,'UNAVAILABLE',?,?) ON CONFLICT(receipt_id) DO UPDATE SET state='UNAVAILABLE',failure=excluded.failure,updated_at=excluded.updated_at").run(receiptId, sourceId, previous?.candidate_id ?? null, reason, timestamp(this.now)); if (previous?.candidate_id) db.prepare("UPDATE ingestion_candidate SET state='UNAVAILABLE',reason=? WHERE id=? AND state NOT IN ('PROCESSED','SKIPPED','SUPERSEDED')").run(reason, previous.candidate_id); })();
       throw error;
     }
@@ -829,6 +853,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!committed || committed.target_segments_json !== JSON.stringify(input.completedSegments)) throw conflict();
     const evidence = localFileEvidenceSchema.parse(JSON.parse(committed.file_evidence_json));
     if (evidence.sha256 !== input.sha256 || evidence.size !== input.size) throw conflict();
+    if (db.prepare("SELECT 1 FROM owned_attempt_cleanup a JOIN download_commit_intent c ON c.attempt_id=a.attempt_id WHERE c.item_id=? AND a.owner_kind='download_attempt' AND a.state!='DONE'").get(input.itemId)) throw conflict("下载所属暂存仍在回收，请等待回收记账后再次交接；尚未创建新的识别候选");
     const previous = db.prepare("SELECT * FROM ingestion_candidate WHERE managed_item_id=? AND managed_version_key=?").get(input.itemId, input.versionKey) as CandidateRow | undefined;
     if (previous) {
       if (previous.expected_sha256 !== input.sha256 || sourceSnapshotSchema.parse(JSON.parse(previous.snapshot_json)).size !== input.size) throw conflict();
@@ -874,7 +899,11 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const row = this.source(sourceId), root = this.sources.get(sourceId), issues = new Map<string, string>(), checkedPaths: string[] = []; let discovered = 0;
     const check = () => { if (this.closed || signal.aborted) throw new DesktopError("INTERRUPTED", "扫描已中断，已发现候选保留；恢复后重新补扫", true); const latest = this.source(sourceId); if (latest.version !== row.version || this.sources.get(sourceId) !== root) throw conflict("来源配置或授权已变化，请按当前配置重新扫描"); };
     const checkRoot = async () => { check(); await root!.check(); await access(root!.grant.path, constants.R_OK | constants.X_OK); check(); };
-    const failed = async (relative: string[], error: unknown) => { await checkRoot(); const reason = error instanceof DesktopError ? error.message.slice(0, 500) : "文件暂不可读，请检查原文件、磁盘和读取权限后重新扫描"; issues.set(relative.join("/"), reason); };
+    const failed = async (relative: string[], error: unknown) => {
+      await checkRoot(); const relativePath = relative.join("/"), reason = sourceFileFailure(error, recognitionOwner(this.database, sourceId)?.mode === "managed-completed" || row.mode === "managed");
+      issues.set(relativePath, reason);
+      this.logger.warn({ event: "recognition.scan.file-failed", sourceId, relativePath, error }, "扫描文件核对失败，已保留逐项原因");
+    };
     try {
       const independent = recognitionOwner(this.database, sourceId);
       if (independent && !independent.active) return { discovered: 0, checkedPaths: [], issues: [] };
@@ -951,7 +980,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       if (automaticKey) db.prepare("UPDATE ingestion_automatic SET task_id=?,state='RECOGNIZING' WHERE id=?").run(id, owned()!.id);
       return id;
     })();
-    void this.tick().catch(() => {}); return { taskId };
+    this.logger.info({ event: "recognition.task.created", sourceId: row.source_id, candidateId: row.id, taskId }, "识别任务已领取");
+    void this.tick().catch((error) => this.logger.error({ event: "recognition.scheduler.failed", error }, "识别整理调度未完成")); return { taskId };
   }
   task(taskId: string): CoreOutput<"ingestion.task"> {
     const row = this.database.connection.prepare("SELECT t.*,c.id AS candidate_id,c.reason FROM media_task t JOIN ingestion_candidate c ON c.task_id=t.id WHERE t.id=?").get(taskId) as { id: string; candidate_id: string; source_path: string; status: string; parsed_json: string | null; reason: string | null } | undefined;
@@ -959,20 +989,18 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const parsed = row.parsed_json ? JSON.parse(row.parsed_json) as ParsedMedia : null;
     const matches = this.database.connection.prepare("SELECT metadata_json FROM task_candidate WHERE task_id=? ORDER BY confidence DESC,json_extract(metadata_json,'$.mediaType'),json_extract(metadata_json,'$.tmdbId'),id LIMIT 100").all(taskId) as { metadata_json: string }[];
     const accessories = (this.database.connection.prepare("SELECT a.* FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id WHERE o.task_id=? ORDER BY a.id LIMIT 100").all(taskId) as (OperationRow & { failure_code: string | null })[]).map((asset) => { const plan = JSON.parse(asset.plan_json) as Plan; return { id: asset.id, sourcePath: join(plan.source.path, ...plan.sourceSegments), targetPath: join(plan.target.path, ...plan.targetSegments), state: asset.phase as NonNullable<CoreOutput<"ingestion.task">["accessories"]>[number]["state"], failure: asset.failure_code }; });
-    return { taskId, candidateId: row.candidate_id, sourcePath: row.source_path, revision: this.recognitionEdits.revision(taskId), matchesStale: this.recognitionEdits.matchesStale(taskId), state: row.status, parsed: parsed ? { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, episodeEnd: parsed.episodeEnd, type: parsed.type } : null, matches: matches.map((entry) => { const match = JSON.parse(entry.metadata_json) as MediaMatch; return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, episodeCheck: match.episodeCheck, explanation: match.evidence === "manual" ? "根据已保存的人工识别字段重新匹配，请核对作品" : match.parentOnlyCapped ? "父目录证据不足，仅供人工选择" : `名称 ${Math.round(match.score.titleScore * 100)}%，年份 ${Math.round(match.score.yearScore * 100)}%，${match.evidence === "both" ? "父目录与名称一致" : "请核对作品"}` }; }), failure: row.reason, accessories };
+    return { taskId, candidateId: row.candidate_id, sourcePath: row.source_path, revision: this.recognitionEdits.revision(taskId), matchesStale: this.recognitionEdits.matchesStale(taskId), state: row.status, parsed: parsed ? { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, episodeEnd: parsed.episodeEnd, type: parsed.type } : null, matches: matches.map((entry) => { const match = JSON.parse(entry.metadata_json) as MediaMatch; return { tmdbId: match.tmdbId, mediaType: match.mediaType, title: match.title, originalTitle: match.originalTitle, year: match.year, confidence: match.score.confidence, evidence: match.evidence, codex: match.codex, episodeCheck: match.episodeCheck, explanation: match.codex ? `Codex ${Math.round(match.codex.confidence * 100)}%：${match.codex.reason}`.slice(0, 500) : match.evidence === "manual" ? "根据已保存的人工识别字段重新匹配，请核对作品" : match.parentOnlyCapped ? "父目录证据不足，仅供人工选择" : `名称 ${Math.round(match.score.titleScore * 100)}%，年份 ${Math.round(match.score.yearScore * 100)}%，${match.evidence === "both" ? "父目录与名称一致" : "请核对作品"}` }; }), failure: row.reason, accessories };
   }
   private async identify(row: CandidateRow, signal: AbortSignal) {
     this.assertCandidateCurrent(row);
     const db = this.database.connection;
     if (!await this.observe(row)) return;
-    const source = this.candidateSource(row), parser = this.parser(), edited = this.recognitionEdits.saved(row.task_id!), recognitionRevision = this.recognitionEdits.revision(row.task_id!); if (!parser && !edited) throw new DesktopError("COMPONENT_UNAVAILABLE", "名称解析器尚未就绪，请重试", true);
+    const source = this.candidateSource(row), parser = this.parser(), edited = this.recognitionEdits.saved(row.task_id!), recognitionRevision = this.recognitionEdits.revision(row.task_id!);
     const connectionVersion = this.connections.version, relative: string[] = JSON.parse(row.relative_json);
     db.prepare("UPDATE media_task SET status='PROCESSING',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id);
-    const parsed = edited ?? await parser!.parse(relative.at(-1)!, signal); if (!edited && source.media_type !== "AUTO") parsed.type = source.media_type;
-    parsed.season = parsed.type === "TV_SHOW" ? resolveSeason(parsed.season, null, relative.slice(0, -1)) : null;
-    let matches = await searchMatches(parsed, this.connections.tmdb, signal, !!edited);
-    const parent = relative.slice(0, -1).reverse().map((part) => parentContext(part, parsed)).find(Boolean);
-    if (parent && !edited) { const context = await parser!.parse(parent.folderName, signal); context.type = parsed.type; context.season = parsed.season; matches = mergeParentEvidence(matches, await searchMatches(context, this.connections.tmdb, signal)); }
+    this.logger.info({ event: "recognition.task.started", sourceId: row.source_id, candidateId: row.id, taskId: row.task_id }, "正在解析文件并匹配媒体信息");
+    const result = await identifyUsingStrategies({ filename: relative.at(-1)!, relative, type: source.media_type, parser, edited, tmdb: this.connections.tmdb, settings: this.connections.recognitionSettings, codex: this.codex, signal, context: (parsed) => this.codexInput(row, parsed) });
+    const { parsed } = result; let { matches } = result;
     // 只预检排序首项，不据此选择作品或提升置信度；其他候选在人工预览时校验。
     matches.sort((a, b) => b.score.confidence - a.score.confidence || (a.mediaType < b.mediaType ? -1 : a.mediaType > b.mediaType ? 1 : 0) || a.tmdbId - b.tmdbId);
     const first = matches[0];
@@ -993,9 +1021,155 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("DELETE FROM task_candidate WHERE task_id=?").run(row.task_id);
       for (const match of matches) db.prepare("INSERT INTO task_candidate(id,task_id,metadata_json,confidence) VALUES(?,?,?,?)").run(randomUUID(), row.task_id, JSON.stringify(match), match.score.confidence);
       db.prepare("UPDATE media_task SET parsed_json=?,status='AWAITING_CONFIRMATION',title=?,updated_at=? WHERE id=?").run(JSON.stringify(parsed), parsed.title, timestamp(this.now), row.task_id);
-      db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(matches.length ? null : "没有可靠候选，请手动输入 TMDB ID 预览", row.id);
+      db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(matches.length ? null : result.failure ?? "没有可靠候选，请手动输入 TMDB ID 预览", row.id);
       this.recognitionEdits.matched(row.task_id!, recognitionRevision);
     })();
+    this.logger.info({ event: "recognition.task.matched", sourceId: row.source_id, candidateId: row.id, taskId: row.task_id, matchCount: matches.length, state: "AWAITING_CONFIRMATION" }, "识别匹配已完成，等待核对候选");
+  }
+  private async codexInput(row: CandidateRow, parsed: ParsedMedia) {
+    const relative: string[] = JSON.parse(row.relative_json), siblings = await this.sources.get(row.source_id)!.filesIn(relative.slice(0, -1));
+    return codexContext(recognitionOwner(this.database, row.source_id)?.rule_id ?? fingerprint([row.source_id, this.candidatePolicy(row)?.policy_key]), relative, siblings.filter((parts) => video.test(parts.at(-1)!)).map((parts) => parts.at(-1)!), parsed);
+  }
+  private codexMemberContext(row: CandidateRow) {
+    const owner = recognitionOwner(this.database, row.source_id), source = this.source(row.source_id);
+    return fingerprint({ candidateId: row.id, version: row.version_key, revision: this.recognitionEdits.revision(row.task_id!), sourceVersion: source.version, ruleId: owner?.rule_id, ruleVersion: owner?.version, policy: this.candidatePolicy(row)?.policy_key });
+  }
+  private captureCodex(taskId: string, directory: boolean): CodexMember[] {
+    if (!this.codex?.enabled) throw conflict("请先在设置中启用 Codex 识别，并核对本机 CLI 配置");
+    const anchor = this.candidate(this.task(taskId).candidateId), parent = JSON.stringify((JSON.parse(anchor.relative_json) as string[]).slice(0, -1));
+    if (this.task(taskId).state !== "AWAITING_CONFIRMATION") throw conflict("仅待确认任务可使用 Codex 重识别，请刷新任务状态");
+    const rows = directory ? this.database.connection.prepare("SELECT * FROM ingestion_candidate WHERE source_id=? AND state='QUEUED' AND task_id IS NOT NULL ORDER BY relative_json").all(anchor.source_id) as CandidateRow[] : [anchor];
+    const members = rows.filter((row) => this.candidatePolicy(row)?.policy_key === this.candidatePolicy(anchor)?.policy_key && JSON.stringify((JSON.parse(row.relative_json) as string[]).slice(0, -1)) === parent && this.task(row.task_id!).state === "AWAITING_CONFIRMATION").map((row) => {
+      this.assertCandidateCurrent(row); const saved = this.database.connection.prepare("SELECT parsed_json FROM media_task WHERE id=?").get(row.task_id) as { parsed_json: string | null };
+      return { taskId: row.task_id!, candidateId: row.id, relativePath: (JSON.parse(row.relative_json) as string[]).join("/"), context: this.codexMemberContext(row), revision: this.recognitionEdits.revision(row.task_id!), parsed: saved.parsed_json ? JSON.parse(saved.parsed_json) as ParsedMedia : normalizeParse({}, basename(this.task(row.task_id!).sourcePath!)) };
+    });
+    if (!members.length || members.length > 80) throw conflict("目录中没有可识别的待确认文件，或超过 80 个，请缩小范围后重试");
+    return members;
+  }
+  async prepareCodexDirectory(input: CoreInput<"codex.prepare-directory">): Promise<CoreOutput<"codex.prepare-directory">> {
+    if (this.closed || !this.codex?.enabled) throw conflict("请先在设置中启用 Codex 识别，并核对本机 CLI 配置");
+    const db = this.database.connection, key = "recognition.codex.directory-request." + input.requestKey, signature = fingerprint([input.id, input.sourceId, input.organize ?? true]);
+    const previous = db.prepare("SELECT value FROM app_setting WHERE key=?").get(key) as { value: string } | undefined;
+    if (previous) { const receipt = JSON.parse(previous.value) as { signature: string; id: string }; if (receipt.signature !== signature) throw conflict("目录请求标识已用于其他范围，请刷新后重试"); return this.codexJobs.get(receipt.id); }
+    const detail = this.directories.get({ id: input.id, sourceId: input.sourceId, page: 1 });
+    if (detail.directory.total > 80) throw conflict("目录视频超过 80 个，请拆分目录后识别");
+    const candidates: CandidateRow[] = [];
+    for (const entry of detail.items) {
+      const candidate = this.candidate(entry.candidate.id);
+      if (candidate.task_id) { if (this.task(candidate.task_id).state === "AWAITING_CONFIRMATION") candidates.push(candidate); continue; }
+      if (candidate.state !== "READY") continue;
+      this.assertCandidateCurrent(candidate); if (await this.observe(candidate)) candidates.push(this.candidate(candidate.id));
+    }
+    if (!candidates.length) throw conflict("目录尚无就绪或待确认文件，请等待文件稳定后重试");
+    const job = db.transaction(() => {
+      for (const candidate of candidates) {
+        const latest = this.candidate(candidate.id); this.assertCandidateCurrent(latest); this.source(latest.source_id);
+        if (latest.task_id) continue;
+        if (latest.state !== "READY") throw conflict("目录文件在提交期间变化，请刷新后重试");
+        const taskId = randomUUID(), relative: string[] = JSON.parse(latest.relative_json), source = this.candidateSource(latest), stamp = timestamp(this.now);
+        db.prepare("INSERT INTO media_task(id,source_id,source_path,status,parsed_json,created_at,updated_at) VALUES(?,?,?,'AWAITING_CONFIRMATION',?,?,?)").run(taskId, latest.source_id, join(JSON.parse(source.source_grant_json).path, ...relative), JSON.stringify(normalizeParse({}, relative.at(-1)!)), stamp, stamp);
+        db.prepare("UPDATE ingestion_candidate SET state='QUEUED',task_id=?,reason='等待目录 Codex 识别',updated_at=? WHERE id=? AND task_id IS NULL").run(taskId, stamp, latest.id);
+      }
+      const first = this.candidate(candidates[0]!.id), result = this.codexJobs.enqueue({ taskId: first.task_id!, directory: true, organize: input.organize ?? true, requestKey: input.requestKey }, false);
+      db.prepare("INSERT INTO app_setting(key,value) VALUES(?,?)").run(key, JSON.stringify({ signature, id: result.id })); return result;
+    })();
+    void this.codexJobs.tick().catch((error) => this.logger.error({ event: "recognition.codex.scheduler-failed", error }, "目录 Codex 识别未完成"));
+    return job;
+  }
+  private async runCodex(job: CoreOutput<"codex.job">, members: CodexMember[], signal: AbortSignal, progress: (item: CoreOutput<"codex.job">["items"][number]) => void) {
+    if (!this.codex?.enabled) throw conflict("Codex 识别已关闭，请启用后重新提交");
+    const first = members[0]!, anchor = this.candidate(first.candidateId), initialVersion = this.connections.version;
+    const owner = recognitionOwner(this.database, anchor.source_id), physical = this.database.connection.prepare("SELECT paused FROM desktop_source WHERE id=?").get(anchor.source_id) as { paused: number };
+    if (this.pauseStatus().paused || owner?.paused || physical.paused) throw new DesktopError("LOCAL_UNAVAILABLE", "识别规则或全局整理已暂停，恢复后继续原 Codex 作业", true);
+    await this.withSourceWork(anchor.id, signal, async (workSignal) => {
+      const context = await this.codexInput(anchor, first.parsed), source = this.candidateSource(anchor);
+      const suggestions = job.directory ? await this.codex!.directory(context, new Map(members.map((member) => [basename(member.relativePath), member.parsed])), source.media_type, workSignal) : new Map<string, CodexSuggestion>();
+      if (!job.directory) { const value = await this.codex!.file(context, first.parsed, source.media_type, true, workSignal); if (!value) throw conflict("Codex 未能确定作品身份，请补充正式片名或手动选择作品"); suggestions.set(basename(first.relativePath), value); }
+      const identity = suggestions.values().next().value!.parsed;
+      const shared = await searchMatches(job.directory ? { ...identity, season: null, episode: null, episodeEnd: null, episodes: [] } : identity, this.connections.tmdb, workSignal);
+      if (!shared.length) throw conflict("Codex 建议未通过 TMDB 校验，已保留原识别信息，请手动选择作品");
+      const updated: string[] = [];
+      for (const member of members) {
+        workSignal.throwIfAborted(); if (job.items.some((item) => item.taskId === member.taskId && item.operationId)) continue;
+        const candidate = this.candidate(member.candidateId), suggestion = suggestions.get(basename(member.relativePath));
+        try {
+          this.assertCandidateCurrent(candidate);
+          if (!suggestion || this.codexMemberContext(candidate) !== member.context || this.task(member.taskId).state !== "AWAITING_CONFIRMATION" || this.connections.version !== initialVersion) throw conflict("文件、识别信息或配置在调用期间变化，请刷新后重试");
+          await this.sources.get(candidate.source_id)!.inspect(JSON.parse(candidate.relative_json)); workSignal.throwIfAborted();
+          const matches = shared.map((match) => ({ ...match, evidence: "codex" as const, codex: suggestion.evidence }));
+          const top = matches[0];
+          if (top?.mediaType === "TV_SHOW") {
+            try {
+              const checked = await validateMediaSelection(this.database, this.connections.tmdb, { tmdbId: top.tmdbId, mediaType: top.mediaType, season: suggestion.parsed.season, episode: suggestion.parsed.episode, episodeEnd: suggestion.parsed.episodeEnd }, { taskId: member.taskId, fileName: basename(member.relativePath), signal: workSignal });
+              top.episodeCheck = { state: "VALID", season: checked.selection.season!, episode: checked.selection.episode!, episodeEnd: checked.selection.episodeEnd, seasonChanged: checked.seasonChanged };
+            } catch (error) { workSignal.throwIfAborted(); const failure = previewFailure(error); top.episodeCheck = { state: "NEEDS_REVIEW", reason: failure instanceof DesktopError ? failure.message.slice(0, 500) : "季集校验未通过，请核对 TMDB 后重新预览" }; }
+          }
+          workSignal.throwIfAborted();
+          if (this.codexMemberContext(candidate) !== member.context || this.task(member.taskId).state !== "AWAITING_CONFIRMATION" || this.connections.version !== initialVersion) throw conflict("识别结果返回后任务已变化，请刷新后重试");
+          this.database.connection.transaction(() => {
+            this.database.connection.prepare("DELETE FROM task_candidate WHERE task_id=?").run(member.taskId);
+            for (const match of matches) this.database.connection.prepare("INSERT INTO task_candidate(id,task_id,metadata_json,confidence) VALUES(?,?,?,?)").run(randomUUID(), member.taskId, JSON.stringify(match), match.score.confidence);
+            this.database.connection.prepare("UPDATE media_task SET parsed_json=?,title=?,updated_at=? WHERE id=?").run(JSON.stringify(suggestion.parsed), suggestion.parsed.title, timestamp(this.now), member.taskId);
+            this.database.connection.prepare("UPDATE ingestion_candidate SET reason=NULL WHERE id=?").run(candidate.id);
+            this.recognitionEdits.matched(member.taskId, member.revision);
+          })();
+          updated.push(member.taskId); progress({ taskId: member.taskId, relativePath: member.relativePath, state: "UPDATED", failure: null, operationId: null });
+        } catch (error) {
+          workSignal.throwIfAborted(); const reason = sourceFileFailure(error, source.mode === "managed");
+          progress({ taskId: member.taskId, relativePath: member.relativePath, state: "SKIPPED", failure: reason, operationId: null });
+        }
+      }
+      if (job.organize) await this.organizeCodexResults(job.id, members.filter((member) => updated.includes(member.taskId)), workSignal, progress);
+    });
+  }
+  private async assertCodexSiblingsUnique(candidateId: string) {
+    const row = this.candidate(candidateId); if (!row.task_id) return;
+    const task = this.task(row.task_id), match = task.matches[0]; if (!match?.codex || match.mediaType !== "TV_SHOW" || !task.parsed?.episode) return;
+    const relative: string[] = JSON.parse(row.relative_json), current = episodeFeature(relative.at(-1)!);
+    if (!current) return;
+    let siblings: string[][];
+    try { siblings = await this.sources.get(row.source_id)!.filesIn(relative.slice(0, -1)); }
+    catch (error) { throw new DesktopError("LOCAL_UNAVAILABLE", `无法完成目录重复文件检查：${relative.slice(0, -1).join("/") || "来源根目录"}；${sourceFileFailure(error)}`.slice(0, 500), true); }
+    const overlap = episodeOverlap(relative.at(-1)!, siblings.filter((sibling) => !this.ignored(this.candidateSource(row))(sibling)).map((sibling) => sibling.at(-1)!));
+    if (overlap) throw conflict(`「${relative.at(-1)}」与同目录文件「${overlap.filename}」重复或重叠：S${task.parsed.season ?? 1} E${overlap.start}${overlap.end > overlap.start ? `–${overlap.end}` : ""}；请修正或排除副本后重新预览`.slice(0, 500));
+  }
+  private async organizeCodexResults(jobId: string, members: CodexMember[], signal: AbortSignal, progress: (item: CoreOutput<"codex.job">["items"][number]) => void) {
+    const plans: { member: CodexMember; preview: CoreOutput<"ingestion.preview"> }[] = [], blockers = new Map<string, string>();
+    for (const member of members) {
+      signal.throwIfAborted();
+      try {
+        const capture = this.automaticPolicies.capture(member.candidateId);
+        if (!capture || this.automaticPolicies.check(member.candidateId, capture.sourceId, capture.context).state !== "READY") throw conflict("识别已更新；当前规则尚未授权自动整理，请在待处理核对并预览确认");
+        const task = this.task(member.taskId), choice = selectAutomaticWork(task, this.connections.recognitionSettings.confidenceThreshold);
+        if ("reason" in choice) throw conflict(choice.reason);
+        await this.assertCodexSiblingsUnique(member.candidateId);
+        plans.push({ member, preview: await this.preview({ taskId: member.taskId, requestKey: codexRequestKey([jobId, member.taskId, "preview"]), selection: choice.selection }, signal) });
+      } catch (error) { signal.throwIfAborted(); blockers.set(member.taskId, error instanceof DesktopError ? error.message.slice(0, 500) : "识别已更新，整理预览未通过，请人工核对"); }
+    }
+    for (const plan of plans) {
+      const saved = this.database.connection.prepare("SELECT plan_json FROM ingestion_preview WHERE id=?").get(plan.preview.id) as { plan_json: string };
+      const volume = (JSON.parse(saved.plan_json) as Plan).target.volume;
+      const pathKey = (path: string) => { const normalized = volume.unicodeEquivalent ? path.normalize("NFC") : path; return volume.caseSensitive ? normalized : normalized.toLowerCase(); };
+      const conflicts = plans.filter((other) => other.member.taskId !== plan.member.taskId && pathKey(other.preview.targetPath) === pathKey(plan.preview.targetPath));
+      if (conflicts.length) blockers.set(plan.member.taskId, `目标路径与「${basename(conflicts[0]!.member.relativePath)}」相同：${plan.preview.targetPath}，请调整命名后重新预览`.slice(0, 500));
+      if (plan.preview.mediaType === "TV_SHOW") for (const other of plans) {
+        if (other.member.taskId === plan.member.taskId || other.preview.mediaType !== "TV_SHOW" || other.preview.season !== plan.preview.season) continue;
+        const start = Math.max(plan.preview.episode!, other.preview.episode!), end = Math.min(plan.preview.episodeEnd ?? plan.preview.episode!, other.preview.episodeEnd ?? other.preview.episode!);
+        if (start <= end) blockers.set(plan.member.taskId, `「${basename(plan.member.relativePath)}」与「${basename(other.member.relativePath)}」重复或重叠：S${plan.preview.season} E${start}${end > start ? `–${end}` : ""}；请修正或排除重复文件后重新预览`.slice(0, 500));
+      }
+    }
+    for (const member of members) {
+      const failure = blockers.get(member.taskId);
+      if (failure) { this.database.connection.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(failure, member.candidateId); progress({ taskId: member.taskId, relativePath: member.relativePath, state: "UPDATED", failure, operationId: null }); }
+    }
+    for (const plan of plans) {
+      if (blockers.has(plan.member.taskId)) continue; signal.throwIfAborted();
+      try {
+        await this.assertCodexSiblingsUnique(plan.member.candidateId);
+        const result = await this.confirm({ previewId: plan.preview.id, requestKey: codexRequestKey([jobId, plan.member.taskId, "confirm"]) }, undefined, () => signal.throwIfAborted());
+        progress({ taskId: plan.member.taskId, relativePath: plan.member.relativePath, state: "SUBMITTED", failure: null, operationId: result.operationId });
+      } catch (error) { signal.throwIfAborted(); progress({ taskId: plan.member.taskId, relativePath: plan.member.relativePath, state: "UPDATED", failure: error instanceof DesktopError ? error.message.slice(0, 500) : "识别已更新，整理提交未通过，请重新预览", operationId: null }); }
+    }
   }
   private async observeAccessory(sourceId: string, relative: string[], expected?: SourceSnapshot, policyKey = "local", check?: () => void) {
     check?.(); this.source(sourceId); const snapshot = await this.sources.get(sourceId)!.inspect(relative); check?.(); const version = sourceVersion(snapshot), key = sourceId + ":" + policyKey + ":" + JSON.stringify(relative);
@@ -1055,7 +1229,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     if (!parsedRow.parsed_json) throw conflict("请先完成名称识别");
     const parsed = JSON.parse(parsedRow.parsed_json) as ParsedMedia;
     const { selection, metadata, episodeTitle } = await validateMediaSelection(this.database, this.connections.tmdb, input.selection, { taskId: input.taskId, fileName: (JSON.parse(row.relative_json) as string[]).at(-1)!, signal });
-    const variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname(parsed.originalFilename).slice(1) };
+    const variables = { title: metadata.title, original_title: metadata.originalTitle, year: metadata.year, tmdb_id: metadata.tmdbId, media_type: metadata.mediaType, season: selection.season, episode: selection.episode === null ? null : { start: selection.episode, end: selection.episodeEnd }, episode_title: episodeTitle, title_initial: titleInitial(metadata.title), genre_1: metadata.genres?.[0] ?? null, genre_2: metadata.genres?.[1] ?? null, genre_3: metadata.genres?.[2] ?? null, genre_4: metadata.genres?.[3] ?? null, country: metadata.country ?? null, resolution: parsed.screenSize, codec: parsed.videoCodec, release_group: parsed.releaseGroup, ext: extname((JSON.parse(row.relative_json) as string[]).at(-1)!).slice(1) };
     const route = recognitionRoute(this.database, row.source_id, input.selection.mediaType, input.selection.targetId);
     const template = input.template ?? route?.configuration.template ?? (selection.mediaType === "MOVIE" ? "{title}[[ ({year})]] [tmdb-{tmdb_id}]/{title}[[ ({year})]].{ext}" : "{title} [tmdb-{tmdb_id}]/Season {season:02d}/{title} - S{season:02d}E{episode:02d}.{ext}");
     const segments = templatePath(template, variables, process.platform === "win32" ? "win32" : "darwin"); target.segments(segments); assertCorrectionTarget(this.database, target, segments, input.taskId); await target.assertVacant(segments); await target.check();
@@ -1070,7 +1244,9 @@ export class IngestionPipeline implements ManagedIngestionSink {
     const result: PreviewRow = { id: randomUUID(), request_key: input.requestKey, task_id: input.taskId, input_hash: digest, plan_json: JSON.stringify(plan), expires_at: this.now() + 10 * 60 * 1000, operation_id: null };
     const concurrent = db.prepare("SELECT * FROM ingestion_preview WHERE request_key=?").get(input.requestKey) as PreviewRow | undefined;
     if (concurrent) { if (concurrent.input_hash !== digest) throw conflict(); return this.previewDto(concurrent); }
-    db.prepare("INSERT INTO ingestion_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(result.id, result.request_key, result.task_id, result.input_hash, result.plan_json, result.expires_at); return this.previewDto(result);
+    db.prepare("INSERT INTO ingestion_preview(id,request_key,task_id,input_hash,plan_json,expires_at) VALUES(?,?,?,?,?,?)").run(result.id, result.request_key, result.task_id, result.input_hash, result.plan_json, result.expires_at);
+    this.logger.info({ event: "recognition.mapping.resolved", ruleId: route?.snapshot.ruleId, sourceId: row.source_id, taskId: input.taskId, previewId: result.id, targetId: plan.logicalTargetId ?? target.grant.id, mediaType: selection.mediaType }, "识别映射目标已核对，整理预览已生成");
+    return this.previewDto(result);
   }
   private assertCoordinates(selection: Plan["selection"], candidateId: string) {
     const candidate = this.candidate(candidateId), current = JSON.parse(candidate.relative_json) as string[];
@@ -1122,6 +1298,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("UPDATE media_task SET status='PROCESSING',confirmed_json=?,metadata_json=?,title=?,updated_at=? WHERE id=?").run(JSON.stringify(plan.selection), JSON.stringify(plan.metadata), plan.metadata.title, current, receipt.task_id);
       db.prepare("INSERT INTO desktop_job(id,kind,state,plan_json,updated_at) VALUES(?,'ingestion','PLANNED',?,?)").run(id, receipt.plan_json, current);
       for (const asset of plan.accessories ?? []) db.prepare("INSERT INTO ingestion_accessory(id,operation_id,target_root_id,plan_json,attempt_id,phase,created_at,updated_at) VALUES(?,?,?,?,?,'PLANNED',?,?)").run(randomUUID(), id, plan.target.id, JSON.stringify({ ...plan, ...asset, accessories: [] }), randomUUID(), current, current);
+      authorizeOrganizedDownloadCleanup(this.database, id, receipt.task_id);
     })(); void this.tick().catch(() => {}); return { operationId: id };
   }
   private reserved(rootId: string, except?: string) { const rows = this.database.connection.prepare("SELECT id,plan_json FROM ingestion_operation WHERE target_root_id=? AND phase IN ('PLANNED','COPYING') UNION ALL SELECT id,plan_json FROM ingestion_accessory WHERE target_root_id=? AND phase IN ('PLANNED','COPYING')").all(rootId, rootId) as { id: string; plan_json: string }[]; return rows.filter((row) => row.id !== except).reduce((total, row) => total + (JSON.parse(row.plan_json) as Plan).snapshot.size, 0); }
@@ -1167,7 +1344,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       db.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(plan.accessories?.length ? "COPYING_ACCESSORIES" : "DONE", timestamp(this.now), operation.id);
       const connection = db.prepare("SELECT id,version FROM emby_connection ORDER BY verified_at DESC LIMIT 1").get() as { id: string; version: number } | undefined;
       db.prepare("INSERT INTO emby_delivery(task_id,operation_id,connection_id,connection_version,state,next_attempt_at,updated_at,binding_json) VALUES(?,?,?,?,'REFRESH_PENDING',?,?,?) ON CONFLICT(task_id) DO NOTHING").run(plan.taskId, operation.id, connection?.id ?? null, connection?.version ?? null, this.now() + 30000, timestamp(this.now), plan.embyBinding ? JSON.stringify(plan.embyBinding) : null);
-    })(); await target.cleanupAttempt(operation.attempt_id).catch(() => {});
+      new OwnedAttemptCleanup(this.database).record("ingestion_operation", operation.id, operation.attempt_id, target.grant);
+    })(); await new OwnedAttemptCleanup(this.database).run("ingestion_operation", operation.id, target);
   }
   private async copyAccessory(operation: OperationRow & { operation_id: string }, signal: AbortSignal) {
     const committed = await this.copyContent(operation, signal, "ingestion_accessory"); if (!committed) return;
@@ -1177,7 +1355,8 @@ export class IngestionPipeline implements ManagedIngestionSink {
       // 字幕稍后补齐时只再安排交付，主视频记录和文件不重新复制。
       db.prepare("UPDATE emby_delivery SET state='REFRESH_PENDING',next_attempt_at=?,check_started_at=NULL,emby_item_id=NULL WHERE task_id=? AND state IN ('REFRESH_PENDING','WAITING_LIBRARY','COLLECTED')").run(this.now() + 30000, plan.taskId);
       db.prepare("UPDATE media_task SET delivery_status=(SELECT state FROM emby_delivery WHERE task_id=?) WHERE id=?").run(plan.taskId, plan.taskId);
-    })(); await this.targets.get(plan.target.id).cleanupAttempt(operation.attempt_id).catch(() => {}); this.accessoryJobState(operation.operation_id);
+      new OwnedAttemptCleanup(this.database).record("ingestion_accessory", operation.id, operation.attempt_id, this.targets.get(plan.target.id).grant);
+    })(); await new OwnedAttemptCleanup(this.database).run("ingestion_accessory", operation.id, this.targets.get(plan.target.id)); this.accessoryJobState(operation.operation_id);
   }
   private accessoryJobState(operationId: string) { const rows = this.database.connection.prepare("SELECT phase FROM ingestion_accessory WHERE operation_id=?").all(operationId) as { phase: string }[]; this.database.connection.prepare("UPDATE desktop_job SET state=?,updated_at=? WHERE id=?").run(rows.every((row) => row.phase === "RECORDED") ? "DONE" : rows.some((row) => row.phase === "NEEDS_ATTENTION") ? "PARTIAL_FAILED" : "COPYING_ACCESSORIES", timestamp(this.now), operationId); }
   retry(taskId: string) {
@@ -1206,6 +1385,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
     finally { parent.removeEventListener("abort", abort); this.activeWork.delete(controller); }
   }
   private async run() {
+    void this.codexJobs.tick().catch((error) => this.logger.error({ event: "recognition.codex.scheduler-failed", error }, "Codex 后台识别调度未完成"));
     this.contentReviews.kick();
     await this.auditRestored();
     if (this.pauseStatus().paused) return;
@@ -1221,6 +1401,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         if (!latest.managed_item_id && !latest.is_current) { db.prepare("UPDATE media_task SET status='SKIPPED',updated_at=? WHERE id=? AND status!='DONE'").run(timestamp(this.now), row.task_id); continue; }
         if (error instanceof SourceWorkInterrupted) { db.prepare("UPDATE media_task SET status='PENDING',updated_at=? WHERE id=? AND status='PROCESSING'").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(error.message, row.id); continue; }
         db.prepare("UPDATE media_task SET status='AWAITING_CONFIRMATION',updated_at=? WHERE id=?").run(timestamp(this.now), row.task_id); db.prepare("UPDATE ingestion_candidate SET reason=? WHERE id=?").run(recognitionFailure(error), row.id);
+        this.logger.warn({ event: "recognition.task.failed", sourceId: row.source_id, candidateId: row.id, taskId: row.task_id, error }, "识别匹配未完成，已转为人工核对");
       } }
       await this.automatic.tick();
       const operations = db.prepare("SELECT o.* FROM ingestion_operation o JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND (s.paused=0 OR json_extract(o.plan_json,'$.recognitionSnapshot') IS NOT NULL OR EXISTS(SELECT 1 FROM recognition_input ri WHERE ri.source_id=s.id)) ORDER BY o.created_at,o.id LIMIT 10").all() as OperationRow[];
@@ -1233,6 +1414,7 @@ export class IngestionPipeline implements ManagedIngestionSink {
         db.prepare("UPDATE ingestion_operation SET phase='NEEDS_ATTENTION',failure_code=?,updated_at=? WHERE id=?").run(error instanceof DesktopError ? error.code : "STORAGE_ERROR", timestamp(this.now), operation.id);
         db.prepare("UPDATE media_task SET status='FAILED',updated_at=? WHERE id=?").run(timestamp(this.now), operation.task_id);
         db.prepare("UPDATE ingestion_candidate SET reason='整理中断或证据冲突，未覆盖现有文件；请检查后重试' WHERE id=?").run(operation.candidate_id);
+        this.logger.warn({ event: "recognition.organize.failed", operationId: operation.id, taskId: operation.task_id, candidateId: operation.candidate_id, error }, "整理文件未完成，已保留原计划并等待处理");
       } }
       const accessories = db.prepare("SELECT a.*,o.task_id,o.candidate_id FROM ingestion_accessory a JOIN ingestion_operation o ON o.id=a.operation_id JOIN desktop_source s ON s.id=(SELECT source_id FROM ingestion_candidate WHERE id=o.candidate_id) WHERE o.phase='RECORDED' AND a.phase IN ('PLANNED','COPYING','VERIFIED','FILE_COMMITTED') AND (s.paused=0 OR json_extract(o.plan_json,'$.recognitionSnapshot') IS NOT NULL OR EXISTS(SELECT 1 FROM recognition_input ri WHERE ri.source_id=s.id)) ORDER BY a.created_at,a.id LIMIT 100").all() as (OperationRow & { operation_id: string })[];
       for (const asset of accessories) { if (controller.signal.aborted) return; if (!this.operationRunnable(asset)) continue; try { await this.withSourceWork(asset.candidate_id, controller.signal, (signal) => this.copyAccessory(asset, signal)); } catch (error) {
@@ -1244,6 +1426,6 @@ export class IngestionPipeline implements ManagedIngestionSink {
       } }
     } finally { this.controller = undefined; }
   }
-  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const controller of this.scanControllers.values()) controller.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.automatic.close(); await this.organizeBatches.close(); await this.recognitionBatches.close(); await this.contentReviews.close(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
+  async quiesce() { this.closed = true; clearInterval(this.timer); this.controller?.abort(); for (const controller of this.scanControllers.values()) controller.abort(); for (const { watcher, timer } of this.watches.values()) { clearTimeout(timer); watcher.close(); } this.watches.clear(); await this.codexJobs.close(); await this.automatic.close(); await this.organizeBatches.close(); await this.recognitionBatches.close(); await this.contentReviews.close(); await this.flight?.catch(() => {}); await Promise.allSettled([...this.scans.values()]); await this.configurationQueue.catch(() => {}); }
   async close() { await this.quiesce(); await Promise.allSettled([...this.sources.values()].map((source) => source.close())); this.sources.clear(); await this.targets.close(); }
 }

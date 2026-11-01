@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { DesktopError, publicError, type CoreInput, type CoreOutput, type SourceScan } from "@media-marshal/contracts";
 import type { CoreDatabase } from "../infrastructure/database.js";
 export interface ScanScope { physicalId: string; name: string; context: string; waiting: string | null }
@@ -8,7 +9,7 @@ const active = "state IN ('PENDING','RUNNING','WAITING_SOURCE')";
 /** 手动扫描只保存意图并复用流水线扫描；真正的文件接入仍经过来源与就绪检查。 */
 export class SourceScans {
   private closed = false; private flight?: Promise<void>; private timer?: ReturnType<typeof setInterval>; private again = false; private closeFlight?: Promise<void>;
-  constructor(private readonly database: CoreDatabase, private readonly scope: (id: string) => ScanScope, private readonly scan: (id: string, sourceId: string) => Promise<ScanResult>, private readonly now = Date.now, private readonly ownerKind: "legacy" | "recognition" = "legacy") {
+  constructor(private readonly database: CoreDatabase, private readonly scope: (id: string) => ScanScope, private readonly scan: (id: string, sourceId: string) => Promise<ScanResult>, private readonly now = Date.now, private readonly ownerKind: "legacy" | "recognition" = "legacy", private readonly logger: CoreLogger = silentLogger) {
     database.connection.prepare("UPDATE ingestion_source_scan SET state='PENDING',failure='核心已重启，等待原目录授权恢复后重新补扫',next_attempt_at=0,updated_at=? WHERE state='RUNNING' AND owner_kind=?").run(this.stamp(), this.ownerKind);
   }
   private stamp() { return new Date(this.now()).toISOString(); }
@@ -44,6 +45,7 @@ export class SourceScans {
         const scope = this.checked(job);
         if (scope.waiting) { db.prepare("UPDATE ingestion_source_scan SET state='WAITING_SOURCE',failure=?,next_attempt_at=?,updated_at=? WHERE id=?").run(scope.waiting, this.now() + 5000, this.stamp(), job.id); continue; }
         db.prepare("UPDATE ingestion_source_scan SET state='RUNNING',failure=NULL,updated_at=? WHERE id=?").run(this.stamp(), job.id);
+        this.logger.info({ event: "recognition.scan.started", scanId: job.id, sourceId: job.source_id }, "目录补扫已开始");
         const result = await this.scan(scope.physicalId, job.source_id);
         if (this.closed || this.row(job.id).state !== "RUNNING") continue;
         const latest = this.checked(job); if (latest.waiting) throw new DesktopError("LOCAL_UNAVAILABLE", latest.waiting, true);
@@ -52,6 +54,7 @@ export class SourceScans {
           for (const issue of result.issues) db.prepare("INSERT OR REPLACE INTO ingestion_source_scan_issue VALUES(?,?,?)").run(job.id, issue.relativePath, issue.failure);
           db.prepare("UPDATE ingestion_source_scan SET state=?,discovered=?,failure=?,updated_at=? WHERE id=?").run(result.issues.length ? "PARTIAL_FAILED" : "COMPLETED", result.discovered, result.issues.length ? "部分文件未能核对，请展开逐项问题，修复后重新扫描；已发现候选保留" : null, this.stamp(), job.id);
         })();
+        this.logger[result.issues.length ? "warn" : "info"]({ event: "recognition.scan.finished", scanId: job.id, sourceId: job.source_id, discoveredCount: result.discovered, failedCount: result.issues.length }, "本次目录补扫已结束");
       } catch (error) {
         if (this.closed || !["PENDING", "RUNNING", "WAITING_SOURCE"].includes(this.row(job.id).state)) continue;
         const reported = publicError(error), code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
@@ -60,6 +63,7 @@ export class SourceScans {
         if (["ENOENT", "ENOTDIR", "ENODEV", "ENXIO", "ESTALE", "EIO"].includes(code)) { waiting = true; failure = "来源目录暂不可访问，请连接原磁盘并恢复原路径后继续补扫"; }
         try { const scope = this.checked(job); if (scope.waiting) { waiting = true; failure = scope.waiting; } } catch (changed) { waiting = false; failure = publicError(changed).message; }
         db.prepare("UPDATE ingestion_source_scan SET state=?,failure=?,next_attempt_at=?,updated_at=? WHERE id=?").run(waiting ? "WAITING_SOURCE" : "FAILED", failure.slice(0, 500), this.now() + 5000, this.stamp(), job.id);
+        if (job.state !== "WAITING_SOURCE" || !waiting) this.logger.warn({ event: "recognition.scan.failed", scanId: job.id, sourceId: job.source_id, state: waiting ? "WAITING_SOURCE" : "FAILED", errorCode: reported.code, error }, "目录补扫未完成，已保留恢复状态");
       }
     }
   }

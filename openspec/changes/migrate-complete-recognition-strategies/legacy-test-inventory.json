@@ -1,0 +1,829 @@
+{
+  "说明": "旧识别测试逐方法对照：127项Java、30项Python、18项Vue，共175项；verification指向已执行的当前测试／独立夹具中的定位文本。多条旧方法可合并为一个覆盖相同断言的当前测试；adaptation显式记录桌面协议、授权及已批准缺陷修正差异。清单不能替代实际测试运行结果。",
+  "sources": [
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/parser/EpisodeSeasonResolverTest.java",
+      "sha256": "02517c2773b27dc82db03e8676e997868db7dd93207d361a277ba62aefcfc162",
+      "cases": [
+        {
+          "name": "defaultsToFirstSeasonAndPreservesExplicitSeasons",
+          "verification": "packages/media-core/src/domain/legacy-parse.test.ts::defaultsToFirstSeasonAndPreservesExplicitSeasons"
+        },
+        {
+          "name": "explicitPathMarkersOverrideModelAndDefault",
+          "verification": "packages/media-core/src/domain/legacy-parse.test.ts::explicitPathMarkersOverrideModelAndDefault"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/parser/CodexRecognitionServiceTest.java",
+      "sha256": "98fa40f508759f3fa756ae0767446f00adf067286280b4b63e2ea4aedbe43a86",
+      "cases": [
+        {
+          "name": "reliableResultsNoLongerReadLegacyForcedApprovalSetting",
+          "verification": "packages/media-core/src/ingestion/automatic.test.ts::reliableResultsNoLongerReadLegacyForcedApprovalSetting"
+        },
+        {
+          "name": "disabledDoesNotCallBridge",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::disabledDoesNotCallBridge"
+        },
+        {
+          "name": "movieRulesAndMissingTokenNeverRequestClusterBridge",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::movieRulesAndMissingTokenNeverRequestClusterBridge",
+          "adaptation": "桌面取消HTTP令牌入口，保留关闭／电影不请求聚类；协议以受限Core内部进程隔离。"
+        },
+        {
+          "name": "explicitSeasonAndEpisodeOverrideModelGuess",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::explicitSeasonAndEpisodeOverrideModelGuess"
+        },
+        {
+          "name": "missingSeasonDefaultsToFirstWithoutInventingEpisode",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::missingSeasonDefaultsToFirstWithoutInventingEpisode"
+        },
+        {
+          "name": "rejectsUnknownWeakOrInvalidResults",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::rejectsUnknownWeakOrInvalidResults"
+        },
+        {
+          "name": "respectsExplicitRuleMediaType",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::respectsExplicitRuleMediaType"
+        },
+        {
+          "name": "directoryPreservesEachFileCoordinatesAndEpisodeRange",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::directoryPreservesEachFileCoordinatesAndEpisodeRange"
+        },
+        {
+          "name": "directoryRejectsMissingDuplicateForeignOrInvalidFiles",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::directoryRejectsMissingDuplicateForeignOrInvalidFiles"
+        },
+        {
+          "name": "contextIsBoundedToWatchedRoot",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::contextIsBoundedToWatchedRoot"
+        },
+        {
+          "name": "clusterScopeSharesSeriesAcrossSeasonsButNotOtherPathsOrRules",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::clusterScopeSharesSeriesAcrossSeasonsButNotOtherPathsOrRules"
+        },
+        {
+          "name": "clusterContextMarksTruncatedSiblings",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::clusterContextMarksTruncatedSiblings"
+        },
+        {
+          "name": "clusterBridgePreservesExplicitCoordinatesAndReturnsHandledUnknown",
+          "verification": "packages/media-core/src/ingestion/codex-recognition.test.ts::clusterBridgePreservesExplicitCoordinatesAndReturnsHandledUnknown"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbInMemoryCacheTest.java",
+      "sha256": "0f9904c50e36f5220ecf5abbaab489f995c6e6b76877976102d0d2103bb4b95a",
+      "cases": [
+        {
+          "name": "cachesLoadedValueByKey",
+          "verification": "packages/media-core/src/infrastructure/tmdb.test.ts::同一请求只访问一次，缓存脱敏且不同消费者不能修改共享元数据"
+        },
+        {
+          "name": "deduplicatesInFlightLoadsForSameKey",
+          "verification": "packages/media-core/src/infrastructure/tmdb.test.ts::同一请求只访问一次，缓存脱敏且不同消费者不能修改共享元数据"
+        },
+        {
+          "name": "failedRequestCanBeRetriedWithoutRetainingFailedFuture",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::failedRequestCanBeRetriedWithoutRetainingFailedFuture"
+        },
+        {
+          "name": "reusesSuccessfulPersistentValueAfterMemoryCacheRestart",
+          "verification": "packages/media-core/src/infrastructure/tmdb.test.ts::SQLite 缓存跨连接恢复，TTL 过期后重取"
+        },
+        {
+          "name": "persistsOnlySuccessfulLoads",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::persistsOnlySuccessfulLoads"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbMetadataMatcherTest.java",
+      "sha256": "0c86a017734f9ebfd4cccf28b7361eecdc33e0b174e1cdd8d8ff1a988d0cc91e",
+      "cases": [
+        {
+          "name": "fetchesTmdbSeasonStructureAndKeepsCachedDetailsIsolated",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::fetchesTmdbSeasonStructureAndKeepsCachedDetailsIsolated"
+        },
+        {
+          "name": "fetchesAndCachesSeasonEpisodesIncludingMissingTitles",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::fetchesAndCachesSeasonEpisodesIncludingMissingTitles"
+        },
+        {
+          "name": "rejectsWrongSeasonInTmdbResponse",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::rejectsWrongSeasonInTmdbResponse"
+        },
+        {
+          "name": "tmdb404CannotBecomeAnEmptySuccessfulSeason",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::tmdb404CannotBecomeAnEmptySuccessfulSeason"
+        },
+        {
+          "name": "omitsSearchYearForLaterSeasonTv",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::omitsSearchYearForLaterSeasonTv"
+        },
+        {
+          "name": "reportsRateLimitAndRetryDelay",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::reportsRateLimitAndRetryDelay"
+        },
+        {
+          "name": "readsLargeSeasonResponseAndSharesItAcrossEpisodeRequests",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::readsLargeSeasonResponseAndSharesItAcrossEpisodeRequests"
+        },
+        {
+          "name": "keepsSearchYearForFirstSeasonTv",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::keepsSearchYearForFirstSeasonTv"
+        },
+        {
+          "name": "keepsSearchYearForMovies",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::keepsSearchYearForMovies"
+        },
+        {
+          "name": "searchesCleanAnimeTitleWhenGuessitDidNotReturnTitle",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::searchesCleanAnimeTitleWhenGuessitDidNotReturnTitle"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbEpisodeServiceTest.java",
+      "sha256": "acdabdb048fe8d638975fc50761069d85ecfc433ad97877cddd805b66df03a60",
+      "cases": [
+        {
+          "name": "jujutsuKaisenRetainsEpisode48WhenSourceSeasonThreeMapsToSingleMetadataSeason",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::jujutsuKaisenRetainsEpisode48WhenSourceSeasonThreeMapsToSingleMetadataSeason"
+        },
+        {
+          "name": "blueBoxUsesTmdbSeasonOneAndRetainsAbsoluteEpisodeNumber",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::blueBoxUsesTmdbSeasonOneAndRetainsAbsoluteEpisodeNumber"
+        },
+        {
+          "name": "validSeasonIsNotChangedEvenWhenOtherSeasonsHaveSameEpisode",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::validSeasonIsNotChangedEvenWhenOtherSeasonsHaveSameEpisode"
+        },
+        {
+          "name": "missingTitleDoesNotMeanEpisodeDoesNotExist",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::missingTitleDoesNotMeanEpisodeDoesNotExist"
+        },
+        {
+          "name": "doesNotGuessOffsetsForMultiSeasonSeries",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::doesNotGuessOffsetsForMultiSeasonSeries"
+        },
+        {
+          "name": "missingSeasonInMultiSeasonSeriesIsAmbiguous",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::missingSeasonInMultiSeasonSeriesIsAmbiguous"
+        },
+        {
+          "name": "existingPathSeasonWithoutEpisodeIsCorrectedUsingActualEpisodeLists",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::existingPathSeasonWithoutEpisodeIsCorrectedUsingActualEpisodeLists"
+        },
+        {
+          "name": "multipleSeasonsContainingTheEpisodeRemainAmbiguous",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::multipleSeasonsContainingTheEpisodeRemainAmbiguous"
+        },
+        {
+          "name": "seasonEpisodeCountAloneCannotProveTheEpisodeExists",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::seasonEpisodeCountAloneCannotProveTheEpisodeExists"
+        },
+        {
+          "name": "anotherSeasonMustBeAvailableToProveTheMappingIsUnique",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::anotherSeasonMustBeAvailableToProveTheMappingIsUnique"
+        },
+        {
+          "name": "specialsAreNeverMappedToRegularSeason",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::specialsAreNeverMappedToRegularSeason"
+        },
+        {
+          "name": "validatesEveryEpisodeInMergedRangeBeforeChangingSeason",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::validatesEveryEpisodeInMergedRangeBeforeChangingSeason"
+        },
+        {
+          "name": "mapsMergedRangeWhenEveryEpisodeExists",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::mapsMergedRangeWhenEveryEpisodeExists"
+        },
+        {
+          "name": "missingTmdbSeasonListCannotBypassValidation",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::missingTmdbSeasonListCannotBypassValidation"
+        },
+        {
+          "name": "networkFailureDoesNotFallBackToFilename",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::networkFailureDoesNotFallBackToFilename"
+        },
+        {
+          "name": "seasonZeroCanBeValidatedNormally",
+          "verification": "packages/media-core/src/domain/fixtures/episode-reconciliation.json::seasonZeroCanBeValidatedNormally"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbPersistentCacheTest.java",
+      "sha256": "bc43f7f54df9cba3bad25d2fe225fa1836106530d222f2306e70cd3433b29b39",
+      "cases": [
+        {
+          "name": "restoresTypedMetadataAcrossInstancesAndDiscardsExpiredOrCorruptEntries",
+          "verification": "packages/media-core/src/infrastructure/legacy-tmdb-recognition.test.ts::restoresTypedMetadataAcrossInstancesAndDiscardsExpiredOrCorruptEntries"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/ParentFolderContextExtractorTest.java",
+      "sha256": "e5fedae5db021193737347f5b7af711840cfb65e0b1cfd818f5b5b3978c15eb5",
+      "cases": [
+        {
+          "name": "extractsBilingualReleaseFolderContext",
+          "verification": "packages/media-core/src/domain/matching.test.ts::父目录只接受带发行线索的有效名称，同季号才补充证据"
+        },
+        {
+          "name": "ignoresGenericParentFolder",
+          "verification": "packages/media-core/src/domain/matching.test.ts::父目录只接受带发行线索的有效名称，同季号才补充证据"
+        },
+        {
+          "name": "ignoresPlainTitleFolderWithoutReleaseMarkers",
+          "verification": "packages/media-core/src/domain/matching.test.ts::父目录只接受带发行线索的有效名称，同季号才补充证据"
+        },
+        {
+          "name": "ignoresFolderWhenSeasonConflictsWithFilename",
+          "verification": "packages/media-core/src/domain/matching.test.ts::父目录只接受带发行线索的有效名称，同季号才补充证据"
+        },
+        {
+          "name": "ignoresNonVideoAssets",
+          "verification": "packages/media-core/src/ingestion/pipeline.test.ts::音乐、ISO 与蓝光结构明确跳过",
+          "adaptation": "桌面在发现入口即排除ISO／蓝光；父目录纯函数只接受上游普通视频上下文。"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TitleSearchPlanBuilderTest.java",
+      "sha256": "96e91bc34c87b9355797955daf886d1370e3eb8fda65076dcea0c9ffbbeea12f",
+      "cases": [
+        {
+          "name": "buildsChineseAndEnglishQueriesForBilingualMovieTitle",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::buildsChineseAndEnglishQueriesForBilingualMovieTitle"
+        },
+        {
+          "name": "buildsChineseAndEnglishQueriesForBilingualSeriesTitle",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::buildsChineseAndEnglishQueriesForBilingualSeriesTitle"
+        },
+        {
+          "name": "extractsBracketedChineseAndEnglishTitle",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::extractsBracketedChineseAndEnglishTitle"
+        },
+        {
+          "name": "extractsBracketedChineseAndEnglishTitleWithShortChineseName",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::extractsBracketedChineseAndEnglishTitleWithShortChineseName"
+        },
+        {
+          "name": "buildsChineseAndEnglishQueriesForEightHundredSeriesTitle",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::buildsChineseAndEnglishQueriesForEightHundredSeriesTitle"
+        },
+        {
+          "name": "doesNotUseEpisodeTitleAsSeriesQuery",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::doesNotUseEpisodeTitleAsSeriesQuery"
+        },
+        {
+          "name": "extractsAnimeTitleWhenGuessitReturnsNoTitle",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::extractsAnimeTitleWhenGuessitReturnsNoTitle"
+        },
+        {
+          "name": "recognizesExplicitSubtitleGroupWithoutGuessitReleaseGroup",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::recognizesExplicitSubtitleGroupWithoutGuessitReleaseGroup"
+        },
+        {
+          "name": "removesKnownReleaseGroupWithoutAssumingEveryLeadingBracketIsAGroup",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::removesKnownReleaseGroupWithoutAssumingEveryLeadingBracketIsAGroup"
+        },
+        {
+          "name": "extractsSeparateBilingualBracketedTitles",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::extractsSeparateBilingualBracketedTitles"
+        },
+        {
+          "name": "preservesBracketedTitleWithoutReleaseGroup",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::preservesBracketedTitleWithoutReleaseGroup"
+        },
+        {
+          "name": "preservesNumericTitleAndTitleNumbers",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::preservesNumericTitleAndTitleNumbers"
+        },
+        {
+          "name": "doesNotDiscardUnknownBracketedTextAsReleaseGroup",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::doesNotDiscardUnknownBracketedTextAsReleaseGroup"
+        },
+        {
+          "name": "preservesUnmarkedParentheticalTitle",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::preservesUnmarkedParentheticalTitle"
+        },
+        {
+          "name": "keepsGuessitTitleAsFallbackAndDeduplicatesIt",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::keepsGuessitTitleAsFallbackAndDeduplicatesIt"
+        },
+        {
+          "name": "doesNotGenerateQueriesFromMetadataOnlyFilename",
+          "verification": "packages/media-core/src/domain/fixtures/search-plans.json::doesNotGenerateQueriesFromMetadataOnlyFilename"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/TmdbConfidenceScorerTest.java",
+      "sha256": "7b5768104a486b0d9ee9411eea7468f428d9120759c565268f804480fc6e178d",
+      "cases": [
+        {
+          "name": "scoresExactTitleYearAndTypeHighly",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::scoresExactTitleYearAndTypeHighly"
+        },
+        {
+          "name": "filtersStrongMediaTypeMismatch",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::filtersStrongMediaTypeMismatch"
+        },
+        {
+          "name": "givesPartialCreditForAdjacentYear",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::givesPartialCreditForAdjacentYear"
+        },
+        {
+          "name": "treatsLaterSeasonTvYearAsSeasonAirYear",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::treatsLaterSeasonTvYearAsSeasonAirYear"
+        },
+        {
+          "name": "keepsFirstSeasonTvYearStrict",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::keepsFirstSeasonTvYearStrict"
+        },
+        {
+          "name": "boostsAliasEvidenceForLaterSeasonTvWhenSeriesStartedEarlier",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::boostsAliasEvidenceForLaterSeasonTvWhenSeriesStartedEarlier"
+        },
+        {
+          "name": "awardsStructureBonusOnlyWhenLocalizedAndOriginalQueriesHitSameCandidate",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::awardsStructureBonusOnlyWhenLocalizedAndOriginalQueriesHitSameCandidate"
+        },
+        {
+          "name": "doesNotAwardStructureBonusForSeriesStructureAlone",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::doesNotAwardStructureBonusForSeriesStructureAlone"
+        },
+        {
+          "name": "boostsConfidenceWhenEnglishAliasUniquelyFindsChineseMovieCandidate",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::boostsConfidenceWhenEnglishAliasUniquelyFindsChineseMovieCandidate"
+        },
+        {
+          "name": "boostsConfidenceWhenEnglishAliasUniquelyFindsChineseSeriesCandidate",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::boostsConfidenceWhenEnglishAliasUniquelyFindsChineseSeriesCandidate"
+        },
+        {
+          "name": "penalizesAliasEvidenceWhenYearIsMissing",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::penalizesAliasEvidenceWhenYearIsMissing"
+        },
+        {
+          "name": "penalizesAliasEvidenceWhenYearDoesNotMatch",
+          "verification": "packages/media-core/src/domain/fixtures/confidence-scores.json::penalizesAliasEvidenceWhenYearDoesNotMatch"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/matcher/ParentFolderMatchEnhancerTest.java",
+      "sha256": "5bf777460836faad62a0e7fa4e3eb8bf027446edb109cb905c3691ebc3776af3",
+      "cases": [
+        {
+          "name": "skipsParentSearchWhenFilenameCandidateAlreadyMeetsThreshold",
+          "verification": "packages/media-core/src/ingestion/recognition-strategies.test.ts::父目录增强只在低分时运行"
+        },
+        {
+          "name": "boostsCandidateOnlyWhenFilenameAndParentFolderAgreeOnSameTmdbId",
+          "verification": "packages/media-core/src/domain/matching.test.ts::父目录单独命中、同 ID 但文件名仅弱证据仍被限权",
+          "adaptation": "当前规格已修正原0.30文件名+0.90父目录仅同ID就加至0.95的缺陷；原输入保存在intentional-differences.json，桌面期望0.75，强双证据仍加分。"
+        },
+        {
+          "name": "capsParentOnlyCandidatesBelowAutoThreshold",
+          "verification": "packages/media-core/src/domain/matching.test.ts::父目录单独命中、同 ID 但文件名仅弱证据仍被限权"
+        },
+        {
+          "name": "keepsConflictingParentCandidateBelowAutoThreshold",
+          "verification": "packages/media-core/src/domain/matching.test.ts::父目录单独命中、同 ID 但文件名仅弱证据仍被限权"
+        },
+        {
+          "name": "leavesCandidatesUntouchedWhenParentFolderContextIsDisabled",
+          "verification": "packages/media-core/src/ingestion/recognition-strategies.test.ts::父目录增强只在低分时运行"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/pipeline/MediaProcessPipelineRecognitionTest.java",
+      "sha256": "1d19b2ea5ed1818a9af8c5abcb72cd636e94d1746bd234bf9e53bc6bc34fd4e8",
+      "cases": [
+        {
+          "name": "clusterIdentityIsAppliedBeforeFilenameSearchWithoutPerFileCodex",
+          "verification": "packages/media-core/src/ingestion/recognition-strategies.test.ts::迁移 clusterIdentityIsAppliedBeforeFilenameSearchWithoutPerFileCodex"
+        },
+        {
+          "name": "unknownClusterDoesNotFallBackToRepeatedIndividualModelCalls",
+          "verification": "packages/media-core/src/ingestion/recognition-strategies.test.ts::迁移 unknownClusterDoesNotFallBackToRepeatedIndividualModelCalls"
+        },
+        {
+          "name": "identifiedClusterStillRequiresTmdbCandidateBeforeOrganizing",
+          "verification": "packages/media-core/src/ingestion/recognition-strategies.test.ts::迁移 identifiedClusterStillRequiresTmdbCandidateBeforeOrganizing"
+        },
+        {
+          "name": "codexSuggestionRequiresTmdbAndConfirmationBeforeMoving",
+          "verification": "packages/media-core/src/ingestion/codex-pipeline.test.ts::重识别不会绕过桌面首次样本授权",
+          "adaptation": "旧测试中requiresConfirmation标记只作桩；桌面可靠模型不额外强制审批，未首次样本授权仍保留候选供人工确认。"
+        },
+        {
+          "name": "updateRecognitionSavesMovieFieldsAndClearsEpisodeFields",
+          "verification": "packages/media-core/src/ingestion/recognition-edits.test.ts::选择性修改公共字段保留其他字段，改成电影清空季集"
+        },
+        {
+          "name": "codexCannotChangeUnknownTaskOrMoveFiles",
+          "verification": "packages/media-core/src/ingestion/codex-pipeline.test.ts::旧 codexCannotChangeUnknownTaskOrMoveFiles"
+        },
+        {
+          "name": "manualCodexRetryKeepsEvidenceAndWaitsForConfirmation",
+          "verification": "packages/media-core/src/ingestion/codex-pipeline.test.ts::重识别不会绕过桌面首次样本授权",
+          "adaptation": "旧测试中requiresConfirmation标记只作桩；桌面可靠模型不额外强制审批，未首次样本授权仍保留候选供人工确认。"
+        },
+        {
+          "name": "directoryRecognizesOnceAndSharesCandidatesWithoutMoving",
+          "verification": "packages/media-core/src/ingestion/codex-pipeline.test.ts::迁移 directoryRecognizesOnceAndSharesCandidates"
+        },
+        {
+          "name": "directorySkipsTaskConfirmedWhileModelIsRunning",
+          "verification": "packages/media-core/src/ingestion/codex-pipeline.test.ts::迁移 directorySkipsTaskConfirmedWhileModelIsRunning"
+        },
+        {
+          "name": "directoryTmdbMissLeavesOriginalTaskAndCandidates",
+          "verification": "packages/media-core/src/ingestion/codex-pipeline.test.ts::迁移 directoryTmdbMissLeavesOriginalTaskAndCandidates"
+        },
+        {
+          "name": "bothConfirmationModesRejectMissingEpisodeBeforeAnySideEffects",
+          "verification": "packages/media-core/src/ingestion/pipeline.test.ts::特殊集使用真实 S0，缺集号不请求详情且不丢失作品匹配"
+        },
+        {
+          "name": "rematchUsesUpdatedRecognitionAndReplacesCandidateConfidence",
+          "verification": "packages/media-core/src/ingestion/pipeline.test.ts::保存并重新匹配使用人工标题且不再解析原文件名"
+        },
+        {
+          "name": "confirmEnrichesSelectedCandidateWithTmdbDetail",
+          "verification": "packages/media-core/src/ingestion/pipeline.test.ts::人工字段和预览不复制，重复确认只产生一个操作"
+        },
+        {
+          "name": "updateRecognitionRejectsNonAwaitingTask",
+          "verification": "packages/media-core/src/ingestion/recognition-edits.test.ts::已经整理的任务不能通过编辑入口修改"
+        },
+        {
+          "name": "confirmationPausesOnConflictAndUsesTmdbCoordinatesAfterReview",
+          "verification": "packages/media-core/src/ingestion/pipeline.test.ts::唯一换季按候选持久保存，原解析及其他候选不被改写"
+        },
+        {
+          "name": "highConfidenceCannotBypassInvalidTmdbEpisode",
+          "verification": "packages/media-core/src/ingestion/automatic.test.ts::剧集只采用已通过的真实坐标；缺失或失败证据不能以高分替代"
+        },
+        {
+          "name": "updateRecognitionRejectsEpisodeRangeEndBeforeStart",
+          "verification": "packages/media-core/src/ingestion/recognition-edits.test.ts::缺失集号、合并集顺序生成、电影顺序生成分别定位阻断"
+        },
+        {
+          "name": "recordFailureMergesSameSourceRuleAndErrorCode",
+          "verification": "packages/media-core/src/ingestion/codex-pipeline.test.ts::旧 recordFailureMergesSameSourceRuleAndErrorCode",
+          "adaptation": "不移植JPA失败合并时删除临时任务；桌面重试沿唯一候选和原任务，错误按持久作业逐次保留，验证两次失败不重复任务。"
+        },
+        {
+          "name": "newHighConfidenceClusterOrganizesWithoutManualApproval",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::迁移 newHighConfidenceClusterOrganizesWithoutManualApproval"
+        },
+        {
+          "name": "reliableDirectoryAutomaticallyOrganizesWithoutOpeningApproval",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::reliableDirectoryAutomaticallyOrganizesWithoutOpeningApproval"
+        },
+        {
+          "name": "duplicatePairStaysForReviewWhileOtherEpisodesAutomaticallyOrganize",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::迁移 duplicatePairStaysForReviewWhileOtherEpisodesAutomaticallyOrganize"
+        },
+        {
+          "name": "targetConflictOnlyBlocksTheAffectedFile",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::targetConflictOnlyBlocksTheAffectedFile"
+        },
+        {
+          "name": "collidingTemplateBlocksAllFilesBeforeAnyMove",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::collidingTemplateBlocksAllFilesBeforeAnyMove"
+        },
+        {
+          "name": "lowModelConfidenceStaysForReviewWithSpecificReason",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::lowModelConfidenceStaysForReviewWithSpecificReason"
+        },
+        {
+          "name": "lowTmdbConfidenceDoesNotBecomeAutomaticJustBecauseModelIsCertain",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::lowTmdbConfidenceDoesNotBecomeAutomaticJustBecauseModelIsCertain"
+        },
+        {
+          "name": "verifiedSeasonRemappingCanAutomaticallyOrganize",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::jujutsuKaisenDirectoryUsesVerifiedSeasonAndRetainsAbsoluteEpisodeNumbers"
+        },
+        {
+          "name": "jujutsuKaisenDirectoryUsesVerifiedSeasonAndRetainsAbsoluteEpisodeNumbers",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::jujutsuKaisenDirectoryUsesVerifiedSeasonAndRetainsAbsoluteEpisodeNumbers"
+        },
+        {
+          "name": "seasonMappingStillBlocksUnqueuedHashDuplicate",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::seasonMappingStillBlocksUnqueuedHashDuplicate"
+        },
+        {
+          "name": "retryOfPreviouslyMappedTaskStillDetectsSourceSeasonDuplicate",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::retryOfPreviouslyMappedTaskStillDetectsSourceSeasonDuplicate"
+        },
+        {
+          "name": "singleCodexRetryAutomaticallyResumesWhenChecksPass",
+          "verification": "packages/media-core/src/sources/recognition-rules.test.ts::迁移 singleCodexRetryAutomaticallyResumesWhenChecksPass"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/pipeline/AutomaticOrganizationGuardTest.java",
+      "sha256": "f2da4cdcb703607378a678e2c30cb48b2b0071544f3a33a2723dd8b6d5a4fd5e",
+      "cases": [
+        {
+          "name": "detectsUnqueuedAnimeHashCopyBeforeTheFirstCopyMoves",
+          "verification": "packages/media-core/src/domain/episode-feature.test.ts::旧 detectsUnqueuedAnimeHashCopyBeforeTheFirstCopyMoves"
+        },
+        {
+          "name": "detectsUnqueuedMergedEpisodeRangeButAllowsDifferentSeason",
+          "verification": "packages/media-core/src/domain/episode-feature.test.ts::旧 detectsUnqueuedMergedEpisodeRangeButAllowsDifferentSeason"
+        },
+        {
+          "name": "directoryInspectionFailureIsActionableAndCannotPassSilently",
+          "verification": "packages/media-core/src/ingestion/codex-pipeline.test.ts::旧 directoryInspectionFailureIsActionableAndCannotPassSilently"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/service/queue/QueueBatchRecognitionServiceTest.java",
+      "sha256": "5c029b5208477180ec100d7e48e44f4d21b95141cc1a80430fba44237df0e6f4",
+      "cases": [
+        {
+          "name": "previewAssignsSequentialEpisodesByNaturalFilenameOrder",
+          "verification": "packages/media-core/src/ingestion/recognition-edits.test.ts::对照 Java 自然文件名顺序生成连续集号"
+        },
+        {
+          "name": "previewBlocksPreserveModeWhenTvEpisodeIsMissing",
+          "verification": "packages/media-core/src/ingestion/recognition-edits.test.ts::缺失集号、合并集顺序生成、电影顺序生成分别定位阻断"
+        },
+        {
+          "name": "previewBlocksSequentialModeForEpisodeRanges",
+          "verification": "packages/media-core/src/ingestion/recognition-edits.test.ts::缺失集号、合并集顺序生成、电影顺序生成分别定位阻断"
+        },
+        {
+          "name": "saveCanChangeTvTaskToMovieAndClearsEpisodeFieldsWithoutTouchingCandidates",
+          "verification": "packages/media-core/src/ingestion/recognition-edits.test.ts::选择性修改公共字段保留其他字段，改成电影清空季集"
+        },
+        {
+          "name": "rematchKeepsSavedRecognitionWhenOneTaskSearchFails",
+          "verification": "packages/media-core/src/ingestion/pipeline.test.ts::保存并重新匹配使用人工标题且不再解析原文件名"
+        }
+      ]
+    },
+    {
+      "source": "legacy/backend/src/test/java/com/mediamarshal/model/dto/ParseResultTest.java",
+      "sha256": "8ba8b922cecef1d7fd2297e19a35eba438aa5c8155b298d0df1aa772695a4135",
+      "cases": [
+        {
+          "name": "deserializesSingleEpisodeNumber",
+          "verification": "packages/media-core/src/domain/legacy-parse.test.ts::deserializesSingleEpisodeNumber"
+        },
+        {
+          "name": "deserializesContiguousEpisodeArrayAsRange",
+          "verification": "packages/media-core/src/domain/legacy-parse.test.ts::deserializesContiguousEpisodeArrayAsRange"
+        },
+        {
+          "name": "deserializesLongContiguousEpisodeArrayAsRange",
+          "verification": "packages/media-core/src/domain/legacy-parse.test.ts::deserializesLongContiguousEpisodeArrayAsRange"
+        },
+        {
+          "name": "rejectsNonContiguousEpisodeArray",
+          "verification": "packages/media-core/src/domain/legacy-parse.test.ts::rejectsNonContiguousEpisodeArray"
+        }
+      ]
+    },
+    {
+      "source": "legacy/scripts/test_codex_bridge.py",
+      "sha256": "7e1a53e20eadde184a2dac80c2b9e2c87c75af180c02f9c18d16b3cb6295d695",
+      "cases": [
+        {
+          "name": "test_rejects_invalid_numeric_fields",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_rejects_invalid_numeric_fields("
+        },
+        {
+          "name": "test_cli_uses_official_chatgpt_login_and_ignores_third_party_config_and_secrets",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cli_uses_official_chatgpt_login_and_ignores_third_party_config_and_secrets("
+        },
+        {
+          "name": "test_cli_failure_never_exposes_process_output_and_cleans_request_files",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cli_failure_never_exposes_process_output_and_cleans_request_files("
+        },
+        {
+          "name": "test_daily_budget_is_atomic_persistent_and_resets_on_shanghai_day",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_daily_budget_is_atomic_persistent_and_resets_on_shanghai_day("
+        },
+        {
+          "name": "test_failed_cli_calls_consume_budget_and_usage_records_only_token_counts",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_failed_cli_calls_consume_budget_and_usage_records_only_token_counts("
+        },
+        {
+          "name": "test_usage_endpoint_requires_authentication",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_usage_endpoint_requires_authentication("
+        },
+        {
+          "name": "test_rejects_unbounded_context",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_rejects_unbounded_context("
+        },
+        {
+          "name": "test_cache_avoids_repeated_calls_including_unknown",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cache_avoids_repeated_calls_including_unknown("
+        },
+        {
+          "name": "test_unknown_expires_and_manual_retry_bypasses_it",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_unknown_expires_and_manual_retry_bypasses_it("
+        },
+        {
+          "name": "test_policy_change_invalidates_cache",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_policy_change_invalidates_cache("
+        },
+        {
+          "name": "test_series_reuses_identity_but_preserves_each_episode",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_series_reuses_identity_but_preserves_each_episode("
+        },
+        {
+          "name": "test_mixed_folders_and_unknown_or_weak_identity_are_not_shared",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_mixed_folders_and_unknown_or_weak_identity_are_not_shared("
+        },
+        {
+          "name": "test_cached_identity_does_not_cross_parent_directories",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cached_identity_does_not_cross_parent_directories("
+        },
+        {
+          "name": "test_series_cache_survives_a_completed_episode_leaving_folder",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_series_cache_survives_a_completed_episode_leaving_folder("
+        },
+        {
+          "name": "test_directory_uses_one_model_call_and_caches_complete_result",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_directory_uses_one_model_call_and_caches_complete_result("
+        },
+        {
+          "name": "test_directory_rejects_incomplete_duplicate_and_invented_files",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_directory_rejects_incomplete_duplicate_and_invented_files("
+        },
+        {
+          "name": "test_directory_refuses_shared_movie_and_preserves_unknown",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_directory_refuses_shared_movie_and_preserves_unknown("
+        },
+        {
+          "name": "test_directory_http_dispatch",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_directory_http_dispatch("
+        },
+        {
+          "name": "test_cluster_features_keep_hash_duplicates_ranges_and_release_names",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cluster_features_keep_hash_duplicates_ranges_and_release_names("
+        },
+        {
+          "name": "test_nineteen_files_are_one_cluster_call_and_new_episodes_reuse_identity",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_nineteen_files_are_one_cluster_call_and_new_episodes_reuse_identity("
+        },
+        {
+          "name": "test_cluster_budget_exhaustion_does_not_poison_identity_cache",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cluster_budget_exhaustion_does_not_poison_identity_cache("
+        },
+        {
+          "name": "test_cluster_separates_named_shows_and_isolates_rules_and_years",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cluster_separates_named_shows_and_isolates_rules_and_years("
+        },
+        {
+          "name": "test_ambiguous_truncated_or_conflicting_context_never_triggers_cluster_model",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_ambiguous_truncated_or_conflicting_context_never_triggers_cluster_model("
+        },
+        {
+          "name": "test_cluster_coordinates_use_filename_and_nearest_season_instead_of_model",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cluster_coordinates_use_filename_and_nearest_season_instead_of_model("
+        },
+        {
+          "name": "test_cluster_rejects_weak_movie_and_incomplete_model_identity",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cluster_rejects_weak_movie_and_incomplete_model_identity("
+        },
+        {
+          "name": "test_cluster_success_expires_and_corrupt_cache_is_rebuilt",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cluster_success_expires_and_corrupt_cache_is_rebuilt("
+        },
+        {
+          "name": "test_cluster_unknown_and_invalid_results_are_shared_briefly_not_retried_per_file",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cluster_unknown_and_invalid_results_are_shared_briefly_not_retried_per_file("
+        },
+        {
+          "name": "test_manual_directory_review_reuses_cluster_identity_without_another_model_call",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_manual_directory_review_reuses_cluster_identity_without_another_model_call("
+        },
+        {
+          "name": "test_cluster_http_dispatch_and_authentication",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_cluster_http_dispatch_and_authentication("
+        },
+        {
+          "name": "test_http_requires_token_and_never_exposes_cli_error",
+          "verification": "tools/desktop-parser/tests/test_codex_recognition.py::def test_http_requires_token_and_never_exposes_cli_error("
+        }
+      ]
+    },
+    {
+      "source": "legacy/frontend/tests/queueDirectories.test.mjs",
+      "sha256": "4ee1fbd8a3b9917209ce78a172d42290aae2d9ef39114608393af2933c918592",
+      "cases": [
+        {
+          "name": "同目录跨越原文件分页边界仍组成一组，不跨规则、相邻目录或原盘合并",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::同目录跨越原文件分页边界仍组成一组，不跨规则、相邻目录或原盘合并"
+        },
+        {
+          "name": "共同候选交集与单文件候选分开计算，不自动宣称每个文件均已识别",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::共同候选交集与单文件候选分开计算，不自动宣称每个文件均已识别"
+        },
+        {
+          "name": "19 个文件中部分已识别时显示作品及覆盖数，不把缺候选的目录显示为全部未识别",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::19 个文件中部分已识别时显示作品及覆盖数，不把缺候选的目录显示为全部未识别"
+        },
+        {
+          "name": "目录共同候选优先，存在不同候选时全部交给用户选择，全空不推断作品",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::目录共同候选优先，存在不同候选时全部交给用户选择，全空不推断作品"
+        },
+        {
+          "name": "确认前阻止缺失、非法和重叠集号，支持特别篇及合并集",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::确认前阻止缺失、非法和重叠集号，支持特别篇及合并集"
+        },
+        {
+          "name": "重复集号返回双方文件，修正或排除任一文件后解除拦截",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::重复集号返回双方文件，修正或排除任一文件后解除拦截"
+        },
+        {
+          "name": "合并集展示实际重叠范围，收集所有冲突且不同季互不冲突",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::合并集展示实际重叠范围，收集所有冲突且不同季互不冲突"
+        },
+        {
+          "name": "缺失与非法输入定位到具体文件，并同时保留其他文件的冲突",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::缺失与非法输入定位到具体文件，并同时保留其他文件的冲突"
+        },
+        {
+          "name": "13 个文件仅一个有候选时允许打开整组确认，不要求逐文件重复识别",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::13 个文件仅一个有候选时允许打开整组确认，不要求逐文件重复识别"
+        },
+        {
+          "name": "加载和更新期间仍等待，候选不一致时允许用户选择统一身份，仅全无候选时阻止进入",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::加载和更新期间仍等待，候选不一致时允许用户选择统一身份，仅全无候选时阻止进入"
+        },
+        {
+          "name": "未标季号默认第一季，明确季号、目录和特别篇优先保留",
+          "verification": "apps/desktop/src/renderer/src/legacy-directory-rules.test.ts::未标季号默认第一季，明确季号、目录和特别篇优先保留"
+        }
+      ]
+    },
+    {
+      "source": "legacy/frontend/tests/queueRecognition.test.mjs",
+      "sha256": "0afc444ef73e4903f88cbb7e9a9d73956aa25be30bf3d843a8779fbe8dbf0ffd",
+      "cases": [
+        {
+          "name": "全部校验通过时无需打开人工确认面板",
+          "verification": "apps/desktop/src/renderer/src/legacy-recognition-results.test.ts::全部校验通过时无需打开人工确认面板"
+        },
+        {
+          "name": "自动整理、保留复核和逐项失败分别统计，部分失败不显示全成功",
+          "verification": "apps/desktop/src/renderer/src/legacy-recognition-results.test.ts::自动整理、保留复核和逐项失败分别统计，部分失败不显示全成功"
+        }
+      ]
+    },
+    {
+      "source": "legacy/frontend/tests/queueOrganization.test.mjs",
+      "sha256": "667f6c72e6dc6d797e64cb4ea47c7246df17b175899ea6af7c5cbf7172d53426",
+      "cases": [
+        {
+          "name": "后台退回待确认和失败均计入未完成，已提交不计为完成",
+          "verification": "apps/desktop/src/renderer/src/legacy-organization-results.test.ts::后台退回待确认和失败均计入未完成，已提交不计为完成"
+        }
+      ]
+    },
+    {
+      "source": "legacy/frontend/tests/confirmQueueDirectory.test.mjs",
+      "sha256": "be8b0810f729e79b4e097ade52632876a0ed33dc862d717058fd5867da1db678",
+      "cases": [
+        {
+          "name": "整目录的每集先保存统一季号，再用一次批量确认提交全部任务及同一作品",
+          "verification": "packages/media-core/src/ingestion/organize-batches.test.ts::迁移旧目录批量确认",
+          "adaptation": "旧HTTP逐项保存后一次确认改为不可变共同作品预览和一次显式确认；25集／13集原规模及累计集号、失败分项和无回执不假报成功保留。成员版本改变时整批预览失效，不隐式提交部分陈旧草稿。"
+        },
+        {
+          "name": "坐标保存失败或状态变化的文件不提交，其余文件保留服务端逐项结果",
+          "verification": "packages/media-core/src/ingestion/organize-batches.test.ts::确认后外部文件抢占导致部分失败",
+          "adaptation": "旧HTTP逐项保存后一次确认改为不可变共同作品预览和一次显式确认；25集／13集原规模及累计集号、失败分项和无回执不假报成功保留。成员版本改变时整批预览失效，不隐式提交部分陈旧草稿。"
+        },
+        {
+          "name": "坐标未变化时不重复保存，不将没有服务端回执的文件显示为成功",
+          "verification": "packages/media-core/src/ingestion/organize-batches.test.ts::COPY 已领取但批次补记故障后继续同一操作",
+          "adaptation": "旧HTTP逐项保存后一次确认改为不可变共同作品预览和一次显式确认；25集／13集原规模及累计集号、失败分项和无回执不假报成功保留。成员版本改变时整批预览失效，不隐式提交部分陈旧草稿。"
+        },
+        {
+          "name": "复用一个文件的正确作品，给其余文件保存共同片名且只提交一次批量确认",
+          "verification": "packages/media-core/src/ingestion/organize-batches.test.ts::迁移旧目录批量确认",
+          "adaptation": "旧HTTP逐项保存后一次确认改为不可变共同作品预览和一次显式确认；25集／13集原规模及累计集号、失败分项和无回执不假报成功保留。成员版本改变时整批预览失效，不隐式提交部分陈旧草稿。"
+        }
+      ]
+    }
+  ]
+}

@@ -1,9 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
+import { silentLogger, type CoreLogger } from "../application/logger.js";
 import { join } from "node:path";
 import { DesktopError, CloudError, cloudFailure, type CloudFailure, sourceConfigurationSchema, syncSourceRuleSchema, syncSourceConfigurationSchema, syncSourceSnapshotSchema, type CoreInput, type CoreOutput, type SyncSourceRule, type SyncSourceSnapshot } from "@media-marshal/contracts";
 import type { CoreDatabase } from "../infrastructure/database.js";
 import type { CloudDownloads } from "../cloud/downloads.js";
 import type { ConfigurationDirectories } from "./configuration-directories.js";
+import { SyncLibraryRechecks } from "./sync-library-rechecks.js";
+import { EmbyLibraryFiles, libraryFilePath, libraryFileReason, publicLibraryReview, type LibraryFileEvidence } from "./emby-library-files.js";
+import type { PreviewSnapshot } from "../cloud/previews.js";
 import { LocalSync } from "./local-sync.js";
 import { SyncReceipts } from "./sync-receipts.js";
 import { assertDirectoryGraph } from "./directory-graph.js";
@@ -19,7 +23,8 @@ const conflict = (message = "来源配置、目录或预览版本已变化，请
 export class SyncRules {
   private closed = false; private timer?: ReturnType<typeof setInterval>; private flight?: Promise<void>; private queue: Promise<unknown> = Promise.resolve();
   private previews = new Map<string, { signature: string; promise: Promise<CoreOutput<"sync.preview">> }>();
-  constructor(private readonly database: CoreDatabase, readonly directories: ConfigurationDirectories, private readonly downloads: CloudDownloads, readonly local: LocalSync, private readonly now = Date.now, private readonly legacyChanged?: () => void) {}
+  private readonly libraryRechecks: SyncLibraryRechecks;
+  constructor(private readonly database: CoreDatabase, readonly directories: ConfigurationDirectories, private readonly downloads: CloudDownloads, readonly local: LocalSync, private readonly now = Date.now, private readonly legacyChanged?: () => void, private readonly logger: CoreLogger = silentLogger) { this.libraryRechecks = new SyncLibraryRechecks(database, downloads, now); }
   private writable() { if (this.closed) throw new DesktopError("INTERRUPTED", "同步服务正在停止，请重新进入后查询原任务", true); }
   private row(id: string) { return this.database.connection.prepare("SELECT * FROM sync_source_rule WHERE id=?").get(id) as Row | undefined; }
   get(id: string): SyncSourceRule {
@@ -93,7 +98,11 @@ export class SyncRules {
   preview(input: CoreInput<"sync.preview">): Promise<CoreOutput<"sync.preview">> {
     this.writable(); const signature = hash(input), existing = this.previews.get(input.requestKey);
     if (existing) { if (existing.signature !== signature) throw conflict("预览请求标识已用于不同范围"); return existing.promise; }
-    const promise = this.buildPreview(input).finally(() => { this.previews.delete(input.requestKey); }); this.previews.set(input.requestKey, { signature, promise }); return promise;
+    this.logger.info({ event: "sync.preview.started", sourceId: input.id, mode: input.mode ?? "configuration" }, "正在生成同步预览");
+    const promise = this.buildPreview(input).then((result) => {
+      this.logger.info({ event: "sync.preview.finished", sourceId: input.id, previewId: result.id, state: result.state }, "本次同步预览已生成");
+      return result;
+    }, (error) => { this.logger.warn({ event: "sync.preview.failed", sourceId: input.id, error }, "同步预览未完成"); throw error; }).finally(() => { this.previews.delete(input.requestKey); }); this.previews.set(input.requestKey, { signature, promise }); return promise;
   }
   private async buildPreview(input: CoreInput<"sync.preview">) {
     const db = this.database.connection, repeated = db.prepare("SELECT * FROM sync_configuration_preview WHERE request_key=?").get(input.requestKey) as Preview | undefined;
@@ -102,7 +111,7 @@ export class SyncRules {
     const mode = input.mode ?? "configuration"; if (input.force && mode !== "execution") throw conflict("显式重新同步需要从已生效来源预览执行，不改写配置");
     if (input.useCurrentDefault && (mode !== "configuration" || this.get(input.id).draft.target.kind !== "default")) throw conflict("只有默认 target 的配置预览可以显式重新绑定当前默认目录");
     const snapshot = this.snapshot(row!, mode), defaultDependency = snapshot.configuration.target.kind === "default"; await this.checkSnapshot(snapshot);
-    const download = snapshot.configuration.type === "cloud" ? this.downloads.previews.start({ accountId: snapshot.configuration.accountId, remoteRef: snapshot.configuration.remoteRef, targetGrantId: snapshot.targetDirectory.id, requestKey: input.requestKey, layout: "drive", filters: { rules: snapshot.configuration.filters }, forceRedownload: input.force ?? false }) : null;
+    const download = snapshot.configuration.type === "cloud" ? this.downloads.previews.start({ accountId: snapshot.configuration.accountId, remoteRef: snapshot.configuration.remoteRef, targetGrantId: snapshot.targetDirectory.id, requestKey: input.requestKey, layout: "drive", filters: { rules: snapshot.configuration.filters }, forceRedownload: input.force ?? false }, new EmbyLibraryFiles(this.database)) : null;
     const local = snapshot.configuration.type === "local" ? await this.local.create(snapshot, input.requestKey, input.force ?? false) : null;
     this.writable(); this.assertVersion(this.row(input.id), input); this.assertLegacy(input.id);
     if (defaultDependency && this.directories.defaults().version !== snapshot.defaultDirectoryVersion) throw conflict("默认下载目录已变化，请重新预览以核对实际目标");
@@ -117,18 +126,36 @@ export class SyncRules {
     const files = row.local_preview_id ? this.local.preview(row.local_preview_id).files : [];
     let failure: string | null = download?.failure?.message ?? null;
     if (snapshot.configuration.periodic.enabled && cloudRow && JSON.parse(cloudRow.snapshot_json).rootType === "file") failure = "文件范围不能启用周期扫描，请改为目录或关闭周期后重新预览";
-    const observing = files.filter((file) => file.state === "OBSERVING").length, conflicts = download?.conflicts ?? files.filter((file) => ["CONFLICT", "UNAVAILABLE"].includes(file.state)).length;
+    const libraryReviews = cloudRow ? (JSON.parse(cloudRow.snapshot_json) as PreviewSnapshot).items.filter((file) => file.libraryReview).length : 0;
+    const observing = files.filter((file) => file.state === "OBSERVING").length, conflicts = download ? Math.max(0, download.conflicts - libraryReviews) : files.filter((file) => ["CONFLICT", "UNAVAILABLE"].includes(file.state)).length;
     const expired = !current || !!current.deleted_at || current.version !== row.version || current.draft_revision !== row.draft_revision || current.lifecycle_revision !== row.lifecycle_revision || row.expires_at <= this.now() || row.state === "EXPIRED" || !!row.default_dependency && snapshot.defaultDirectoryVersion !== this.directories.defaults().version;
     const complete = download ? download.complete : !!row.local_preview_id;
-    const state = row.state === "APPLIED" ? "APPLIED" : expired || download?.state === "EXPIRED" ? "EXPIRED" : download?.state === "BUILDING" ? "BUILDING" : failure || conflicts || !complete || row.mode === "execution" && observing ? "BLOCKED" : "READY";
+    const state = row.state === "APPLIED" ? "APPLIED" : expired || download?.state === "EXPIRED" ? "EXPIRED" : download?.state === "BUILDING" ? "BUILDING" : failure || conflicts || libraryReviews || !complete || row.mode === "execution" && observing ? "BLOCKED" : "READY";
     const job = this.database.connection.prepare("SELECT id FROM sync_job WHERE preview_id IN (?,?) ORDER BY created_at LIMIT 1").get(row.local_preview_id, row.download_preview_id) as { id: string } | undefined;
-    return { id, sourceId: row.source_id, mode: row.mode, state, snapshot, expiresAt: row.expires_at, files: download?.files ?? files.length, bytes: download?.bytes ?? files.reduce((sum, file) => sum + file.size, 0), complete, observing, conflicts, reused: download?.reuseFiles ?? files.filter((file) => file.state === "REUSED").length, removed: download?.localRemovedFiles ?? files.filter((file) => file.state === "REMOVED").length, force: !!row.force, failure, download, jobId: job?.id ?? null };
+    return { id, sourceId: row.source_id, mode: row.mode, state, snapshot, expiresAt: row.expires_at, files: download?.files ?? files.length, bytes: download?.bytes ?? files.reduce((sum, file) => sum + file.size, 0), complete, observing, conflicts, libraryReviews, inLibrary: cloudRow ? (JSON.parse(cloudRow.snapshot_json) as PreviewSnapshot).items.filter((file) => file.libraryFile).length : files.filter((file) => file.libraryFile).length, reused: download?.reuseFiles ?? files.filter((file) => file.state === "REUSED").length, removed: download?.localRemovedFiles ?? files.filter((file) => file.state === "REMOVED").length, force: !!row.force, failure, download, jobId: job?.id ?? null };
   }
   previewFiles(input: CoreInput<"sync.preview-files">): CoreOutput<"sync.preview-files"> {
     const row = this.previewRow(input.id), snapshot = JSON.parse(row.snapshot_json) as SyncSourceSnapshot, size = input.pageSize ?? 25, start = ((input.page ?? 1) - 1) * size;
-    if (row.local_preview_id) { const files = this.local.preview(row.local_preview_id).files; return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.segments.join("/"), targetPath: join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.size, state: file.state, reason: file.reason })) }; }
-    const cloud = row.download_preview_id ? this.downloads.previews.row(row.download_preview_id) : null, files: { targetSegments: string[]; expectedSize: number; localRemoved?: boolean; receiptId?: string; reuseItemId?: string; issue?: { message: string } }[] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
-    return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.targetSegments.join("/"), targetPath: join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state: file.issue ? "CONFLICT" : file.localRemoved ? "REMOVED" : file.receiptId || file.reuseItemId ? "REUSED" : "READY", reason: file.issue?.message ?? (file.localRemoved ? "已同步，本地已移除；普通执行不会补回" : null) })) };
+    if (row.local_preview_id) { const files = this.local.preview(row.local_preview_id).files; return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.segments.join("/"), targetPath: file.libraryFile ? libraryFilePath(file.libraryFile) : join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.size, state: file.state, reason: file.reason })) }; }
+    const cloud = row.download_preview_id ? this.downloads.previews.row(row.download_preview_id) : null, files: PreviewSnapshot["items"] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
+    return { total: files.length, items: files.slice(start, start + size).map((file) => ({ relativePath: file.targetSegments.join("/"), targetPath: file.libraryFile ? libraryFilePath(file.libraryFile) : join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state: file.libraryFile ? "IN_LIBRARY" : file.libraryReview ? "LIBRARY_REVIEW" : file.issue ? "CONFLICT" : file.localRemoved ? "REMOVED" : file.receiptId || file.reuseItemId ? "REUSED" : "READY", reason: file.libraryFile ? libraryFileReason(file.libraryFile) : file.libraryIssue ?? file.issue?.message ?? (file.localRemoved ? "已同步，本地已移除；普通执行不会补回" : null), ...(file.libraryReview ? { libraryReview: publicLibraryReview(file.libraryReview) } : {}) })) };
+  }
+  resolveLibraryReview(input: CoreInput<"sync.resolve-library-review">): Promise<CoreOutput<"sync.resolve-library-review">> {
+    const work = this.queue.catch(() => {}).then(async () => {
+      this.writable(); const signature = hash({ operation: "sync.resolve-library-review", input });
+      const old = this.previous<CoreOutput<"sync.resolve-library-review">>(input.requestKey, signature); if (old) return this.getPreview(input.previewId);
+      const preview = this.getPreview(input.previewId), row = this.previewRow(input.previewId);
+      if (!["READY", "BLOCKED"].includes(preview.state) || !row.download_preview_id || row.force) throw conflict("该预览已确认、过期或不支持重复核对，请重新预览");
+      if (this.libraryRechecks.busyForSource(row.source_id)) throw conflict("该来源正在复核原任务，请等待完成后重新预览");
+      await this.checkSnapshot(preview.snapshot);
+      const commit = await this.downloads.previews.resolveLibraryReview(row.download_preview_id, input.relativePath, input.decision, input.decision === "USE_LIBRARY" ? input.candidateId : undefined);
+      return this.database.connection.transaction(() => {
+        this.writable(); const repeated = this.previous<CoreOutput<"sync.resolve-library-review">>(input.requestKey, signature); if (repeated) return this.getPreview(input.previewId);
+        if (!["READY", "BLOCKED"].includes(this.getPreview(input.previewId).state)) throw conflict("核对期间配置或预览已变化，请重新预览");
+        commit(); const result = this.getPreview(input.previewId); this.receipt(input.requestKey, signature, result); return result;
+      })();
+    });
+    this.queue = work; return work;
   }
   confirm(input: CoreInput<"sync.confirm">): Promise<CoreOutput<"sync.confirm">> {
     const work = this.queue.catch(() => {}).then(() => this.confirmOnce(input)); this.queue = work; return work;
@@ -137,6 +164,7 @@ export class SyncRules {
     this.writable(); const db = this.database.connection, signature = hash({ operation: "sync.confirm", input }), repeated = this.previous<CoreOutput<"sync.confirm">>(input.requestKey, signature); if (repeated) return repeated;
     const preview = this.getPreview(input.previewId), row = this.previewRow(input.previewId), owner = this.row(row.source_id)!;
     if (preview.state !== "READY") throw conflict(preview.failure ?? "同步预览未完成、已过期或存在逐项问题，请重新预览后确认");
+    if (this.libraryRechecks.busyForSource(owner.id)) throw conflict("该来源正在重新核对媒体库，请等待完成后再确认配置");
     this.assertLegacy(owner.id); await this.checkSnapshot(preview.snapshot);
     const requestedExecution = row.mode === "execution" || !!input.runOnce, effectivePaused = this.get(owner.id).paused;
     if (requestedExecution && owner.version > 0 && effectivePaused) throw conflict("来源已暂停，请先恢复来源；确认配置不会解除已有暂停");
@@ -162,7 +190,8 @@ export class SyncRules {
       db.prepare("UPDATE sync_configuration_preview SET state=CASE WHEN id=? THEN 'APPLIED' ELSE 'EXPIRED' END WHERE source_id=? AND state='READY'").run(row.id, owner.id);
       const saved = { rule: this.get(owner.id), jobId }; this.receipt(input.requestKey, signature, saved); return saved;
     })();
-    this.legacyChanged?.(); if (this.timer) void this.tick().catch(() => {}); return result;
+    this.logger.info({ event: "sync.confirmed", sourceId: owner.id, previewId: row.id, jobId: result.jobId, version: result.rule.version, mode: row.mode }, "同步预览已确认，配置与执行意图已记账");
+    this.legacyChanged?.(); if (this.timer) void this.tick().catch((error) => this.logger.error({ event: "sync.scheduler.failed", error }, "同步调度未完成")); return result;
   }
   private retireLegacy(id: string) {
     const db = this.database.connection;
@@ -179,6 +208,7 @@ export class SyncRules {
   async control(input: CoreInput<"sync.control">): Promise<SyncSourceRule> {
     this.writable(); const db = this.database.connection, signature = hash({ operation: "sync.control", input }), previous = this.previous<SyncSourceRule>(input.requestKey, signature); if (previous) return previous;
     const row = this.row(input.id); this.assertVersion(row, input, true); const rule = this.get(input.id);
+    if (this.libraryRechecks.busyForSource(rule.id)) throw conflict("此来源正在重新核对媒体库，请等待完成后再修改来源状态；来源保持暂停");
     if (!rule.runtime?.claimed && input.operation === "pause" && db.prepare("SELECT 1 FROM legacy_configuration_owner WHERE source_id=?").get(rule.id)) {
       if (rule.deletedAt) throw conflict("旧来源已删除，请先核对其恢复状态");
       const result = db.transaction(() => {
@@ -225,36 +255,85 @@ export class SyncRules {
     const db = this.database.connection;
     const counts = db.prepare("SELECT count(*) AS files,sum(state='DONE') AS done,sum(state='REUSED') AS reused,sum(state='REMOVED') AS removed,sum(state='NEEDS_ATTENTION') AS failed FROM local_sync_member WHERE job_id=?").get(row.id) as { files: number; done: number | null; reused: number | null; removed: number | null; failed: number | null };
     const cloud = row.download_job_id ? this.downloads.get(row.download_job_id) : null;
+    const isCloud = (JSON.parse(row.snapshot_json) as SyncSourceSnapshot).configuration.type === "cloud";
+    const cloudPreview = isCloud && row.preview_id ? this.downloads.previews.row(row.preview_id) : null;
+    const cloudFiles = cloudPreview ? (JSON.parse(cloudPreview.snapshot_json) as PreviewSnapshot).items : null;
+    const libraryFiles = isCloud ? cloudFiles?.filter((file) => file.libraryFile).length ?? 0 : row.preview_id ? this.local.preview(row.preview_id).files.filter((file) => file.libraryFile).length : 0;
     const failed = row.download_job_id ? (db.prepare("SELECT count(*) AS n FROM download_job_item j JOIN download_item i ON i.id=j.item_id WHERE j.job_id=? AND i.failure_code IS NOT NULL AND i.state IN ('FAILED','AUTH_REQUIRED','BLOCKED_LOCAL','RECONCILING')").get(row.download_job_id) as { n: number }).n : counts.failed ?? 0;
+    const source = this.row(row.source_id), waiting: string[] = [];
+    if (row.state === "PENDING" || row.state === "RUNNING") {
+      if (!source || source.deleted_at) waiting.push("来源已删除，请先恢复来源并核对配置，再恢复来源同步");
+      else if (source.paused) waiting.push("来源同步已暂停，请在对应来源点击「恢复来源同步」");
+      if (this.downloads.pauseStatus().paused) waiting.push("全部同步下载已暂停，请点击页面顶部的「恢复全部同步下载」");
+    }
+    const waitingReason = waiting.length ? waiting.join("；") + "。恢复后继续原任务，无需重新创建。" : null;
     const destination = (JSON.parse(row.snapshot_json) as SyncSourceSnapshot).targetDirectory.id, recognition = db.prepare("SELECT r.id,r.paused FROM recognition_input i JOIN recognition_rule r ON r.id=i.rule_id WHERE i.directory_id=? AND i.mode='managed-completed' AND i.active=1 AND r.deleted_at IS NULL LIMIT 1").get(destination) as { id: string; paused: number } | undefined;
-    return { recognition: { state: !recognition ? "NOT_ENABLED" as const : recognition.paused ? "PAUSED" as const : "ENABLED" as const, ruleId: recognition?.id ?? null }, id: row.id, sourceId: row.source_id, sourceVersion: row.source_version, state: row.state, files: cloud?.progress.totalItems ?? counts.files, done: cloud?.progress.completedItems ?? counts.done ?? 0, reused: counts.reused ?? 0, removed: cloud?.localRemovedFiles ?? counts.removed ?? 0, failed, failure: row.failure ?? cloud?.failure?.message ?? null, downloadJobId: row.download_job_id, createdAt: row.created_at, updatedAt: row.updated_at };
+    return { recognition: { state: !recognition ? "NOT_ENABLED" as const : recognition.paused ? "PAUSED" as const : "ENABLED" as const, ruleId: recognition?.id ?? null }, id: row.id, sourceId: row.source_id, sourceVersion: row.source_version, libraryRecheck: this.libraryRechecks.status(row.id), libraryRecheckBlockedReason: this.libraryRechecks.blockedReason(row.id), state: row.state, files: cloudFiles?.length ?? counts.files, inLibrary: libraryFiles, done: cloud?.progress.completedItems ?? counts.done ?? 0, reused: cloud ? 0 : Math.max(0, (counts.reused ?? 0) - libraryFiles), removed: cloud?.localRemovedFiles ?? counts.removed ?? 0, failed, waitingReason, failure: row.failure ?? cloud?.failure?.message ?? null, downloadJobId: row.download_job_id, createdAt: row.created_at, updatedAt: row.updated_at };
   }
   jobs(input: CoreInput<"sync.jobs">): CoreOutput<"sync.jobs"> {
     const db = this.database.connection, size = input.pageSize ?? 25, offset = ((input.page ?? 1) - 1) * size;
-    const rows = db.prepare("SELECT * FROM sync_job WHERE ? IS NULL OR source_id=? ORDER BY created_at DESC,id LIMIT ? OFFSET ?").all(input.sourceId ?? null, input.sourceId ?? null, size, offset) as Job[];
-    return { items: rows.map((row) => this.jobDto(row)), total: (db.prepare("SELECT count(*) AS n FROM sync_job WHERE ? IS NULL OR source_id=?").get(input.sourceId ?? null, input.sourceId ?? null) as { n: number }).n };
+    const rows = db.prepare("SELECT * FROM sync_job WHERE NOT EXISTS(SELECT 1 FROM app_setting a WHERE a.key='sync.job.removed.' || sync_job.id) AND (? IS NULL OR source_id=?) ORDER BY created_at DESC,id LIMIT ? OFFSET ?").all(input.sourceId ?? null, input.sourceId ?? null, size, offset) as Job[];
+    return { items: rows.map((row) => this.jobDto(row)), total: (db.prepare("SELECT count(*) AS n FROM sync_job WHERE NOT EXISTS(SELECT 1 FROM app_setting a WHERE a.key='sync.job.removed.' || sync_job.id) AND (? IS NULL OR source_id=?)").get(input.sourceId ?? null, input.sourceId ?? null) as { n: number }).n };
   }
   getJob(id: string): CoreOutput<"sync.job"> { return this.jobDto(this.job(id)); }
   jobFiles(input: CoreInput<"sync.job-files">): CoreOutput<"sync.job-files"> {
     const row = this.job(input.id), snapshot = JSON.parse(row.snapshot_json) as SyncSourceSnapshot;
-    if (row.download_job_id) {
+    if (snapshot.configuration.type === "cloud") {
       const cloud = row.preview_id ? this.downloads.previews.row(row.preview_id) : null;
-      const files: { targetSegments: string[]; targetPathKey: string; expectedSize: number; receiptId?: string; reuseItemId?: string }[] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
+      const files: { targetSegments: string[]; targetPathKey: string; expectedSize: number; libraryFile?: LibraryFileEvidence; receiptId?: string; reuseItemId?: string }[] = cloud ? JSON.parse(cloud.snapshot_json).items : [];
       const size = input.pageSize ?? 25, start = ((input.page ?? 1) - 1) * size;
       const item = this.database.connection.prepare("SELECT i.state,i.failure_code FROM download_job_item j JOIN download_item i ON i.id=j.item_id WHERE j.job_id=? AND i.target_path_key=?");
+      const recheck = this.libraryRechecks.status(row.id);
       return { total: files.length, items: files.slice(start, start + size).map((file) => {
+        if (recheck?.state === "FAILED" && recheck.relativePath === file.targetSegments.join("/")) return { relativePath: recheck.relativePath, targetPath: join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state: "NEEDS_ATTENTION" as const, reason: recheck.failure };
+        if (file.libraryFile) return { relativePath: file.targetSegments.join("/"), targetPath: libraryFilePath(file.libraryFile), size: file.expectedSize, state: row.state === "NEEDS_ATTENTION" && !row.download_job_id ? "NEEDS_ATTENTION" as const : "IN_LIBRARY" as const, reason: row.state === "NEEDS_ATTENTION" && !row.download_job_id ? row.failure : libraryFileReason(file.libraryFile) };
         const value = item.get(row.download_job_id, file.targetPathKey) as { state: string; failure_code: CloudFailure["code"] | null } | undefined;
-        const removed = file.receiptId ? !!this.database.connection.prepare("SELECT 1 FROM sync_receipt_local_state WHERE receipt_id=? AND state='REMOVED'").get(file.receiptId) : false;
+        const cleaned = !!file.receiptId && new SyncReceipts(this.database).isCleaned(file.receiptId);
+        const removed = cleaned || (file.receiptId ? !!this.database.connection.prepare("SELECT 1 FROM sync_receipt_local_state WHERE receipt_id=? AND state='REMOVED'").get(file.receiptId) : false);
         const failed = value?.failure_code && ["FAILED", "AUTH_REQUIRED", "BLOCKED_LOCAL", "RECONCILING"].includes(value.state);
         const state = removed ? "REMOVED" : failed ? "NEEDS_ATTENTION" : value?.state === "COMPLETED" ? file.receiptId || file.reuseItemId ? "REUSED" : "DONE" : !value && file.receiptId ? "REUSED" : "PENDING";
-        return { relativePath: file.targetSegments.join("/"), targetPath: join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state, reason: failed ? cloudFailure(new CloudError(value!.failure_code!)).message : removed ? "已同步，本地已移除；普通执行不会补回" : null };
+        return { relativePath: file.targetSegments.join("/"), targetPath: join(snapshot.targetDirectory.path, "completed", ...file.targetSegments), size: file.expectedSize, state, reason: failed ? cloudFailure(new CloudError(value!.failure_code!)).message : cleaned ? "已核验媒体库内容并主动清理受管副本；成功同步记录保留，普通执行不会补回" : removed ? "已同步，本地已移除；普通执行不会补回" : null };
       }) };
     }
     const size = input.pageSize ?? 25, rows = this.database.connection.prepare("SELECT m.*,o.plan_json FROM local_sync_member m LEFT JOIN local_sync_operation o ON o.id=m.operation_id WHERE m.job_id=? ORDER BY m.ordinal LIMIT ? OFFSET ?").all(row.id, size, ((input.page ?? 1) - 1) * size) as { relative_path: string; state: "PENDING" | "REUSED" | "REMOVED" | "DONE" | "NEEDS_ATTENTION"; failure: string | null; plan_json: string | null; receipt_id: string | null }[];
-    return { items: rows.map((file) => { const plan = file.plan_json ? JSON.parse(file.plan_json) : null, receipt = file.receipt_id ? new SyncReceipts(this.database).get(file.receipt_id) : null; return { relativePath: file.relative_path, targetPath: join(snapshot.targetDirectory.path, "completed", ...(plan?.targetSegments ?? JSON.parse(receipt?.target_segments_json ?? "[]"))), size: plan?.snapshot.size ?? receipt?.size ?? 0, state: file.state, reason: file.failure ?? (file.state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回" : null) }; }), total: (this.database.connection.prepare("SELECT count(*) AS n FROM local_sync_member WHERE job_id=?").get(row.id) as { n: number }).n };
+    const libraryFiles = row.preview_id ? this.local.preview(row.preview_id).files : [];
+    return { items: rows.map((file) => { const libraryFile = libraryFiles.find((entry) => entry.segments.join("/") === file.relative_path)?.libraryFile; if (libraryFile) return { relativePath: file.relative_path, targetPath: libraryFilePath(libraryFile), size: libraryFile.snapshot.size, state: "IN_LIBRARY" as const, reason: libraryFileReason(libraryFile) }; const plan = file.plan_json ? JSON.parse(file.plan_json) : null, receipt = file.receipt_id ? new SyncReceipts(this.database).get(file.receipt_id) : null; return { relativePath: file.relative_path, targetPath: join(snapshot.targetDirectory.path, "completed", ...(plan?.targetSegments ?? JSON.parse(receipt?.target_segments_json ?? "[]"))), size: plan?.snapshot.size ?? receipt?.size ?? 0, state: file.state, reason: file.failure ?? (file.state === "REMOVED" ? "已同步，本地已移除；普通执行不会补回" : null) }; }), total: (this.database.connection.prepare("SELECT count(*) AS n FROM local_sync_member WHERE job_id=?").get(row.id) as { n: number }).n };
+  }
+  recheckLibrary(input: CoreInput<"sync.recheck-library">): CoreOutput<"sync.recheck-library"> {
+    this.writable(); const signature = hash({ operation: "sync.recheck-library", input });
+    return this.database.connection.transaction(() => {
+      const old = this.previous<CoreOutput<"sync.recheck-library">>(input.requestKey, signature); if (old) return this.getJob(input.id);
+      if (this.flight) throw conflict("同步调度仍在核对在途任务，请等待停止后重新检查媒体库");
+      this.libraryRechecks.start(input.id, input.requestKey);
+      const result = this.getJob(input.id); this.receipt(input.requestKey, signature, result); return result;
+    })();
+  }
+  removeJob(input: CoreInput<"sync.remove-job">): CoreOutput<"sync.remove-job"> {
+    this.writable();
+    const db = this.database.connection, signature = hash({ operation: "sync.remove-job", input });
+    return db.transaction(() => {
+      const previous = this.previous<CoreOutput<"sync.remove-job">>(input.requestKey, signature); if (previous) return previous;
+      if (this.libraryRechecks.busy(input.id)) throw conflict("正在重新核对媒体库，请等待完成后再删除任务");
+      const row = this.job(input.id), hidden = db.prepare("SELECT 1 FROM app_setting WHERE key=?").get(`sync.job.removed.${row.id}`);
+      if (!hidden) {
+        const cloud = row.download_job_id ? this.downloads.get(row.download_job_id) : null;
+        const unfinished = row.state !== "DONE" && row.state !== "CANCELED";
+        // 暂停生效后，已进入异步确认／提交的调度轮次仍须先结束。
+        const pendingStop = unfinished && (!this.get(row.source_id).paused || !!this.flight || this.local.hasActive(row.source_id));
+        const cloudBusy = cloud && ["RUNNING", "VERIFYING", "COMMITTING", "PAUSING", "CANCELLING"].includes(cloud.state);
+        if (pendingStop || cloudBusy) throw conflict(`同步任务 ${row.id} 尚未停止，请先暂停对应来源并等待在途同步停止后重试删除；文件和成功历史保留`);
+        if (unfinished && row.download_job_id) this.downloads.control({ jobId: row.download_job_id, operation: "cancel", requestKey: input.requestKey });
+        if (unfinished) db.prepare("UPDATE sync_job SET state='CANCELED',updated_at=? WHERE id=?").run(new Date(this.now()).toISOString(), row.id);
+        // 仅持久化列表可见性，冻结计划和成功收据仍供幂等、恢复与去重使用。
+        db.prepare("INSERT INTO app_setting(key,value) VALUES(?,?)").run(`sync.job.removed.${row.id}`, new Date(this.now()).toISOString());
+      }
+      const result = { id: row.id }; this.receipt(input.requestKey, signature, result); return result;
+    })();
   }
   retry(input: CoreInput<"sync.retry">): CoreOutput<"sync.retry"> {
     this.writable(); const row = this.job(input.id), rule = this.get(row.source_id);
+    if (this.libraryRechecks.busy(input.id)) throw conflict("正在重新核对媒体库，请等待完成后再重试任务");
+    if (this.database.connection.prepare("SELECT 1 FROM app_setting WHERE key=?").get(`sync.job.removed.${row.id}`)) throw conflict("此同步任务已删除，请从来源重新预览执行；成功历史保留");
     if (rule.paused || rule.deletedAt) throw conflict("请先恢复来源，再重试原同步作业；全局暂停仍独立生效");
     const signature = hash({ operation: "sync.retry", input }), old = this.previous<CoreOutput<"sync.retry">>(input.requestKey, signature); if (old) return old;
     if (row.download_job_id) { this.downloads.control({ jobId: row.download_job_id, operation: "retry", requestKey: input.requestKey }); this.database.connection.prepare("UPDATE sync_job SET state='RUNNING',failure=NULL,updated_at=? WHERE id=?").run(new Date(this.now()).toISOString(), row.id); }
@@ -262,28 +341,34 @@ export class SyncRules {
     else throw conflict("该作业的远端预览未能提交，请从来源重新预览执行，原历史会保留");
     const result = this.jobDto(this.job(row.id)); this.receipt(input.requestKey, signature, result); return result;
   }
-  start() { if (!this.closed && !this.timer) this.timer = setInterval(() => { void this.tick().catch(() => {}); }, 1000); }
+  start() { if (!this.closed && !this.timer) this.timer = setInterval(() => { void this.tick().catch((error) => this.logger.error({ event: "sync.scheduler.failed", error }, "同步调度未完成")); }, 1000); }
   tick(): Promise<void> { if (this.closed) return Promise.resolve(); return this.flight ??= this.run().finally(() => { this.flight = undefined; }); }
   private async run() {
     const db = this.database.connection;
+    await this.libraryRechecks.tick();
+    if (this.closed) return;
     await this.local.tick();
-    const jobs = db.prepare("SELECT j.* FROM sync_job j JOIN sync_source_rule r ON r.id=j.source_id WHERE (j.state IN ('PENDING','RUNNING') OR j.state='NEEDS_ATTENTION' AND j.download_job_id IS NOT NULL) AND r.paused=0 AND r.deleted_at IS NULL AND json_extract(j.snapshot_json,'$.configuration.type')='cloud' ORDER BY j.updated_at,j.id LIMIT 16").all() as Job[];
+    const jobs = db.prepare("SELECT j.* FROM sync_job j JOIN sync_source_rule r ON r.id=j.source_id WHERE (j.state IN ('PENDING','RUNNING') OR j.state='NEEDS_ATTENTION' AND j.download_job_id IS NOT NULL) AND (j.download_job_id IS NOT NULL OR r.paused=0 AND r.deleted_at IS NULL) AND json_extract(j.snapshot_json,'$.configuration.type')='cloud' ORDER BY j.updated_at,j.id LIMIT 16").all() as Job[];
     for (const row of jobs) {
       if (this.closed) return;
       const snapshot = JSON.parse(row.snapshot_json) as SyncSourceSnapshot; if (snapshot.configuration.type !== "cloud") continue;
-      const source = this.row(row.source_id); if (!source || source.paused || source.deleted_at) continue;
+      // 暂停只阻止新执行，已交给下载队列的作业仍须读取停止与完成结果。
+      const source = this.row(row.source_id); if (!row.download_job_id && (!source || source.paused || source.deleted_at)) continue;
       try {
         if (!row.download_job_id) {
           if (this.downloads.pauseStatus().paused) continue;
           const result = await this.downloads.confirm({ previewId: row.preview_id!, requestKey: row.request_key }, { syncSourceId: row.source_id, syncSourceVersion: row.source_version, syncJobId: row.id });
           row.download_job_id = result.jobId;
           db.prepare("UPDATE sync_job SET download_job_id=?,state='RUNNING',failure=NULL,updated_at=? WHERE id=?").run(result.jobId, new Date(this.now()).toISOString(), row.id);
+          this.logger.info({ event: "sync.download.linked", sourceId: row.source_id, jobId: row.id, downloadJobId: result.jobId }, "同步作业已交给下载队列");
         }
         const download = this.downloads.get(row.download_job_id); if (!download) throw conflict("原下载作业已不存在，请查看历史后重新预览");
         const state = download.state === "COMPLETED" ? "DONE" : ["FAILED", "AUTH_REQUIRED", "BLOCKED_LOCAL"].includes(download.state) ? "NEEDS_ATTENTION" : ["CANCELLED", "CANCELLING"].includes(download.state) ? "CANCELED" : "RUNNING";
         db.prepare("UPDATE sync_job SET state=?,failure=?,updated_at=? WHERE id=?").run(state, download.failure?.message ?? null, new Date(this.now()).toISOString(), row.id);
+        if (row.state !== state) this.logger.info({ event: "sync.job.state", sourceId: row.source_id, jobId: row.id, fromState: row.state, toState: state }, "同步作业状态已更新");
       } catch (error) {
         const failure = error instanceof DesktopError ? error.message : error instanceof CloudError ? error.message : "同步范围或远端连接无法核对，请重新选择范围并预览；原成果保留";
+        if (row.state !== "NEEDS_ATTENTION") this.logger.warn({ event: "sync.job.failed", sourceId: row.source_id, jobId: row.id, error }, "同步作业需要处理，原成果保留");
         db.prepare("UPDATE sync_job SET state='NEEDS_ATTENTION',failure=?,updated_at=? WHERE id=?").run(failure, new Date(this.now()).toISOString(), row.id);
       }
     }
@@ -310,6 +395,6 @@ export class SyncRules {
       db.prepare("DELETE FROM sync_periodic_preview WHERE source_id=? AND preview_id=?").run(row.source_id, row.preview_id);
     }
   }
-  quiesce() { this.closed = true; clearInterval(this.timer); }
+  quiesce() { this.closed = true; this.libraryRechecks.close(); clearInterval(this.timer); }
   async close() { this.quiesce(); const local = this.local.close(); await Promise.allSettled([local, this.flight, this.queue, ...[...this.previews.values()].map((value) => value.promise)]); }
 }

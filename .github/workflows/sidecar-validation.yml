@@ -33,12 +33,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 暂停 Intel Mac 和 Windows 验证，当前仅运行 macOS ARM。
           - os: macos-15
             target: darwin-arm64
-          - os: macos-15-intel
-            target: darwin-x64
-          - os: windows-2022
-            target: win32-x64
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

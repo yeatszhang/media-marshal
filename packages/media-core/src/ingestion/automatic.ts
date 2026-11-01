@@ -20,6 +20,7 @@ export interface AutomaticHooks {
   preview(taskId: string, requestKey: string, selection: MediaSelection): Promise<OrganizePreview>;
   confirm(previewId: string, requestKey: string, check: () => void): Promise<{ operationId: string }>;
   receipt(requestKey: string): { operationId: string } | null;
+  threshold?(): number;
 }
 
 /** 只推进已授权的持久意图；页面等待和 Core 重启均不生成新的执行键。 */
@@ -84,7 +85,7 @@ export class AutomaticIngestion {
         if (row.state === "RECOGNIZING") {
           const task = this.hooks.task(row.task_id!);
           if (["PENDING", "PROCESSING"].includes(task.state)) { this.update(row, { failure: "等待后台识别完成" }); continue; }
-          const choice = selectAutomaticWork(task);
+          const choice = selectAutomaticWork(task, this.hooks.threshold?.());
           if ("reason" in choice) { this.update(row, { state: "NEEDS_REVIEW", failure: choice.reason }); continue; }
           this.update(row, { state: "PREVIEWING", selection_json: JSON.stringify(choice.selection), failure: null });
         }

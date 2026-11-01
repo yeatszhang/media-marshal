@@ -9,8 +9,8 @@ HELP.md                           # Spring Initializr 自动生成，无实际�
 
 # ── Node / Frontend ───────────────────────────────────────────
 node_modules/
-frontend/dist/
-frontend/.vite/                   # Vite 构建缓存
+legacy/frontend/dist/
+legacy/frontend/.vite/                   # Vite 构建缓存
 apps/desktop/out/
 apps/desktop/release/
 packages/*/dist/
@@ -23,9 +23,9 @@ apps/desktop/resources/parser/
 apps/desktop/resources/native-files/
 test-results/
 playwright-report/
-frontend/.env.local
-frontend/src/auto-imports.d.ts
-frontend/src/components.d.ts
+legacy/frontend/.env.local
+legacy/frontend/src/auto-imports.d.ts
+legacy/frontend/src/components.d.ts
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 build-artifacts/
@@ -35,8 +35,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
-parser/.venv/
-parser/dist/
+legacy/parser/.venv/
+legacy/parser/dist/
 .pytest_cache/
 
 # ── IDE ──────────────────────────────────────────────────────

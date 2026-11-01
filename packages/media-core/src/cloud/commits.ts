@@ -1,3 +1,4 @@
+import { downloadFailureColumns } from "./download-failures.js";
 import { randomUUID } from "node:crypto";
 import { CloudError, type RemoteEntry, type VersionEvidence } from "@media-marshal/contracts";
 import { localFileEvidenceSchema, type LocalFileEvidence, type TransferItem } from "@media-marshal/contracts/internal";
@@ -5,6 +6,7 @@ import type { CoreDatabase } from "../infrastructure/database.js";
 import type { CloudRoots } from "./roots.js";
 import type { RemoteCatalog } from "./catalog.js";
 import { SyncReceipts } from "../sources/sync-receipts.js";
+import { OwnedAttemptCleanup } from "../files/owned-attempt-cleanup.js";
 
 type Checkpoint = "verified" | "intent" | "linked" | "recorded";
 interface Intent { item_id: string; attempt_id: string; account_id: string; version_key: string; file_evidence_json: string; state: string; target_root_id: string; target_segments_json: string }
@@ -15,7 +17,7 @@ export class DownloadCommits {
   constructor(private readonly database: CoreDatabase, private readonly roots: CloudRoots, private readonly catalog: Pick<RemoteCatalog, "stat" | "source">, private readonly checkpoint: (point: Checkpoint) => Promise<void> = async () => {}) {}
   private stopped(attemptId: string) {
     const row = this.database.connection.prepare("SELECT state,stop_evidence_json FROM download_attempt WHERE id=?").get(attemptId) as { state: string; stop_evidence_json: string | null } | undefined;
-    if (!row || !["STOPPED", "EXITED"].includes(row.state) || !row.stop_evidence_json) throw new CloudError("CONFLICT");
+    if (!row || !["STOPPED", "EXITED"].includes(row.state) || !row.stop_evidence_json) throw new CloudError("STOP_UNCONFIRMED");
   }
   private async remote(item: TransferItem) {
     const current = this.catalog.source(item.source.binding.accountId, item.source.remoteRef);
@@ -54,7 +56,7 @@ export class DownloadCommits {
     } catch (error) {
       if (intent.state !== "RECORDED") db.transaction(() => {
         db.prepare("UPDATE download_commit_intent SET state='RECONCILING',updated_at=? WHERE item_id=?").run(new Date().toISOString(), itemId);
-        db.prepare("UPDATE download_item SET state=?,failure_code=?,updated_at=? WHERE id=? AND state!='COMPLETED'").run(error instanceof CloudError && error.code === "LOCAL_UNAVAILABLE" ? "BLOCKED_LOCAL" : "RECONCILING", error instanceof CloudError ? error.code : "CONFLICT", new Date().toISOString(), itemId);
+        db.prepare("UPDATE download_item SET state=?,failure_code=?,failure_detail_code=?,updated_at=? WHERE id=? AND state!='COMPLETED'").run(error instanceof CloudError && error.code === "LOCAL_UNAVAILABLE" ? "BLOCKED_LOCAL" : "RECONCILING", ...downloadFailureColumns(error instanceof CloudError ? error.code : (error as NodeJS.ErrnoException).code === "ENOENT" ? "LOCAL_FILE_MISSING" : "INTERNAL_ERROR"), new Date().toISOString(), itemId);
       })();
       throw error;
     }
@@ -62,11 +64,12 @@ export class DownloadCommits {
   private record(intent: Intent, evidence: LocalFileEvidence) {
     const db = this.database.connection, now = new Date().toISOString();
     db.transaction(() => {
-      db.prepare("UPDATE download_item SET state='COMPLETED',local_sha256=?,completed_size=?,failure_code=NULL,updated_at=? WHERE id=? AND version_key=?").run(evidence.sha256, evidence.size, now, intent.item_id, intent.version_key);
+      db.prepare("UPDATE download_item SET state='COMPLETED',local_sha256=?,completed_size=?,failure_code=NULL,failure_detail_code=NULL,updated_at=? WHERE id=? AND version_key=?").run(evidence.sha256, evidence.size, now, intent.item_id, intent.version_key);
       db.prepare("INSERT INTO ingestion_outbox(id,item_id,version_key,state,created_at,updated_at) VALUES(?,?,?,'PENDING',?,?) ON CONFLICT(item_id,version_key) DO NOTHING").run(randomUUID(), intent.item_id, intent.version_key, now, now);
       db.prepare("UPDATE download_commit_intent SET state='RECORDED',updated_at=? WHERE item_id=?").run(now, intent.item_id);
       new SyncReceipts(this.database).recordDownload(intent.item_id, evidence);
       db.prepare("DELETE FROM download_claim WHERE item_id=? AND attempt_id=?").run(intent.item_id, intent.attempt_id);
+      new OwnedAttemptCleanup(this.database).recordDownload(intent.attempt_id, intent.target_root_id);
     })();
   }
 }
