@@ -6,6 +6,8 @@
 
 ## 环境与命令
 
+当前支持范围以 仓库根目录 `AGENTS.md` 的平台约束为准，仅交付 macOS arm64；Windows 和 Intel Mac 须由用户明确要求后再扩展支持。本文历史验证记录及暂缓发行规划中的其他平台要求不构成当前兼容或验收义务。
+
 使用 Node.js 22.12+ 和 npm。工作区首次安装：
 
 ```bash
@@ -84,15 +86,15 @@ npm run test:desktop:foreground -- apps/desktop/tests/presentation.spec.ts
 
 2026-10-28 本机 macOS arm64：呈现策略及登录控制器 13 项单元测试、9 项后台 Electron 回归通过，覆盖隐藏主窗口与登录子窗口、DOM 键盘取消、运行设置、原生菜单回调、受控重载、窗口重建及来源删除。记录确认 `visible=false`、`focused=false`、`focusable=false`、后台节流关闭、Dock 隐藏且截图非空；类型、依赖边界、桌面构建、测试严格类型检查与文档构建通过。前台命令已验证清单入口，普通前台行为另有单元覆盖；本轮没有额外运行前台窗口或 OS 原生操作验收。
 
-Mac 首次运行测试前，先执行 `npm run desktop:prepare-native-files`。它使用锁文件已有 node-gyp 从 Electron 官方地址校验并缓存当前版本头文件，再通过 Xcode Command Line Tools 编译修正所需的 Node-API 原语；其他平台的该组原生测试按条件跳过。随后执行 `npm test`。当前原语已连接 Core 单条／批量修正服务、Main 资源准备、worker 私有注入、客户端页面及 arm64 安装包，输出位于 `build-artifacts/desktop-files`；Intel 运行和正式签名仍分别验收。
+Mac 首次运行测试前，先执行 `npm run desktop:prepare-native-files`。它使用锁文件已有 node-gyp 从 Electron 官方地址校验并缓存当前版本头文件，再通过 Xcode Command Line Tools 编译修正所需的 Node-API 原语；其他平台的该组原生测试按条件跳过。随后执行 `npm test`。当前原语已连接 Core 单条／批量修正服务、Main 资源准备、worker 私有注入、客户端页面及 arm64 安装包，输出位于 `build-artifacts/desktop-files`；正式签名仍需单独验收，Intel Mac 不在当前支持范围。
 
 原生模块需要匹配目标平台、架构和运行时。`npm test` 通过仓库运行器使用 Electron 内置 Node，`test:electron-node` 是兼容别名；SQLite 二进制必须先匹配桌面 ABI。当前 SQLite 包提供平台预编译文件，产物检查核对它在 ASAR 外可用，实际加载仍以窗口测试为准。不要用另一系统 Node ABI 直接加载已经重建的 SQLite 模块。`desktop:build` 只编译，不启动旧服务。
 
-Mac 的 `desktop:build` 及 `beforePack` 准备 Node-API 8 安全修正组件，需 Xcode Command Line Tools；运行中的应用不下载或编译原语。Main 从当前架构开发目录或 ASAR 内清单计算可信摘要，Core 校验 ASAR 外模块后加载，`runtime.get.correctionFiles` 可查询可用性。按架构资源、源码／许可和完整性验证命令见 `tools/desktop-files/README.md`；x64 交叉编译不作为 Intel 运行验收。
+Mac 的 `desktop:build` 及 `beforePack` 准备 Node-API 8 安全修正组件，需 Xcode Command Line Tools；运行中的应用不下载或编译原语。Main 从当前架构开发目录或 ASAR 内清单计算可信摘要，Core 校验 ASAR 外模块后加载，`runtime.get.correctionFiles` 可查询可用性。按架构资源、源码／许可和完整性验证命令见 `tools/desktop-files/README.md`；已有 x64 构建结构不代表当前支持 Intel Mac。
 
 `desktop:pack` 生成当前系统的应用目录包；正式 DMG/NSIS、签名、公证和其他架构须在对应目标环境验收。未配置开发者证书时的本地原型可使用 `CSC_IDENTITY_AUTO_DISCOVERY=false npm run desktop:pack`，该产物不能作为正式发行完成的证据。运行已打包的应用测试时，将 `MARSHAL_APP_PATH` 设为可执行文件并使用 `MARSHAL_EXECUTABLE=1`；具体路径以构建输出为准。
 
-当前平台目录包可直接使用 `npm run test:packaged` 验证，它先检查许可、原生库和框架来源，再运行真实窗口测试。`.github/workflows/desktop-prototype.yml` 预置 macOS arm64、macOS Intel 和 Windows x64 矩阵；尚未远端运行时不能据此宣称三平台通过。
+当前平台目录包可直接使用 `npm run test:packaged` 验证，它先检查许可、原生库和框架来源，再运行真实窗口测试。`.github/workflows/desktop-prototype.yml` 及内置下载组件工作流均仅运行 macOS arm64；Windows 和 Intel Mac 不属于当前支持范围。
 
 实际只读 DMG 的验收需让 `MARSHAL_APP_PATH` 和 `MARSHAL_ARTIFACT_RESOURCES` 指向同一个映像内的可执行文件与 Resources，并显式设置 `MARSHAL_INSTALL_MATRIX=1`。`installation.spec.ts` 验证 EROFS、系统 PATH、中文／空格安装位置、覆盖安装和卸载重装；提供历史实际 DMG 的 `MARSHAL_PREVIOUS_APP_PATH` 后另验手动升级及旧库备份。未指定安装态入口时这组用例跳过，不能将目录包回归计为映像验收。命令、结果与边界见 [Mac 安装态验证](./mac-installation-validation.md)。
 
@@ -221,9 +223,9 @@ Main 收到 resume 后先通过私有动作重置就绪观察，再恢复目录�
 
 当前开发构建已接通冻结 parser、统一来源、云端下载、候选识别、默认人工确认、首次预览授权后的持久自动意图、COPY 及独立 Emby 交付。账号页只管理连接；来源页配置本地或网盘范围、周期及可选整理。保存草稿不执行，确认配置与一次性执行分别记账；首次也可原子确认配置并执行一次。来源版本、旧配置定位、分层暂停和按需求选择整理目标见[统一来源配置与版本](./source-rules.md)，文件状态和交付边界见[桌面整理流水线](./desktop-ingestion.md)。
 
-当前业务 SQLite 为 schema v33。单元与真实文件测试覆盖下载交接、识别预览、COPY 和固定服务器响应；另在维护者自己的 Mac 完成了[单资源真实 Emby 收录闭环](./mac-unified-source-validation.md)。官方客户端行为夹具、共享自动权限、完整故障矩阵、Mac Intel 安装态和正式签名仍按变更中的未完成任务验收。下方 10 月 18～19 日的原型表是历史记录，其中的「尚未接通」只描述当时构建。
+当前业务 SQLite 为 schema v33。单元与真实文件测试覆盖下载交接、识别预览、COPY 和固定服务器响应；另在维护者自己的 Mac 完成了[单资源真实 Emby 收录闭环](./mac-unified-source-validation.md)。官方客户端行为夹具、共享自动权限、完整故障矩阵和正式签名仍按变更中的未完成任务验收，平台限定为 macOS arm64。下方 10 月 18～19 日的原型表是历史记录，其中的「尚未接通」只描述当时构建。
 
-窗口测试对目录对话框使用受控替身，只证明授权桥和界面逻辑；原生对话框、托盘、签名、Mac 两架构安装及网盘实际磁盘行为须另做 OS 实测。20.4 另有真实 HFS+ 目录授权与重载记录，不推广为完整文件链路。未满足完整验收的 OpenSpec 任务保持未勾选；其他 OS 由独立变更承接。
+窗口测试对目录对话框使用受控替身，只证明授权桥和界面逻辑；原生对话框、托盘、签名、macOS arm64 安装及网盘实际磁盘行为须另做 OS 实测。20.4 另有真实 HFS+ 目录授权与重载记录，不推广为完整文件链路。未满足完整验收的 OpenSpec 任务保持未勾选；Windows 和 Intel Mac 不作为当前待补验收项。
 
 ## 本轮验证记录（2026-10-18～19）
 
@@ -249,7 +251,7 @@ Main 收到 resume 后先通过私有动作重置就绪观察，再恢复目录�
 | 正式安装包与签名 | DMG/NSIS、签名、公证、最低系统与卸载升级尚未验收 |
 | 实际媒体业务 | 发现、匹配、预览确认、复制/修正恢复、Emby 交付待迁移；当前不操作媒体文件 |
 
-上表保留当时三平台原型的验证范围。当前任务 1.3 按已修订的 Mac 两架构门槛核验，非 macOS 由独立变更承接；本机 arm64 结果不替代 Intel Mac 的运行证据。
+上表保留当时三平台原型的验证范围。当前交付仅按 macOS arm64 门槛核验；Windows 和 Intel Mac 的历史未完成项不再构成当前交付门槛，也不计作已验收。
 
 ### 内置网盘组件 M0（2026-10-24）
 

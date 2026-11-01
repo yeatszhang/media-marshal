@@ -3,6 +3,7 @@
 ## 当前工程与边界
 
 - 当前开发主体是 `apps/desktop/`（Electron + React）、`packages/contracts/` 和 `packages/media-core/`（TypeScript）。桌面运行不依赖旧 Java 服务或旧数据库。
+- 当前唯一支持平台是 Apple Silicon Mac（macOS arm64）。用户明确要求扩展前，不承担 Windows 或 Intel Mac 的功能支持、兼容适配、构建及验收要求，不为其新增平台抽象、兼容分支或 CI；已有代码和历史跨平台验证记录不构成支持承诺。历史文档及暂缓规划中的多平台要求不作为当前交付门槛。
 - `legacy/` 集中保存旧 Java / Vue / HTTP parser 源码、Docker 入口及历史文档，仅作参考，仅在任务明确涉及旧工程或需要行为对照时修改；旧源码目录内 `AGENTS.md` 不适用于桌面工作区。`tools/desktop-parser/` 是桌面冻结解析器，不是旧 HTTP parser。
 - 产品范围、设计与任务状态以对应的 `openspec/changes/` 和已落地主规格为准，不能从旧路线图或现有枚举推断本轮承诺。规划完成、代码实现、测试通过和发行验收分开记录。
 - 新规划和实施证据使用 OpenSpec 及对应架构／验收文档；`legacy/docs/` 是只供按需查阅的旧工程快照，不继续维护第二套需求、ADR 或进度日志。历史正文中的角色要求和“必须先读全部文档”不作为当前指令。

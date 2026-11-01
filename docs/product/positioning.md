@@ -4,6 +4,8 @@
 
 ## 核心定位
 
+当前客户端仅支持 Apple Silicon Mac（macOS arm64），平台扩展遵循仓库根目录 `AGENTS.md` 的平台约束。下文对家庭设备与 Emby 部署环境的描述不代表 Media Marshal 支持 Windows 或 Intel Mac。
+
 **产品 Slogan：你的本地媒体库**
 
 用现有电脑和一块移动硬盘，低成本搭建自己的家庭影院。
