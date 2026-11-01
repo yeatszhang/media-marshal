@@ -89,7 +89,8 @@ export async function captureImage(
     await writeFile(path, bytes, { flag: "wx", mode: 0o600 });
     const result = {
       ...evidence,
-      status: "available",
+      status: "available" as const,
+      source: "dom" as const,
       path,
       clip,
       scale: input.scale,
@@ -110,7 +111,7 @@ export async function captureImage(
   } catch (error) {
     const result = {
       ...evidence,
-      status: "missing",
+      status: "missing" as const,
       layoutMatched: false,
       reason: error instanceof ToolError ? error.code : "GUI_IMAGE_FAILED",
     };
@@ -118,3 +119,7 @@ export async function captureImage(
     return result;
   }
 }
+export type AvailableImage = Extract<
+  Awaited<ReturnType<typeof captureImage>>,
+  { status: "available" }
+>;

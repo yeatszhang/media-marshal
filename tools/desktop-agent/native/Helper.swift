@@ -4,6 +4,7 @@ import ApplicationServices
 import CoreGraphics
 import ScreenCaptureKit
 import CryptoKit
+import Darwin
 
 struct ControlError: Error { let code: String; let message: String }
 func reject(_ code: String, _ message: String) throws -> Never { throw ControlError(code: code, message: message) }
@@ -16,13 +17,25 @@ struct Input: Decodable {
     let pid: Int32
     let executable: String
     let profile: String
-    let launchedAt: Double?
+    let generation: String?
     let path: [Int]?
     let fingerprint: String?
     let text: String?
     let key: String?
     let windowID: UInt32?
     let output: String?
+}
+func processGeneration(_ pid: Int32) throws -> String {
+    var information = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &information, size) == size, information.pbi_start_tvsec > 0 else { try reject("PROCESS_IDENTITY_UNAVAILABLE", "无法读取目标内核创建时间") }
+    return "\(information.pbi_start_tvsec):\(information.pbi_start_tvusec)"
+}
+func sessionLocked() -> Bool {
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return true }
+    let locked = session["CGSSessionScreenIsLocked"] as? Bool ?? false
+    let onConsole = session[kCGSessionOnConsoleKey as String] as? Bool ?? false
+    return locked || !onConsole
 }
 func trustedApplication(_ input: Input) throws -> NSRunningApplication {
     guard input.pid > 0, let app = NSRunningApplication(processIdentifier: input.pid), let executable = app.executableURL?.resolvingSymlinksInPath().path else { try reject("PROCESS_UNAVAILABLE", "目标进程不存在") }
@@ -38,8 +51,8 @@ func trustedApplication(_ input: Input) throws -> NSRunningApplication {
     try query.run(); let bytes = pipe.fileHandleForReading.readDataToEndOfFile(); query.waitUntilExit()
     let command = String(data: bytes, encoding: .utf8) ?? ""
     guard query.terminationStatus == 0, command.contains("--user-data-dir=" + profile) else { try reject("PROFILE_MISMATCH", "进程未使用本会话的数据目录") }
-    if let expectedTime = input.launchedAt {
-        guard let actualTime = app.launchDate?.timeIntervalSince1970, abs(actualTime - expectedTime) < 0.01 else { try reject("GENERATION_MISMATCH", "目标进程已更换代际") }
+    if let generation = input.generation {
+        guard try processGeneration(input.pid) == generation else { try reject("GENERATION_MISMATCH", "目标进程已更换代际") }
     } else if input.command != "identity" { try reject("GENERATION_REQUIRED", "操作须携带进程创建时间") }
     return app
 }
@@ -60,6 +73,26 @@ func windowRecords(_ pid: Int32) -> [[String: Any]] {
     return all.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid }.map { row in
         ["id": row[kCGWindowNumber as String] ?? 0, "bounds": row[kCGWindowBounds as String] ?? [:], "layer": row[kCGWindowLayer as String] ?? 0, "onScreen": row[kCGWindowIsOnscreen as String] ?? false]
     }
+}
+func visibilityRecords(_ pid: Int32) throws -> [String: Any] {
+    guard let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { try reject("WINDOW_STATE_UNAVAILABLE", "无法核验屏幕窗口次序") }
+    var windows = [[String: Any]]()
+    func bounds(_ row: [String: Any]) -> CGRect? {
+        guard let value = row[kCGWindowBounds as String] as? NSDictionary else { return nil }
+        return CGRect(dictionaryRepresentation: value)
+    }
+    for (index, row) in rows.enumerated() where (row[kCGWindowOwnerPID as String] as? Int32) == pid {
+        guard let rectangle = bounds(row) else { try reject("WINDOW_STATE_UNAVAILABLE", "自有窗口缺少位置证据") }
+        let occluded = rows.prefix(index).contains { higher in
+            if (higher[kCGWindowAlpha as String] as? Double ?? 1) <= 0 || (higher[kCGWindowLayer as String] as? Int ?? 0) < 0 { return false }
+            guard let frame = bounds(higher) else { return true }
+            return !frame.intersection(rectangle).isNull
+        }
+        windows.append(["id": row[kCGWindowNumber as String] ?? 0,
+                        "bounds": ["x": rectangle.minX, "y": rectangle.minY, "width": rectangle.width, "height": rectangle.height],
+                        "occluded": occluded])
+    }
+    return ["source": "native-window-metadata", "sessionLocked": sessionLocked(), "frontmost": NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, "windows": windows]
 }
 func snapshot(_ root: AXUIElement, pid: Int32) throws -> [String: Any] {
     var nodes = [[String: Any]](), truncated = false
@@ -129,13 +162,14 @@ func act(_ input: Input, app: NSRunningApplication, root: AXUIElement, observed:
     static func main() async {
         do {
             if CommandLine.arguments.dropFirst().first == "capabilities" {
-                emit(["protocolVersion": 1, "accessibility": AXIsProcessTrusted(), "screenCapture": CGPreflightScreenCaptureAccess()]); return
+                emit(["protocolVersion": 1, "accessibility": AXIsProcessTrusted(), "screenCapture": CGPreflightScreenCaptureAccess(), "sessionLocked": sessionLocked()]); return
             }
             let bytes = try FileHandle.standardInput.read(upToCount: 65537) ?? Data()
             guard bytes.count <= 65536 else { try reject("INPUT_TOO_LARGE", "原生请求超过允许大小") }
             let input = try JSONDecoder().decode(Input.self, from: bytes), app = try trustedApplication(input)
-            if input.command == "identity" { emit(["pid": app.processIdentifier, "launchedAt": app.launchDate?.timeIntervalSince1970 ?? 0]); return }
+            if input.command == "identity" { emit(["pid": app.processIdentifier, "generation": try processGeneration(input.pid)]); return }
             guard AXIsProcessTrusted() else { try reject("ACCESSIBILITY_REQUIRED", "尚未获得辅助功能权限") }
+            if input.command == "window-state" { emit(try visibilityRecords(input.pid)); return }
             let root = AXUIElementCreateApplication(input.pid)
             if input.command == "capture" {
                 guard #available(macOS 14.0, *) else { try reject("UNSUPPORTED", "当前 macOS 不支持此窗口截图驱动") }

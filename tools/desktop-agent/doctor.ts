@@ -111,13 +111,19 @@ async function nativeCheck(root: string, required: boolean): Promise<Check> {
       { timeout: 5000, maxBuffer: 8192 },
     );
     const caps = JSON.parse(stdout);
-    const ready = !!caps.accessibility && !!caps.screenCapture;
+    const ready =
+      caps.accessibility === true && caps.screenCapture === true && caps.sessionLocked === false;
     return {
       name: "native-gui",
       status: ready ? "ready" : "blocked",
-      detail: `辅助功能=${!!caps.accessibility}，屏幕录制=${!!caps.screenCapture}${required ? "" : "；本次未要求原生验收"}`,
+      detail: `辅助功能=${!!caps.accessibility}，屏幕录制=${!!caps.screenCapture}，锁屏或非交互会话=${caps.sessionLocked ?? "未知"}${required ? "" : "；本次未要求原生验收"}`,
       ...(!ready
-        ? { repair: "在 macOS 隐私设置为运行工具的应用授权，再重新 doctor；工具不会自动确认权限" }
+        ? {
+            repair:
+              typeof caps.sessionLocked !== "boolean"
+                ? "重新 desktop:agent:native:build 后再 doctor"
+                : "解锁当前 macOS 会话，并在隐私设置为运行工具的应用授权，再重新 doctor",
+          }
         : {}),
     };
   } catch {

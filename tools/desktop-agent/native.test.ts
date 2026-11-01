@@ -13,6 +13,7 @@ test("macOS 权限探测只读返回能力，不请求系统授权", { skip }, (
   assert.equal(value.protocolVersion, 1);
   assert.equal(typeof value.accessibility, "boolean");
   assert.equal(typeof value.screenCapture, "boolean");
+  assert.equal(typeof value.sessionLocked, "boolean");
 });
 test("原生请求拒绝非法进程和超量输入，不访问其他应用界面", { skip }, () => {
   const input = JSON.stringify({
@@ -20,7 +21,7 @@ test("原生请求拒绝非法进程和超量输入，不访问其他应用界�
     pid: -1,
     executable: "/outside",
     profile: "/outside",
-    launchedAt: 0,
+    generation: "0:0",
   });
   const rejected = spawnSync(helper, [], { input, encoding: "utf8", timeout: 5000 });
   assert.equal(rejected.status, 2);

@@ -34,19 +34,30 @@ export class GuiWindows {
     const handle = await this.app.browserWindow(page);
     const native = await handle.evaluate((window) => ({
       bounds: window.getBounds(),
+      contentBounds: window.getContentBounds(),
       focused: window.isFocused(),
       visible: window.isVisible(),
       minimized: window.isMinimized(),
       zoomFactor: window.webContents.getZoomFactor(),
     }));
     const observable = trustedPage(page);
+    const displayScaleFactor = await this.app.evaluate(
+      ({ screen }, bounds) => screen.getDisplayMatching(bounds).scaleFactor,
+      native.bounds,
+    );
     return {
       windowId: entry.id,
       generation: entry.generation,
       observable,
+      displayScaleFactor,
       ...(!observable ? { unavailableReason: "非可信主页面，禁止采集内容" } : {}),
       ...native,
     };
+  }
+  async applicationIdentity() {
+    const pid = this.app.process()?.pid;
+    const executable = await this.app.evaluate(() => process.execPath);
+    return { pid, executable };
   }
   async select(windowId?: string) {
     const windows = await this.list();

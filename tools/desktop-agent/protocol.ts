@@ -79,6 +79,7 @@ export const commands = {
     action: z.enum(["click", "fill", "select", "check", "key", "scroll"]),
     value: z.union([z.string().max(4096), z.boolean()]).optional(),
     position: z.strictObject({ x: z.number().finite(), y: z.number().finite() }).optional(),
+    imageId: uuid.optional(),
     timeoutMs: bounded.max(10000).default(5000),
     after: condition.optional(),
   }),

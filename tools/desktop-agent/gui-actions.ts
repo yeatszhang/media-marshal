@@ -13,6 +13,8 @@ import {
 import { validateInput, sendInput } from "./gui-input.ts";
 import { validateCondition, waitCondition } from "./gui-condition.ts";
 import { uniqueTarget } from "./gui-target.ts";
+import { executeCoordinate } from "./gui-coordinates.ts";
+import { observeAfter } from "./gui-after.ts";
 export class GuiActions {
   busy = false;
   private root: string;
@@ -45,6 +47,7 @@ export class GuiActions {
       runId: this.session.runId,
       buildId: this.session.buildId,
       snapshotId: input.snapshotId,
+      ...(input.imageId ? { imageId: input.imageId } : {}),
       action: input.action,
       status: "unknown",
       inputStatus: "not-sent",
@@ -76,7 +79,14 @@ export class GuiActions {
         receipt.error = failure(error).error;
         if (receipt.inputStatus === "sending") receipt.inputStatus = "unknown";
       })
-      .then(() => saveAction(path, signature, receipt))
+      .then(async () => {
+        if (input.position)
+          receipt.result = {
+            ...(receipt.result && typeof receipt.result === "object" ? receipt.result : {}),
+            afterObservation: await observeAfter(this.observer, input.windowId),
+          };
+        await saveAction(path, signature, receipt);
+      })
       .catch(() => {
         /* 持久化失败保留原 running／unknown，不能重新执行。 */
       })
@@ -95,6 +105,14 @@ export class GuiActions {
         "blocked",
       );
     const handle = await this.observer.current(input.snapshotId, input.windowId);
+    if (input.position) {
+      await executeCoordinate(
+        { root: this.root, session: this.session, observer: this.observer, handle, input },
+        receipt,
+        persist,
+      );
+      return;
+    }
     const target = await uniqueTarget(handle, input, input.action !== "scroll");
     if (
       input.action === "scroll" &&

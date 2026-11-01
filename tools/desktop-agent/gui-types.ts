@@ -5,6 +5,8 @@ export interface GuiWindow {
   observable: boolean;
   unavailableReason?: string;
   bounds: { x: number; y: number; width: number; height: number };
+  contentBounds: { x: number; y: number; width: number; height: number };
+  displayScaleFactor: number;
   focused: boolean;
   visible: boolean;
   minimized: boolean;

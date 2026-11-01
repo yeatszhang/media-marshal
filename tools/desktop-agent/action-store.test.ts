@@ -68,7 +68,7 @@ test("动作持久收据不保存输入，重复请求续查，跨参数冲突�
     await rm(root, { recursive: true, force: true });
   }
 });
-test("按键、动作值与尚未接入的坐标请求有明确准入", () => {
+test("按键、动作值与坐标参数组合有明确准入", () => {
   const input = (payload: object) =>
     parseRequest({
       command: "act",
@@ -83,7 +83,7 @@ test("按键、动作值与尚未接入的坐标请求有明确准入", () => {
   assert.throws(() => validateInput(input({ action: "scroll", value: "任意代码" })), /滚动方向/);
   assert.throws(
     () => validateInput(input({ action: "click", position: { x: 10, y: 20 } })),
-    /坐标动作尚未接入/,
+    /截图坐标点击需要/,
   );
   assert.doesNotThrow(() => validateInput(input({ action: "key", value: "Enter" })));
 });

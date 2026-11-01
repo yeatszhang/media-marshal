@@ -8,12 +8,12 @@ import { parseRequest, type Input } from "./protocol.ts";
 export const guiRoot = resolve(import.meta.dirname, "../..");
 export const observeInput = (payload: object = {}) =>
   parseRequest({ command: "observe", payload }).payload as Input<"observe">;
-export async function setupGui() {
+export async function setupGui(mode: "background" | "foreground" = "background") {
   const build = await assertBuild(guiRoot, "development");
   const session = await newSession(guiRoot, {
     scenario: "empty",
     seed: "gui",
-    mode: "background",
+    mode,
     target: "development",
   });
   session.buildId = build.buildId;

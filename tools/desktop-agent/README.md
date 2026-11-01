@@ -61,10 +61,14 @@ macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其�
 
 截图前后重新核对同一快照身份与几何状态，并对最多 6000 个 DOM 元素的位置生成布局摘要；超出核验预算会受阻。输入区域使用临时自有遮罩，图像采集失败或布局变化不保存无法关联的 PNG，仍保存 status=missing 及原因；完整性不能从命令 completed 推断。画布、二维码或敏感上下文禁止截图。此能力只捕获自有 Renderer 视口，不需要屏幕录制权限，也不代表菜单、系统对话框或其他原生窗口已验证。
 
-`act --session <sessionId> --input 动作参数.json --request UUID --json` 使用当前 snapshotId 和 targetRef，或 `target:{"role":"button","name":"确认"}` 的精确语义目标；二者必须选一个。同名目标拒绝并返回候选引用，不选择第一个。控件必须有可信名称、可操作角色且可见／可用；scroll 可选择命名区域。当前支持 click、fill、select、check、key、scroll；fill／select 的 value 为字符串，check 为布尔值，scroll 方向为 up／down／left／right。key 只允许导航／编辑按键及 ControlOrMeta+A，坐标操作尚未接入。调用前核对当前构建及快照，页面重载后旧 ref 不会指向新的同名控件。
+`act --session <sessionId> --input 动作参数.json --request UUID --json` 使用当前 snapshotId 和 targetRef，或 `target:{"role":"button","name":"确认"}` 的精确语义目标；二者必须选一个。同名目标拒绝并返回候选引用，不选择第一个。控件必须有可信名称、可操作角色且可见／可用；scroll 可选择命名区域。当前支持 click、fill、select、check、key、scroll；fill／select 的 value 为字符串，check 为布尔值，scroll 方向为 up／down／left／right。key 只允许导航／编辑按键及 ControlOrMeta+A。调用前核对当前构建及快照，页面重载后旧 ref 不会指向新的同名控件。
 
 动作立即返回持久 jobId（同 requestId）；使用 `status --session UUID --input 作业参数.json` 和 `{"jobId":"原身份"}` 查询。先持久受理记录，再持久标记 sending，才发送输入；发送／等待超时返回 unknown，重复原请求只能续查，不再执行。不同参数复用请求 ID 会拒绝；重启后和停止后保留原收据。每会话最多 512 份收据，容量满时拒绝新动作，不自动淘汰确认身份。收据使用 HMAC 绑定请求但不保存输入明文或条件期望值。
 
 动作可带 after 条件，例如 `{"target":{"role":"heading","name":"设置"},"state":"visible"}`；timeoutMs 默认 5000、最多 10000。独立 `wait` 同样需要当前 snapshotId、唯一目标和条件，等待期间允许同一文档内容变化，跨文档重载拒绝。条件包括 visible／hidden／enabled／disabled／checked／text／value；text 是包含匹配，value 是精确匹配，checked 使用布尔期望值。动作收据区分输入发送、界面条件、后续观察和业务断言；界面条件通过不代表持久业务已成功，businessAssertion 仍为 not-run。控件结果未知时应查询 diagnose／业务任务，不能再点一次确认。
 
 DOM 变化判断会合并同一批次内原值重复写入及写后恢复，避免 React 重渲染临时修改 input name／type 导致误判；真实属性／文本／节点变化、输入及焦点事件仍使快照失效。快照过期原因只记录变化类别，不记录属性旧值或输入内容。动作要求实例 buildId 与当前成功构建相同，旧实例不能借用新清单验收。应用代码更新后可安全 restart；控制工具、契约或共享驱动更新后，旧控制进程仍持有旧模块，必须 stop 后新建场景，旧数据和证据保留。
+
+图像坐标点击使用 act 的 `snapshotId`、`imageId`、`position:{"x":100,"y":50}` 和必填 after 条件，action 只能为 click，不能混入 target／targetRef／value。position 始终是这张 PNG 内的图像像素，从图片左上角计算；需要先用 observe image 取得并查看图片。只接受当前控制器登记的最近 8 张图片，图片 sha256、会话／运行／构建／窗口／快照和实际布局均须匹配。旧图片、文件改写、越界、窗口移动／缩放／重建、焦点或遮挡变化均拒绝；命中输入、敏感或禁用区域时改用语义控件。
+
+坐标收据保留动作前图片、CSS 位置、原生屏幕 DIP 换算、显示比例和动作后语义／图像证据；后置条件未成立时保持 unknown，采集失败标明 missing。输入范围始终是 Renderer 视口，nativeInputSent=false。后台模式记录 background-virtual，不向其他应用或屏幕位置发送鼠标事件；前台额外通过 macOS helper 的只读窗口次序、焦点与遮挡元数据核验，helper 绑定自有进程及内核创建代际，不读取其他应用标题或画面。锁屏／非交互桌面返回 NATIVE_SESSION_LOCKED，doctor 同步报告；前台操作不会自动激活窗口来执行旧坐标。原生截图仍单独依赖录屏权限，后台通过不能代替前台或 OS 原生验收。

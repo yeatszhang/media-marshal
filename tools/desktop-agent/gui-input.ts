@@ -1,11 +1,26 @@
 import type { Locator } from "@playwright/test";
 import { ToolError, type Input } from "./protocol.ts";
 export function validateInput(input: Input<"act">) {
-  if (input.position)
+  if (
+    input.position &&
+    (input.action !== "click" ||
+      !input.imageId ||
+      input.target ||
+      input.targetRef ||
+      input.value !== undefined ||
+      !input.after)
+  )
     throw new ToolError(
-      "GUI_COORDINATES_UNAVAILABLE",
-      "坐标动作尚未接入",
-      "使用当前语义引用",
+      "GUI_COORDINATE_INPUT",
+      "截图坐标点击需要 imageId 和后置条件，且不能混入语义目标或值",
+      "重新 observe image，明确同快照的图像像素坐标与条件",
+      "blocked",
+    );
+  if (!input.position && input.imageId)
+    throw new ToolError(
+      "GUI_COORDINATE_INPUT",
+      "图片身份仅用于坐标点击",
+      "同时指定图像像素 position",
       "blocked",
     );
   if (

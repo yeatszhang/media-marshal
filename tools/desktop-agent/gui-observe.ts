@@ -9,10 +9,11 @@ import { GuiWindows } from "./gui-windows.ts";
 import { documentState, sameObservation, staleSnapshot } from "./gui-document.ts";
 import { normalizeAria } from "./gui-normalize.ts";
 import type { GuiSnapshot, SnapshotHandle } from "./gui-types.ts";
-import { captureImage } from "./gui-image.ts";
+import { captureImage, type AvailableImage } from "./gui-image.ts";
 export class GuiObserver {
   readonly windows: GuiWindows;
   private snapshots = new Map<string, SnapshotHandle>();
+  private images = new Map<string, AvailableImage>();
   private root: string;
   private session: Session;
   constructor(root: string, app: ElectronApplication, session: Session) {
@@ -60,6 +61,22 @@ export class GuiObserver {
       (await documentState(handle.page)).documentId !== handle.snapshot.document.documentId
     )
       throw staleSnapshot();
+  }
+  observedImage(imageId: string, snapshotId: string) {
+    const image = this.images.get(imageId);
+    if (
+      !image ||
+      image.snapshotId !== snapshotId ||
+      image.runId !== this.session.runId ||
+      image.buildId !== this.session.buildId
+    )
+      throw new ToolError(
+        "GUI_IMAGE_UNAVAILABLE",
+        "没有与当前快照匹配的已登记图片",
+        "使用 observe image 取得并查看本次截图",
+        "blocked",
+      );
+    return structuredClone(image);
   }
   async capture(windowId?: string): Promise<SnapshotHandle> {
     const { page, window } = await this.windows.select(windowId);
@@ -129,6 +146,13 @@ export class GuiObserver {
       nodes = nodes.slice(start, end < 0 ? undefined : end);
     }
     const { nodes: _all, ...identity } = snapshot;
+    const image = input.image
+      ? await captureImage(this.root, this.session, this, handle, input)
+      : { status: "not-requested" as const };
+    if (image.status === "available") {
+      this.images.set(image.imageId, structuredClone(image));
+      while (this.images.size > 8) this.images.delete(this.images.keys().next().value!);
+    }
     return {
       ...identity,
       nodes: nodes.slice(input.cursor, input.cursor + input.limit),
@@ -140,9 +164,7 @@ export class GuiObserver {
         .filter((n) => ["dialog", "alertdialog"].includes(n.role))
         .map((n) => n.ref),
       alerts: snapshot.nodes.filter((n) => ["alert", "status"].includes(n.role)).map((n) => n.ref),
-      image: input.image
-        ? await captureImage(this.root, this.session, this, handle, input)
-        : { status: "not-requested" },
+      image,
     };
   }
 }

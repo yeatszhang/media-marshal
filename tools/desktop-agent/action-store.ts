@@ -11,6 +11,7 @@ export interface ActionReceipt {
   runId: string;
   buildId?: string;
   snapshotId: string;
+  imageId?: string;
   action: string;
   status: "running" | "completed" | "failed" | "blocked" | "unknown";
   inputStatus: "not-sent" | "sending" | "sent" | "unknown";
