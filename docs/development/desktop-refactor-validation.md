@@ -27,6 +27,8 @@
 
 同步事务基础能力已落到 `storage/public.ts` 和 `storage/transactions.ts`：业务只持有不透明 token，连接解析仅供组装与 persistence 注入，原有业务 SQL 后续分模块接入。4 项内存 SQLite 测试通过，覆盖跨所有者故障回滚、嵌套共用 token 及吞错回滚、异步回调与异步续写拒绝、伪造／跨库／过期 token 和外部事务拒绝。工作区类型检查、架构检查（8 项规则测试，390 项既有例外）、文档构建及 OpenSpec 严格校验通过；规则变更仅允许导入公开事务类型，运行时导入及原始实现 type-only 导入仍有拒绝反例。本单元不修改业务 schema 或真实文件。
 
+表归属续接核验：v35 内存库为 118 张表，静态 DDL 多出的 4 张临时表明确排除；4 张旧接管表、两张 runtime 表的旧接管字段与 14 张受保护成功／恢复事实分别登记于 `table-lifecycle.json`。当前表集与候选基线均有唯一所有者，删除集与受保护事实／保留身份无交集。storage 两个测试文件共 5 项通过，架构正反例增至 9 项并通过，架构检查和文档构建通过。仅登记未来 schema 切换范围，尚未删除任何业务表或字段；3.3～3.7 仍需一起完成可运行切换。
+
 | 范围 | 当前入口 |
 | --- | --- |
 | 请求、启动回滚与关闭顺序 | `packages/media-core/src/modules/application.test.ts`、`application/request-executions.test.ts`、Main supervisor 测试 |

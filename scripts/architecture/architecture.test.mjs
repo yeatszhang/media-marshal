@@ -8,7 +8,40 @@ import { join } from "node:path";
 import { parse, dependencies, structure, createResolver } from "./source.mjs";
 import { edgeReason } from "./policy.mjs";
 import { cycles, applyExceptions, keyOf, scan } from "./check.mjs";
-import { declaredTables } from "./catalog.mjs";
+import { declaredTables, verifyTableLifecycle } from "./catalog.mjs";
+
+test("表生命周期拒绝未知、重复、历史表混用与成功恢复事实删除", () => {
+  const owners = { current: "sync", old: "sync", temporary: "sync" };
+  const lifecycle = {
+    historicalDdlOnly: ["temporary"],
+    legacyTakeoverTables: ["old"],
+    protectedFacts: ["current"],
+    retainedIdentities: [],
+    legacyTakeoverColumns: { current: ["fingerprint"] },
+  };
+  verifyTableLifecycle(owners, lifecycle);
+  assert.throws(
+    () => verifyTableLifecycle(owners, { ...lifecycle, legacyTakeoverTables: ["missing"] }),
+    /未登记/,
+  );
+  assert.throws(
+    () => verifyTableLifecycle(owners, { ...lifecycle, legacyTakeoverTables: ["old", "old"] }),
+    /重复/,
+  );
+  assert.throws(
+    () => verifyTableLifecycle(owners, { ...lifecycle, legacyTakeoverTables: ["temporary"] }),
+    /历史临时表/,
+  );
+  assert.throws(
+    () => verifyTableLifecycle(owners, { ...lifecycle, legacyTakeoverTables: ["current"] }),
+    /不能进入删除集/,
+  );
+  assert.throws(
+    () =>
+      verifyTableLifecycle(owners, { ...lifecycle, legacyTakeoverColumns: { unknown: ["id"] } }),
+    /登记无效/,
+  );
+});
 
 const from = "packages/media-core/src/modules/sync/service.ts";
 const to = "packages/media-core/src/modules/library/public.ts";

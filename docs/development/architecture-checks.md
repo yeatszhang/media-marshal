@@ -22,6 +22,14 @@ npm run check:architecture
 
 跨业务调用使用公开入口，原始数据库只能在 storage、模块 persistence 与限定测试夹具中使用。`tables.json` 登记静态 DDL 中每张表的唯一所有者；新增或删除表须同步登记。当前旧表归属登记用于迁移核对，不代表旧模型已经收敛。
 
+### 表所有者与基线切换清单
+
+逐表归属以 `scripts/architecture/tables.json` 为唯一清单，生命周期分类以同目录的 `table-lifecycle.json` 为准。当前 v35 内存库实际有 118 张业务表，全部具有 configuration、library、sync、ingestion、corrections、delivery、retention 中的唯一所有者；静态 DDL 多出的 4 张表是迁移中重建表的名称，不进入新基线。`storage/schema-ownership.test.ts` 用真实 SQLite 核对当前表集、所有者及旧字段，架构检查校验生命周期登记不含未知、重复或互相冲突的条目。
+
+仅为旧配置接管保留的表为 `legacy_configuration_owner`、`recognition_legacy_owner`、`recognition_rule_legacy_reference`、`source_rule_legacy_reference`；`sync_runtime` 和 `recognition_runtime` 的 `claimed`、`edited`、`legacy_fingerprint` 是同类待移除字段。删除须与运行期双轨分支的切换一起完成，不能先删表再让现有调用者访问缺失结构。排除这 4 张接管表后，当前直接初始化的候选基线是 114 张表；正式切换仍须以实际初始化结构及调用者回归核验，登记本身不执行删表。
+
+`source_rule`、`source_rule_version`、`desktop_source` 和 `cloud_subscription` 目前仍承担执行身份、外键或共享需求关系，不能仅凭旧名称删除；相应身份转换按后续当前模型任务实施。独立同步／识别规则及版本同样保留。成功收据、历史确认、下载提交意图、共享需求、整理 outbox、文件重定位、修正及清理恢复意图均列入 `protectedFacts`，检查禁止它们进入删除集。目录授权与配置归 configuration，媒体目标和 Emby 绑定归 library，来源／下载／收据归 sync，接入／识别／COPY 归 ingestion，修正、交付、清理各归所属模块。`app_setting` 内的业务暂停 key 仍须在所属模块迁移时拆出，表登记不能授予跨所有者写权限。
+
 静态检查不能证明任意 SQL 的写集合，也不能证明文件恢复正确。跨所有者写入、事务边界、授权和幂等仍须代码审查及故障回归。不要把 SQL 关键词匹配包装成完整 SQL 语义分析。
 
 ### 同步事务作用域
