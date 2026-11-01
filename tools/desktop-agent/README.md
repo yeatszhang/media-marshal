@@ -116,3 +116,7 @@ actions.jsonl 区分工具动作收据与测试 API 步骤摘要，后者不冒�
 验证输入 `{"mode":"run","baseRef":"HEAD","benchmark":true}` 会把当前设备的后台性能采集纳入计划，关联独立 benchmark runId／buildId／reportPath。后台测量范围和前台 not-run 保留，passed 仅表示测量完成，performanceRegression 始终 not-evaluated。默认不执行推荐项；未知路径的全量回退包含性能和 native，权限或未完成验收会明确受阻。verify 不自动接受视觉基线、不清空用户状态、不变更系统权限、不 push 或发布。
 
 需要同时保有两类当前产物时，先 build packaged、再 build development；目录包准备会重生成开发态共享原生资源，旧 development 清单可能过期。Playwright 检查遇到首个失败停止，剩余用例保持未运行／跳过；全量桌面阶段预算 45 分钟，单个用例的断言、等待和超时仍由原测试控制。非零退出后机器结果缺失仍保留 failed，零退出但没有可信结果为 unknown。
+
+无账号 CI 闭环使用 `npm run test:desktop-agent:smoke`，要求先以 `test-build.ts packaged`、`test-build.ts development` 生成两个当前清单。固定流程执行产品／工具依赖边界、协议与 CDP 驱动正反例、敏感上下文拒绝、故障采集、自有会话停止回收、目录包资源检查及两项安装态证据用例，不接收任意命令或用例路径。正常导航使用语义和动作后置条件；隐私专项验证禁采与 trace 丢弃，不要求系统截图权限。当前 macOS 后台 smoke 不代表原生前台、真实账号、其他平台或完整产品回归。
+
+该流程保存独立父 run 的构建、复现和逐阶段断言，核对运行前后源码身份；失败停止后续阶段并保留原失败，缺失、跳过和运行中改动不能标绿。工作流的 always 步骤以 `npm run --silent desktop:agent:ci:export` 尽力导出，上传范围仅为 `test-results/agent/exports/` 中经既有白名单过滤器生成的包。活跃或不可信索引不导出，每次最多 32 个终止运行、失败优先，partial 保留缺失清单；原始 test-results、数据库、个人凭据和任意 userData 不上传。导出失败不会覆盖测试步骤原有的失败状态。
