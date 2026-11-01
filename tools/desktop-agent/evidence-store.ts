@@ -1,5 +1,5 @@
 import { open, unlink, constants } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { agentFile, agentRunHome } from "./paths.ts";
 import { atomicJson } from "./build.ts";
@@ -36,7 +36,42 @@ export async function readEvidence(root: string, runId: string): Promise<Evidenc
     await file.close();
   }
 }
+const writerQueues = new Map<string, Promise<void>>();
 export async function lockEvidenceWriter(
+  directory: string,
+  name: ".manifest.lock" | ".actions.lock" | ".storage.lock" = ".manifest.lock",
+) {
+  const key = resolve(directory, name);
+  const previous = writerQueues.get(key);
+  let next!: () => void;
+  const current = new Promise<void>((done) => {
+    next = done;
+  });
+  writerQueues.set(key, current);
+  await previous;
+  const advance = () => {
+    if (writerQueues.get(key) === current) writerQueues.delete(key);
+    next();
+  };
+  try {
+    // 本进程已知请求先排队，外部写入权的等待预算从真正尝试文件锁时计算。
+    const unlock = await acquireEvidenceWriter(directory, name);
+    let released = false;
+    return async () => {
+      if (released) return;
+      released = true;
+      try {
+        await unlock();
+      } finally {
+        advance();
+      }
+    };
+  } catch (error) {
+    advance();
+    throw error;
+  }
+}
+async function acquireEvidenceWriter(
   directory: string,
   name: ".manifest.lock" | ".actions.lock" | ".storage.lock" = ".manifest.lock",
 ) {
