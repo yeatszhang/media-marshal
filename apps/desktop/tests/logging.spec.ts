@@ -2,6 +2,7 @@ import { expect, test, launchElectron, type ElectronApplication } from "./suppor
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
 let application: ElectronApplication | undefined;
 let directory: string;
@@ -19,6 +20,8 @@ test("统一日志把 Main、Core 和沙盒页面同时写入控制台及本地�
   );
   delete env.ELECTRON_RUN_AS_NODE;
   env.MARSHAL_LOG_LEVEL = "debug";
+  env.FORCE_COLOR = "1";
+  delete env.NO_COLOR;
   application = await launchElectron({
     ...(process.env.MARSHAL_EXECUTABLE ? { executablePath: process.env.MARSHAL_APP_PATH } : {}),
     args: [
@@ -28,8 +31,10 @@ test("统一日志把 Main、Core 和沙盒页面同时写入控制台及本地�
     env,
   });
   let consoleOutput = "";
+  let rawConsoleOutput = "";
   application.process().stdout?.on("data", (bytes) => {
-    consoleOutput += bytes.toString();
+    rawConsoleOutput += bytes.toString();
+    consoleOutput = stripVTControlCharacters(rawConsoleOutput);
   });
   const page = await application.firstWindow();
   await expect(page.getByText("核心已连接", { exact: true })).toBeVisible();
@@ -52,6 +57,18 @@ test("统一日志把 Main、Core 和沙盒页面同时写入控制台及本地�
           error: { token: "页面令牌秘密" },
         }),
     );
+    console.error(
+      "[media-marshal] " +
+        JSON.stringify({
+          level: 50,
+          msg: "页面异常探针",
+          error: {
+            type: "TypeError",
+            code: "PROBE",
+            stack: "    at rendererProbe (probe.ts:1:1)\n    at rendererCaller (probe.ts:2:1)",
+          },
+        }),
+    );
   });
   await page.evaluate(() => window.desktopApi.listSyncSources());
   const sourceId = "11111111-1111-4111-8111-111111111111";
@@ -69,7 +86,17 @@ test("统一日志把 Main、Core 和沙盒页面同时写入控制台及本地�
     }
   }, sourceId);
   await expect.poll(() => consoleOutput).toContain("页面日志探针");
-  await expect.poll(() => consoleOutput).toContain('"action":"sync.list"');
+  await expect.poll(() => consoleOutput).toContain("action=sync.list");
+  await expect.poll(() => consoleOutput).toContain("at rendererCaller (probe.ts:2:1)");
+  expect(consoleOutput).toContain("INFO:");
+  expect(consoleOutput).toContain("[renderer] 页面日志探针");
+  expect(consoleOutput).toContain("event=renderer.probe");
+  expect(consoleOutput).not.toContain('"level":');
+  expect(consoleOutput).toMatch(
+    /error: type=TypeError code=PROBE\n\s+at rendererProbe \(probe.ts:1:1\)\n\s+at rendererCaller/,
+  );
+  expect(rawConsoleOutput).toContain("\u001b[32mINFO");
+  expect(rawConsoleOutput).toContain("\u001b[31mERROR");
   await application.close();
   application = undefined;
   content = await readFile(path, "utf8");
@@ -90,5 +117,6 @@ test("统一日志把 Main、Core 和沙盒页面同时写入控制台及本地�
   });
   expect(content).not.toContain("页面令牌秘密");
   expect(content).not.toContain("未经标记的原始秘密");
+  expect(content).not.toContain("\u001b[");
   for (const line of content.trim().split("\n")) expect(() => JSON.parse(line)).not.toThrow();
 });

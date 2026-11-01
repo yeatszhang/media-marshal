@@ -42,7 +42,7 @@ npm run desktop:pack
 
 需要读取普通页面控制台、未捕获异常或真正的 webview 日志时，使用[开发态 CDP 日志工具](../development/desktop-cdp-logs.md)：`npm run desktop:dev:debug` 启动，`npm run desktop:logs` 读取。
 
-桌面使用 Pino，默认将 JSON Lines 同时输出到启动终端和 `<userData>/logs/desktop.log`，启动时打印实际路径。`userData` 是 Electron 的应用数据目录；macOS 通常在 `~/Library/Application Support/<应用名>/` 下，传入 `--user-data-dir` 时日志跟随该隔离目录。文件采用异步写入，达到 10 MiB 后轮转，保留当前文件及五份历史；普通退出会在 Core、Sidecar 和桌面资源停止后等待日志落盘，强杀不保证最后几条日志已写入。
+桌面使用 Pino，启动终端通过 [pino-pretty](https://github.com/pinojs/pino-pretty) 输出易读文本：本地时间、级别、进程／模块、消息和紧凑的 `key=value` 上下文；错误类型、错误码和调用堆栈另起多行。交互终端按级别着色（INFO 绿、WARN 黄、ERROR 红、FATAL 红底），重定向默认无 ANSI 颜色，可用 `FORCE_COLOR=1` 强制启用，`FORCE_COLOR=0` 或 `NO_COLOR=1` 禁用。`<userData>/logs/desktop.log` 保留 JSON Lines，启动时打印实际路径。`userData` 是 Electron 的应用数据目录；macOS 通常在 `~/Library/Application Support/<应用名>/` 下，传入 `--user-data-dir` 时日志跟随该隔离目录。文件采用异步写入，达到 10 MiB 后轮转，保留当前文件及五份历史；普通退出会在 Core、Sidecar 和桌面资源停止后等待日志落盘，强杀不保证最后几条日志已写入。
 
 开发态默认 `debug`，安装态默认 `info`，可以覆盖集中输出的最低级别：
 
@@ -54,7 +54,7 @@ tail -F "/实际应用数据目录/logs/desktop.log"
 
 支持 `trace/debug/info/warn/error/fatal/silent`，非法值回退到对应环境的默认级别。Renderer 的 DevTools Console 使用开发态 `debug`／构建态 `info`，汇入 Main 后再按 `MARSHAL_LOG_LEVEL` 过滤。修改环境变量后需退出并重新启动开发进程。
 
-Main 是唯一文件写入者，使用 [Pino 多目标输出](https://github.com/pinojs/pino/blob/main/docs/api.md#pino-multistream)同时写控制台和轮转文件；不启用依赖额外 worker 文件的 transport。Core／Sidecar 使用 Pino 输出到 stdout，Main 按有界的 UTF-8 行接收并重新脱敏，只采集结构化记录，原始 stderr 不原样转发。沙盒 Renderer 使用 [Pino 浏览器入口](https://github.com/pinojs/pino/blob/main/docs/browser.md)，输出带固定前缀的 JSON，由 Main 核对主窗口、顶层 frame 和受信任地址后采集，没有新增 Preload 日志通道；普通 `console.log/error` 不汇入本地日志，可在 DevTools 或开发态 CDP 工具中查看。每个来源的转发限制为每秒 200 条、单条 32 KiB，防止错误循环占满日志；Main 的文件队列超过 1 MiB 时丢弃新的文件记录并明确报告，控制台继续输出。
+Main 是唯一文件写入者，使用 [Pino 多目标输出](https://github.com/pinojs/pino/blob/main/docs/api.md#pino-multistream)同时写控制台和轮转文件；仅终端目标通过 `pino-pretty.prettyFactory` 同步格式化，不启用依赖额外 worker 文件的 transport。Core／Sidecar 使用 Pino 输出到 stdout，Main 按有界的 UTF-8 行接收并重新脱敏，只采集结构化记录，原始 stderr 不原样转发。沙盒 Renderer 使用 [Pino 浏览器入口](https://github.com/pinojs/pino/blob/main/docs/browser.md)，输出带固定前缀的 JSON，由 Main 核对主窗口、顶层 frame 和受信任地址后采集，没有新增 Preload 日志通道；普通 `console.log/error` 不汇入本地日志，可在 DevTools 或开发态 CDP 工具中查看。每个来源的转发限制为每秒 200 条、单条 32 KiB，防止错误循环占满日志；Main 的文件队列超过 1 MiB 时丢弃新的文件记录并明确报告，控制台继续输出。
 
 新增宿主日志使用 `apps/desktop/src/logging/node.ts` 的 `getLogger("模块名")`；Utility Process 使用 `createProcessLogger("core" | "sidecar")`，Renderer 使用 `src/renderer/src/logger.ts` 的 `logger.child({ scope: "模块名" })`。统一用固定中文消息配合结构化字段：
 

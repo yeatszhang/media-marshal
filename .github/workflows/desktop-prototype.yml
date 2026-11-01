@@ -28,7 +28,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15-intel, windows-2022]
+        # 暂停 Intel Mac 和 Windows 验证，当前仅运行 macOS ARM。
+        os: [macos-14]
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:

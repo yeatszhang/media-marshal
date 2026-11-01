@@ -306,3 +306,12 @@ CI 不再上传整个 test-results；始终尝试从可信终态 manifest 通过
 本机 Apple M1／macOS 后台实测：packaged 作业 `70dea959-96a7-48fa-8b71-a6978731768b`、buildId `18054374152102fcb50af3723fcf79b13f6d3493242cc10c19650139418f6016`，随后 development 作业 `bfa89577-2772-44ce-878a-e4df529f6f52`、buildId `062fbbcc8af7f0cba54f5fad8b56b96042e3a44b4f2363bb7eec5084cce654a8`。smoke run `d314742d-0506-4a75-bd28-0d2e83fc6fe1`，四阶段全部 passed：边界、14 项协议／真实驱动／故障／回收用例、当前产物资源、2 项目录包用例，无失败或跳过，sourceChanged=false。父报告 completed，16 个本轮运行成功导出，无 missing；按选择保留的 partial 包不伪报完整历史。汇总在 `test-results/agent/ci-smoke-validation.json`。
 
 2.19 完成表示工作流已接入且相同固定命令在本机当前构建实测通过；未触发远端 GitHub Actions，不代表远端 runner、其他平台、完整产品回归或原生前台验收通过。无真实账号、个人媒体或原始 userData 上传。
+
+
+## MR #4 合并 main 的冲突复验（2026-11-01）
+
+在独立 worktree 将 `main` 的 `76fde1f` 合入本分支，解决两个日志测试的冲突。保留 main 的终端美化、颜色、多行堆栈及文件 JSON 断言，同时保留本分支的隔离 `launchElectron` 与证据生命周期。首轮日志单元测试 14 项通过、2 项失败：新断言假设消息后立即出现业务字段，但本分支实际先输出 sessionId／buildId／processGeneration／sequence。修正断言以保留这些身份字段，并分别核对业务上下文；没有移除颜色、脱敏或堆栈要求。新增终端实现及测试按当前格式规则整理，未新增架构例外。
+
+复验：日志单元 5 文件共 16 项、`npm run typecheck`、`npm run check:architecture` 均通过，架构仍为 390 项存量例外。首次类型检查因全新 worktree 尚未生成 Core dist 失败，完成测试运行器的前置编译后通过。首次桌面构建作业 `706a90ee-7e38-4559-a293-76da6212d05f` 在产物身份登记阶段失败，查明隔离 worktree 缺少固定 sidecars 资源；按准备器核验固定资产并构建 Guardian 后重新运行，没有复用其他工作区的桌面产物。
+
+最终 development 作业 `21ad6caf-92b8-40e9-a202-705a50952835`、buildId `0a1a531c1e176472559b6a4a182cc577f6dba37d3a77e17d3097b95330701863`；后台真实 Electron 日志用例 1 项通过，无跳过，runId `e5ee0bb6-f873-4d39-ae42-88bdc551c960`。本次仅验证合并涉及的日志路径，未运行全量媒体业务、目录包或原生前台验收；原工作区未提交的模块重构和初始化代码未纳入合并。
