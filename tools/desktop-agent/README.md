@@ -104,3 +104,5 @@ actions.jsonl 区分工具动作收据与测试 API 步骤摘要，后者不冒�
 故障发生在隔离测试进程、回环 HTTP 服务、新建目录／SQLite 或测试注入端口内；没有产品环境变量或发行注入入口。进程退出只作用于用例新建的已核验子进程；未知身份不强杀。测试原始控制台、断言值及错误正文不进入汇总，保留稳定用例 ID、状态、耗时、可取得的源码位置、固定原因和复现入口。Node 的位置标为 test-registration，Vitest 的位置标为 assertion-stack；不可取得时不伪造行号。标准差异比较在 verify 中接入前明确为 standardsComparison=not-run。检查 run 的 GUI／原生验收范围单独声明，核心替身与后台通过不等同于真实账号、真实卷卸载或前台 OS 验收。
 
 `verify --json` 默认仅生成检查计划，按真实 Git 基点、暂存／未暂存及未跟踪差异计算，输入 changedFiles 仅补充提示。baseRef 默认 HEAD，只接受本地已有 commit／分支；无法核实则受阻，不自动 fetch 或忽略基点。未知路径或清单截断回退当前桌面全量；共享契约／工程配置扩大范围；纯文档不默认跑媒体业务。计划列出每项理由、需要的构建及验收文件变化，status=planned、execution=not-run、allPlannedChecksPassed=false；文件级差异不证明语义等价，也不自动接受新基线。当前仅计划入口可用，mode=run 仍明确受阻，执行和性能接入继续在 2.17 实施。
+
+性能入口为 `npm run --silent desktop:benchmark -- --json`，要求当前 packaged 构建；默认前台，锁屏时明确受阻。追加 --background 显式选择后台启动／导航／CPU／内存／队列及包内解析器范围，前台窗口唤起记录为 not-run。所有应用样本使用新建临时资料、独立 runId，复用同一资料目录时递增代际，记录关联到汇总 run；截图／完整 trace 按性能采集策略阻断。开始及结束核对源码与目录包，旧报告不覆盖；结果中的 reportPath 指向本轮证据。completed 表示所选指标已测量，性能回归仍为 not-evaluated，没有人为达标阈值。未知写入者的临时资料保留供诊断，实际设备和样本见验证记录。

@@ -28,7 +28,7 @@
     "test:desktop:background": "node scripts/test-desktop.mjs --background",
     "test:desktop:foreground": "node scripts/test-desktop.mjs --foreground",
     "test:packaged": "node scripts/test-packaged-desktop.mjs",
-    "desktop:benchmark": "node scripts/benchmark-desktop.mjs",
+    "desktop:benchmark": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/benchmark-desktop.mjs",
     "check:boundaries": "node scripts/architecture/run.mjs boundaries",
     "check:framework": "node scripts/check-framework-package.mjs",
     "docs:dev": "vitepress dev docs",

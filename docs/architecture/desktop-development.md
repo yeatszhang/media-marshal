@@ -269,7 +269,7 @@ macOS arm64、Intel Mac、Windows x64 在同一提交上各通过 22 次本地 A
 
 ## 原型测量
 
-生成当前平台目录包后，在 macOS 运行 `npm run desktop:benchmark`。测量从包内启动同一冻结 parser，不要求另有工作区 parser 产物。原始样本、ASAR／parser 摘要及环境保存到 `test-results/desktop/benchmark.json`。测量包含 Playwright 启动、查询与交互开销，系统磁盘缓存未清空；冷启动在此定义为新应用进程，热唤起为已有托盘进程重新显示窗口。它们不等于安装态真实用户体验的最终基准。
+生成当前平台目录包后，在 macOS 运行 `npm run desktop:benchmark`；默认前台，锁屏时明确受阻。`npm run --silent desktop:benchmark -- --json --background` 显式只测后台启动、导航、CPU／内存、队列与解析器，窗口唤起标为 not-run。脚本核对当前源码和目录包，修正后的目标页标题为「来源同步」。原始样本、ASAR／parser 摘要及设备环境保存在新建的 `test-results/agent/<runId>/`，终端结果返回 reportPath，旧报告不覆盖。每个应用样本有独立运行身份，复用资料目录时递增代际；只有写入者已确认停止才清理本次临时资料。测量包含 Playwright 连接、查询及采集开销，系统磁盘缓存未清空；启动从 SDK 启动调用测至观测到核心连接且来源同步页可用，热唤起为已有进程窗口重新显示后的 CDP 导航。性能回归状态为 not-evaluated，不生成未经实际基线确定的达标阈值；最新测量及范围见[桌面重构验证](../development/desktop-refactor-validation.md)。
 
 空队列测量使用隔离资料目录。从实际 Main 的 PID、创建时间和完整命令核对归属，递归采样其 OS 子进程，包含 Core 和冻结 parser。CPU 使用两次 `ps` 累计 user＋system CPU 时间之差除以实际采样间隔，RSS 为末次快照；Electron `app.getAppMetrics` 单列，不能重复相加。新出现或缺少比较基线的进程保留未知 CPU，不记为零。以下原型表保留 2026-10-18～19 的旧测量，不将旧值套用于当前构建。
 
@@ -286,7 +286,7 @@ macOS arm64、Intel Mac、Windows x64 在同一提交上各通过 22 次本地 A
 
 当时 `du -sk` 测得应用目录约 367.91 MiB，独立 parser 目录约 23.53 MiB，均非 DMG/NSIS 下载体积。样本较小，未设置虚构性能承诺；Windows、Intel Mac、最低系统、正式签名产物及完整媒体队列均未测，后续接通 parser 和业务后需重新测量。
 
-### 当前目录包测量（2026-10-26）
+### 目录包测量（2026-10-26）
 
 已接入 Core／冻结 parser 的 arm64 未签名目录包在同一 Apple M1／16 GiB、macOS 26.5.2／APFS 机器重新测量。修正脚本对「来源配置」标题的定位，直接测量随包解析器，补齐原先不在 Electron 指标中的 parser 进程。应用 ASAR 为 `6a35a50718d0f0a61fdb160d45186a62fa2046cdd5ed150dafd4e0dd7da08510`；脚本、环境与完整样本见 `tools/desktop-files/fixtures/mac-benchmark-2026-10-26.json`。
 
