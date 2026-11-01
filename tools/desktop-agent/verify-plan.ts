@@ -108,7 +108,8 @@ export function verificationPlan(changes: VerificationChanges, benchmark = false
       required: true as const,
     }));
   const targets = new Set<"development" | "packaged">();
-  if (checks.some((check) => !["docs", "specs"].includes(check.id))) targets.add("development");
+  if (checks.some((check) => ["tools", "desktop", "native"].includes(check.id)))
+    targets.add("development");
   if (checks.some((check) => ["packaged", "benchmark"].includes(check.id))) targets.add("packaged");
   return {
     version: 1,

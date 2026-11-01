@@ -103,6 +103,14 @@ actions.jsonl 区分工具动作收据与测试 API 步骤摘要，后者不冒�
 
 故障发生在隔离测试进程、回环 HTTP 服务、新建目录／SQLite 或测试注入端口内；没有产品环境变量或发行注入入口。进程退出只作用于用例新建的已核验子进程；未知身份不强杀。测试原始控制台、断言值及错误正文不进入汇总，保留稳定用例 ID、状态、耗时、可取得的源码位置、固定原因和复现入口。Node 的位置标为 test-registration，Vitest 的位置标为 assertion-stack；不可取得时不伪造行号。标准差异比较在 verify 中接入前明确为 standardsComparison=not-run。检查 run 的 GUI／原生验收范围单独声明，核心替身与后台通过不等同于真实账号、真实卷卸载或前台 OS 验收。
 
-`verify --json` 默认仅生成检查计划，按真实 Git 基点、暂存／未暂存及未跟踪差异计算，输入 changedFiles 仅补充提示。baseRef 默认 HEAD，只接受本地已有 commit／分支；无法核实则受阻，不自动 fetch 或忽略基点。未知路径或清单截断回退当前桌面全量；共享契约／工程配置扩大范围；纯文档不默认跑媒体业务。计划列出每项理由、需要的构建及验收文件变化，status=planned、execution=not-run、allPlannedChecksPassed=false；文件级差异不证明语义等价，也不自动接受新基线。当前仅计划入口可用，mode=run 仍明确受阻，执行和性能接入继续在 2.17 实施。
+`verify --json` 默认仅生成检查计划，按真实 Git 基点、暂存／未暂存及未跟踪差异计算，输入 changedFiles 仅补充提示。baseRef 默认 HEAD，只接受本地已有 commit／分支；无法核实则受阻，不自动 fetch 或忽略基点。未知路径或清单截断回退当前桌面全量；共享契约／工程配置扩大范围；纯文档不默认跑媒体业务。计划列出每项理由、需要的构建及验收文件变化，status=planned、execution=not-run、allPlannedChecksPassed=false；文件级差异不证明语义等价，也不自动接受新基线。追加 `mode:"run"` 执行固定检查目录，立即返回 jobId／runId，随后用不带 --session 的 status 和 `{"jobId":"原身份"}` 续查。相同 requestId 不重跑，变更参数须使用新身份；空计划不会标绿。
 
 性能入口为 `npm run --silent desktop:benchmark -- --json`，要求当前 packaged 构建；默认前台，锁屏时明确受阻。追加 --background 显式选择后台启动／导航／CPU／内存／队列及包内解析器范围，前台窗口唤起记录为 not-run。所有应用样本使用新建临时资料、独立 runId，复用同一资料目录时递增代际，记录关联到汇总 run；截图／完整 trace 按性能采集策略阻断。开始及结束核对源码与目录包，旧报告不覆盖；结果中的 reportPath 指向本轮证据。completed 表示所选指标已测量，性能回归仍为 not-evaluated，没有人为达标阈值。未知写入者的临时资料保留供诊断，实际设备和样本见验证记录。
+
+`verify` 执行前要求工具／桌面／原生项的当前 development 构建，以及目录包／性能项的当前 packaged 构建；缺失或过期时逐项 blocked，修复命令仍为 build，不自动运行旧产物。纯类型、架构、文档和规格检查不要求 GUI 构建。执行使用固定命令与测试文件，不接受任意脚本、SQL 或命令输入；按检查组保存理由、阶段命令、耗时、退出码和测试数量。Node TODO／跳过／空测试、Playwright 跳过／重试、结果缺失均不能计为通过；原始断言正文、控制台和敏感标题不写入汇总。单阶段输出上限 1 MiB、机器结果 32 MiB，超时／超量为 unknown。
+
+每轮 verify 有独立 manifest，构建清单、计划与复现入口、逐组断言及最终报告分别登记，失败自动固定。构建指纹之外还核对真实 Git 差异、文档、断言和未跟踪文件的内容与变化时间；受理后或运行中变化、证据登记失败不能标绿，之前的断言失败保持 failed。结果保留 not-run 和 blocked；`allPlannedChecksPassed` 只在非空计划全部实际通过且身份未变时为 true。验收标准文件包含开发驱动与 benchmark；comparison=file-diff-only、semanticEquivalence=unverified 不会自动批准标准变化。工具回归包含后台协议／驱动集成；OS 前台能力单列，现有 helper／坐标检查通过仍不能代替待完成的菜单与目录面板验收。
+
+验证输入 `{"mode":"run","baseRef":"HEAD","benchmark":true}` 会把当前设备的后台性能采集纳入计划，关联独立 benchmark runId／buildId／reportPath。后台测量范围和前台 not-run 保留，passed 仅表示测量完成，performanceRegression 始终 not-evaluated。默认不执行推荐项；未知路径的全量回退包含性能和 native，权限或未完成验收会明确受阻。verify 不自动接受视觉基线、不清空用户状态、不变更系统权限、不 push 或发布。
+
+需要同时保有两类当前产物时，先 build packaged、再 build development；目录包准备会重生成开发态共享原生资源，旧 development 清单可能过期。Playwright 检查遇到首个失败停止，剩余用例保持未运行／跳过；全量桌面阶段预算 45 分钟，单个用例的断言、等待和超时仍由原测试控制。非零退出后机器结果缺失仍保留 failed，零退出但没有可信结果为 unknown。

@@ -9,7 +9,7 @@ export async function checkProcess(
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
 ) {
-  const child = spawn(executable, args, { cwd: root, env, stdio: ["ignore", "pipe", "ignore"] });
+  const child = spawn(executable, args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   let identity: ProcessIdentity | undefined;
   try {
     identity = child.pid ? identify(child.pid) : undefined;
@@ -17,12 +17,18 @@ export async function checkProcess(
     /* 身份不可查时仍须收口管道，不能结束未知 PID。 */
   }
   const chunks: Buffer[] = [];
+  const errors: Buffer[] = [];
   let bytes = 0,
     timedOut = false,
     truncated = false;
   child.stdout.on("data", (chunk: Buffer) => {
     bytes += chunk.length;
     if (bytes <= 1024 * 1024) chunks.push(chunk);
+    else truncated = true;
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    bytes += chunk.length;
+    if (bytes <= 1024 * 1024) errors.push(chunk);
     else truncated = true;
   });
   const signal = (signal: NodeJS.Signals) => {
@@ -49,12 +55,14 @@ export async function checkProcess(
       abandon = setTimeout(() => {
         timedOut = true;
         child.stdout.destroy();
+        child.stderr.destroy();
         child.unref();
         done(null);
       }, timeoutMs + 5000);
     });
     return {
       text: Buffer.concat(chunks).toString("utf8"),
+      errorText: Buffer.concat(errors).toString("utf8"),
       exitCode,
       timedOut,
       truncated,

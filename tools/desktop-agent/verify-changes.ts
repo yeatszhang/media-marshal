@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { ToolError } from "./protocol.ts";
 import type { VerificationChanges } from "./verify-plan.ts";
 export const isStandardsFile = (path: string) =>
-  /(?:^|\/)(?:AGENTS\.md|SKILL\.md)$|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)(?:tests?|fixtures|__tests__)\/|^scripts\/(?:architecture\/|check-|test-)|^(?:\.github\/|vitest\.config\.ts|\.prettier)|(?:^|\/)(?:tsconfig[^/]*\.json|[^/]*playwright[^/]*config\.[cm]?[jt]s|package(?:-lock)?\.json)$/.test(
+  /(?:^|\/)(?:AGENTS\.md|SKILL\.md)$|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)(?:tests?|fixtures|__tests__)\/|^tools\/desktop-agent\/|^scripts\/(?:architecture\/|check-|test-|benchmark-desktop)|^(?:\.github\/|vitest\.config\.ts|\.prettier)|(?:^|\/)(?:tsconfig[^/]*\.json|[^/]*playwright[^/]*config\.[cm]?[jt]s|package(?:-lock)?\.json)$/.test(
     path,
   );
 export function verificationChanges(
@@ -26,6 +26,10 @@ export function verificationChanges(
       ...new Set(
         [
           ...git(["diff", "--no-renames", "--name-only", "-z", baseCommit, "--"]).split("\0"),
+          ...git(["diff", "--cached", "--no-renames", "--name-only", "-z", baseCommit, "--"]).split(
+            "\0",
+          ),
+          ...git(["diff", "--no-renames", "--name-only", "-z", "--"]).split("\0"),
           ...git(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
           ...hints,
         ].filter(Boolean),

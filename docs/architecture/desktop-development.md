@@ -309,3 +309,8 @@ parser 独立启动至 health 为 91.03 ms，首个解析请求为 37.31 ms，�
 ### 桌面表单交互验证
 
 来源同步、识别映射和旧来源配置使用共享编辑抽屉，网盘连接使用居中弹窗；设置与文件核对／修正保持页面内流程。容器选择与交互规则见 `apps/desktop/DESIGN.md` 的「表单任务容器」。`editor-surface.test.tsx` 检查关闭保护与焦点恢复；`layout.spec.ts` 覆盖常用／最小窗口布局、真实 Escape、放弃修改、错误可见和保存后的范围确认。所有测试使用隔离数据目录，目录选择使用受控替身。
+
+
+## 按改动验证
+
+统一 CLI 的 `verify` 默认生成计划，按 Git 实际差异选择带理由的检查；`changedFiles` 仅补充提示，未知路径回退当前桌面全量。通过 JSON 输入 `{"mode":"run","baseRef":"HEAD"}` 执行，返回持久 jobId，再用 status 查询；相同请求只续查。需要的 development／packaged 构建须先通过统一 build 入口完成，旧产物按项受阻；文档变更不要求业务或 GUI 构建。执行、跳过、未知和未运行分别记录，验收标准变化单列且不自动接受。可用 `benchmark:true` 增加实际设备的后台性能样本，测量完成不代表性能回归达标。参数、范围和证据索引见 仓库 `tools/desktop-agent/README.md`。

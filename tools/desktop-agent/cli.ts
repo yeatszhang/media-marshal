@@ -11,6 +11,7 @@ import { collect } from "./collect.ts";
 import { gcEvidence } from "./evidence-retention.ts";
 import { knownCheckStatus } from "./check-store.ts";
 import { verifyCommand } from "./verify-command.ts";
+import { knownVerificationStatus } from "./verify-store.ts";
 import type { Input } from "./protocol.ts";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -100,7 +101,11 @@ export async function dispatch(request: Request): Promise<unknown> {
   if (request.command === "build") return createBuild(root, request);
   if (request.command === "status" && (request.payload as Input<"status">).jobId) {
     const id = (request.payload as Input<"status">).jobId!;
-    return (await knownCheckStatus(root, id)) ?? buildStatus(root, id);
+    return (
+      (await knownVerificationStatus(root, id)) ??
+      (await knownCheckStatus(root, id)) ??
+      buildStatus(root, id)
+    );
   }
   if (request.command === "doctor")
     return doctor(resolve(import.meta.dirname, "../.."), request.payload as Input<"doctor">);
