@@ -6,6 +6,7 @@ import { z } from "zod";
 import { atomicJson } from "./build.ts";
 import { ToolError, scenario as scenarioSchema, type Input } from "./protocol.ts";
 import { sameProcess } from "./process.ts";
+import { agentRunHome } from "./paths.ts";
 
 const identity = z.strictObject({
   pid: z.number().int().positive(),
@@ -48,8 +49,7 @@ export type Session = z.infer<typeof sessionSchema>;
 export const sessionsHome = (root: string) => join(root, "test-results/agent/sessions");
 export const sessionPath = (root: string, id: string) =>
   join(sessionsHome(root), z.uuid().parse(id) + ".json");
-export const runHome = (root: string, runId: string) =>
-  join(root, "test-results/agent", z.uuid().parse(runId));
+export const runHome = agentRunHome;
 export async function saveSession(root: string, session: Session) {
   session.updatedAt = new Date().toISOString();
   await atomicJson(sessionPath(root, session.sessionId), session);

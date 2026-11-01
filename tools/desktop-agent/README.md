@@ -72,3 +72,5 @@ DOM 变化判断会合并同一批次内原值重复写入及写后恢复，避�
 图像坐标点击使用 act 的 `snapshotId`、`imageId`、`position:{"x":100,"y":50}` 和必填 after 条件，action 只能为 click，不能混入 target／targetRef／value。position 始终是这张 PNG 内的图像像素，从图片左上角计算；需要先用 observe image 取得并查看图片。只接受当前控制器登记的最近 8 张图片，图片 sha256、会话／运行／构建／窗口／快照和实际布局均须匹配。旧图片、文件改写、越界、窗口移动／缩放／重建、焦点或遮挡变化均拒绝；命中输入、敏感或禁用区域时改用语义控件。
 
 坐标收据保留动作前图片、CSS 位置、原生屏幕 DIP 换算、显示比例和动作后语义／图像证据；后置条件未成立时保持 unknown，采集失败标明 missing。输入范围始终是 Renderer 视口，nativeInputSent=false。后台模式记录 background-virtual，不向其他应用或屏幕位置发送鼠标事件；前台额外通过 macOS helper 的只读窗口次序、焦点与遮挡元数据核验，helper 绑定自有进程及内核创建代际，不读取其他应用标题或画面。锁屏／非交互桌面返回 NATIVE_SESSION_LOCKED，doctor 同步报告；前台操作不会自动激活窗口来执行旧坐标。原生截图仍单独依赖录屏权限，后台通过不能代替前台或 OS 原生验收。
+
+统一证据索引的基础 API 位于 evidence-model／store／artifacts 模块，包含格式与摘要校验、跨进程写入权、证据关联和原始失败保留；未采集类型有显式状态，健康读取不将断言标为通过。该索引尚在任务 2.14 接入运行器、reporter 和 trace，当前不能据此声称每个会话已自动生成完整 manifest，collect／导出也尚未接入。

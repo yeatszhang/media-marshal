@@ -1,6 +1,9 @@
 import { realpath, lstat } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 import { ToolError } from "./protocol.ts";
+import { z } from "zod";
+export const agentRunHome = (root: string, runId: string) =>
+  resolve(root, "test-results/agent", z.uuid().parse(runId));
 
 /** 仅读取工作树内工具拥有的证据；根和叶子链接均不能指向其他应用数据。 */
 export async function agentFile(root: string, path: string) {
