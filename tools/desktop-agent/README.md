@@ -15,6 +15,8 @@ npm run typecheck:desktop-agent
 
 开发工具不进入发行包，不连接用户正在使用的实例。完整能力和验收条件见 `openspec/changes/refactor-desktop-module-boundaries/`；架构检查同样覆盖本目录。
 
+日常开发默认优先 `logs`、`diagnose` 和基于 CDP 的 `observe` 语义快照（默认 `image:false`），结合动作及业务后置条件验证；不强制截图。仅视觉问题或这些证据不足时显式请求图像，截图不可用只影响对应视觉项。原生流程优先记录 AX 语义和动作后置条件，录屏权限不是日志／CDP 开发的前置。
+
 `doctor` 只读检查依赖、Electron／SQLite ABI、源码映射和本机资源，不自动安装或下载。资源缺失返回 `blocked` 和修复命令，退出码为 2。原生权限严格检查使用输入 `{"native": true}`；后台 DOM 自动化不需要屏幕录制权限。
 
 macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其能力探测不会弹出或操作权限确认；系统未授权录屏时原生截图保持受阻。helper 仅面向本工作树中使用工具隔离 profile 的进程，拒绝不匹配的可执行文件、创建时间和界面指纹，输出只进入新的会话证据文件。

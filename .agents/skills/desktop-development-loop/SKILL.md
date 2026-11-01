@@ -24,7 +24,7 @@ npm run --silent desktop:agent -- <command> --json [--input 参数.json] [--requ
 
 通过 `scenario list` 选择现有场景；`start` 的输入如 `{"scenario":"empty","seed":"本轮复现标记","mode":"background","target":"development"}`。默认后台，userData 与个人实例隔离。业务故障走固定 `scenario mode=fault` 目录，不向运行中的数据库直接写夹具。保留 scenario／seed、buildId、sessionId、runId 和复现命令；只有新运行身份才能代表重跑。
 
-用 `observe` 读取窗口、语义快照，交互相关问题加 `image:true` 并实际查看返回图片；需要原生菜单、面板或 OS 快捷键时，使用已核验的原生驱动和前台场景，DOM／后台替身不能代替 native。缺能力保留 blocked，不能用旧截图或人工转述作为当前证据。
+默认先用 `logs`、`diagnose` 和基于 CDP 的 `observe` 语义快照、控件状态及动作后置条件定位与验证，不要求截图。只有视觉问题或日志／语义证据不足且确需视觉判断时才显式加 `image:true`；无法截图不阻断日志、CDP 和非视觉业务验证。需要原生菜单、面板或 OS 快捷键时，优先使用 AX 语义、动作收据与应用状态证据；DOM／后台替身不能代替 native，原生截图仍为可选能力。专门的视觉验收未运行时如实记录，不能用旧图或人工转述代替当前证据。
 
 ## 操作、定位与修复
 
