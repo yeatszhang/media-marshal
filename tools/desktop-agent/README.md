@@ -25,7 +25,21 @@ macOS 原生 helper 需显式执行 `npm run desktop:agent:native:build`。其�
 
 成功构建清单绑定 Git 基点、未提交及未跟踪有效源码、配置／锁文件、运行平台和产物摘要。构建前后同时比较内容及文件变化观测；构建期间改后复原也拒绝。生成的 dist、资源和证据不被误计为源码。启动前重新核对清单和产物；最近构建失败、清单损坏、源码变化或产物缺失时拒绝使用旧成功结果。崩溃遗留构建锁不自动删除，必须先核实原构建及子进程已停止。
 
-`start --json` 创建默认后台的 empty 会话；随后以 `--session <sessionId>` 调用 `status`、`restart`、`stop`。耗时生命周期操作先返回 running 收据，使用 status 等待 running／stopped；重复原 request ID 查询其结果，不重新执行。前台通过参数 `{"mode":"foreground"}` 显式选择。当前仅 empty 场景接入，其余场景明确受阻。
+`start --json` 创建默认后台的 empty 会话；随后以 `--session <sessionId>` 调用 `status`、`restart`、`stop`。耗时生命周期操作先返回 running 收据，使用 status 等待 running／stopped；重复原 request ID 查询其结果，不重新执行。前台通过参数 `{"mode":"foreground"}` 显式选择。
+
+场景使用 `scenario --input 参数文件 --json`：`{"mode":"list"}` 查询注册定义，`{"mode":"run","name":"recognition-review","seed":"复现编号"}` 创建新后台隔离会话。也可向 start 传 `scenario` 与 `seed`。同 seed 保持合成输入与业务后置条件一致，物理目录、会话和运行身份各自独立。场景 run 拒绝已有 session；不能通过此命令重置活跃业务库。
+
+| 场景               | 实际运行与后置条件                                                           | 替身与限制                                                        |
+| ------------------ | ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| empty              | 应用自行初始化当前空库，没有同步、识别或下载                                 | 无业务数据替身                                                    |
+| local-sync-ready   | 独立同步 API 保存、预览、确认一条本地配置                                    | 仅自有目录授权；输入仍须生产稳定观察，不保证立即产生同步任务      |
+| recognition-review | 真实下载提交、暂存清理及收据接入，独立识别规则，待确认任务，无整理 COPY 计划 | 云端计划／stat 与识别结果为固定替身，不验证远端账号或真实识别质量 |
+| download-conflict  | 启动后 BLOCKED_LOCAL，已有不同目标内容保留                                   | 固定云端计划，不连接真实账号、不执行远程下载                      |
+| recovery-pending   | 未完成写入进入 RECONCILING，不发布 completed 文件                            | 固定中断状态，不等同于本轮实际 SIGKILL 恢复验收                   |
+
+非空场景当前需要 macOS 原生卷探测和匹配 Electron ABI 的 SQLite。控制器在应用启动前以 Electron Node 独占初始化自有数据库，复用 `apps/desktop/tests/support/` 的下载与识别夹具；启动后通过受限只读 API 核对后置条件。`scenario.json` 记录当前 schema、版本、seed、真实路径及替身；`scenario-check.json` 仅在业务和文件检查都通过后标记 passed。重启保留原数据，只记录初始断言未重跑，避免把开发操作重置成夹具。
+
+已有库、部分准备、准备超时或 schema／场景版本不符均保留证据并拒绝覆盖，不自动删除数据库或重复灌数据。通过 seed-worker.json 核实准备进程，失败后使用新会话复现。场景集成检查需先 build，再运行 `node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tools/desktop-agent/scenarios.integration.ts`。
 
 本地控制进程跨 CLI 调用存活，随机凭证仅留在权限受限的会话记录，本机 socket 权限为 0600，不开放网络监听。会话记录在 `test-results/agent/sessions/`；每次启动或重启创建新的 `test-results/agent/<runId>/`。重启保留初始 run 的 data 目录并提升 generation，旧证据不覆盖。共享 Electron 启动夹具位于 `apps/desktop/tests/support/electron.ts`，呈现 E2E 已使用同一入口。
 

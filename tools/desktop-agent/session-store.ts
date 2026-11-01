@@ -4,7 +4,7 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { atomicJson } from "./build.ts";
-import { ToolError, type Input } from "./protocol.ts";
+import { ToolError, scenario as scenarioSchema, type Input } from "./protocol.ts";
 import { sameProcess } from "./process.ts";
 
 const identity = z.strictObject({
@@ -25,13 +25,14 @@ export const sessionSchema = z.strictObject({
     "stopping",
     "stopped",
     "failed",
+    "blocked",
     "crashed",
     "unknown",
   ]),
   options: z.strictObject({
     mode: z.enum(["background", "foreground"]),
     target: z.enum(["development", "packaged"]),
-    scenario: z.literal("empty"),
+    scenario: scenarioSchema,
     seed: z.string(),
   }),
   socket: z.string(),
@@ -70,7 +71,7 @@ export function publicSession(session: Session) {
   return publicValue;
 }
 export function inspectSession(session: Session, probe = sameProcess): Session {
-  if (["stopped", "failed", "crashed"].includes(session.status)) return session;
+  if (["stopped", "failed", "blocked", "crashed"].includes(session.status)) return session;
   if (!session.owner) {
     if (Date.now() - Date.parse(session.createdAt) < 20000) return session;
     return {
@@ -97,13 +98,6 @@ export function inspectSession(session: Session, probe = sameProcess): Session {
   return session;
 }
 export async function newSession(root: string, options: Input<"start">): Promise<Session> {
-  if (options.scenario !== "empty")
-    throw new ToolError(
-      "SCENARIO_UNAVAILABLE",
-      "场景尚未接入",
-      "当前仅可使用 empty；场景按任务 2.7 实施",
-      "blocked",
-    );
   const sessionId = randomUUID(),
     stamp = new Date().toISOString();
   const socketName =
@@ -119,7 +113,7 @@ export async function newSession(root: string, options: Input<"start">): Promise
     profileRunId: randomUUID(),
     generation: 1,
     status: "starting",
-    options: { ...options, scenario: "empty" },
+    options,
     socket:
       process.platform === "win32"
         ? `\\\\.\\pipe\\${socketName}`

@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { doctor } from "./doctor.ts";
 import { createBuild, buildStatus } from "./build.ts";
+import { scenarios, SCENARIO_VERSION } from "./scenarios.ts";
 import { readLogs } from "./log-reader.ts";
 import { diagnoseSession } from "./diagnose.ts";
 import { startSession, sessionCommand } from "./session.ts";
@@ -64,6 +65,28 @@ export async function requestFromArgs(args: string[]): Promise<Request> {
 }
 export async function dispatch(request: Request): Promise<unknown> {
   const root = resolve(import.meta.dirname, "../..");
+  if (request.command === "scenario") {
+    const input = request.payload as Input<"scenario">;
+    if (input.mode === "list") return { version: SCENARIO_VERSION, scenarios };
+    if (request.sessionId)
+      throw new ToolError(
+        "SCENARIO_REQUIRES_FRESH_SESSION",
+        "不能向现有会话直接写入场景数据",
+        "不指定 --session，使用 scenario run 创建新隔离会话",
+        "blocked",
+      );
+    if (!input.name)
+      throw new ToolError("SCENARIO_NAME_REQUIRED", "运行场景需要名称", "先查询 scenario list");
+    return startSession(root, {
+      ...request,
+      payload: {
+        scenario: input.name,
+        seed: input.seed,
+        mode: "background",
+        target: "development",
+      },
+    });
+  }
   if (request.command === "diagnose") return diagnoseSession(root, request);
   if (request.command === "logs") {
     if (!request.sessionId)
@@ -98,7 +121,8 @@ export async function dispatch(request: Request): Promise<unknown> {
         "doctor",
         "build",
         "status",
-        "start(empty)",
+        "start",
+        "scenario",
         "logs",
         "diagnose",
         "stop",
@@ -119,7 +143,7 @@ export async function main(args: string[]) {
     const value = await dispatch(request);
     const response = result(request, value);
     if (
-      ["build", "status", "start", "restart", "stop"].includes(request.command) &&
+      ["build", "status", "start", "restart", "stop", "scenario"].includes(request.command) &&
       value &&
       typeof value === "object" &&
       "status" in value

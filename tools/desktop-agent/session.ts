@@ -51,10 +51,13 @@ async function spawnController(root: string, session: Session) {
     await log.close();
   }
 }
-async function existingStart(path: string, options: Input<"start">, root: string) {
+async function existingStart(path: string, options: Input<"start">, root: string, command: string) {
   try {
     const previous = JSON.parse(await readFile(path, "utf8"));
-    if (JSON.stringify(previous.options) !== JSON.stringify(options))
+    if (
+      previous.command !== command ||
+      JSON.stringify(previous.options) !== JSON.stringify(options)
+    )
       throw new ToolError(
         "REQUEST_CONFLICT",
         "同一请求已用于不同启动参数",
@@ -82,17 +85,19 @@ export async function startSession(root: string, request: Request) {
     reservation = await open(path, "wx", 0o600);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST")
-      return existingStart(path, options, root);
+      return existingStart(path, options, root, request.command);
     throw error;
   }
   try {
-    await reservation.writeFile(JSON.stringify({ options, status: "preparing" }));
+    await reservation.writeFile(
+      JSON.stringify({ command: request.command, options, status: "preparing" }),
+    );
     await reservation.sync();
     const build = await assertBuild(root, options.target);
     const session = await newSession(root, options);
     session.buildId = build.buildId;
     await saveSession(root, session);
-    await atomicJson(path, { options, sessionId: session.sessionId });
+    await atomicJson(path, { command: request.command, options, sessionId: session.sessionId });
     try {
       await spawnController(root, session);
     } catch (error) {

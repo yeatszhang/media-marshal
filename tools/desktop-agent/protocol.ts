@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 export const TOOL_PROTOCOL_VERSION = 1 as const;
 const uuid = z.uuid();
 const page = z.strictObject({ windowId: z.string().min(1).max(120).optional() });
-const scenario = z.enum([
+export const scenario = z.enum([
   "empty",
   "local-sync-ready",
   "recognition-review",

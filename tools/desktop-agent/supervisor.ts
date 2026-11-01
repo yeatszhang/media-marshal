@@ -2,6 +2,8 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ElectronApplication } from "@playwright/test";
+import { prepareScenario } from "./scenario-prepare.ts";
+import { checkScenario } from "./scenario-check.ts";
 import { EventCollector } from "./collector.ts";
 import { readHealth } from "./health.ts";
 import type { Server } from "node:net";
@@ -35,6 +37,7 @@ async function openApplication(runtime: Runtime) {
   const dataDir = join(runHome(root, session.profileRunId), "data");
   await mkdir(directory, { recursive: true, mode: 0o700 });
   session.buildId = build.buildId;
+  const fixture = await prepareScenario(root, session);
   runtime.collector = await EventCollector.create(root, session);
   const app = await launchDesktop(root, {
     ...session.options,
@@ -63,6 +66,14 @@ async function openApplication(runtime: Runtime) {
   const page = await app.firstWindow({ timeout: 20000 });
   await page.getByText("核心已连接", { exact: true }).waitFor({ timeout: 20000 });
   await assertBuild(root, session.options.target);
+  if (session.generation === 1) await checkScenario(root, app, session, fixture);
+  else
+    await atomicJson(join(runHome(root, session.runId), "scenario-check.json"), {
+      status: "not-run",
+      reason: "重启保留开发操作，初始场景断言不重放",
+      fixture,
+      buildId: session.buildId,
+    });
   session.status = "running";
   delete session.error;
   await saveSession(root, session);
@@ -252,7 +263,12 @@ export async function supervise(root: string, id: string) {
     session.status = "stopping";
     await closeApplication(runtime).catch(() => {});
     await runtime.collector?.close().catch(() => {});
-    session.status = runtime.app ? "unknown" : "failed";
+    session.status =
+      runtime.app || (error instanceof ToolError && error.state === "unknown")
+        ? "unknown"
+        : error instanceof ToolError && error.state === "blocked"
+          ? "blocked"
+          : "failed";
     session.error = failure(error).error;
     await saveSession(root, session);
     if (!runtime.app) runtime.server.close();
